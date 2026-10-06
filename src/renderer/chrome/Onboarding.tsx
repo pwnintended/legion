@@ -29,7 +29,10 @@ export function Onboarding() {
         <div className="flex flex-col items-center gap-5">
           <div
             className="grid size-16 place-items-center rounded-[18px] border-[1.5px] border-surface0 bg-base"
-            style={{ boxShadow: '0 0 0 1px rgb(203 166 247 / 0.12), 0 12px 48px rgb(203 166 247 / 0.14)' }}
+            style={{
+              boxShadow:
+                '0 0 0 1px color-mix(in srgb, var(--mauve) 12%, transparent), 0 12px 48px color-mix(in srgb, var(--mauve) 14%, transparent)',
+            }}
           >
             <LegionMark size={32} />
           </div>

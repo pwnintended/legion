@@ -4,7 +4,16 @@
  * Mutating procedures (inbox.resolve, runs.pause/resume, runs.approvePlan) update the world and push the
  * resulting events, so the UI behaves as it would against the real engine.
  */
-import type { Attempt, InboxItem, QuestionAnswer, Run, Task } from '@shared/domain';
+import {
+  type Attempt,
+  applySettingsPatch,
+  type EngineKind,
+  type InboxItem,
+  type QuestionAnswer,
+  type Run,
+  type SettingsPatch,
+  type Task,
+} from '@shared/domain';
 import type { AgentEvent, ServerEvent, ServerEventBody } from '@shared/events';
 import type { ProcedureName, RepoInspection, RpcInput, RpcOutput, TranscriptEntry } from '@shared/rpc';
 import { RpcError } from '@shared/rpc-transport';
@@ -114,10 +123,23 @@ export class DemoClient implements EngineClient {
           headSeq: this.headSeq,
         };
       case 'engines.list':
-      case 'engines.probe':
         return structuredClone(w.engines);
+      case 'engines.probe': {
+        const kind = input.kind as EngineKind | null;
+        for (const engine of w.engines) if (kind === null || engine.kind === kind) engine.probedAt = Date.now();
+        return structuredClone(w.engines.filter((e) => kind === null || e.kind === kind));
+      }
       case 'settings.get':
         return structuredClone(w.settings);
+      case 'settings.set': {
+        try {
+          w.settings = applySettingsPatch(w.settings, input as SettingsPatch);
+        } catch (error) {
+          throw new RpcError('bad_request', error instanceof Error ? error.message : String(error));
+        }
+        this.emit([{ type: 'settings.updated', settings: structuredClone(w.settings) }]);
+        return structuredClone(w.settings);
+      }
       case 'subscribe':
         return { headSeq: this.headSeq, replayed: true };
       case 'runs.list':

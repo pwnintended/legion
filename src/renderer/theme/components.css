@@ -12,10 +12,10 @@
   --radius: 12px;
   --radius-sm: 8px;
   --border-w: 1.5px;
-  --hairline: #2a2b3c;
-  --chrome-line: #232336;
-  --glow-focus: 0 0 0 1px rgb(203 166 247 / 0.3), 0 0 18px rgb(203 166 247 / 0.2);
-  --glow-urgent: 0 0 0 1.5px var(--peach), 0 0 24px rgb(250 179 135 / 0.45);
+  --glow-focus:
+    0 0 0 1px color-mix(in srgb, var(--mauve) 30%, transparent),
+    0 0 18px color-mix(in srgb, var(--mauve) 20%, transparent);
+  --glow-urgent: 0 0 0 1.5px var(--peach), 0 0 24px color-mix(in srgb, var(--peach) 45%, transparent);
   --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
 }
 
@@ -24,7 +24,7 @@ body {
 }
 
 ::selection {
-  background: rgb(203 166 247 / 0.3);
+  background: color-mix(in srgb, var(--mauve) 30%, transparent);
 }
 
 :focus-visible {
@@ -64,27 +64,27 @@ body {
   flex: none;
 }
 .chip-claude {
-  background: rgb(203 166 247 / 0.14);
+  background: color-mix(in srgb, var(--mauve) 14%, transparent);
   color: var(--mauve);
 }
 .chip-codex {
-  background: rgb(148 226 213 / 0.13);
+  background: color-mix(in srgb, var(--teal) 13%, transparent);
   color: var(--teal);
 }
 .chip-ok {
-  background: rgb(166 227 161 / 0.13);
+  background: color-mix(in srgb, var(--green) 13%, transparent);
   color: var(--green);
 }
 .chip-run {
-  background: rgb(137 180 250 / 0.14);
+  background: color-mix(in srgb, var(--blue) 14%, transparent);
   color: var(--blue);
 }
 .chip-warn {
-  background: rgb(250 179 135 / 0.16);
+  background: color-mix(in srgb, var(--peach) 16%, transparent);
   color: var(--peach);
 }
 .chip-bad {
-  background: rgb(243 139 168 / 0.14);
+  background: color-mix(in srgb, var(--red) 14%, transparent);
   color: var(--red);
 }
 .chip-idle {
@@ -92,7 +92,7 @@ body {
   color: var(--subtext0);
 }
 .chip-accent {
-  background: rgb(180 190 254 / 0.14);
+  background: color-mix(in srgb, var(--lavender) 14%, transparent);
   color: var(--lavender);
 }
 
@@ -153,14 +153,14 @@ body {
   color: var(--crust);
 }
 .btn-primary:hover {
-  background: #d7b9f9;
+  background: var(--mauve-hover);
 }
 .btn-warn {
   background: var(--peach);
   color: var(--crust);
 }
 .btn-warn:hover {
-  background: #fbc19d;
+  background: var(--peach-hover);
 }
 .btn-icon {
   width: 28px;
@@ -187,8 +187,8 @@ body {
 }
 .btn-primary .kbd,
 .btn-warn .kbd {
-  background: rgb(17 17 27 / 0.18);
-  border-color: rgb(17 17 27 / 0.25);
+  background: color-mix(in srgb, var(--crust) 18%, transparent);
+  border-color: color-mix(in srgb, var(--crust) 25%, transparent);
   color: var(--crust);
 }
 
@@ -301,8 +301,8 @@ body {
 }
 .tile[data-urgent="true"][data-focused="true"] {
   box-shadow:
-    0 0 0 1px rgb(250 179 135 / 0.35),
-    0 0 18px rgb(250 179 135 / 0.25);
+    0 0 0 1px color-mix(in srgb, var(--peach) 35%, transparent),
+    0 0 18px color-mix(in srgb, var(--peach) 25%, transparent);
 }
 /* Urgency pulse: opacity-only on a pseudo-element; stops once acknowledged. */
 .tile[data-pulse="true"]::after,
@@ -439,7 +439,7 @@ body {
 }
 .tab:hover {
   color: var(--text);
-  background: rgb(49 50 68 / 0.5);
+  background: color-mix(in srgb, var(--surface0) 50%, transparent);
 }
 .tab[aria-selected="true"] {
   background: var(--surface0);
@@ -527,7 +527,7 @@ body {
   outline-offset: 2px;
 }
 .pnode[data-tone="ok"] {
-  border-color: rgb(166 227 161 / 0.45);
+  border-color: color-mix(in srgb, var(--green) 45%, transparent);
 }
 .pnode[data-tone="run"] {
   border-color: var(--blue);
@@ -537,7 +537,7 @@ body {
 }
 .pnode[data-urgent="true"] {
   border-color: var(--peach);
-  box-shadow: 0 0 22px rgb(250 179 135 / 0.3);
+  box-shadow: 0 0 22px color-mix(in srgb, var(--peach) 30%, transparent);
 }
 .pnode[data-quiet="true"] {
   color: var(--subtext0);
@@ -570,6 +570,27 @@ body {
   border-color: var(--surface0);
 }
 .rail-item:focus-visible {
+  outline: 2px solid var(--mauve);
+  outline-offset: -2px;
+}
+.rail-engine {
+  all: unset;
+  box-sizing: border-box;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 24px;
+  padding: 0 6px;
+  border-radius: 6px;
+  font-size: 12px;
+  color: var(--subtext1);
+  transition: background-color 0.15s;
+}
+.rail-engine:hover {
+  background: var(--base);
+}
+.rail-engine:focus-visible {
   outline: 2px solid var(--mauve);
   outline-offset: -2px;
 }
@@ -616,7 +637,7 @@ body {
 .ghost:hover {
   border-color: var(--overlay0);
   color: var(--text);
-  background: rgb(30 30 46 / 0.5);
+  background: color-mix(in srgb, var(--base) 50%, transparent);
 }
 .ghost:focus-visible {
   outline: 2px solid var(--mauve);
@@ -625,7 +646,11 @@ body {
 
 /* Skeleton for virtualized columns */
 .placeholder {
-  background: linear-gradient(180deg, rgb(30 30 46 / 0.7), rgb(30 30 46 / 0.35));
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--base) 70%, transparent),
+    color-mix(in srgb, var(--base) 35%, transparent)
+  );
   border: var(--border-w) solid var(--surface0);
   border-radius: var(--radius);
 }

@@ -274,6 +274,7 @@ const COMMAND_ICON: Record<string, IconName> = {
   'tile.close': 'close',
   'column.maximize': 'maximize',
   'column.toggleCollapse': 'collapse',
+  'settings.open': 'settings',
 };
 const CATEGORY_ICON: Record<string, IconName> = {
   Focus: 'arrowRight',
@@ -284,6 +285,7 @@ const CATEGORY_ICON: Record<string, IconName> = {
   Run: 'play',
   Tile: 'session',
   Overlay: 'search',
+  App: 'settings',
 };
 
 function fromCommand(c: CommandView): Entry {

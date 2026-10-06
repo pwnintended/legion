@@ -46,7 +46,7 @@ export interface CommandContext {
   layout: Workspace | null;
 }
 
-export type CommandCategory = 'Run' | 'Layout' | 'Focus' | 'Column' | 'Tile' | 'Overlay' | 'Workspace' | 'Mode';
+export type CommandCategory = 'Run' | 'Layout' | 'Focus' | 'Column' | 'Tile' | 'Overlay' | 'Workspace' | 'Mode' | 'App';
 
 export interface Command {
   /** Stable id, e.g. `layout.overview`. The app menu and palette refer to commands by id. */
@@ -351,6 +351,14 @@ export function builtinCommands(): Command[] {
       category: 'Overlay',
       keybinding: 'Mod+K',
       run: () => actions.toggleOverlay('palette'),
+    },
+    {
+      id: 'settings.open',
+      inOverlay: true,
+      title: 'Settings…',
+      category: 'App',
+      keybinding: 'Mod+,',
+      run: (ctx) => (ctx.ui.overlay === 'settings' ? actions.closeOverlay() : actions.openSettings()),
     },
     {
       id: 'overlay.close',

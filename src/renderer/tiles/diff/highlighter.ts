@@ -19,8 +19,9 @@ import tsx from 'shiki/langs/tsx.mjs';
 import typescript from 'shiki/langs/typescript.mjs';
 import yaml from 'shiki/langs/yaml.mjs';
 import mocha from 'shiki/themes/catppuccin-mocha.mjs';
+import { themedColor } from '../../theme/palette';
 
-/** One token: text and colour (null = default text colour); `i` = italic. */
+/** One token: text and colour (a theme token like `var(--mauve)`; null = default text colour); `i` = italic. */
 export interface Tok {
   t: string;
   c: string | null;
@@ -62,7 +63,7 @@ export async function highlight(request: HighlightRequest): Promise<HighlightRes
       try {
         return h.codeToTokensBase(code, { lang: request.lang, theme: 'catppuccin-mocha' }).map((line) =>
           line.map((token) => {
-            const color = token.color && token.color.toLowerCase() !== DEFAULT_FG ? token.color : null;
+            const color = token.color && token.color.toLowerCase() !== DEFAULT_FG ? themedColor(token.color) : null;
             return (token.fontStyle ?? 0) & 1
               ? { t: token.content, c: color, i: 1 as const }
               : { t: token.content, c: color };

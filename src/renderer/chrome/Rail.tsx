@@ -6,6 +6,7 @@ import { openInboxCount, runningAttempts, taskCounts } from '../app/data';
 import { useActiveRunId, useConnection, useData, useEngines, useRuns } from '../app/hooks';
 import { actions } from '../app/store';
 import { ENGINE_NAME, type Tone } from '../layout/describe';
+import { Icon } from './icons';
 import { repoLabel } from './TitleBar';
 import { Dot, toneColor } from './ui';
 
@@ -136,26 +137,45 @@ function EnginesFooter() {
         ? 'var(--peach)'
         : 'var(--red)';
   return (
-    <div className="mt-auto flex flex-col gap-2 border-t border-[var(--chrome-line)] px-2 pt-2.5 pb-0.5">
-      <div className="sec">Engines</div>
+    <div className="mt-auto flex flex-col gap-1 border-t border-[var(--chrome-line)] px-1 pt-2 pb-0.5">
+      <div className="flex h-6 items-center px-1">
+        <span className="sec">Engines</span>
+        <button
+          type="button"
+          className="btn btn-ghost btn-icon ml-auto h-6 w-6"
+          aria-label="Settings"
+          title={commandTooltip('settings.open', 'Settings')}
+          onClick={() => void executeCommand('settings.open')}
+          data-testid="rail-settings"
+        >
+          <Icon name="settings" size={14} />
+        </button>
+      </div>
       {real.length === 0 ? (
-        <div className="faint text-xs">{engines.status === 'unavailable' ? 'detection unavailable' : 'detecting…'}</div>
+        <div className="faint px-1 text-xs">
+          {engines.status === 'unavailable' ? 'detection unavailable' : 'detecting…'}
+        </div>
       ) : (
-        real.map((engine) => (
-          <div
-            key={engine.kind}
-            className="flex items-center gap-2 text-xs"
-            title={engine.error ?? engine.path ?? undefined}
-          >
-            <Dot color={engine.installed ? `var(--${engine.kind === 'codex' ? 'teal' : 'mauve'})` : 'var(--red)'} />
-            {ENGINE_NAME[engine.kind]}
-            <span className="mono faint ml-auto text-[11px]">
-              {engine.installed ? (engine.version ?? '?') : 'not found'}
-            </span>
-          </div>
-        ))
+        real.map((engine) => {
+          const problem = !engine.installed ? 'not found' : engine.loggedIn === false ? 'not logged in' : null;
+          return (
+            <button
+              key={engine.kind}
+              type="button"
+              className="rail-engine"
+              title={`${engine.error ?? engine.path ?? ENGINE_NAME[engine.kind]} · engine settings`}
+              onClick={() => actions.openSettings('engines')}
+            >
+              <Dot color={problem ? 'var(--red)' : `var(--${engine.kind === 'codex' ? 'teal' : 'mauve'})`} />
+              {ENGINE_NAME[engine.kind]}
+              <span className={`mono ml-auto text-[11px] ${problem ? 'text-red' : 'faint'}`}>
+                {problem ?? engine.version ?? '?'}
+              </span>
+            </button>
+          );
+        })
       )}
-      <div className="faint flex items-center gap-2 text-[11px]">
+      <div className="faint flex items-center gap-2 px-1 pt-0.5 text-[11px]">
         <Dot color={statusColor} live={connection.status === 'connecting' || connection.syncing} />
         engine
         <span className="mono ml-auto" data-testid="connection-status">

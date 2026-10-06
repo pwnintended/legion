@@ -11,11 +11,13 @@ import { InboxOverlay } from './Inbox';
 import { useToasts } from './nav';
 import './overlays.css';
 import { PaletteOverlay } from './Palette';
+import { SettingsOverlay } from './Settings';
 
 const VIEWS: Record<Overlay, () => React.JSX.Element> = {
   composer: ComposerOverlay,
   inbox: InboxOverlay,
   palette: PaletteOverlay,
+  settings: SettingsOverlay,
 };
 
 /** Put focus back where it was (a rail button, ...) or on the focused tile once an overlay closes. */

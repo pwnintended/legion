@@ -5,8 +5,9 @@ import { Terminal } from '@xterm/xterm';
 import '@xterm/xterm/css/xterm.css';
 import { useEffect, useRef, useState } from 'react';
 import { useEngine } from '../../app/engine';
+import { prefsStore } from '../../app/prefs';
 import type { TileProps } from '../../layout/types';
-import { TERMINAL_FONT_FAMILY, terminalTheme } from './theme';
+import { TERMINAL_FONT_FAMILY, terminalTheme, terminalThemeLatte } from './theme';
 import { webglPool } from './webgl-pool';
 
 type Status = 'idle' | 'connecting' | 'live' | 'exited' | 'error';
@@ -71,7 +72,7 @@ export default function TerminalTile({ tileId, params, focused, visible }: TileP
       macOptionIsMeta: false,
       macOptionClickForcesSelection: true,
       smoothScrollDuration: 0,
-      theme: terminalTheme,
+      theme: prefsStore.getState().flavour === 'latte' ? terminalThemeLatte : terminalTheme,
     });
     const fit = new FitAddon();
     term.loadAddon(fit);
