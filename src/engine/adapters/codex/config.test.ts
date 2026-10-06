@@ -68,15 +68,23 @@ describe('permissions', () => {
 });
 
 describe('thread parameters', () => {
-  it('configures the Legion MCP server with a bearer token env var', () => {
+  it('configures the Legion MCP server with a bearer token env var and a day-long tool timeout', () => {
     expect(threadConfig(opts())).toEqual({
       mcp_servers: {
         legion: {
           url: 'http://127.0.0.1:4000/mcp',
           bearer_token_env_var: MCP_TOKEN_ENV,
           default_tools_approval_mode: 'approve',
+          tool_timeout_sec: 86_400,
         },
       },
+    });
+    // request_human_input from a Codex coder may wait for a human at least as long as Claude's MCP_TOOL_TIMEOUT.
+    const legion = (threadConfig(opts()).mcp_servers as Record<string, { tool_timeout_sec: number }>).legion;
+    expect(legion?.tool_timeout_sec).toBeGreaterThanOrEqual(24 * 60 * 60);
+    expect(threadStartParams(opts()).config).toMatchObject({ mcp_servers: { legion: { tool_timeout_sec: 86_400 } } });
+    expect(threadResumeParams('t1', opts()).config).toMatchObject({
+      mcp_servers: { legion: { tool_timeout_sec: 86_400 } },
     });
     expect(threadConfig(opts({ mcp: null }))).toEqual({});
   });
