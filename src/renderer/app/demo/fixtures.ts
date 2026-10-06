@@ -22,6 +22,7 @@ import {
 import type { EngineInfo } from '@shared/engine';
 import type { AgentEvent } from '@shared/events';
 import type { RunSnapshot } from '@shared/rpc';
+import { withSessionDemo } from './sessions';
 
 const MIN = 60_000;
 
@@ -748,7 +749,7 @@ export function createDemoWorld(now = Date.now()): DemoWorld {
     },
   ];
 
-  return {
+  const world: DemoWorld = {
     runs,
     plans: [planA, planB, planC],
     tasks: [...tasksA, ...tasksB],
@@ -771,6 +772,7 @@ export function createDemoWorld(now = Date.now()): DemoWorld {
     engines,
     settings: { ...DEFAULT_SETTINGS, concurrency: { ...DEFAULT_SETTINGS.concurrency, global: 4 } },
   };
+  return withSessionDemo(world, now);
 }
 
 export function snapshotOf(world: DemoWorld, runId: string, seq: number): RunSnapshot | null {

@@ -4,13 +4,16 @@
  * Mutating procedures (inbox.resolve, runs.pause/resume, runs.approvePlan) update the world and push the
  * resulting events, so the UI behaves as it would against the real engine.
  */
-import type { InboxItem, Run, Task } from '@shared/domain';
-import type { ServerEvent, ServerEventBody } from '@shared/events';
-import type { ProcedureName, RpcInput, RpcOutput, TranscriptEntry } from '@shared/rpc';
+import type { Attempt, InboxItem, QuestionAnswer, Run, Task } from '@shared/domain';
+import type { AgentEvent, ServerEvent, ServerEventBody } from '@shared/events';
+import type { ProcedureName, RepoInspection, RpcInput, RpcOutput, TranscriptEntry } from '@shared/rpc';
 import { RpcError } from '@shared/rpc-transport';
 import type { ConnectionState } from '../engine-connection';
 import type { EngineClient } from '../sync';
 import { createDemoWorld, type DemoWorld, LIVE_SCRIPT, snapshotOf } from './fixtures';
+import { withSessionLive } from './sessions';
+
+const SCRIPT = withSessionLive(LIVE_SCRIPT);
 
 const SNAPSHOT_SEQ = 1000;
 
@@ -24,6 +27,7 @@ export class DemoClient implements EngineClient {
   private readonly eventListeners = new Set<(events: ServerEvent[]) => void>();
   private timer: ReturnType<typeof setInterval> | null = null;
   private scriptIndex = 0;
+  private created = 0;
 
   constructor(options: { live?: boolean; now?: number } = {}) {
     const now = options.now ?? Date.now();
@@ -32,8 +36,13 @@ export class DemoClient implements EngineClient {
     let seq = 100;
     for (const [attemptId, events] of Object.entries(this.world.transcripts)) {
       const span = events.length;
-      this.history[attemptId] = events.map((event, i) => ({ seq: seq++, ts: now - (span - i) * 40_000, event }));
+      this.history[attemptId] = events.map((event, i) => ({
+        seq: seq++,
+        ts: now - (span - i) * Math.min(40_000, (30 * 60_000) / span),
+        event,
+      }));
     }
+    this.headSeq = Math.max(SNAPSHOT_SEQ, seq);
     queueMicrotask(() => {
       this.setState({ status: 'connected', generation: 1 });
       // Replay history the way the engine does for subscribe({ sinceSeq: 0 }).
@@ -152,6 +161,33 @@ export class DemoClient implements EngineClient {
         return this.updateRun(input.runId as string, { paused: method === 'runs.pause' });
       case 'runs.approvePlan':
         return this.approvePlan(input.runId as string);
+      case 'repos.recent':
+        return [
+          { path: '/Users/dev/src/erudiet/app', name: 'app', lastUsedAt: Date.now() - 60_000 },
+          { path: '/Users/dev/src/erudiet/web', name: 'web', lastUsedAt: Date.now() - 3_600_000 },
+          { path: '/Users/dev/src/erudiet/api', name: 'api', lastUsedAt: Date.now() - 86_400_000 },
+        ];
+      case 'repos.inspect':
+        return inspectDemoRepo(input.path as string);
+      case 'runs.create':
+        return this.createRun(input as unknown as RpcInput<'runs.create'>);
+      case 'runs.answerClarify':
+        return this.answerClarify(input.runId as string, input.answers as QuestionAnswer[]);
+      case 'sessions.send':
+        return this.steer(input.attemptId as string, input.text as string, input.priority as 'now' | 'next');
+      case 'sessions.interrupt':
+        return this.interruptSession(input.attemptId as string);
+      case 'sessions.takeover':
+        throw new RpcError('not_implemented', 'Takeover needs the real engine; demo mode has no agent processes.');
+      case 'tasks.setEngine':
+        return this.updateTask(input.taskId as string, {
+          engineOverride: input.engine as Task['engineOverride'],
+          modelOverride: (input.model as string | null) ?? null,
+        });
+      case 'tasks.retry':
+        return this.updateTask(input.taskId as string, { status: 'queued', error: null });
+      case 'tasks.skip':
+        return this.updateTask(input.taskId as string, { status: 'skipped' });
       default:
         throw new RpcError('not_implemented', `${method} is not available in demo mode`);
     }
@@ -182,7 +218,11 @@ export class DemoClient implements EngineClient {
   }
 
   private tick(): void {
-    const step = LIVE_SCRIPT[this.scriptIndex % LIVE_SCRIPT.length];
+    const index = this.scriptIndex;
+    const step =
+      index < SCRIPT.intro.length
+        ? SCRIPT.intro[index]
+        : SCRIPT.loop[(index - SCRIPT.intro.length) % SCRIPT.loop.length];
     this.scriptIndex++;
     if (!step) return;
     const attempt = this.world.attempts.find((a) => a.id === step.attemptId);
@@ -235,6 +275,100 @@ export class DemoClient implements EngineClient {
     return structuredClone(item);
   }
 
+  private attemptEvent(attempt: Attempt, event: AgentEvent): ServerEventBody {
+    return { type: 'agent.event', runId: attempt.runId, taskId: attempt.taskId, attemptId: attempt.id, event };
+  }
+
+  private steer(attemptId: string, text: string, priority: 'now' | 'next'): { ok: true } {
+    const attempt = this.world.attempts.find((a) => a.id === attemptId);
+    if (attempt?.status !== 'running') throw new RpcError('conflict', 'session is not running');
+    setTimeout(() => {
+      const reply =
+        priority === 'now' ? `Stopping here to follow your note: "${text}".` : `Noted for the next step: "${text}".`;
+      this.emit([this.attemptEvent(attempt, { type: 'message', text: reply })]);
+    }, 900);
+    return { ok: true };
+  }
+
+  private interruptSession(attemptId: string): { ok: true } {
+    const attempt = this.world.attempts.find((a) => a.id === attemptId);
+    if (attempt?.status !== 'running') throw new RpcError('conflict', 'session is not running');
+    this.emit([
+      this.attemptEvent(attempt, {
+        type: 'turn_complete',
+        structuredOutput: null,
+        isError: false,
+        reason: 'interrupted',
+      }),
+    ]);
+    return { ok: true };
+  }
+
+  private updateTask(taskId: string, patch: Partial<Task>): Task {
+    const task = this.world.tasks.find((t) => t.id === taskId);
+    if (!task) throw new RpcError('not_found', 'task not found');
+    const from = task.status;
+    Object.assign(task, patch, { updatedAt: Date.now() });
+    this.emit([{ type: 'task.updated', task: structuredClone(task), from }]);
+    return structuredClone(task);
+  }
+
+  private createRun(input: RpcInput<'runs.create'>): Run {
+    const now = Date.now();
+    const firstLine = input.issueText.trim().split('\n')[0] ?? '';
+    const fromUrl = input.issueUrl ? /\/issues\/(\d+)|([A-Z]+-\d+)/.exec(input.issueUrl) : null;
+    const title =
+      input.title ??
+      (firstLine
+        ? firstLine.length > 64
+          ? `${firstLine.slice(0, 63)}…`
+          : firstLine
+        : fromUrl
+          ? `Issue ${fromUrl[1] ? `#${fromUrl[1]}` : fromUrl[2]}`
+          : 'New run');
+    const run: Run = {
+      id: `run_demonew${String(++this.created).padStart(5, '0')}`,
+      repoPath: input.repoPath,
+      baseRef: input.baseRef ?? 'main',
+      title,
+      issueText: input.issueText,
+      issueUrl: input.issueUrl ?? null,
+      status: input.skipClarify ? 'planning' : 'clarifying',
+      paused: false,
+      plannerEngine: input.plannerEngine,
+      plannerModel: input.plannerModel ?? null,
+      integrationBranch: null,
+      prUrl: null,
+      error: null,
+      createdAt: now,
+      updatedAt: now,
+    };
+    this.world.runs.push(run);
+    this.emit([{ type: 'run.updated', run: structuredClone(run), from: null }]);
+    return structuredClone(run);
+  }
+
+  private answerClarify(runId: string, answers: QuestionAnswer[]): Run {
+    const item = this.world.inbox.find(
+      (i) => i.runId === runId && i.kind === 'question' && i.payload.source === 'clarify' && i.resolvedAt === null,
+    );
+    if (!item) throw new RpcError('conflict', 'no open clarify questions');
+    Object.assign(item, { resolvedAt: Date.now(), resolution: { answers } });
+    const bodies: ServerEventBody[] = [{ type: 'inbox.updated', item: structuredClone(item) }];
+    const planner = this.world.attempts.find(
+      (a) => a.runId === runId && a.role === 'planner' && a.status === 'running',
+    );
+    if (planner)
+      bodies.push(
+        this.attemptEvent(planner, {
+          type: 'message',
+          text: `Thanks. Drafting the plan with ${answers.filter((a) => a.answer.trim()).length} answers.`,
+        }),
+      );
+    this.emit(bodies);
+    return this.updateRun(runId, { status: 'planning' });
+  }
+
   private approvePlan(runId: string): Run {
     const w = this.world;
     const plan = w.plans.filter((p) => p.runId === runId).at(-1);
@@ -278,6 +412,27 @@ export class DemoClient implements EngineClient {
       integrationBranch: `legion/${runId.slice(4, 12)}/integration`,
     });
   }
+}
+
+/** A plausible `repos.inspect` answer; paths containing "not-a-repo" are rejected. */
+function inspectDemoRepo(path: string): RepoInspection {
+  const name = path.split('/').filter(Boolean).at(-1) ?? path;
+  const ok = !path.includes('not-a-repo');
+  return {
+    path,
+    exists: true,
+    isGitRepo: ok,
+    root: ok ? path : null,
+    currentBranch: ok ? 'main' : null,
+    headSha: ok ? 'a1f3c9e4b2d8' : null,
+    defaultBranch: ok ? 'main' : null,
+    remotes: ok ? [{ name: 'origin', url: `https://github.com/erudiet/${name}.git` }] : [],
+    github: ok ? { owner: 'erudiet', name } : null,
+    dirty: false,
+    hasGh: true,
+    legionConfig: null,
+    error: ok ? null : 'Not a git repository',
+  };
 }
 
 /** Demo mode: `?demo=1` (or `#demo`), `localStorage['legion.demo'] = '1'`, or `LEGION_DEMO=1` via the bridge. */
