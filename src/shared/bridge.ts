@@ -22,6 +22,8 @@ export const COMMAND_IDS = [
   'layout.overview',
   'layout.pipeline',
   'focus.nextUrgent',
+  'column.cycleMode',
+  'mode.resize',
   'run.pause',
   'run.resume',
 ] as const;

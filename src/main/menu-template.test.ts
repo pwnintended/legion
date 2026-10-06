@@ -1,7 +1,7 @@
 import { COMMAND_IDS, type CommandId } from '@shared/bridge';
 import type { MenuItemConstructorOptions } from 'electron';
 import { describe, expect, it } from 'vitest';
-import { buildMenuTemplate } from './menu-template';
+import { buildMenuTemplate, MENU_ACCELERATORS } from './menu-template';
 
 function walk(items: MenuItemConstructorOptions[], visit: (item: MenuItemConstructorOptions) => void): void {
   for (const item of items) {
@@ -23,14 +23,53 @@ describe('menu template', () => {
     expect([...new Set(sent)].sort()).toEqual([...COMMAND_IDS].sort());
   });
 
-  it('does not bind accelerators that clash with text editing or the renderer', () => {
-    const accelerators: string[] = [];
-    walk(template, (item) => {
-      if (typeof item.accelerator === 'string') accelerators.push(item.accelerator);
+  const accelerators = (t: MenuItemConstructorOptions[]) => {
+    const out: { accelerator: string; label: string | undefined }[] = [];
+    walk(t, (item) => {
+      if (typeof item.accelerator === 'string') out.push({ accelerator: item.accelerator, label: item.label });
     });
-    expect(new Set(accelerators).size).toBe(accelerators.length);
-    for (const bad of ['CmdOrCtrl+W', 'CmdOrCtrl+C', 'CmdOrCtrl+V', 'CmdOrCtrl+X', 'CmdOrCtrl+A', 'CmdOrCtrl+Z']) {
-      expect(accelerators).not.toContain(bad);
+    return out;
+  };
+
+  it('does not bind accelerators that clash with text editing or the renderer', () => {
+    const list = accelerators(template).map((a) => a.accelerator);
+    expect(new Set(list).size).toBe(list.length);
+    for (const bad of ['CmdOrCtrl+C', 'CmdOrCtrl+V', 'CmdOrCtrl+X', 'CmdOrCtrl+A', 'CmdOrCtrl+Z']) {
+      expect(list).not.toContain(bad);
     }
+    // ⌘1–9 switch workspaces in the renderer.
+    for (let n = 1; n <= 9; n++) expect(list).not.toContain(`CmdOrCtrl+${n}`);
+  });
+
+  it('mirrors the renderer command registry', () => {
+    // Keep in sync with builtinCommands() in src/renderer/app/commands.ts.
+    expect(MENU_ACCELERATORS).toEqual({
+      'composer.open': 'CmdOrCtrl+N',
+      'inbox.open': 'CmdOrCtrl+I',
+      'palette.open': 'CmdOrCtrl+K',
+      'layout.focus': 'CmdOrCtrl+Return',
+      'layout.overview': 'CmdOrCtrl+Shift+O',
+      'layout.pipeline': 'CmdOrCtrl+G',
+      'focus.nextUrgent': 'CmdOrCtrl+U',
+      'column.cycleMode': 'CmdOrCtrl+W',
+      'mode.resize': 'CmdOrCtrl+R',
+    });
+  });
+
+  it('routes ⌘W and ⌘R to Legion commands, not to close/reload', () => {
+    for (const isDev of [false, true]) {
+      const list = accelerators(buildMenuTemplate({ appName: 'Legion', isMac: true, isDev, send: () => {} }));
+      expect(list.filter((a) => a.accelerator === 'CmdOrCtrl+W').map((a) => a.label)).toEqual([
+        'Toggle Tabbed / Stacked Column',
+      ]);
+      expect(list.filter((a) => a.accelerator === 'CmdOrCtrl+R').map((a) => a.label)).toEqual(['Resize Mode']);
+    }
+    let roles: unknown[] = [];
+    walk(template, (item) => {
+      roles.push(item.role);
+    });
+    roles = roles.filter(Boolean);
+    expect(roles).not.toContain('windowMenu');
+    expect(roles).not.toContain('close');
   });
 });
