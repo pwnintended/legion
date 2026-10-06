@@ -60,6 +60,11 @@ export interface Command {
   run: (ctx: CommandContext) => unknown;
   /** Bound and executable, but not listed in the palette. */
   hidden?: boolean;
+  /**
+   * When several enabled commands share a binding, the highest priority wins (default 0). Tile-scoped
+   * commands (e.g. ⌘⏎ "approve" on a focused review) use it to take precedence over global ones.
+   */
+  priority?: number;
 }
 
 export interface CommandView extends Command {
@@ -185,7 +190,9 @@ export function useCommands(): CommandView[] {
 
 function parsedBindings() {
   if (parsedCache?.version === version) return parsedCache.list;
-  const list = listCommands().map((command) => ({ command, chords: bindings(command).map(parseChord) }));
+  const list = listCommands()
+    .map((command) => ({ command, chords: bindings(command).map(parseChord) }))
+    .sort((a, b) => (b.command.priority ?? 0) - (a.command.priority ?? 0));
   parsedCache = { version, list };
   return list;
 }
