@@ -10,6 +10,7 @@ import { useStore } from 'zustand';
 import { useShallow } from 'zustand/react/shallow';
 import { createStore } from 'zustand/vanilla';
 import { type CommandContext, registerCommands } from '../../app/commands';
+import { taskReport } from '../../app/compat';
 import { attemptsOfRun, openInbox, reviewsOfRun, verificationsOfRun } from '../../app/data';
 import { rpc, useData, useLatestPlan, useNow, useSettings, useTranscript } from '../../app/hooks';
 import { actions, dataStore } from '../../app/store';
@@ -317,7 +318,10 @@ function Header({ pack, reviews, onDiff }: { pack: Pack; reviews: Review[]; onDi
 }
 
 function IntentOutcome({ pack }: { pack: Pack }) {
-  const report = useAgentReport(pack.coderAttempts);
+  // Prefer the coder's structured report (Task.report on newer engines) over its last chat message.
+  const structured = taskReport(pack.task);
+  const fromTranscript = useAgentReport(structured ? [] : pack.coderAttempts);
+  const report = structured ? { text: structured.summary, attempt: pack.coderAttempts.at(-1) ?? null } : fromTranscript;
   const engine = report.attempt?.engine ?? pack.coder?.engine ?? pack.node?.agent.engine ?? 'claude';
   const running = report.attempt?.status === 'running';
   return (

@@ -34,9 +34,12 @@ import {
   toggleCollapsed,
   type Workspace,
 } from '../layout/tree';
+import { toast } from '../overlays/nav';
+import { canArchive, runPr } from './compat';
 import { type DataState, selectRunList, TERMINAL_RUN_STATUSES } from './data';
 import { rpc } from './hooks';
 import { formatChord, isTerminal, isTextInput, matchesChord, parseChord } from './keys';
+import { archiveRun, refreshPr } from './run-actions';
 import { actions, dataStore, jumpToNextUrgent, type KeyMode, type UiState, uiStore } from './store';
 
 export interface CommandContext {
@@ -571,6 +574,35 @@ export function builtinCommands(): Command[] {
         return !!run && run.paused;
       },
       run: (ctx) => rpc('runs.resume', { runId: ctx.activeRunId as string }),
+    },
+    {
+      id: 'run.archive',
+      title: 'Archive run (cleans up its worktrees)',
+      category: 'Run',
+      when: (ctx) => canArchive(activeRun(ctx)),
+      run: async (ctx) => {
+        const run = activeRun(ctx);
+        if (!run) return;
+        try {
+          await archiveRun(run.id);
+          toast(`Archived “${run.title}”. Its worktrees are cleaned up.`);
+        } catch (error) {
+          toast(`Couldn't archive: ${error instanceof Error ? error.message : String(error)}`, 'error');
+        }
+      },
+    },
+    {
+      id: 'run.refreshPr',
+      title: 'Refresh pull request status',
+      category: 'Run',
+      when: (ctx) => runPr(activeRun(ctx))?.state === 'open',
+      run: async (ctx) => {
+        try {
+          await refreshPr(ctx.activeRunId as string);
+        } catch (error) {
+          toast(`Couldn't refresh the PR: ${error instanceof Error ? error.message : String(error)}`, 'error');
+        }
+      },
     },
   ];
 

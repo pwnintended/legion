@@ -573,6 +573,52 @@ body {
   outline: 2px solid var(--mauve);
   outline-offset: -2px;
 }
+.rail-row {
+  position: relative;
+}
+.rail-row[data-archiving="true"] {
+  opacity: 0.5;
+  pointer-events: none;
+}
+.rail-action {
+  position: absolute;
+  right: 6px;
+  top: 7px;
+  width: 24px;
+  height: 24px;
+  background: var(--base);
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+.rail-row:hover .rail-action,
+.rail-action:focus-visible {
+  opacity: 1;
+}
+.rail-toggle {
+  all: unset;
+  box-sizing: border-box;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  height: 26px;
+  margin: 6px 0 2px;
+  padding: 0 10px;
+  border-radius: 7px;
+  font-size: 11.5px;
+  color: var(--subtext0);
+  transition:
+    background-color 0.15s,
+    color 0.15s;
+}
+.rail-toggle:hover {
+  background: var(--base);
+  color: var(--text);
+}
+.rail-toggle:focus-visible {
+  outline: 2px solid var(--mauve);
+  outline-offset: -2px;
+}
 .rail-engine {
   all: unset;
   box-sizing: border-box;

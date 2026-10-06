@@ -25,6 +25,7 @@ import type {
 import type { EngineInfo } from '@shared/engine';
 import type { AgentEvent, ServerEvent } from '@shared/events';
 import type { RunSnapshot, RunSummary, TranscriptEntry } from '@shared/rpc';
+import { isArchived } from './compat';
 
 export type EntityKind = 'run' | 'plan' | 'task' | 'attempt' | 'review' | 'inbox' | 'verification' | 'merge';
 
@@ -461,11 +462,27 @@ function memoByRun<C extends object, R>(compute: (collection: C, runId: string) 
 export const TERMINAL_RUN_STATUSES = new Set(['done', 'failed', 'cancelled']);
 
 const runListCache = new WeakMap<Record<string, Run>, Run[]>();
-/** Runs for the rail: active runs oldest first (stable workspace numbers), then finished runs newest first. */
+const archivedCache = new WeakMap<Record<string, Run>, Run[]>();
+
+/** Archived runs (only in the store when "Show archived" is on), most recently updated first. */
+export function selectArchivedRuns(state: DataState): Run[] {
+  const cached = archivedCache.get(state.runs);
+  if (cached) return cached;
+  const list = Object.values(state.runs)
+    .filter(isArchived)
+    .sort((a, b) => b.updatedAt - a.updatedAt);
+  archivedCache.set(state.runs, list);
+  return list;
+}
+
+/**
+ * Runs for the rail: active runs oldest first (stable workspace numbers), then finished runs newest first.
+ * Archived runs are left out (see `selectArchivedRuns`).
+ */
 export function selectRunList(state: DataState): Run[] {
   const cached = runListCache.get(state.runs);
   if (cached) return cached;
-  const runs = Object.values(state.runs);
+  const runs = Object.values(state.runs).filter((r) => !isArchived(r));
   const active = runs.filter((r) => !TERMINAL_RUN_STATUSES.has(r.status)).sort((a, b) => a.createdAt - b.createdAt);
   const finished = runs.filter((r) => TERMINAL_RUN_STATUSES.has(r.status)).sort((a, b) => b.updatedAt - a.updatedAt);
   const list = [...active, ...finished];

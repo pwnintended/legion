@@ -17,9 +17,11 @@ import {
 import type { AgentEvent, ServerEvent, ServerEventBody } from '@shared/events';
 import type { ProcedureName, RepoInspection, RpcInput, RpcOutput, TranscriptEntry } from '@shared/rpc';
 import { RpcError } from '@shared/rpc-transport';
+import { isArchived } from '../compat';
 import type { ConnectionState } from '../engine-connection';
 import type { EngineClient } from '../sync';
 import { createDemoWorld, type DemoWorld, LIVE_SCRIPT, snapshotOf } from './fixtures';
+import { extra, withLifecycleDemo } from './lifecycle';
 import { type DemoRpcContext, extendDemoWorld, handlePlanReviewRpc, isHandled } from './plan-review';
 import { withSessionLive } from './sessions';
 
@@ -41,8 +43,9 @@ export class DemoClient implements EngineClient {
 
   constructor(options: { live?: boolean; now?: number } = {}) {
     const now = options.now ?? Date.now();
-    this.world = createDemoWorld(now);
-    extendDemoWorld(this.world, now);
+    const world = createDemoWorld(now);
+    extendDemoWorld(world, now);
+    this.world = withLifecycleDemo(world, now);
     // Transcript history gets seqs below the snapshot seq (it happened before the snapshot was read).
     let seq = 100;
     for (const [attemptId, events] of Object.entries(this.world.transcripts)) {
@@ -143,17 +146,19 @@ export class DemoClient implements EngineClient {
       case 'subscribe':
         return { headSeq: this.headSeq, replayed: true };
       case 'runs.list':
-        return w.runs.map((run) => {
-          const tasks = w.tasks.filter((t) => t.runId === run.id);
-          const taskCounts: Partial<Record<Task['status'], number>> = {};
-          for (const t of tasks) taskCounts[t.status] = (taskCounts[t.status] ?? 0) + 1;
-          return {
-            run: structuredClone(run),
-            taskCounts,
-            openInbox: w.inbox.filter((i) => i.runId === run.id && i.resolvedAt === null).length,
-            costUsd: w.attempts.filter((a) => a.runId === run.id).reduce((s, a) => s + (a.costUsd ?? 0), 0),
-          };
-        });
+        return w.runs
+          .filter((run) => input.includeArchived === true || !isArchived(run))
+          .map((run) => {
+            const tasks = w.tasks.filter((t) => t.runId === run.id);
+            const taskCounts: Partial<Record<Task['status'], number>> = {};
+            for (const t of tasks) taskCounts[t.status] = (taskCounts[t.status] ?? 0) + 1;
+            return {
+              run: structuredClone(run),
+              taskCounts,
+              openInbox: w.inbox.filter((i) => i.runId === run.id && i.resolvedAt === null).length,
+              costUsd: w.attempts.filter((a) => a.runId === run.id).reduce((s, a) => s + (a.costUsd ?? 0), 0),
+            };
+          });
       case 'runs.get': {
         const snapshot = snapshotOf(w, input.runId as string, this.headSeq);
         if (!snapshot) throw new RpcError('not_found', `run ${String(input.runId)} not found`);
@@ -180,6 +185,22 @@ export class DemoClient implements EngineClient {
       }
       case 'inbox.resolve':
         return this.resolve(input.itemId as string, input.resolution as { kind: string });
+      case 'runs.archive' as ProcedureName: {
+        const run = w.runs.find((r) => r.id === input.runId);
+        if (!run) throw new RpcError('not_found', 'run not found');
+        if (!['done', 'failed', 'cancelled'].includes(run.status))
+          throw new RpcError('failed_precondition', `run is ${run.status}; archive it once it is finished`);
+        extra(run, { archived: true });
+        return this.updateRun(run.id, {});
+      }
+      case 'runs.refreshPr' as ProcedureName: {
+        const run = w.runs.find((r) => r.id === input.runId);
+        if (!run?.prUrl) throw new RpcError('failed_precondition', 'no pull request yet');
+        // The demo's reviewers are quick: a refreshed draft PR has been merged on GitHub.
+        const pr = (run as { pr?: { number?: number } }).pr;
+        extra(run, { pr: { url: run.prUrl, number: pr?.number ?? 412, state: 'merged', isDraft: false } });
+        return this.updateRun(run.id, {});
+      }
       case 'runs.pause':
       case 'runs.resume':
         return this.updateRun(input.runId as string, { paused: method === 'runs.pause' });
@@ -303,6 +324,15 @@ export class DemoClient implements EngineClient {
               type: 'message',
               text: 'Understood: writing a thin wrapper around navigator.credentials.create() instead.',
             },
+      });
+    }
+    if (item.kind === 'escalation' && item.taskId) {
+      const action = (resolution as { action?: string }).action;
+      const taskId = item.taskId;
+      queueMicrotask(() => {
+        if (action === 'retry' || action === 'edit') this.updateTask(taskId, { status: 'queued', error: null });
+        else if (action === 'skip') this.updateTask(taskId, { status: 'skipped' });
+        else if (action === 'abort') this.updateRun(item.runId, { status: 'cancelled' });
       });
     }
     if (item.kind === 'plan_signoff') {

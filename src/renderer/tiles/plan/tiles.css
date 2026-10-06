@@ -770,6 +770,24 @@
     border: 1.5px solid color-mix(in srgb, var(--green) 50%, transparent);
     position: relative;
   }
+  .lg-done-ring[data-state="merged"] {
+    color: var(--mauve);
+    background: radial-gradient(
+      circle,
+      color-mix(in srgb, var(--mauve) 16%, transparent),
+      color-mix(in srgb, var(--mauve) 4%, transparent) 70%
+    );
+    border-color: color-mix(in srgb, var(--mauve) 50%, transparent);
+  }
+  .lg-done-ring[data-state="closed"] {
+    color: var(--overlay2);
+    background: none;
+    border-color: var(--surface1);
+  }
+  .lg-done-ring[data-state="merged"]::after,
+  .lg-done-ring[data-state="closed"]::after {
+    display: none;
+  }
   .lg-done-ring::after {
     content: "";
     position: absolute;

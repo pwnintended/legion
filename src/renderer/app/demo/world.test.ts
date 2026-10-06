@@ -1,6 +1,7 @@
 import { checkScope } from '@engine/orchestrator/core/scope';
 import { describe, expect, it } from 'vitest';
 import { createDemoWorld, type DemoWorld } from './fixtures';
+import { withLifecycleDemo } from './lifecycle';
 import { type DemoStage, extendDemoWorld } from './plan-review';
 
 const NOW = 1_000_000_000_000;
@@ -8,7 +9,7 @@ const NOW = 1_000_000_000_000;
 function world(stage: DemoStage): DemoWorld {
   const w = createDemoWorld(NOW);
   extendDemoWorld(w, NOW, stage);
-  return w;
+  return withLifecycleDemo(w, NOW);
 }
 
 /**

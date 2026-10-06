@@ -275,6 +275,8 @@ const COMMAND_ICON: Record<string, IconName> = {
   'column.maximize': 'maximize',
   'column.toggleCollapse': 'collapse',
   'settings.open': 'settings',
+  'run.archive': 'archive',
+  'run.refreshPr': 'refresh',
 };
 const CATEGORY_ICON: Record<string, IconName> = {
   Focus: 'arrowRight',

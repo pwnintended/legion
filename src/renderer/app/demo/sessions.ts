@@ -295,7 +295,7 @@ export function withSessionDemo(world: DemoWorld, now: number): DemoWorld {
     integrationBranch: null,
     prUrl: null,
     error: null,
-    createdAt: now - 3 * MIN,
+    createdAt: now - 85 * MIN,
     updatedAt: now - 50_000,
   };
   const planner: Attempt = {

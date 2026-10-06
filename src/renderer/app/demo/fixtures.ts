@@ -646,7 +646,7 @@ export function createDemoWorld(now = Date.now()): DemoWorld {
       id: C,
       title: 'Extract UI strings for i18n',
       status: 'awaiting_approval',
-      createdAt: now - 9 * MIN,
+      createdAt: now - 95 * MIN,
       updatedAt: now - 4 * MIN,
       repoPath: '/Users/dev/src/erudiet/web',
     }),

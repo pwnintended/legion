@@ -5,8 +5,12 @@
 import type { InboxItemOf, Review, Run } from '@shared/domain';
 import { useMemo, useState } from 'react';
 import { useShallow } from 'zustand/react/shallow';
+import { commandTooltip } from '../../app/commands';
+import { canArchive, isArchived, type PrState, type PullRequestInfo, runPr } from '../../app/compat';
 import { attemptsOfRun, reviewsOfRun, tasksOfRun } from '../../app/data';
 import { rpc, useData, useNow, useRun } from '../../app/hooks';
+import { archiveRun, refreshPr } from '../../app/run-actions';
+import { Icon } from '../../chrome/icons';
 import { Chip, EngineChip } from '../../chrome/ui';
 import { ENGINE_LABEL, formatCost, formatDuration } from '../../layout/describe';
 import type { TileCardProps, TileProps } from '../../layout/types';
@@ -49,7 +53,8 @@ function openExternal(url: string): void {
 export default function PrTile({ runId }: TileProps<'pr'>) {
   const run = useRun(runId);
   if (!run) return null;
-  if (run.prUrl) return <Opened run={run} url={run.prUrl} />;
+  const pr = runPr(run);
+  if (pr) return <Opened run={run} pr={pr} />;
   if (run.status === 'pr_ready') return <Ready run={run} />;
   return <NotYet run={run} />;
 }
@@ -274,7 +279,13 @@ function Ready({ run }: { run: Run }) {
 // Opened
 // ---------------------------------------------------------------------------------------------
 
-function Opened({ run, url }: { run: Run; url: string }) {
+const PR_HEADLINE: Record<PrState, (n: string) => string> = {
+  open: (n) => `PR ${n} is open`,
+  merged: (n) => `PR ${n} is merged`,
+  closed: (n) => `PR ${n} was closed`,
+};
+
+function Opened({ run, pr }: { run: Run; pr: PullRequestInfo }) {
   const stats = useData(
     useShallow((s) => {
       const tasks = tasksOfRun(s.tasks, run.id);
@@ -290,56 +301,84 @@ function Opened({ run, url }: { run: Run; url: string }) {
     }),
   );
   const [merged, claude, codex, fixes, cost] = stats;
-  const number = prNumber(url);
+  const number = pr.number ? `#${pr.number}` : '';
   const [copied, setCopied] = useState(false);
+  const [refresh, refreshing] = useAction(() => refreshPr(run.id));
+  const [archive, archiving] = useAction(() => archiveRun(run.id));
+  const archivable = canArchive(run);
   const elapsed = useMemo(() => formatDuration(run.updatedAt - run.createdAt), [run.updatedAt, run.createdAt]);
+  const headline = pr.state === 'open' && pr.isDraft ? `Draft PR ${number} is open` : PR_HEADLINE[pr.state](number);
+  const note =
+    pr.state === 'merged'
+      ? 'Merged on GitHub. Archive the run to clean up its worktrees and branches.'
+      : pr.state === 'closed'
+        ? 'Closed without merging. Archive the run to clean up, or reopen it on GitHub.'
+        : pr.isDraft
+          ? 'Mark it ready for review on GitHub when you are happy with it.'
+          : 'Waiting for review on GitHub.';
   return (
-    <div className="lg-col" data-testid="pr-opened">
+    <div className="lg-col" data-testid="pr-opened" data-pr-state={pr.state}>
       <div className="lg-scroll flex flex-col items-center justify-center px-6 py-6 text-center">
-        <div className="lg-done-ring lg-rise flex-none">
-          <svg width="28" height="28" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-            <path
-              d="M20 6L9 17l-5-5"
-              stroke="currentColor"
-              strokeWidth="2.4"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-            />
-          </svg>
+        <div className="lg-done-ring lg-rise flex-none" data-state={pr.state}>
+          {pr.state === 'closed' ? (
+            <Icon name="close" size={26} strokeWidth={2.4} />
+          ) : pr.state === 'merged' ? (
+            <Icon name="merge" size={26} strokeWidth={2.2} />
+          ) : (
+            <Icon name="check" size={28} strokeWidth={2.4} />
+          )}
         </div>
         <div className="lg-rise mt-5 text-[17px] font-semibold" style={{ animationDelay: '80ms' }}>
-          Draft PR {number ? `#${number}` : ''} is open
+          {headline}
         </div>
         <div
-          className="lg-rise muted mt-1 max-w-[360px] text-[12.5px] leading-normal"
+          className="lg-rise muted mt-1 max-w-[380px] text-[12.5px] leading-normal"
           style={{ animationDelay: '120ms' }}
         >
-          {run.title}. Mark it ready for review on GitHub when you are happy with it.
+          {run.title}. {note}
         </div>
         <div className="lg-rise mono faint mt-3 max-w-full truncate text-[11.5px]" style={{ animationDelay: '160ms' }}>
-          {url}
+          {pr.url}
         </div>
-        <div className="lg-rise mt-4 flex gap-2" style={{ animationDelay: '200ms' }}>
+        <div className="lg-rise mt-4 flex flex-wrap justify-center gap-2" style={{ animationDelay: '200ms' }}>
+          {archivable ? (
+            <button
+              type="button"
+              className="btn btn-primary lg-btn-lg"
+              onClick={() => void archive()}
+              disabled={archiving.pending}
+              data-testid="pr-archive"
+              title="Remove the run's worktrees and hide it from the rail"
+            >
+              <Icon name="archive" size={14} />
+              {archiving.pending ? 'Archiving…' : 'Archive run'}
+            </button>
+          ) : null}
           <button
             type="button"
-            className="btn btn-primary lg-btn-lg"
-            onClick={() => openExternal(url)}
+            className={archivable ? 'btn lg-btn-lg' : 'btn btn-primary lg-btn-lg'}
+            onClick={() => openExternal(pr.url)}
             data-testid="open-github"
           >
             Open on GitHub
-            <span aria-hidden="true">↗</span>
+            <Icon name="external" size={13} />
           </button>
           <button
             type="button"
             className="btn lg-btn-lg"
             onClick={() => {
-              void navigator.clipboard?.writeText(url).then(() => setCopied(true));
+              void navigator.clipboard?.writeText(pr.url).then(() => setCopied(true));
               setTimeout(() => setCopied(false), 1600);
             }}
           >
             {copied ? 'Copied' : 'Copy link'}
           </button>
         </div>
+        {archiving.error || refreshing.error ? (
+          <div className="mt-2 text-[12px] text-red" role="alert">
+            {archiving.error ?? refreshing.error}
+          </div>
+        ) : null}
         <div
           className="lg-rise mono faint mt-8 grid gap-x-10 gap-y-2 text-left text-[11.5px]"
           style={{ animationDelay: '260ms', gridTemplateColumns: 'repeat(4, auto)' }}
@@ -352,9 +391,26 @@ function Opened({ run, url }: { run: Run; url: string }) {
       </div>
       <div className="lg-foot">
         <div className="faint flex items-center gap-2 text-[12px]">
-          <Chip tone="ok">draft</Chip>
+          <Chip tone={pr.state === 'merged' ? 'accent' : pr.state === 'closed' ? 'idle' : 'ok'}>
+            {pr.state === 'open' && pr.isDraft ? 'draft' : pr.state}
+          </Chip>
           <span className="mono truncate">{run.integrationBranch}</span>
-          <span className="ml-auto">worktrees are cleaned up when the PR merges or closes</span>
+          {pr.state === 'open' ? (
+            <button
+              type="button"
+              className="btn btn-ghost btn-sm ml-auto"
+              onClick={() => void refresh()}
+              disabled={refreshing.pending}
+              title={commandTooltip('run.refreshPr', 'Check GitHub for the PR state')}
+            >
+              <Icon name="refresh" size={12} />
+              {refreshing.pending ? 'Checking…' : 'Refresh status'}
+            </button>
+          ) : (
+            <span className="ml-auto">
+              {isArchived(run) ? 'archived · worktrees removed' : 'archiving removes the run’s worktrees'}
+            </span>
+          )}
         </div>
       </div>
     </div>
@@ -380,11 +436,15 @@ export function Card({ runId }: TileCardProps<'pr'>) {
   const review = useFinalReview(runId);
   const merged = useData((s) => tasksOfRun(s.tasks, runId).filter((t) => t.status === 'merged').length);
   const total = useData((s) => tasksOfRun(s.tasks, runId).length);
-  if (run?.prUrl)
+  const pr = runPr(run);
+  if (pr)
     return (
       <>
-        <div>draft PR {prNumber(run.prUrl) ? `#${prNumber(run.prUrl)}` : ''} open</div>
-        <div>{run.prUrl}</div>
+        <div>
+          {pr.state === 'open' && pr.isDraft ? 'draft PR' : 'PR'} {pr.number ? `#${pr.number}` : ''}{' '}
+          {pr.state === 'open' ? 'open' : pr.state}
+        </div>
+        <div>{pr.url}</div>
         <div>
           {merged}/{total} tasks merged
         </div>
