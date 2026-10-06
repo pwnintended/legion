@@ -144,6 +144,77 @@ test('demo workspace: strip, keyboard focus/move, layout modes', async () => {
   }
 });
 
+/** Where the focused column sits in the strip's viewport (layout boxes, transforms ignored): 'ok' when fully in view. */
+const focusedInView = (window: Page) =>
+  window.evaluate(() => {
+    const strip = document.querySelector<HTMLElement>('[data-workspace] .strip');
+    const column = document
+      .querySelector<HTMLElement>('[data-workspace] [data-focused="true"]')
+      ?.closest<HTMLElement>('[data-column]');
+    if (!strip || !column) return 'missing';
+    const left = column.offsetLeft - strip.scrollLeft;
+    const right = left + column.offsetWidth;
+    const fits = column.offsetWidth <= strip.clientWidth;
+    // A column wider than the viewport aligns its left edge.
+    const ok = fits ? left >= -1 && right <= strip.clientWidth + 1 : Math.abs(left - 10) <= 1;
+    return ok ? 'ok' : `${column.dataset.column} at ${Math.round(left)}..${Math.round(right)} of ${strip.clientWidth}`;
+  });
+
+async function expectFocusedInView(window: Page): Promise<void> {
+  await expect.poll(() => focusedInView(window), { timeout: 4000 }).toBe('ok');
+  // ...and it stays there once smooth scrolling and layout animations have settled.
+  await window.waitForTimeout(700);
+  expect(await focusedInView(window)).toBe('ok');
+}
+
+test('strip: the focused column is always fully in view (bursts, resizes, inserted columns)', async () => {
+  const { app, window, home } = await launchDemo();
+  try {
+    await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]?.setSize(1280, 800));
+    await expect(window.locator('[data-tile-id="session:T2"]')).toBeVisible({ timeout: 30_000 });
+    await expectFocusedInView(window);
+
+    // Bursts of focus moves while the previous smooth scroll is still in flight.
+    for (const key of ['l', 'l', 'l', 'l']) await window.keyboard.press(`Meta+Alt+${key}`);
+    await expectFocusedInView(window);
+    for (const key of ['h', 'h', 'h', 'h', 'h']) await window.keyboard.press(`Meta+Alt+${key}`);
+    await expectFocusedInView(window);
+    for (const key of ['l', 'l', 'h', 'l', 'l', 'l']) {
+      await window.keyboard.press(`Meta+Alt+${key}`);
+      await window.waitForTimeout(60);
+    }
+    await expectFocusedInView(window);
+
+    // Widen the focused column to 2/3, then full: still entirely visible (full aligns left).
+    await window.keyboard.press('Meta+r');
+    await window.keyboard.press('l');
+    await window.keyboard.press('l');
+    await expectFocusedInView(window);
+    await window.keyboard.press('l');
+    await window.keyboard.press('Escape');
+    await expectFocusedInView(window);
+
+    // An inserted column (the review's diff, opened with D) is revealed, also after moving it left.
+    await window.locator('[data-tile-id="review:T4"]').click({ position: { x: 160, y: 12 } });
+    await expectFocusedInView(window);
+    await window.keyboard.press('d');
+    await expect(window.getByTestId('diff-tile')).toBeVisible();
+    await expectFocusedInView(window);
+    await window.keyboard.press('Meta+Alt+Shift+h');
+    await window.keyboard.press('Meta+r');
+    await window.keyboard.press('l');
+    await window.keyboard.press('Escape');
+    await expectFocusedInView(window);
+    await window.keyboard.press('Meta+Alt+l');
+    await expectFocusedInView(window);
+    await window.keyboard.press('Meta+Alt+h');
+    await expectFocusedInView(window);
+  } finally {
+    await app.close();
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
 test('empty state: onboarding with engine diagnostics', async () => {
   mkdirSync(shots, { recursive: true });
   const home = mkdtempSync(join(tmpdir(), 'legion-e2e-empty-'));

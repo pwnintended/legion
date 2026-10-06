@@ -630,16 +630,13 @@ body {
   border-radius: var(--radius);
 }
 
+/* No scroll snapping: the strip scrolls programmatically, minimally (niri), and snap points would drag a
+   right-aligned focused column back to the nearest column start and cut it off. */
 .strip {
-  scroll-snap-type: x proximity;
   scrollbar-width: none;
 }
 .strip::-webkit-scrollbar {
   display: none;
-}
-.strip > .strip-track > [data-column] {
-  scroll-snap-align: start;
-  scroll-margin-left: 10px;
 }
 .strip-col {
   content-visibility: auto;

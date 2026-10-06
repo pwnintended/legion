@@ -10,7 +10,7 @@ import { useData } from '../app/hooks';
 import { Icon } from '../chrome/icons';
 import { DURATION_OPEN_MS, SPRING } from '../theme/motion';
 import { ColumnView } from './ColumnView';
-import { layoutColumns, STRIP_GAP, STRIP_PAD, scrollTargetFor, stripContentWidth, visibleRange } from './geometry';
+import { layoutColumns, revealTarget, STRIP_GAP, STRIP_PAD, stripContentWidth, visibleRange } from './geometry';
 import { Minimap } from './Minimap';
 import type { Workspace } from './tree';
 
@@ -49,18 +49,51 @@ export function StripView({ layout }: { layout: Workspace }) {
     });
   }, []);
 
-  // Reveal the focused column (and re-reveal when widths change, e.g. maximize).
+  // Where an in-flight smooth scroll will land. Cleared when it ends or the user scrolls by hand.
+  const pending = useRef<number | null>(null);
+  useEffect(() => {
+    const el = scroller.current;
+    if (!el) return;
+    const settle = () => {
+      pending.current = null;
+    };
+    el.addEventListener('scrollend', settle);
+    el.addEventListener('wheel', settle, { passive: true });
+    el.addEventListener('pointerdown', settle);
+    return () => {
+      el.removeEventListener('scrollend', settle);
+      el.removeEventListener('wheel', settle);
+      el.removeEventListener('pointerdown', settle);
+    };
+  }, []);
+
+  // Reveal the focused column (and re-reveal when widths change, e.g. maximize or a column inserted before
+  // it). Geometry comes from the layout model, not the DOM, so Motion's in-flight transforms don't matter.
   const focusedColumn = layout.focus?.column ?? null;
   const focusedBox = boxes.find((b) => b.id === focusedColumn);
+  const contentWidth = stripContentWidth(boxes);
   const targetKey = focusedBox ? `${focusedBox.id}:${focusedBox.left}:${focusedBox.width}:${viewport}` : null;
   const first = useRef(true);
   // biome-ignore lint/correctness/useExhaustiveDependencies: targetKey captures the box geometry.
   useEffect(() => {
     const el = scroller.current;
     if (!el || !focusedBox) return;
-    const target = scrollTargetFor(focusedBox, el.scrollLeft, el.clientWidth);
-    if (target !== null) el.scrollTo({ left: target, behavior: reduced || first.current ? 'auto' : 'smooth' });
+    const target = revealTarget(focusedBox, {
+      scrollLeft: el.scrollLeft,
+      pending: pending.current,
+      viewport: el.clientWidth,
+      contentWidth,
+    });
+    const instant = reduced || first.current;
     first.current = false;
+    if (target === null) return;
+    if (instant || Math.abs(target - el.scrollLeft) < 1) {
+      pending.current = null;
+      el.scrollLeft = target;
+      return;
+    }
+    pending.current = target;
+    el.scrollTo({ left: target, behavior: 'smooth' });
   }, [targetKey, reduced]);
 
   // Vertical wheel over gaps/headers scrolls the strip sideways (tile bodies keep their own scrolling).
@@ -87,7 +120,7 @@ export function StripView({ layout }: { layout: Workspace }) {
         <div
           className="strip-track flex h-full"
           style={{
-            width: stripContentWidth(boxes),
+            width: contentWidth,
             gap: STRIP_GAP,
             padding: `${STRIP_PAD}px ${STRIP_PAD}px 6px`,
             boxSizing: 'border-box',
