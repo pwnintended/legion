@@ -347,8 +347,13 @@ export const rpcContract = {
   },
 
   // terminals (transfer a MessagePort with `open`) -----------------------------------------------
+  /**
+   * Open a terminal, or re-attach to a live one: with `terminalId` (e.g. a detached shell, or the
+   * terminal returned by `sessions.takeover`) the transferred port is attached to that terminal and
+   * `target` is ignored. Absent/null `terminalId` = open (or, for an attempt target, find) by `target`.
+   */
   'terminals.open': {
-    input: z.object({ target: TerminalTargetSchema, ...TerminalSize }),
+    input: z.object({ target: TerminalTargetSchema, ...TerminalSize, terminalId: IdSchema.nullish() }),
     output: z.object({ terminalId: IdSchema, pid: z.number().int() }),
   },
   'terminals.resize': { input: z.object({ terminalId: IdSchema, ...TerminalSize }), output: OkSchema },

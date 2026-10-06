@@ -95,4 +95,60 @@ describe('terminal handlers', () => {
     service.dispose();
     client.close({ closePort: true });
   });
+
+  it('re-attaches a port to a live terminal by terminalId', async () => {
+    const ctx = {
+      env: { SHELL: '/bin/sh' },
+      log: silentLogger,
+      store: { onEvents: () => {} },
+    } as unknown as EngineContext;
+    const server = createEngineRpcServer(ctx);
+    const procs: ReturnType<typeof fakeProc>[] = [];
+    const service = registerTerminalHandlers(server, ctx, {
+      spawn: () => {
+        const p = fakeProc();
+        procs.push(p);
+        return p;
+      },
+    });
+    const rpc = new NodeChannel();
+    server.connect(rpc.port1);
+    const client = createRpcClient<typeof import('@shared/rpc').rpcContract>(rpc.port2);
+    const first = new NodeChannel();
+    const opened = await client.call(
+      'terminals.open',
+      { target: { kind: 'shell', cwd: tmpdir() }, cols: 80, rows: 24 },
+      { transfer: [first.port1] },
+    );
+    procs[0]?.emit('hello$ ');
+    await sleep(30);
+    first.port2.close();
+    await sleep(10);
+
+    const second = new NodeChannel();
+    const received: TerminalMessage[] = [];
+    second.port2.on('message', (m: TerminalMessage) => received.push(m));
+    await expect(
+      client.call(
+        'terminals.open',
+        { target: { kind: 'shell', cwd: tmpdir() }, cols: 80, rows: 24, terminalId: opened.terminalId },
+        { transfer: [second.port1] },
+      ),
+    ).resolves.toEqual(opened);
+    await sleep(30);
+    expect(procs).toHaveLength(1);
+    expect(received.map((m) => (m.type === 'data' ? m.data : '')).join('')).toContain('hello$');
+
+    const third = new NodeChannel();
+    await expect(
+      client.call(
+        'terminals.open',
+        { target: { kind: 'shell', cwd: tmpdir() }, cols: 80, rows: 24, terminalId: 'term_missing' },
+        { transfer: [third.port1] },
+      ),
+    ).rejects.toMatchObject({ code: 'not_found' });
+    second.port2.close();
+    service.dispose();
+    client.close({ closePort: true });
+  });
 });

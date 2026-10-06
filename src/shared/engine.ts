@@ -40,10 +40,11 @@ export type EngineInfo = z.infer<typeof EngineInfoSchema>;
 
 /**
  * What a session may do. Roles map to profiles via `permissionProfileFor`:
- * - read_only (planner, reviewer, finalizer): Claude `--permission-mode plan`/`dontAsk` with read-only
- *   tools; Codex `sandbox: read-only`, `approvalPolicy: never`.
- * - workspace_write (coder, resolver): Claude `acceptEdits` + curated allowed tools, everything else
- *   through `mcp__legion__approve`; Codex `sandbox: workspace-write`, `approvalPolicy: on-request`.
+ * - read_only (planner, reviewer, finalizer): Claude `--permission-mode dontAsk` with edit tools
+ *   disallowed; Codex `sandbox: read-only`, `approvalPolicy: never`.
+ * - workspace_write (coder, resolver): Claude `acceptEdits` + curated allowed tools; everything else is
+ *   asked in-band (`--permission-prompt-tool stdio` → `can_use_tool` control requests → `approval_request`);
+ *   Codex `sandbox: workspace-write`, `approvalPolicy: on-request` (`item/<kind>/requestApproval`).
  */
 export interface PermissionProfile {
   mode: 'read_only' | 'workspace_write';
@@ -94,7 +95,10 @@ export interface SessionOptions {
   mcp: McpConnection | null;
   /** Full environment for the child process (login-shell PATH already resolved by main). */
   env: Readonly<Record<string, string>>;
-  /** Extra readable directories (Claude `--add-dir`, Codex writable roots stay = cwd). */
+  /**
+   * Extra directories. Claude: `--add-dir` (readable, and writable under `acceptEdits`). Codex: extra
+   * `writable_roots` for workspace-write sessions (read-only sessions can read everything anyway).
+   */
   addDirs?: readonly string[];
   /** Aborting it is equivalent to `session.close()`. */
   signal?: AbortSignal;

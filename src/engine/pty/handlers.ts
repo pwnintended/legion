@@ -68,6 +68,15 @@ export function registerTerminalHandlers(
     const port = call.ports[0];
     if (!port) throw new RpcError('bad_request', 'terminals.open needs a MessagePort in the transfer list');
     const endpoint = toEndpoint(port as Parameters<typeof toEndpoint>[0]);
+    if (input.terminalId) {
+      const live = manager.list().find((t) => t.terminalId === input.terminalId);
+      if (!live) {
+        endpoint.close();
+        throw new RpcError('not_found', `unknown terminal ${input.terminalId}`);
+      }
+      manager.attach(live.terminalId, endpoint);
+      return { terminalId: live.terminalId, pid: live.pid };
+    }
     try {
       const opened = manager.open({ ...resolveTarget(input.target), cols: input.cols, rows: input.rows });
       manager.attach(opened.terminalId, endpoint);

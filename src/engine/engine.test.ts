@@ -3,7 +3,7 @@ import { existsSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { MessageChannel } from 'node:worker_threads';
 import type { ServerEvent } from '@shared/events';
-import type { RpcContract } from '@shared/rpc';
+import { type RpcContract, rpcContract } from '@shared/rpc';
 import { createRpcClient, type RpcClient } from '@shared/rpc-transport';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { silentLogger } from './context';
@@ -17,7 +17,14 @@ let channel: MessageChannel;
 
 beforeEach(async () => {
   dir = tempDir();
-  engine = await startEngine({ dataDir: dir.path, env: process.env, version: '9.9.9', log: silentLogger });
+  engine = await startEngine({
+    dataDir: dir.path,
+    env: process.env,
+    version: '9.9.9',
+    log: silentLogger,
+    fakeEngines: true,
+    probeOnStart: false,
+  });
   channel = new MessageChannel();
   engine.connect(channel.port1);
   client = createRpcClient(channel.port2, { timeoutMs: 10_000 });
@@ -84,9 +91,15 @@ describe('engine over RPC (plain Node)', () => {
     expect(list).toEqual([{ run, taskCounts: {}, openInbox: 0, costUsd: 0 }]);
   });
 
-  it('unimplemented procedures answer not_implemented', async () => {
-    await expect(client.call('runs.get', { runId: 'run_x' })).rejects.toMatchObject({ code: 'not_implemented' });
-    await expect(client.call('engines.list', {})).rejects.toMatchObject({ code: 'not_implemented' });
+  it('implements every procedure of the contract', async () => {
+    const missing = (Object.keys(rpcContract) as (keyof typeof rpcContract)[]).filter(
+      (name) => !engine.server.isImplemented(name),
+    );
+    expect(missing).toEqual([]);
+    await expect(client.call('runs.get', { runId: 'run_x' })).rejects.toMatchObject({ code: 'not_found' });
+    const engines = await client.call('engines.list', {});
+    expect(engines.map((e) => e.kind)).toEqual(['claude', 'codex', 'fake']);
+    expect(engines.every((e) => e.installed && e.error === null)).toBe(true);
   });
 
   it('subscribe replays missed events, or asks for a refetch when it cannot', async () => {
