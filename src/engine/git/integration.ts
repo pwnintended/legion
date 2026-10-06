@@ -1,4 +1,4 @@
-import { identityArgs, NO_HOOKS } from './changes';
+import { identityArgs, NO_HOOKS, RERERE } from './changes';
 import { GitError, git, gitSucceeds, gitText, splitZ, withRepoLock } from './exec';
 import { isLockfilePath } from './provision';
 import { headSha, isDirty } from './repo';
@@ -98,9 +98,13 @@ export async function squashMergeIntoIntegration(
   return withRepoLock(integrationWorktree, async () => {
     await assertCleanWorktree(integrationWorktree, 'squash merge');
     const preMergeSha = await headSha(integrationWorktree);
-    const merge = await git(integrationWorktree, [...NO_HOOKS, 'merge', '--squash', '--no-commit', taskBranch], {
-      okExitCodes: [0, 1],
-    });
+    const merge = await git(
+      integrationWorktree,
+      [...NO_HOOKS, ...RERERE, 'merge', '--squash', '--no-commit', taskBranch],
+      {
+        okExitCodes: [0, 1],
+      },
+    );
     try {
       if (merge.exitCode === 1) {
         const files = await unmergedFiles(integrationWorktree);
@@ -161,6 +165,7 @@ export async function mergeIntoTaskBranch(taskWorktree: string, integrationRef: 
       [
         ...id,
         ...NO_HOOKS,
+        ...RERERE,
         'merge',
         '--no-edit',
         '--no-gpg-sign',
@@ -182,7 +187,7 @@ export async function mergeIntoTaskBranch(taskWorktree: string, integrationRef: 
 
 export async function abortMerge(worktree: string): Promise<void> {
   await withRepoLock(worktree, async () => {
-    await git(worktree, ['merge', '--abort'], { okExitCodes: [0, 128] });
+    await git(worktree, [...RERERE, 'merge', '--abort'], { okExitCodes: [0, 128] });
   });
 }
 
@@ -211,6 +216,7 @@ export async function finishMerge(worktree: string, message?: string): Promise<{
     await git(worktree, [
       ...id,
       ...NO_HOOKS,
+      ...RERERE,
       'commit',
       '--no-verify',
       '--no-gpg-sign',

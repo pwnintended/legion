@@ -38,13 +38,6 @@ export function taskBranchName(runId: string, taskId: string, title: string): st
 // Config helpers
 // ---------------------------------------------------------------------------------------------
 
-/** Enable rerere (resolutions live in the shared common dir, reusable across worktrees). */
-export async function enableRerere(repo: string): Promise<void> {
-  await withRepoLock(repo, async () => {
-    await git(repo, ['config', 'rerere.enabled', 'true']);
-  });
-}
-
 /** Set `gc.auto=0`. Returns the previous local value (null if unset) for {@link restoreGcAuto}. */
 export async function disableAutoGc(repo: string): Promise<string | null> {
   return withRepoLock(repo, async () => {
@@ -79,7 +72,7 @@ export interface CreateWorktreeInput {
 }
 
 /**
- * `git worktree add -b <branch> <path> <startSha>`, enable rerere, lock. On failure nothing is left
+ * `git worktree add -b <branch> <path> <startSha>`, lock. On failure nothing is left
  * behind except possibly an empty parent directory (a failed lock removes the new worktree again).
  */
 export async function createWorktree(input: CreateWorktreeInput): Promise<void> {
@@ -88,7 +81,6 @@ export async function createWorktree(input: CreateWorktreeInput): Promise<void> 
   const reason = input.lockReason === undefined ? 'legion' : input.lockReason;
   await mkdir(dirname(path), { recursive: true });
   await withRepoLock(repo, async () => {
-    await git(repo, ['config', 'rerere.enabled', 'true']);
     await git(repo, ['worktree', 'add', input.resetBranch ? '-B' : '-b', branch, path, startSha]);
     if (reason !== null) {
       try {
@@ -125,7 +117,9 @@ export interface RemoveWorktreeInput {
 }
 
 /**
- * Unlock + remove the worktree, delete `branch` (if given and it exists), prune stale entries.
+ * Unlock + remove the worktree (also when its directory is already gone), then delete `branch` (if given
+ * and it exists). Only this worktree's administrative entry is touched: no `git worktree prune`, which
+ * would also drop the entries of the user's own worktrees whose directories are temporarily missing.
  * Idempotent: a missing worktree directory or branch is fine.
  */
 export async function removeWorktree(input: RemoveWorktreeInput): Promise<void> {
@@ -133,30 +127,18 @@ export async function removeWorktree(input: RemoveWorktreeInput): Promise<void> 
   const path = resolve(input.path);
   const force = input.force ?? true;
   await withRepoLock(repo, async () => {
-    await git(repo, ['worktree', 'unlock', path], { okExitCodes: [0, 128] });
-    const exists = await access(path).then(
-      () => true,
-      () => false,
-    );
-    if (exists) {
-      try {
-        await git(repo, ['worktree', 'remove', ...(force ? ['--force'] : []), path]);
-      } catch (e) {
-        // Not a registered worktree (already pruned) — fall through to prune/branch cleanup.
-        const registered = (await listWorktreesUnlocked(repo)).some((w) => samePath(w.path, path));
-        if (registered) throw e;
-      }
+    const target = await canonical(path);
+    let registered = false;
+    for (const w of await listWorktreesUnlocked(repo)) {
+      if ((await canonical(w.path)) === target) registered = true;
     }
-    await git(repo, ['worktree', 'prune']);
+    if (registered) {
+      await git(repo, ['worktree', 'unlock', path], { okExitCodes: [0, 128] });
+      await git(repo, ['worktree', 'remove', ...(force ? ['--force'] : []), path]);
+    }
     if (input.branch && (await branchExists(repo, input.branch))) {
       await git(repo, ['branch', force ? '-D' : '-d', input.branch]);
     }
-  });
-}
-
-export async function pruneWorktrees(repo: string): Promise<void> {
-  await withRepoLock(repo, async () => {
-    await git(repo, ['worktree', 'prune']);
   });
 }
 
@@ -224,10 +206,6 @@ async function listWorktreesUnlocked(repo: string): Promise<WorktreeInfo[]> {
 /** All worktrees of the repo, the main checkout first. */
 export function listWorktrees(repo: string): Promise<WorktreeInfo[]> {
   return listWorktreesUnlocked(repo);
-}
-
-function samePath(a: string, b: string): boolean {
-  return resolve(a) === resolve(b);
 }
 
 async function canonical(p: string): Promise<string> {

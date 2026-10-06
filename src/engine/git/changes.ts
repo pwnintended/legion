@@ -20,6 +20,12 @@ export async function identityArgs(repo: string): Promise<string[]> {
 /** Args that disable hooks for Legion-authored commits/merges (husky etc. must not fire in worktrees). */
 export const NO_HOOKS = ['-c', 'core.hooksPath=/dev/null'] as const;
 
+/**
+ * Rerere for Legion's own merges only (recorded resolutions live in the shared common dir, reusable across
+ * worktrees), passed per command so the user's repository config is never changed.
+ */
+export const RERERE = ['-c', 'rerere.enabled=true'] as const;
+
 export interface CommitResult {
   /** False when the tree was clean and nothing was committed. */
   committed: boolean;

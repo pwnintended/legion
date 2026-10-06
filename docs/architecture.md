@@ -367,6 +367,9 @@ The service applies `core/` decisions with CAS transitions; every flow is re-ent
   Never touch the user's main checkout's working tree or index.
 - Branches: `legion/<runShort>/integration`, `legion/<runShort>/<taskId>-<slug>`.
 - A per-repo mutex serializes ref-changing git commands. `gc.auto=0` on repos Legion manages while runs are active.
+  No other repository config is written: rerere is enabled per merge command (`-c rerere.enabled=true`).
+  `removeWorktree` removes only its own worktree entry (also when the directory is gone) and never runs
+  `git worktree prune`, which would drop the user's worktrees on unmounted volumes.
 - Recovery on engine start (`orchestrator/recovery.ts`): attempts in `running` → `interrupted`; coder attempts of
   running/fixing tasks are resumed in the same row with a "Legion was restarted" prompt, the others fail and their
   step reruns. Approval and agent-question items are dismissed (their sessions are gone). `pending` merges are rolled
