@@ -44,6 +44,8 @@ export interface StartEngineOptions {
   now?: () => number;
   /** Serve every engine kind with the scripted fake. Default: `LEGION_FAKE_ENGINES=1` in `env`. */
   fakeEngines?: boolean;
+  /** Delay between scripted fake steps in fake-engine mode (default 120 ms, so the UI can follow). */
+  fakeStepDelayMs?: number;
   /** Engines per kind (tests inject fakes standing in for claude / codex). */
   engines?: Partial<Record<EngineKind, AgentEngine>>;
   /** GitHub side of the PR step. Default: `gh` (a push-less fake in fake-engine mode). */
@@ -107,6 +109,7 @@ export async function startEngine(options: StartEngineOptions): Promise<EngineHa
     settings: () => opened.store.getSettings(),
     fake,
     ...(options.engines ? { overrides: options.engines } : {}),
+    ...(options.fakeStepDelayMs !== undefined ? { fakeStepDelayMs: options.fakeStepDelayMs } : {}),
   });
   const orchestrator = createOrchestrator({
     ctx,

@@ -296,7 +296,9 @@ export class Orchestrator {
 
   // -- rate limits & gates -----------------------------------------------------------------------
 
+  /** Pause new sessions on `engine` until `resetsAt` (unknown: a backoff, unless a known limit is active). */
   registerRateLimit(engine: EngineKind, resetsAt: number | null): void {
+    if (resetsAt === null && this.limitedUntil(engine) !== null) return;
     const until = resetsAt ?? this.now() + RATE_LIMIT_BACKOFF_MS;
     this.rateLimits = [...this.rateLimits.filter((r) => r.engine !== engine), { engine, resetsAt: until }];
     this.log.warn(`rate limited on ${engine} until ${new Date(until).toISOString()}`);

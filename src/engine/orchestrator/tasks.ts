@@ -138,6 +138,21 @@ export function upstreamOf(o: Orchestrator, task: Task, node: TaskNode): Upstrea
   });
 }
 
+/**
+ * 1-based number of this fresh coder attempt over the task's whole life (`attemptCount` restarts at 0
+ * after a human retry; the prompt should still say it is a retry and carry the failure / note).
+ */
+function attemptNumber(o: Orchestrator, task: Task): number {
+  const sessions = new Set(
+    o.store
+      .listAttempts(task.runId)
+      .filter((a) => a.taskId === task.id && a.role === 'coder' && a.sessionId !== null)
+      .map((a) => a.sessionId),
+  );
+  const current = taskMeta(o.store, task.id).coderSessionId;
+  return Math.max(1, task.attemptCount, sessions.size + (current && sessions.has(current) ? 0 : 1));
+}
+
 function lastCoderAttemptId(o: Orchestrator, task: Task): string | null {
   return (
     o.store
@@ -279,7 +294,7 @@ async function code(o: Orchestrator, run: Run, task: Task, mode: 'coder' | 'fixe
       node,
       planSummary: planSummary(o, run.id),
       upstream: upstreamOf(o, task, node),
-      attempt: Math.max(1, task.attemptCount),
+      attempt: attemptNumber(o, task),
       previousFailure: meta.previousFailure,
       tools,
       structuredReport: true,
@@ -325,7 +340,7 @@ async function code(o: Orchestrator, run: Run, task: Task, mode: 'coder' | 'fixe
               node,
               planSummary: planSummary(o, run.id),
               upstream: upstreamOf(o, task, node),
-              attempt: Math.max(1, task.attemptCount),
+              attempt: attemptNumber(o, task),
               previousFailure: meta.previousFailure,
               tools,
               structuredReport: true,

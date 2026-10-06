@@ -6,6 +6,7 @@
 import { join } from 'node:path';
 import { MessageChannel } from 'node:worker_threads';
 import type { SettingsPatch, TaskNode } from '@shared/domain';
+import type { AgentEngine } from '@shared/engine';
 import type { ServerEvent } from '@shared/events';
 import type { EngineToMainMessage } from '@shared/host-protocol';
 import type { RpcContract } from '@shared/rpc';
@@ -76,6 +77,8 @@ export async function startHarness(options: {
   script: Script;
   files?: Record<string, string>;
   settings?: SettingsPatch;
+  /** Make the fakes report the kind they stand in for (attempt rows say claude/codex, takeover works). */
+  realKinds?: boolean;
 }): Promise<Harness> {
   const repo = await makeRepo({ 'README.md': '# fixture\n', ...options.files });
   const origin = await makeBare(repo.scratch);
@@ -99,7 +102,9 @@ export async function startHarness(options: {
       dataDir,
       env: process.env,
       log: silentLogger,
-      engines: { claude, codex },
+      engines: options.realKinds
+        ? { claude: asKind(claude, 'claude'), codex: asKind(codex, 'codex') }
+        : { claude, codex },
       prHost,
       onHostMessage: (message) => host.push(message),
       ptySpawn,
@@ -147,6 +152,16 @@ export async function startHarness(options: {
     },
   };
   return harness;
+}
+
+/** A fake engine that reports another kind. */
+export function asKind(engine: FakeEngine, kind: EngineName): AgentEngine {
+  return {
+    kind,
+    probe: async () => ({ ...(await engine.probe()), kind }),
+    start: (opts) => engine.start(opts),
+    resume: (id, opts) => engine.resume(id, opts),
+  };
 }
 
 // -- script building blocks -------------------------------------------------------------------------
