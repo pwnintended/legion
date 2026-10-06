@@ -384,7 +384,6 @@ function extendPasskeys(world: DemoWorld, now: number, stage: DemoStage): void {
   );
   world.transcripts.att_authv2t4fix1 = [
     ...fix,
-    { type: 'file_change', path: 'server/db/passkeys.repo.test.ts', added: 7, removed: 1 },
     {
       type: 'message',
       text: 'Switched sign_count to BIGINT (the repository already used bigint) and added a test that bumps the counter to 2³² + 1. Documented credential_id encoding on the schema.',
