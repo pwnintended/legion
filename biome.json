@@ -3,7 +3,7 @@
   "vcs": { "enabled": true, "clientKind": "git", "useIgnoreFile": true },
   "files": {
     "ignoreUnknown": true,
-    "includes": ["**", "!out", "!dist", "!docs", "!src/engine/adapters/codex/protocol"]
+    "includes": ["**", "!out", "!dist", "!docs", "!src/engine/adapters/codex/protocol", "!.claude"]
   },
   "formatter": {
     "enabled": true,
