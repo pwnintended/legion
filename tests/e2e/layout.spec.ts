@@ -215,6 +215,79 @@ test('strip: the focused column is always fully in view (bursts, resizes, insert
   }
 });
 
+test('settings, a failed task escalated to you, a finished run archived', async () => {
+  mkdirSync(shots, { recursive: true });
+  const { app, window, home } = await launchDemo();
+  try {
+    await expect(window.getByTestId('titlebar')).toContainText('Add passkey (WebAuthn) login', { timeout: 30_000 });
+
+    // Settings (⌘,): engines with detected version/login, inline validation, saves on commit.
+    await window.keyboard.press('Meta+,');
+    const settings = window.getByTestId('settings');
+    await expect(settings).toBeVisible();
+    await expect(settings.getByTestId('engine-claude')).toContainText('2.1.289');
+    await expect(settings.getByTestId('engine-claude').getByTestId('engine-status')).toHaveText('logged in');
+    const global = settings.getByLabel('All engines');
+    await global.fill('0');
+    await global.press('Enter');
+    await expect(settings).toContainText('Must be between 1 and 32.');
+    await global.fill('5');
+    await global.press('Enter');
+    await expect(settings.getByTestId('settings-save')).toContainText('Saved');
+    await window.waitForTimeout(400);
+    await window.screenshot({ path: join(shots, 'settings.png') });
+    await settings.locator('.st-nav-item', { hasText: 'Agents' }).click();
+    await window.waitForTimeout(600);
+    await window.screenshot({ path: join(shots, 'settings-agents.png') });
+    // ⌘⏎ inside an overlay is not the Focus layout.
+    await window.keyboard.press('Meta+Enter');
+    await expect(settings).toBeVisible();
+    await window.keyboard.press('Escape');
+    await expect(settings).toHaveCount(0);
+    await expect(window.locator('[data-layout-mode="strip"]')).toBeVisible();
+    // The rail footer opens it too.
+    await window.getByTestId('rail-settings').click();
+    await expect(settings).toBeVisible();
+    await window.keyboard.press('Escape');
+
+    // ⌘5: T2 failed all its attempts; the run lands on it with the escalation inline.
+    await window.keyboard.press('Meta+5');
+    await expect(window.getByTestId('titlebar')).toContainText('Move cron jobs onto the queue');
+    await expect.poll(() => focusedTile(window)).toBe('session:T2');
+    const t2 = window.locator('[data-tile-id="session:T2"]');
+    await expect(t2).toHaveAttribute('data-urgent', 'true');
+    await expect(t2.getByTestId('escalation-card')).toContainText('Out of attempts');
+    await expect(t2.locator('.ss-attempt')).toHaveText(['coder', 'attempt 2', 'attempt 3']);
+    await window.waitForTimeout(500);
+    await window.screenshot({ path: join(shots, 'failed-task.png') });
+    // R retries it from the keyboard.
+    await t2.locator('.tile-head').click();
+    await window.keyboard.press('r');
+    await expect(t2.getByTestId('escalation-card')).toHaveCount(0);
+    await expect(t2).toHaveAttribute('data-urgent', 'false');
+
+    // ⌘6: a finished run whose PR merged, archived from its PR tile.
+    await window.keyboard.press('Meta+6');
+    await expect(window.getByTestId('titlebar')).toContainText('Dark mode tokens');
+    await expect.poll(() => focusedTile(window)).toBe('pr');
+    const opened = window.getByTestId('pr-opened');
+    await expect(opened).toHaveAttribute('data-pr-state', 'merged');
+    await expect(opened).toContainText('PR #398 is merged');
+    await window.waitForTimeout(1200);
+    await window.screenshot({ path: join(shots, 'done-run.png') });
+    await opened.getByTestId('pr-archive').click();
+    await expect(window.getByTestId('rail-run')).toHaveCount(5);
+    await expect(window.getByTestId('titlebar')).not.toContainText('Dark mode tokens');
+    await window.getByTestId('show-archived').click();
+    await expect(window.getByTestId('rail-archived-run')).toHaveCount(2);
+    await window.waitForTimeout(400);
+    await window.screenshot({ path: join(shots, 'archived.png') });
+  } finally {
+    await app.close();
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
 test('empty state: onboarding with engine diagnostics', async () => {
   mkdirSync(shots, { recursive: true });
   const home = mkdtempSync(join(tmpdir(), 'legion-e2e-empty-'));
