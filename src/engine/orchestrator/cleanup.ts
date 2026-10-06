@@ -8,8 +8,9 @@ import { isTerminal, type PullRequest, RUN_TRANSITIONS, type Run } from '@shared
 import { RpcError } from '@shared/rpc-transport';
 import { integrationBranchName, removeWorktree, repoHash, runDir } from '../git';
 import { cancelRun } from './actions';
-import { prInFlight, releaseRepo } from './finalize';
+import { prInFlight } from './finalize';
 import type { Orchestrator } from './orchestrator';
+import { releaseRepo } from './repo-gc';
 
 /** How often open PRs are re-read from the host. */
 export const PR_POLL_MS = 3 * 60 * 1000;

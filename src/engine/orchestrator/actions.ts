@@ -16,10 +16,11 @@ import {
 } from '@shared/domain';
 import { RpcError } from '@shared/rpc-transport';
 import { decideEscalation, decideHumanGate, SLOT_STATUSES, taskStatusPath } from './core';
-import { createPr, enterPrReady, releaseRepo } from './finalize';
+import { createPr, enterPrReady } from './finalize';
 import { patchRunMeta, patchTaskMeta, taskMeta } from './meta';
 import { dismissal, type Orchestrator } from './orchestrator';
 import { answerClarify, approvePlan, requestPlanRevision } from './planner';
+import { releaseRepo } from './repo-gc';
 
 // -- runs ------------------------------------------------------------------------------------------
 

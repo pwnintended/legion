@@ -215,6 +215,35 @@ describe('PR status, task reports and cleanup', () => {
   });
 });
 
+describe('gc.auto bookkeeping', () => {
+  it('restores the user value after overlapping runs, whichever finishes first', async () => {
+    h = await startHarness({ script: basicScript([node('T1')]) });
+    const harness = h;
+    await git(harness.repo.path, ['config', '--local', 'gc.auto', '50']);
+    const approveOne = async () => {
+      const run = await createRun(harness);
+      await harness.waitFor(() => runOf(harness, run.id).status === 'awaiting_approval', 'plan');
+      const plan = harness.engine.store.latestPlan(run.id);
+      await harness.client.call('runs.approvePlan', { runId: run.id, planId: plan?.id as string });
+      return run;
+    };
+    const a = await approveOne();
+    const b = await approveOne(); // approved while A is active: sees gc.auto=0
+    expect(await gcAuto(harness)).toBe('0');
+    await harness.waitFor(() => [a, b].every((r) => runOf(harness, r.id).status === 'pr_ready'), 'pr_ready', 30_000);
+
+    await harness.client.call('runs.createPr', { runId: a.id, title: null, body: null });
+    expect(await gcAuto(harness)).toBe('0'); // B still holds the repo
+    // Survives an engine restart in between.
+    await harness.restart();
+    await harness.client.call('runs.createPr', { runId: b.id, title: null, body: null });
+    expect(await gcAuto(harness)).toBe('50');
+    // Releasing again (archive) changes nothing.
+    await harness.client.call('runs.archive', { runId: a.id });
+    expect(await gcAuto(harness)).toBe('50');
+  });
+});
+
 describe('same-engine review fallback', () => {
   it('reviews and finalizes with a different model of the coder engine when the other engine is off', async () => {
     h = await startHarness({

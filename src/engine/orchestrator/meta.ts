@@ -18,8 +18,10 @@ export interface RunMeta {
   /** Per-run budget raised through a `budget` inbox answer (overrides settings). */
   budgetLimitUsd: number | null;
   budgetWarned: boolean;
-  /** The `gc.auto` value before Legion disabled it (restored when the run ends). */
+  /** Legacy (runs approved before `repo-gc.ts`): the `gc.auto` value before Legion disabled it. */
   gcAuto: string | null;
+  /** `gc.auto` is reference-counted per repository (`repo-gc.ts`) for this run. */
+  gcRepoManaged: boolean;
 }
 
 export interface FixContext {
@@ -59,6 +61,7 @@ const RUN_DEFAULTS: RunMeta = {
   budgetLimitUsd: null,
   budgetWarned: false,
   gcAuto: null,
+  gcRepoManaged: false,
 };
 
 const TASK_DEFAULTS: TaskMeta = {

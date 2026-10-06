@@ -341,8 +341,9 @@ The service applies `core/` decisions with CAS transitions; every flow is re-ent
 - **Diffs**: task = `startSha` → the task worktree including uncommitted and untracked files (staged into a
   throwaway index); once the worktree is gone, `startSha..branch`. Run = `base...integration`.
 - **Bookkeeping** that is not a domain row (planner session id, clarify answers, fix context, coder session, latest
-  report, resolver attempts, per-run budget, saved `gc.auto`) lives in the `settings` key/value table under
-  `run:<id>` / `task:<id>`.
+  report, resolver attempts, per-run budget) lives in the `settings` key/value table under `run:<id>` /
+  `task:<id>`. `gc.auto` is reference-counted per repository under `repo:<repoPath>` (`repo-gc.ts`): the user's
+  value is saved once by the first run that disables it and restored when the last holding run ends.
 - **Host messages**: `notify` for every new inbox item (main decides about focus), `badge` = open inbox items,
   `power` = any agent process alive.
 - **Plan edits**: `runs.updatePlan` takes the DAG's `annotations` from the client; an `[overlap_accepted]` note
