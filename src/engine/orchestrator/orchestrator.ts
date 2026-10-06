@@ -162,6 +162,8 @@ export class Orchestrator {
   /** Slot-holding tasks whose driver stopped until the run resumes / a rate limit resets. */
   readonly parked = new Map<string, ParkReason>();
   readonly mergeLoops = new Set<string>();
+  /** Runs whose merge queue stopped until the run resumes / a rate limit resets (a resolver must wait). */
+  readonly mergeParked = new Map<string, ParkReason>();
   /** Runs with a planner or finalize job in flight. */
   readonly runJobs = new Set<string>();
   /** Takeover terminals by attempt id. */
@@ -850,6 +852,22 @@ export class Orchestrator {
     );
   }
 
+  /** The run's merge queue is parked and its gate is still closed (arms the wake timer for a rate limit). */
+  private mergeQueueWaits(run: Run): boolean {
+    const parked = this.mergeParked.get(run.id);
+    if (!parked) return false;
+    if (parked.kind === 'paused' && run.paused) return true;
+    if (parked.kind === 'rate') {
+      const until = this.limitedUntil(parked.engine);
+      if (until !== null) {
+        this.armWake(until);
+        return true;
+      }
+    }
+    this.mergeParked.delete(run.id);
+    return false;
+  }
+
   startMergeQueue(runId: string): void {
     if (this.closed || this.mergeLoops.has(runId) || !this.flows) return;
     const flows = this.flows;
@@ -974,7 +992,9 @@ export class Orchestrator {
       this.startDriver(task.id);
     }
     const tasks = this.store.listTasks(run.id);
-    if (tasks.some((t) => t.status === 'approved' || t.status === 'merging')) this.startMergeQueue(run.id);
+    if (tasks.some((t) => t.status === 'approved' || t.status === 'merging') && !this.mergeQueueWaits(run)) {
+      this.startMergeQueue(run.id);
+    }
     if (plan.run.state === 'complete' && !this.mergeLoops.has(run.id)) this.startFinalize(run.id);
     if (plan.nextWakeAt !== null) this.armWake(plan.nextWakeAt);
   }

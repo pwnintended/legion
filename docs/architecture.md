@@ -334,7 +334,10 @@ The service applies `core/` decisions with CAS transitions; every flow is re-ent
   regenerated with the lockfile command (`legion.json` `lockfileCommand`, else `pnpm install --lockfile-only`,
   `npm install --package-lock-only`, `yarn install`, `bun install --lockfile-only`; exit code checked, the lockfile
   committed, a failure escalates the task), a `resolver` session (coder engine) handles the rest, `finishMerge`, forecast again.
-  Exhausted resolver attempts → `conflict` item (`retry` = back into the merge queue with a fresh budget).
+  Exhausted resolver attempts → `conflict` item (`retry` = back into the merge queue with a fresh budget). When a
+  resolver is needed (the forecast has non-lockfile conflicts) but the run is paused or the coder engine is rate
+  limited, the queue parks *before* touching git (`mergeParked`); the tick does not restart it until the run
+  resumes or the limit resets (a wake timer is armed at the reset).
 - **Escalations**: task items carry `taskId`; run-level items (`taskId: null`) come from the final verify
   (`verify_failed`), the final review (`final_review`) or a finalizer that cannot run (`other`), with actions `[retry,
   skip, abort]`: retry reruns the step, skip moves on (integrating → finalizing → pr_ready), abort cancels the run.

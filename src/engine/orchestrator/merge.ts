@@ -38,7 +38,7 @@ import {
 } from './core';
 import type { AgentRun } from './live-session';
 import { patchTaskMeta, taskMeta } from './meta';
-import { AgentFailure, Closed, type Orchestrator } from './orchestrator';
+import { AgentFailure, Closed, type Orchestrator, type ParkReason } from './orchestrator';
 import { coderTurn } from './tasks';
 import {
   ensureIntegrationWorktree,
@@ -228,6 +228,14 @@ async function resolveConflicts(
       });
       return 'done';
     }
+    // A resolver session will be needed (the forecast has non-lockfile conflicts) but cannot start now:
+    // park before touching git, and let the tick wake the queue when the gate opens.
+    const engine = coderEngineFor(node, task);
+    const forecastFiles = await conflictFilesOf(run, task);
+    if (forecastFiles.some((f) => !isLockfilePath(f))) {
+      const gate = o.gate(run.id, engine);
+      if (gate) return parkQueue(o, run.id, gate);
+    }
     const path = task.worktreePath ?? o.taskPath(run, taskId);
     if (task.branch) await ensureWorktree(run.repoPath, path, task.branch, null);
     if (await isMergeInProgress(path)) await abortMerge(path);
@@ -236,11 +244,10 @@ async function resolveConflicts(
     const locks = await resolveLockfileConflicts(path, merged.files, 'theirs');
     let commitMessage = `Merge ${integrationRef} into ${node.id}`;
     if (locks.remaining.length > 0) {
-      const engine = coderEngineFor(node, task);
       const gate = o.gate(run.id, engine);
       if (gate) {
         await abortMerge(path);
-        return 'park';
+        return parkQueue(o, run.id, gate);
       }
       const attempt = meta.resolverAttempts + 1;
       patchTaskMeta(o.store, taskId, { resolverAttempts: attempt });
@@ -286,7 +293,7 @@ async function resolveConflicts(
         if (failure.kind === 'rate_limited') {
           patchTaskMeta(o.store, taskId, { resolverAttempts: meta.resolverAttempts });
           if (o.limitedUntil(engine) === null) o.registerRateLimit(engine, null);
-          return 'park';
+          return parkQueue(o, run.id, { kind: 'rate', engine });
         }
         patchTaskMeta(o.store, taskId, { resolverFailure: failure.message });
         continue;
@@ -348,6 +355,12 @@ async function regenerateLockfiles(
   }
   await commitPaths(worktree, lockfiles, `Regenerate lockfile after merging ${integrationRef}`);
   return null;
+}
+
+/** Stop the queue until the gate opens; `tickRun` restarts it (and arms a wake timer for a rate limit). */
+function parkQueue(o: Orchestrator, runId: string, reason: ParkReason): 'park' {
+  o.mergeParked.set(runId, reason);
+  return 'park';
 }
 
 async function conflictFilesOf(run: Run, task: Task): Promise<string[]> {
