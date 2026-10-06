@@ -1,12 +1,29 @@
 # orchestrator
 
-Run lifecycle (architecture §8): clarify → plan → DAG validation (`dag.ts`) → approval → scheduler
-(`scheduler.ts`, concurrency caps from `Settings`) → verify → cross-engine review → fix loop → merge
-queue → finalize → PR. Prompts live in `prompts/`. Recovery on engine start (§9).
+The run lifecycle service (architecture §8, details in §8.1): clarify → plan → DAG validation → approval →
+dispatch → per-task driver (provision, code, verify, cross-engine review, fix rounds) → serialized merge queue →
+finalize → PR. Crash recovery (§9). The pure decision logic lives in `core/` (see `core/README.md`); this layer
+applies it with CAS transitions through `Store`, runs git through `engine/git`, and drives agents.
 
-All state changes go through `Store` (`engine/db`): `transitionRun/Task/Attempt` (CAS + event in one
-transaction). Agent events are persisted with `Store.appendAgentEvent`. Implements most `runs.*`,
-`tasks.*`, `inbox.*`, `sessions.*` procedures via `server.implement(...)` in a `register*Handlers` function.
+| File | |
+|---|---|
+| `orchestrator.ts` | `Orchestrator`: shared state, `openSession` (attempt row, MCP token, env), usage/budget, rate limits, inbox helpers, `applyDecision`, the dispatch `tick`, the `McpHost` |
+| `live-session.ts` | `AgentRun`: one agent process bound to one attempt; turn results, takeover / hand-back |
+| `planner.ts` | `runs.create`, clarify, plan (validation retries), plan versions, revision, approval |
+| `tasks.ts` | the per-task driver (re-entrant by task status) |
+| `merge.ts` | merge queue, conflict resolution (lockfiles, resolver sessions) |
+| `finalize.ts` | integration verify, final review, PR text, `runs.createPr` |
+| `actions.ts` | human actions: pause/resume/cancel, `tasks.*`, `inbox.resolve` effects |
+| `sessions.ts` | `sessions.send/interrupt/takeover`, attempt terminals |
+| `diff.ts` | `diff.get` |
+| `recovery.ts` | crash recovery on engine start |
+| `registry.ts` | `EngineRegistry` (Claude, Codex, fakes; probes, usability) |
+| `pr-host.ts` | `PrHost` (`ghPrHost` for the app, `FakePrHost` for tests and demo mode) |
+| `demo.ts` | the scripted agent of `LEGION_FAKE_ENGINES=1` |
+| `meta.ts` | persisted bookkeeping (`run:<id>` / `task:<id>` in the settings key/value table) |
+| `handlers.ts` | RPC procedures |
+| `test-harness.ts` | test-only: temp repo + bare origin, fake engines standing in for Claude/Codex, RPC client |
 
-The pure decision logic (plan validation, graph utilities, estimates, `planDispatch`, task status policy,
-prompt builders) lives in `core/`; see `core/README.md` for its API.
+Wiring is in `engine/index.ts` (`createOrchestrator`, MCP server, terminals, `recover`). Tests: `lifecycle.test.ts`
+(end to end on a real repo), `service.test.ts`, `accounting.test.ts`; `run.live.test.ts` runs a tiny real run with
+`pnpm test:live` (Claude haiku coders, Codex low-effort reviewer, stops at `pr_ready`).

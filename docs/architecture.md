@@ -227,7 +227,10 @@ Tools (all return small JSON):
 
 DAG and review output come back as structured output, not via MCP tools. Tool approvals do not go through
 MCP either: both adapters receive them in-band (§6). The Claude adapter pre-approves every Legion tool
-(`--allowedTools mcp__legion`).
+(`--allowedTools mcp__legion`). The server also has an `approve` tool: an unused fallback (no CLI is configured to
+call it); the orchestrator still routes it to an `approval` inbox item. Coders get the task-report output schema
+too, so a turn that ends with a valid structured report counts even without `mark_task_done` (the fake engine
+relies on this); when both exist the structured report wins.
 
 ## 8. Orchestration flow
 
@@ -269,15 +272,78 @@ MCP either: both adapters receive them in-band (§6). The Claude adapter pre-app
    Body: issue link, plan summary, task table (engine, reviewer verdict), verification, minor findings, run id.
 9. **Cleanup** on PR merge/close or user action: remove worktrees, delete local task branches.
 
+### 8.1 Lifecycle service (`engine/orchestrator/`)
+
+The service applies `core/` decisions with CAS transitions; every flow is re-entrant from the persisted state.
+
+- **Engines**: `EngineRegistry` holds `ClaudeEngine`, `CodexEngine` (`CODEX_HOME` = `<dataDir>/codex-home`) and
+  `FakeEngine`. `LEGION_FAKE_ENGINES=1` serves *every* kind with the scripted demo agent (`orchestrator/demo.ts`)
+  and a PR host that never pushes. Engines are probed at start and by `engines.list/probe`; an engine that is not
+  installed, not logged in or disabled fails `runs.create` (`failed_precondition`) or the session start (an `auth`
+  failure → escalation), with the probe's message.
+- **Attempts**: one `Attempt` row per agent *process*. Resuming a session (planner plan step, fix rounds, hand-back
+  after takeover, recovery) keeps the engine `sessionId`; a resume after a crash re-uses the interrupted row
+  (`interrupted → running`), others insert a new row. Usage events are cumulative per engine session: an attempt's
+  cost/tokens = latest total − what the session's other attempts were charged (engines whose totals restart per
+  process are detected on the first usage event). Run cost = sum of attempt costs.
+- **Planner**: runs read-only in the run's integration worktree (`legion/<run>/integration`, created at the base
+  sha when planning starts, so the planner sees exactly `baseRef`). Clarify and plan resume one planner session.
+  Invalid plans get up to 2 corrective follow-ups in the same session; a plan still invalid is stored with its errors
+  as `[error]` notes (approval then answers `bad_request` until a human edit fixes it). Each new version supersedes
+  the open `plan_signoff` item. Approval creates the tasks (`blocked`), sets `integrationBranch` and `gc.auto=0`, and
+  runs `legion.json` copy/symlink/setup in the integration worktree.
+- **Task driver** (`tasks.ts`, one per task, re-entrant by status): provisioning → coder → `commitAll` (message from
+  the report) → verify (`node.verify` + `legion.json` verify, stop at the first failure) + scope check (report only;
+  lockfiles always allowed when there is an install command) → reviewer (other engine, fresh, read-only, cwd = task
+  worktree) → `decideAfterReview`. Fix rounds resume the coder session with the fixer prompt; a session that cannot
+  be resumed is replaced by a fresh one. A high-risk approval → `awaiting_human` + an `escalation` item (`reason:
+  other`, actions `[skip, abort]`): the UI approves with `tasks.approveMerge` (resolves it with `{action: retry, note:
+  "approved for merge"}`) or sends it back with `tasks.requestChanges` (`{action: edit, note}`).
+- **Merge queue** (`merge.ts`, serialized per run): `merging` tasks first (resume), then `approved` FIFO. Clean
+  forecast → `insertMerge(preSha)` → squash → post-merge verify (install command first when a lockfile changed) →
+  `merged`; a failed verify resets to `preSha` (merge `reverted`) and starts a fix round with integration merged into
+  the task branch. Conflict → merge integration into the task branch, lockfiles take integration's side and the
+  install command reruns, a `resolver` session (coder engine) handles the rest, `finishMerge`, forecast again.
+  Exhausted resolver attempts → `conflict` item (`retry` = back into the merge queue with a fresh budget).
+- **Escalations**: task items carry `taskId`; run-level items (`taskId: null`) come from the final verify
+  (`verify_failed`), the final review (`final_review`) or a finalizer that cannot run (`other`), with actions `[retry,
+  skip, abort]`: retry reruns the step, skip moves on (integrating → finalizing → pr_ready), abort cancels the run.
+  Task `edit` = retry with the note as context for the next attempt. Answering through `inbox.resolve` and through
+  the `tasks.*` procedures is equivalent; both resolve the item.
+- **Rate limits**: a `rate_limit` event with `usedPct ≥ 95`, or a retryable 429-like error, pauses new sessions on that
+  engine until the reset (60 s when unknown); the failed coder attempt is re-queued without being charged.
+- **Budget**: `settings.budget.perRunUsd` (or a per-run limit raised through the `budget` item) reached → run paused +
+  `budget` item; `raise` (default 1.5× the spend) resumes, `stop` cancels. A notification fires at `warnAtPct`.
+- **Pause** gates new agent sessions (dispatch, reviewers, fixers, resolvers, finalizer); turns in flight finish.
+  **Cancel** cancels open tasks and attempts, dismisses open inbox items, interrupts and closes live sessions and
+  takeover terminals (worktrees are kept).
+- **Steering**: `sessions.send` / `sessions.interrupt` need a live session; a human interrupt does not end the step,
+  the session waits for the next message. **Takeover**: `sessions.takeover` interrupts and closes the adapter
+  session, marks the attempt `interrupted` (`error: "taken over by a human"`) and opens a PTY running
+  `claude --resume <id>` / `codex resume <id>` (with Legion's `CODEX_HOME`) in the attempt's worktree. When the PTY
+  exits, the adapter session is resumed with a hand-back prompt and the attempt is `running` again. The renderer
+  attaches with `terminals.open({target: {kind: "attempt", attemptId}, terminalId, cols, rows})`.
+- **Diffs**: task = `startSha` → the task worktree including uncommitted and untracked files (staged into a
+  throwaway index); once the worktree is gone, `startSha..branch`. Run = `base...integration`.
+- **Bookkeeping** that is not a domain row (planner session id, clarify answers, fix context, coder session, latest
+  report, resolver attempts, per-run budget, saved `gc.auto`) lives in the `settings` key/value table under
+  `run:<id>` / `task:<id>`.
+- **Host messages**: `notify` for every new inbox item (main decides about focus), `badge` = open inbox items,
+  `power` = any agent process alive.
+
 ## 9. Git & filesystem conventions
 
 - Worktrees: `~/Library/Application Support/Legion/worktrees/<repoHash>/<runId>/<taskId>/` and `.../_integration/`.
   Never touch the user's main checkout's working tree or index.
 - Branches: `legion/<runShort>/integration`, `legion/<runShort>/<taskId>-<slug>`.
 - A per-repo mutex serializes ref-changing git commands. `gc.auto=0` on repos Legion manages while runs are active.
-- Recovery on engine start: attempts in `running` with no live process → `interrupted`; reconcile
-  `git worktree list --porcelain` against the DB; resume sessions where possible, else new attempt from the
-  worktree's HEAD. Before every integration merge record the pre-merge SHA.
+- Recovery on engine start (`orchestrator/recovery.ts`): attempts in `running` → `interrupted`; coder attempts of
+  running/fixing tasks are resumed in the same row with a "Legion was restarted" prompt, the others fail and their
+  step reruns. Approval and agent-question items are dismissed (their sessions are gone). `pending` merges are rolled
+  back (`resetIntegration(preSha)`, merge `reverted`) and the task is merged again. `git worktree list` is reconciled
+  with the DB: missing worktrees are restored from their branch, else the task is re-queued without charging the
+  attempt; unknown worktrees under Legion's directory are only logged. Conflict merges left in progress are aborted.
+  Planner and finalize jobs restart; dispatch resumes. Before every integration merge record the pre-merge SHA.
 - Per-repo config `legion.json` (optional): `{ setup?: string[], verify?: string[], copy?: string[],
   symlink?: string[], highRiskGlobs?: string[], installCommand?: string }`.
 - App data: `~/Library/Application Support/Legion/legion.db` (override with `LEGION_HOME` for tests).
@@ -290,8 +356,9 @@ Every ServerEvent is one row of the `events` table (its `seq`), and entity event
 applying them is idempotent. On (re)connect the renderer sends `subscribe({sinceSeq})`: the engine replays missed
 events (`replayed: true`) or, if it cannot (fresh client, gap > 20k events), answers `replayed: false` and the
 client refetches snapshots (`runs.list`, `runs.get` — each carries the `seq` it was read at) and ignores older
-events. Unimplemented procedures answer `RpcError('not_implemented')`.
-Raw PTY bytes use a dedicated MessagePort per terminal, not the RPC channel.
+events. Unimplemented procedures answer `RpcError('not_implemented')` (none are left).
+Raw PTY bytes use a dedicated MessagePort per terminal, not the RPC channel. `terminals.open` with a `terminalId`
+re-attaches the transferred port to a live terminal (a detached shell, or the terminal of `sessions.takeover`).
 
 ## 11. UI
 
@@ -318,9 +385,13 @@ Raw PTY bytes use a dedicated MessagePort per terminal, not the RPC channel.
   `engine/db/migrations/` (never edit a released one).
 - Agent structured output: define the zod schema in `shared/schemas/`, export `toStrictJsonSchema(schema)`, re-validate
   with zod in the engine.
-- Engine tests run in plain Node: `startEngine({ dataDir: tempDir, env, log: silentLogger })` and
-  `engine.connect(new MessageChannel().port1)` with `createRpcClient(port2)`; use `adapters/fake` (`FakeEngine`,
-  scenarios `success|edit|approval|structured|fail` or a custom script) instead of real CLIs.
+- Engine tests run in plain Node: `startEngine({ dataDir: tempDir, env, log: silentLogger, probeOnStart: false })`
+  and `engine.connect(new MessageChannel().port1)` with `createRpcClient(port2)`; use `adapters/fake` (`FakeEngine`,
+  scenarios `success|edit|approval|structured|fail` or a custom script) instead of real CLIs: `fakeEngines: true`
+  (the demo agent for every kind) or `engines: {claude, codex}` (scripted stand-ins), plus `prHost: new
+  FakePrHost()` and `ptySpawn` for terminals. `orchestrator/test-harness.ts` sets all of that up on a temp repo with a
+  bare `origin`.
+- Demo the app without real CLIs: `LEGION_FAKE_ENGINES=1 pnpm dev` (any repo; the PR step never pushes).
 
 - `pnpm typecheck`, `pnpm lint`, `pnpm test` must pass before you report done. Add tests for logic you write.
 - Never run real `claude`/`codex` sessions in the default test suite. Live tests live under
