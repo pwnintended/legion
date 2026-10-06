@@ -54,7 +54,8 @@ src/
       fake/          scripted fake engine used by tests and the dev "demo" mode
     mcp/             Legion MCP server (streamable HTTP on 127.0.0.1, per-session bearer tokens)
     git/             git CLI wrapper, worktrees, merge-tree forecast, integration merge queue, gh PR
-    orchestrator/    dag validation, scheduler, run lifecycle, review loop, prompts/
+    orchestrator/    run lifecycle, review loop; core/ = pure logic (dag validation, graph, estimates,
+                     scheduler, task status policy, prompts/)
     pty/             node-pty sessions for terminal takeover (Electron runtime only)
   renderer/          React 19 UI
     app/             bootstrap, EngineConnection (RPC client + reconnect), stores
@@ -218,13 +219,18 @@ DAG and review output come back as structured output, not via MCP tools.
 1. **Create run** (composer): repo, base ref (default: current default branch), issue text/URL, planner engine.
 2. **Clarify** (planner, read-only): returns `{questions[]}` (0–5) as structured output → inbox items, answered inline.
 3. **Plan** (planner, read-only, same session resumed): returns `{markdown, dag}` per `schemas/plan.ts`.
-4. **Validate** (deterministic, `orchestrator/dag.ts`): ids unique, deps resolve, acyclic, every node has a
-   verify command; compute pairwise `touches` overlap for nodes not ordered by a path → auto-add a
-   serializing edge (lower id first) and record it as a plan annotation; flag L-size nodes. Estimate cost.
+4. **Validate** (deterministic, `orchestrator/core/dag.ts`): ids unique, deps resolve, acyclic, every node has
+   ≥1 acceptance criterion and a verify command, `touches` globs are repo-relative; compute pairwise write-set
+   (`create|modify` touches) overlap for nodes not ordered by a path → auto-add a serializing edge (lower
+   topological depth first, then lower id) and record it as a `serializing_edge` plan annotation (undoable:
+   `undoAutoEdge` leaves a `[overlap_accepted]` note); flag hot files written by several nodes, L-size nodes,
+   high-risk nodes and `highRiskGlobs` matches. Estimate cost and wall clock.
 5. **Approve** (human). The user can edit the markdown, nodes, deps, engines before approving.
-6. **Execute** (`orchestrator/scheduler.ts`): a node is *ready* when all deps are **merged** into the
-   integration branch. Priority = longest remaining path, then fan-out. Global concurrency cap (default 3)
-   plus per-engine caps; pause dispatch on rate-limit events.
+6. **Execute** (`orchestrator/core/scheduler.ts`): a node is *ready* when all deps are **merged** (or
+   skipped by a human) into the integration branch. Priority = longest remaining path, then fan-out, then
+   risk, then id. Global concurrency cap (default 3) plus per-engine caps, counted in tasks holding a slot
+   (provisioning → fixing; one agent session at a time each); pause dispatch on rate-limit events. Status
+   decisions for verify/review/fix/merge/retry are pure functions in `orchestrator/core/policy.ts`.
    - Provision: `git worktree add -b legion/<run>/<task>-<slug> <wt> <integration HEAD>`; record `startSha`;
      run repo `legion.json` `setup` commands.
    - Code (coder session) → Legion commits (`git add -A && git commit`, message from `mark_task_done`).
