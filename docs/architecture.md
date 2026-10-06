@@ -16,7 +16,7 @@ document disagree, fix one of them in the same change.
 | Platform | macOS (arm64 + x64) first. Don't break Linux needlessly, but don't test it. |
 | Claude Code | Spawn the user's installed `claude` CLI: `claude -p --input-format stream-json --output-format stream-json --verbose --include-partial-messages`. No Agent SDK. Auth = the user's own login (never touch tokens). |
 | Codex | Spawn `codex app-server` (JSON-RPC 2.0 over stdio). Types generated with `codex app-server generate-ts --experimental` and committed. Auth = the user's own `codex login`. |
-| Approvals | Claude: `--permission-prompt-tool mcp__legion__approve` → Legion MCP server → inbox. Codex: `item/*/requestApproval` server requests → inbox. |
+| Approvals | In-band for both engines, surfaced as `approval_request` events → inbox → `session.respond()`. Claude: `--permission-prompt-tool stdio` → `can_use_tool` control requests on stdout, answered with a `control_response` on stdin. Codex: `item/*/requestApproval` server requests. |
 | Engine per role | Planner: user choice per run (default Claude). Coder: per task from the plan (`agent.engine`), overridable. Reviewer: always the *other* engine than the task's coder (fallback: same engine, different model). |
 | Commits | Legion commits, never the agent (Codex's sandbox makes `.git` read-only anyway). |
 | Integration | One integration branch per run; each approved task is squash-merged into it via a serialized merge queue; post-merge verification after every merge. |
@@ -189,16 +189,29 @@ Normalized `AgentEvent` kinds: `session_started{sessionId, model, version}`, `te
 
 | Role | Claude | Codex |
 |---|---|---|
-| planner, reviewer, finalizer | `--permission-mode plan` or `dontAsk` with read-only `--allowedTools` (Read, Grep, Glob, read-only Bash patterns, legion MCP tools) | `sandbox: read-only`, `approvalPolicy: never` |
-| coder, resolver | `--permission-mode acceptEdits`, curated `--allowedTools` (edits + project's verify commands), everything else → `--permission-prompt-tool mcp__legion__approve` | `sandbox: workspace-write` (cwd = worktree), `approvalPolicy: on-request` → requestApproval → inbox |
+| planner, reviewer, finalizer | `--permission-mode dontAsk --permission-prompts none`, `--allowedTools mcp__legion`, `--disallowedTools` edit tools + AskUserQuestion/Enter/ExitPlanMode. Reads inside cwd/`--add-dir` and commands the CLI classifies as read-only (`ls`, `git diff`, …) need no rule. | `sandbox: read-only`, `approvalPolicy: never` |
+| coder, resolver | `--permission-mode acceptEdits` (edits inside the working dirs), `--allowedTools` = `Bash(<cmd>)`/`Bash(<cmd> *)` per verify command + `mcp__legion`; everything else → `--permission-prompt-tool stdio` → `approval_request` (or `--permission-prompts none` when `askHuman` is false) | `sandbox: workspace-write` (cwd = worktree), `approvalPolicy: on-request` → requestApproval → inbox |
 
-Config isolation: Claude runs with `--strict-mcp-config --mcp-config <legion only>` and explicit
-`--setting-sources project` (keeps the repo's CLAUDE.md, ignores the user's global hooks). Codex runs with a
+Every Claude profile also denies `Bash(git commit *)`, `Bash(git push *)`, Enter/ExitWorktree and the
+scheduling tools (Cron*, ScheduleWakeup, RemoteTrigger, PushNotification). Approval decisions: allow →
+`{behavior:"allow", updatedInput}`; allow with scope `session` adds the CLI's own rule suggestions with
+`destination:"session"` (never `localSettings`); deny → `{behavior:"deny", message, interrupt?}`.
+`AskUserQuestion`/`ExitPlanMode` from a coder arrive as ordinary `approval_request`s (answer AskUserQuestion with
+`updatedInput: {questions, answers}`); planners never see them.
+
+Config isolation: Claude runs with `--strict-mcp-config --mcp-config <legion only>` (written to a 0600 temp
+file so the bearer token stays out of `ps`), explicit `--setting-sources project` (keeps the repo's CLAUDE.md
+and `.claude/settings.json`, ignores the user's global hooks/plugins/settings) and `--settings
+'{"autoMemoryEnabled":false}'` (otherwise the agent may write `~/.claude/projects/<cwd>/memory/`). Variables of a
+*parent* Claude Code session (`CLAUDECODE`, `CLAUDE_CODE_SESSION_ID`, …) are stripped from the child env. Codex runs with a
 Legion-owned `CODEX_HOME` (copying only `auth.json`/config the user opts into) or `--ignore-user-config`
 (adapter author verifies which keeps auth working).
 
 Structured output: Claude `--json-schema`, Codex `outputSchema` on `turn/start`. Both are re-validated with
 zod in the engine; a schema failure is a retryable attempt failure.
+
+Claude specifics the orchestrator must know (session ids known at start, cumulative `usage`, `turn_complete.reason`
+values, interrupt/close escalation) are listed in `src/engine/adapters/claude/README.md`.
 
 ## 7. Legion MCP server
 
@@ -207,11 +220,11 @@ Tools (all return small JSON):
 
 - `report_progress({summary})` — one-line status shown on the task card
 - `request_human_input({question, options?})` — blocks until answered via the inbox
-- `approve({tool_name, input})` — Claude's permission prompt tool; blocks until the user decides;
-  returns Claude's expected `{behavior: "allow", updatedInput}` / `{behavior: "deny", message}` JSON
 - `mark_task_done({summary, commitMessage})` — coder signals completion
 
-DAG and review output come back as structured output, not via MCP tools.
+DAG and review output come back as structured output, not via MCP tools. Tool approvals do not go through
+MCP either: both adapters receive them in-band (§6). The Claude adapter pre-approves every Legion tool
+(`--allowedTools mcp__legion`).
 
 ## 8. Orchestration flow
 
