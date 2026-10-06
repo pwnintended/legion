@@ -12,6 +12,7 @@ import { TitleBar } from '../chrome/TitleBar';
 import { Workspace, WorkspaceSkeleton } from '../layout/Workspace';
 import { installKeybindings } from './commands';
 import { useActiveRunId, useConnection, useRuns, useUi } from './hooks';
+import { useMotionConfig } from './prefs';
 
 const overlayModules = import.meta.glob<{ default: ComponentType }>('../overlays/index.tsx');
 const overlayLoader = Object.values(overlayModules)[0];
@@ -28,6 +29,7 @@ export function App() {
   const runs = useRuns();
   const connection = useConnection();
   const activeRunId = useActiveRunId();
+  const reducedMotion = useMotionConfig();
 
   let content: React.ReactNode;
   if (!connection.loaded) content = <WorkspaceSkeleton />;
@@ -36,7 +38,7 @@ export function App() {
   else content = <WorkspaceSkeleton />;
 
   return (
-    <MotionConfig reducedMotion="user">
+    <MotionConfig reducedMotion={reducedMotion}>
       <div className="flex h-full flex-col bg-crust" data-testid="app">
         <TitleBar />
         <div className="flex min-h-0 flex-1">

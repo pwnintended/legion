@@ -2,10 +2,11 @@
  * Focus mode (dwm master-stack): the focused tile as master (~62%), a stack of the tiles most worth watching
  * on the right (urgent first, then live work), and the rest as a compact list.
  */
-import { motion, useReducedMotion } from 'motion/react';
+import { motion } from 'motion/react';
 import { useMemo } from 'react';
 import { useShallow } from 'zustand/react/shallow';
 import { useData } from '../app/hooks';
+import { useReducedMotionPref } from '../app/prefs';
 import { actions, dataStore } from '../app/store';
 import { Dot, toneColor } from '../chrome/ui';
 import { describeTile } from './describe';
@@ -15,7 +16,7 @@ import { allTiles, type Column, focusedTile, focusTile, type LayoutTile, type Wo
 const STACK_SIZE = 3;
 
 export function FocusView({ layout }: { layout: Workspace }) {
-  const reduced = useReducedMotion() ?? false;
+  const reduced = useReducedMotionPref();
   const master = focusedTile(layout) ?? allTiles(layout)[0]?.tile ?? null;
   // Rank the other tiles by how much they deserve attention.
   const rankInputs = useData(useShallow((s) => [s.tasks, s.inbox, s.attempts, s.reviews]));

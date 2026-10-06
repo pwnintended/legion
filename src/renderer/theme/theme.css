@@ -113,13 +113,26 @@ body {
   -webkit-app-region: no-drag;
 }
 
+/* Reduced motion: the OS setting unless Settings → Appearance overrides it (data-motion on <html>). */
 @media (prefers-reduced-motion: reduce) {
-  *,
-  *::before,
-  *::after {
+  :root:not([data-motion="full"]) *,
+  :root:not([data-motion="full"]) *::before,
+  :root:not([data-motion="full"]) *::after {
     /* biome-ignore lint/complexity/noImportantStyles: reduced motion must override component styles */
     animation-duration: 0.01ms !important;
     /* biome-ignore lint/complexity/noImportantStyles: reduced motion must override component styles */
+    animation-iteration-count: 1 !important;
+    /* biome-ignore lint/complexity/noImportantStyles: reduced motion must override component styles */
     transition-duration: 0.01ms !important;
   }
+}
+:root[data-motion="reduce"] *,
+:root[data-motion="reduce"] *::before,
+:root[data-motion="reduce"] *::after {
+  /* biome-ignore lint/complexity/noImportantStyles: reduced motion must override component styles */
+  animation-duration: 0.01ms !important;
+  /* biome-ignore lint/complexity/noImportantStyles: reduced motion must override component styles */
+  animation-iteration-count: 1 !important;
+  /* biome-ignore lint/complexity/noImportantStyles: reduced motion must override component styles */
+  transition-duration: 0.01ms !important;
 }

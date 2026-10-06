@@ -3,10 +3,11 @@
  * into view (minimal movement); columns slide with critically damped springs (position only — widths snap, so
  * terminals are never resized per frame); off-screen columns beyond ±1 viewport render as light placeholders.
  */
-import { AnimatePresence, motion, useReducedMotion } from 'motion/react';
+import { AnimatePresence, motion } from 'motion/react';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { commandTooltip, executeCommand } from '../app/commands';
 import { useData } from '../app/hooks';
+import { useReducedMotionPref } from '../app/prefs';
 import { Icon } from '../chrome/icons';
 import { DURATION_OPEN_MS, SPRING } from '../theme/motion';
 import { ColumnView } from './ColumnView';
@@ -18,7 +19,7 @@ export function StripView({ layout }: { layout: Workspace }) {
   const scroller = useRef<HTMLDivElement>(null);
   const [viewport, setViewport] = useState(1200);
   const [scrollLeft, setScrollLeft] = useState(0);
-  const reduced = useReducedMotion() ?? false;
+  const reduced = useReducedMotionPref();
   const columns = layout.strip.columns;
   const boxes = useMemo(
     () => layoutColumns(columns, viewport, layout.maximized),

@@ -10,6 +10,7 @@ import { useShallow } from 'zustand/react/shallow';
 import { type CommandContext, registerCommands } from '../../app/commands';
 import { openInbox } from '../../app/data';
 import { useActivity, useData, useTask, useTaskNode, useTranscript } from '../../app/hooks';
+import { prefersReducedMotion } from '../../app/prefs';
 import { getSync } from '../../app/sync';
 import { Icon } from '../../chrome/icons';
 import { Chip } from '../../chrome/ui';
@@ -112,7 +113,7 @@ function useStickyScroll() {
     if (!el) return;
     pinnedRef.current = true;
     setPinned(true);
-    const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    const reduced = prefersReducedMotion();
     el.scrollTo({ top: el.scrollHeight, behavior: smooth && !reduced ? 'smooth' : 'auto' });
   }, []);
 
