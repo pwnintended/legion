@@ -83,8 +83,13 @@ test('session tiles, approvals, composer, inbox, palette, clarify', async () => 
     await expect(composer.getByTestId('composer-link')).toContainText('erudiet/app#512');
     await window.waitForTimeout(400);
     await window.screenshot({ path: join(shots, 'composer.png') });
-    await window.keyboard.press('Escape');
+    // Overlays own their keys: ⌘⏎ with focus on a button inside the composer submits it (it is not the global
+    // ⌘⏎ Focus layout binding).
+    await composer.locator('[data-engine="codex"]').focus();
+    await window.keyboard.press('Meta+Enter');
     await expect(composer).toHaveCount(0);
+    await expect(window.getByTestId('titlebar')).toContainText('Add audit logging to admin actions');
+    await expect(window.locator('[data-layout-mode="strip"]')).toBeVisible();
 
     // Inbox again: the approval is gone; j/k move, ⏎ jumps to the item's tile.
     await window.keyboard.press('Meta+i');
