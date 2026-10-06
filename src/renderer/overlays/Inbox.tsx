@@ -9,7 +9,7 @@ import { rpc, useAgentsRunning, useData, useInbox } from '../app/hooks';
 import { isTextInput } from '../app/keys';
 import { Icon } from '../chrome/icons';
 import { Chip, Kbd } from '../chrome/ui';
-import { formatCost, formatDuration, type Tone } from '../layout/describe';
+import { displayEngine, formatCost, formatDuration, type Tone } from '../layout/describe';
 import { type ApprovalChoice, resolveApproval, trackResolution, usePendingResolution } from '../tiles/session/actions';
 import { ApprovalButtons, ApprovalSubjectView, describeApproval } from '../tiles/session/approval';
 import { type RankedItem, rankInbox, runLabel } from './inbox-model';
@@ -114,7 +114,10 @@ function InboxRow({
   const { item } = entry;
   const run = useData((s) => s.runs[item.runId] ?? null);
   const task = useData((s) => (item.taskId ? (s.tasks[item.taskId] ?? null) : null));
-  const engine = useData((s) => (item.attemptId ? (s.attempts[item.attemptId]?.engine ?? null) : null));
+  const engine = useData((s) => {
+    const attempt = item.attemptId ? s.attempts[item.attemptId] : null;
+    return attempt ? displayEngine(s, attempt) : null;
+  });
   const pending = usePendingResolution(item.id);
   const chip = KIND_CHIP[item.kind];
   const context = [run ? runLabel(run.title) : null, task?.nodeId ?? null, engine].filter(Boolean).join(' · ');

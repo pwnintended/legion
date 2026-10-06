@@ -240,8 +240,9 @@
 .cmp-status {
   display: flex;
   align-items: center;
-  flex-wrap: wrap;
-  gap: 4px 10px;
+  flex-wrap: nowrap;
+  gap: 8px;
+  min-width: 0;
   min-height: 18px;
   font-size: 12px;
 }

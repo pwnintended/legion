@@ -15,7 +15,7 @@ import { attemptsOfRun, openInbox, reviewsOfRun, verificationsOfRun } from '../.
 import { rpc, useData, useLatestPlan, useNow, useSettings, useTranscript } from '../../app/hooks';
 import { actions, dataStore } from '../../app/store';
 import { Chip, EngineChip, Kbd } from '../../chrome/ui';
-import { ENGINE_LABEL, ENGINE_NAME, formatDuration, otherEngine } from '../../layout/describe';
+import { displayEngine, ENGINE_LABEL, ENGINE_NAME, formatDuration, otherEngine } from '../../layout/describe';
 import { focusedTile } from '../../layout/tree';
 import type { TileCardProps, TileProps } from '../../layout/types';
 import { focusDiff } from '../diff/data';
@@ -322,7 +322,8 @@ function IntentOutcome({ pack }: { pack: Pack }) {
   const structured = taskReport(pack.task);
   const fromTranscript = useAgentReport(structured ? [] : pack.coderAttempts);
   const report = structured ? { text: structured.summary, attempt: pack.coderAttempts.at(-1) ?? null } : fromTranscript;
-  const engine = report.attempt?.engine ?? pack.coder?.engine ?? pack.node?.agent.engine ?? 'claude';
+  const shown = report.attempt ?? pack.coder;
+  const engine = shown ? displayEngine(dataStore.getState(), shown) : (pack.node?.agent.engine ?? 'claude');
   const running = report.attempt?.status === 'running';
   return (
     <>
@@ -480,7 +481,7 @@ function Actions({
         {approve.error ? <div className="text-[12px] text-red">{approve.error}</div> : null}
         {requesting ? (
           <InlineComposer
-            placeholder={`What should ${ENGINE_NAME[coder?.engine ?? 'claude']} change?`}
+            placeholder={`What should ${ENGINE_NAME[displayEngine(dataStore.getState(), coder)]} change?`}
             submitLabel="Request changes"
             tone="warn"
             hint="goes back to the coder session"
@@ -524,8 +525,11 @@ function Actions({
   if (task.status === 'fixing')
     line = (
       <>
-        <span className="dot live" style={{ color: `var(--${coder?.engine === 'codex' ? 'teal' : 'mauve'})` }} />
-        {ENGINE_NAME[coder?.engine ?? 'claude']} is fixing round {task.fixRounds}
+        <span
+          className="dot live"
+          style={{ color: `var(--${displayEngine(dataStore.getState(), coder) === 'codex' ? 'teal' : 'mauve'})` }}
+        />
+        {ENGINE_NAME[displayEngine(dataStore.getState(), coder)]} is fixing round {task.fixRounds}
         {coder?.status === 'running' ? ` · ${formatDuration(now - coder.startedAt)}` : ''}
         <span className="faint ml-auto">then gates and a fresh review run again</span>
       </>

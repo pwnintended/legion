@@ -64,6 +64,16 @@
     border: 1px solid var(--hairline);
     border-radius: 10px;
   }
+  /* Long PR bodies (tables, code) scroll inside the card, never the tile sideways. */
+  .lg-pr-preview {
+    min-width: 0;
+    overflow-x: auto;
+  }
+  .lg-pr-preview table {
+    display: block;
+    max-width: 100%;
+    overflow-x: auto;
+  }
   .lg-kv {
     display: grid;
     grid-template-columns: 96px minmax(0, 1fr);

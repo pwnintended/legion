@@ -10,9 +10,10 @@ import { canArchive, isArchived, type PrState, type PullRequestInfo, runPr } fro
 import { attemptsOfRun, reviewsOfRun, tasksOfRun } from '../../app/data';
 import { rpc, useData, useNow, useRun } from '../../app/hooks';
 import { archiveRun, refreshPr } from '../../app/run-actions';
+import { dataStore } from '../../app/store';
 import { Icon } from '../../chrome/icons';
 import { Chip, EngineChip } from '../../chrome/ui';
-import { ENGINE_LABEL, formatCost, formatDuration } from '../../layout/describe';
+import { displayEngine, ENGINE_LABEL, formatCost, formatDuration } from '../../layout/describe';
 import type { TileCardProps, TileProps } from '../../layout/types';
 import { useIntegration } from '../integration';
 import { AutoTextarea, Check, Markdown, openTile, Segmented, useAction } from '../plan/kit';
@@ -83,7 +84,9 @@ function NotYet({ run }: { run: Run }) {
       ok: data.final.length > 0 ? data.final.every((v) => v.exitCode === 0) : null,
     },
     {
-      label: finalizer ? `Final review by ${ENGINE_LABEL[finalizer.engine]}` : 'Final review by the other engine',
+      label: finalizer
+        ? `Final review by ${ENGINE_LABEL[displayEngine(dataStore.getState(), finalizer)]}`
+        : 'Final review by the other engine',
       ok: finalizer?.status === 'succeeded' ? true : null,
     },
     { label: 'Your sign-off: create the draft PR', ok: null },
@@ -154,9 +157,12 @@ function Ready({ run }: { run: Run }) {
   return (
     <div className="lg-col" data-testid="pr-tile">
       <div className="lg-scroll lg-pane">
-        <div className="grid gap-x-8" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(380px, 1fr))' }}>
+        <div
+          className="grid gap-x-8"
+          style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 380px), 1fr))' }}
+        >
           <section className="min-w-0" aria-label="Pull request draft">
-            <div className="lg-sec">
+            <div className="lg-sec flex-wrap gap-y-1.5">
               Pull request
               <span className="lg-sec-aside flex items-center gap-2">
                 {edited ? <span style={{ color: 'var(--peach)' }}>edited</span> : <span>generated</span>}
@@ -194,7 +200,7 @@ function Ready({ run }: { run: Run }) {
                 }}
               />
             ) : (
-              <div className="lg-card px-4 py-3" data-testid="pr-preview">
+              <div className="lg-card lg-pr-preview px-4 py-3" data-testid="pr-preview">
                 <Markdown>{body || '_No description._'}</Markdown>
               </div>
             )}
@@ -204,7 +210,10 @@ function Ready({ run }: { run: Run }) {
               Final review
               <span className="lg-sec-aside flex items-center gap-1.5">
                 {finalizer ? (
-                  <EngineChip engine={finalizer.engine} text={`${ENGINE_LABEL[finalizer.engine]} · base…integration`} />
+                  <EngineChip
+                    engine={displayEngine(dataStore.getState(), finalizer)}
+                    text={`${ENGINE_LABEL[displayEngine(dataStore.getState(), finalizer)]} · base…integration`}
+                  />
                 ) : null}
                 {review ? (
                   <Chip tone={review.verdict === 'approve' ? 'ok' : 'warn'}>{review.verdict.replace('_', ' ')}</Chip>
@@ -232,7 +241,7 @@ function Ready({ run }: { run: Run }) {
                       <FindingCard
                         key={f.key}
                         tracked={f}
-                        reviewer={finalizer?.engine ?? 'codex'}
+                        reviewer={displayEngine(dataStore.getState(), finalizer, 'codex')}
                         task={null}
                         scope={run.id}
                         onOpen={() => openTile(run.id, 'diff', { target: { kind: 'run', runId: run.id } })}
@@ -290,11 +299,15 @@ function Opened({ run, pr }: { run: Run; pr: PullRequestInfo }) {
     useShallow((s) => {
       const tasks = tasksOfRun(s.tasks, run.id);
       const attempts = attemptsOfRun(s.attempts, run.id);
-      const coders = attempts.filter((a) => a.role === 'coder');
+      // Count tasks by the engine that coded them (the planned one in fake mode).
+      const engines = tasks.map((t) => {
+        const coder = attempts.filter((a) => a.taskId === t.id && a.role === 'coder').at(-1) ?? null;
+        return coder ? displayEngine(s, coder) : null;
+      });
       return [
         tasks.filter((t) => t.status === 'merged').length,
-        coders.filter((a) => a.engine === 'claude').length,
-        coders.filter((a) => a.engine === 'codex').length,
+        engines.filter((e) => e === 'claude').length,
+        engines.filter((e) => e === 'codex').length,
         tasks.reduce((n, t) => n + t.fixRounds, 0),
         attempts.reduce((n, a) => n + (a.costUsd ?? 0), 0),
       ] as const;
@@ -318,75 +331,86 @@ function Opened({ run, pr }: { run: Run; pr: PullRequestInfo }) {
           : 'Waiting for review on GitHub.';
   return (
     <div className="lg-col" data-testid="pr-opened" data-pr-state={pr.state}>
-      <div className="lg-scroll flex flex-col items-center justify-center px-6 py-6 text-center">
-        <div className="lg-done-ring lg-rise flex-none" data-state={pr.state}>
-          {pr.state === 'closed' ? (
-            <Icon name="close" size={26} strokeWidth={2.4} />
-          ) : pr.state === 'merged' ? (
-            <Icon name="merge" size={26} strokeWidth={2.2} />
-          ) : (
-            <Icon name="check" size={28} strokeWidth={2.4} />
-          )}
-        </div>
-        <div className="lg-rise mt-5 text-[17px] font-semibold" style={{ animationDelay: '80ms' }}>
-          {headline}
-        </div>
-        <div
-          className="lg-rise muted mt-1 max-w-[380px] text-[12.5px] leading-normal"
-          style={{ animationDelay: '120ms' }}
-        >
-          {run.title}. {note}
-        </div>
-        <div className="lg-rise mono faint mt-3 max-w-full truncate text-[11.5px]" style={{ animationDelay: '160ms' }}>
-          {pr.url}
-        </div>
-        <div className="lg-rise mt-4 flex flex-wrap justify-center gap-2" style={{ animationDelay: '200ms' }}>
-          {archivable ? (
+      <div className="lg-scroll flex flex-col px-6 py-6">
+        {/* my-auto (not justify-center): centred when it fits, scrollable from the top when it doesn't. */}
+        <div className="my-auto flex flex-col items-center text-center">
+          <div className="lg-done-ring lg-rise flex-none" data-state={pr.state}>
+            {pr.state === 'closed' ? (
+              <Icon name="close" size={26} strokeWidth={2.4} />
+            ) : pr.state === 'merged' ? (
+              <Icon name="merge" size={26} strokeWidth={2.2} />
+            ) : (
+              <Icon name="check" size={28} strokeWidth={2.4} />
+            )}
+          </div>
+          <div className="lg-rise mt-5 text-[17px] font-semibold" style={{ animationDelay: '80ms' }}>
+            {headline}
+          </div>
+          <div
+            className="lg-rise muted mt-1 max-w-[380px] text-[12.5px] leading-normal"
+            style={{ animationDelay: '120ms' }}
+          >
+            {run.title}. {note}
+          </div>
+          <div
+            className="lg-rise mono faint mt-3 max-w-full truncate text-[11.5px]"
+            style={{ animationDelay: '160ms' }}
+          >
+            {pr.url}
+          </div>
+          <div className="lg-rise mt-4 flex flex-wrap justify-center gap-2" style={{ animationDelay: '200ms' }}>
+            {archivable && pr.state !== 'open' ? (
+              <button
+                type="button"
+                className="btn btn-primary lg-btn-lg"
+                onClick={() => void archive()}
+                disabled={archiving.pending}
+                data-testid="pr-archive"
+                title="Remove the run's worktrees and hide it from the rail"
+              >
+                <Icon name="archive" size={14} />
+                {archiving.pending ? 'Archiving…' : 'Archive run'}
+              </button>
+            ) : null}
             <button
               type="button"
-              className="btn btn-primary lg-btn-lg"
-              onClick={() => void archive()}
-              disabled={archiving.pending}
-              data-testid="pr-archive"
-              title="Remove the run's worktrees and hide it from the rail"
+              className={archivable && pr.state !== 'open' ? 'btn lg-btn-lg' : 'btn btn-primary lg-btn-lg'}
+              onClick={() => openExternal(pr.url)}
+              data-testid="open-github"
             >
-              <Icon name="archive" size={14} />
-              {archiving.pending ? 'Archiving…' : 'Archive run'}
+              Open on GitHub
+              <Icon name="external" size={13} />
             </button>
-          ) : null}
-          <button
-            type="button"
-            className={archivable ? 'btn lg-btn-lg' : 'btn btn-primary lg-btn-lg'}
-            onClick={() => openExternal(pr.url)}
-            data-testid="open-github"
-          >
-            Open on GitHub
-            <Icon name="external" size={13} />
-          </button>
-          <button
-            type="button"
-            className="btn lg-btn-lg"
-            onClick={() => {
-              void navigator.clipboard?.writeText(pr.url).then(() => setCopied(true));
-              setTimeout(() => setCopied(false), 1600);
-            }}
-          >
-            {copied ? 'Copied' : 'Copy link'}
-          </button>
-        </div>
-        {archiving.error || refreshing.error ? (
-          <div className="mt-2 text-[12px] text-red" role="alert">
-            {archiving.error ?? refreshing.error}
+            <button
+              type="button"
+              className="btn lg-btn-lg"
+              onClick={() => {
+                void navigator.clipboard?.writeText(pr.url).then(() => setCopied(true));
+                setTimeout(() => setCopied(false), 1600);
+              }}
+            >
+              {copied ? 'Copied' : 'Copy link'}
+            </button>
           </div>
-        ) : null}
-        <div
-          className="lg-rise mono faint mt-8 grid gap-x-10 gap-y-2 text-left text-[11.5px]"
-          style={{ animationDelay: '260ms', gridTemplateColumns: 'repeat(4, auto)' }}
-        >
-          <Stat label="tasks merged" value={`${merged}`} />
-          <Stat label="coders" value={`${claude} claude · ${codex} codex`} />
-          <Stat label="fix rounds" value={`${fixes}`} />
-          <Stat label={cost ? 'spent' : 'elapsed'} value={cost ? formatCost(cost) : elapsed} />
+          {archiving.error || refreshing.error ? (
+            <div className="mt-2 text-[12px] text-red" role="alert">
+              {archiving.error ?? refreshing.error}
+            </div>
+          ) : null}
+          <div
+            className="lg-rise mono faint mt-7 flex flex-wrap justify-center gap-x-8 gap-y-3 text-[11.5px]"
+            style={{ animationDelay: '260ms' }}
+          >
+            <Stat label="tasks merged" value={`${merged}`} />
+            <Stat
+              label="coded by"
+              value={
+                [claude ? `${claude} claude` : null, codex ? `${codex} codex` : null].filter(Boolean).join(' · ') || '—'
+              }
+            />
+            <Stat label="fix rounds" value={`${fixes}`} />
+            <Stat label={cost ? 'spent' : 'elapsed'} value={cost ? formatCost(cost) : elapsed} />
+          </div>
         </div>
       </div>
       <div className="lg-foot">
@@ -419,7 +443,7 @@ function Opened({ run, pr }: { run: Run; pr: PullRequestInfo }) {
 
 function Stat({ label, value }: { label: string; value: string }) {
   return (
-    <div className="flex flex-col gap-0.5">
+    <div className="flex flex-col items-center gap-0.5 whitespace-nowrap">
       <span className="text-[13px] text-text">{value}</span>
       <span>{label}</span>
     </div>

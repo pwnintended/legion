@@ -278,6 +278,17 @@ function EngineCard({
           {probing ? 'Detecting…' : 'Detect'}
         </button>
       </div>
+      <Field
+        label="Fallback review model"
+        className="mt-3 max-w-[340px]"
+        mono
+        value={config.fallbackReviewModel ?? ''}
+        placeholder="automatic"
+        suggestions={info?.models}
+        parse={parseModel}
+        onCommit={(fallbackReviewModel) => commit({ engines: { [kind]: { fallbackReviewModel } } })}
+        hint={`Used when ${ENGINE_NAME[kind]} has to review its own coders' work.`}
+      />
       {probeError ? (
         <div className="st-error mt-1.5" role="alert">
           Detection failed: {probeError}

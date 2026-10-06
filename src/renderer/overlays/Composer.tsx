@@ -382,16 +382,22 @@ function RepoStatus({ inspect, error }: { inspect: Inspect; error: string | null
   ].filter(Boolean);
   return (
     <span className="cmp-status" data-testid="repo-status">
-      <span className="tl-ok">
+      <span className="tl-ok flex-none">
         <Icon name="check" size={12} strokeWidth={2.4} />
       </span>
-      <span className="muted">{parts.join(' · ')}</span>
+      <span className="muted min-w-0 truncate" title={parts.join(' · ')}>
+        {parts.join(' · ')}
+      </span>
       {r.hasGh ? (
-        <span className="faint">gh ready</span>
+        <span className="faint flex-none">gh ready</span>
       ) : (
-        <span className="cmp-warn">gh not found: the PR step will need it</span>
+        <span className="cmp-warn flex-none">gh not found: the PR step will need it</span>
       )}
-      {r.dirty ? <span className="faint">uncommitted changes stay untouched (worktrees)</span> : null}
+      {r.dirty ? (
+        <span className="faint flex-none" title="uncommitted changes stay untouched (Legion works in worktrees)">
+          uncommitted changes stay untouched
+        </span>
+      ) : null}
     </span>
   );
 }

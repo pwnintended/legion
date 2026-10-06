@@ -51,7 +51,7 @@ test('session tiles, approvals, composer, inbox, palette, clarify', async () => 
     // Inbox (⌘I) across runs, approvals first; Esc closes and gives focus back to the tile.
     await window.keyboard.press('Meta+i');
     const inbox = window.getByTestId('inbox');
-    await expect(inbox.getByTestId('inbox-item')).toHaveCount(5);
+    await expect(inbox.getByTestId('inbox-item')).toHaveCount(6);
     await expect(inbox.getByTestId('inbox-item').first()).toHaveAttribute('data-kind', 'approval');
     await expect(inbox.getByTestId('inbox-item').first()).toContainText('blocks T5, T6');
     await window.waitForTimeout(450);
@@ -93,7 +93,7 @@ test('session tiles, approvals, composer, inbox, palette, clarify', async () => 
 
     // Inbox again: the approval is gone; j/k move, ⏎ jumps to the item's tile.
     await window.keyboard.press('Meta+i');
-    await expect(inbox.getByTestId('inbox-item')).toHaveCount(4);
+    await expect(inbox.getByTestId('inbox-item')).toHaveCount(5);
     await expect(inbox.getByTestId('inbox-item').first()).toHaveAttribute('data-kind', 'question');
     await window.keyboard.press('j');
     await expect(inbox.getByTestId('inbox-item').nth(1)).toHaveAttribute('aria-selected', 'true');

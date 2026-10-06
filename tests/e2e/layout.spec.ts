@@ -39,13 +39,13 @@ test('demo workspace: strip, keyboard focus/move, layout modes', async () => {
   mkdirSync(shots, { recursive: true });
   const { app, window, home } = await launchDemo();
   try {
-    // Chrome: demo badge, three runs in the rail, the passkeys run active.
+    // Chrome: demo badge, six runs in the rail (an archived seventh is hidden), the passkeys run active.
     await expect(window.getByTestId('titlebar')).toContainText('demo', { timeout: 30_000 });
-    await expect(window.getByTestId('rail-run')).toHaveCount(4);
+    await expect(window.getByTestId('rail-run')).toHaveCount(6);
     await expect(window.getByTestId('titlebar')).toContainText('Add passkey (WebAuthn) login');
     await expect(window.locator('[data-tile-id="session:T2"]')).toBeVisible();
     await expect(window.getByTestId('mode-pill')).toHaveText('NORMAL');
-    await expect(window.getByTestId('needs-you')).toContainText('needs you 5');
+    await expect(window.getByTestId('needs-you')).toContainText('needs you 6');
 
     // Initial layout: plan, thin T1, then live tasks; T3 (approval pending) pulses.
     expect((await columnOrder(window)).slice(0, 4)).toEqual(['col:plan', 'col:task:T1', 'col:task:T2', 'col:task:T3']);

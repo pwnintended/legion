@@ -11,10 +11,11 @@ import { type CommandContext, registerCommands } from '../../app/commands';
 import { openInbox } from '../../app/data';
 import { useActivity, useData, useTask, useTaskNode, useTranscript } from '../../app/hooks';
 import { prefersReducedMotion } from '../../app/prefs';
+import { dataStore } from '../../app/store';
 import { getSync } from '../../app/sync';
 import { Icon } from '../../chrome/icons';
 import { Chip } from '../../chrome/ui';
-import { formatCost, formatTokens } from '../../layout/describe';
+import { displayEngine, formatCost, formatTokens } from '../../layout/describe';
 import { TileActions } from '../../layout/TileFrame';
 import { focusedTile } from '../../layout/tree';
 import type { TileCardProps, TileProps } from '../../layout/types';
@@ -243,13 +244,13 @@ export default function SessionTile({ tileId, runId, params, focused }: TileProp
   );
   const ctx: RowContext = useMemo(
     () => ({
-      engine: attempt?.engine ?? 'claude',
+      engine: displayEngine(dataStore.getState(), attempt),
       running,
       focused,
       approvals,
       onOpenDiff: task ? onOpenDiff : null,
     }),
-    [attempt?.engine, running, focused, approvals, task, onOpenDiff],
+    [attempt, running, focused, approvals, task, onOpenDiff],
   );
 
   const cost = attempt?.costUsd ?? timeline.usage?.costUsd ?? null;
@@ -322,11 +323,13 @@ export default function SessionTile({ tileId, runId, params, focused }: TileProp
                   aria-selected={a.id === attempt.id}
                   className="ss-attempt"
                   onClick={() => setChosen(a.id)}
-                  title={`${a.engine} · ${a.status}`}
+                  title={`${displayEngine(dataStore.getState(), a)} · ${a.status}`}
                 >
                   <span
                     className={`dot${a.status === 'running' ? ' live' : ''}`}
-                    style={{ color: a.engine === 'codex' ? 'var(--teal)' : 'var(--mauve)' }}
+                    style={{
+                      color: displayEngine(dataStore.getState(), a) === 'codex' ? 'var(--teal)' : 'var(--mauve)',
+                    }}
                   />
                   {attemptLabel(a, attempts)}
                 </button>
