@@ -32,6 +32,7 @@ import {
 import { createNodePtySpawn, type PtySpawn, registerTerminalHandlers, type TerminalService } from './pty';
 import { registerCoreHandlers } from './rpc/core';
 import { createEngineRpcServer, type EngineRpcServer } from './rpc/server';
+import { SELFTEST_ENV, selfTest } from './selftest';
 
 export interface StartEngineOptions {
   /** Data directory; the DB lives at `<dataDir>/legion.db`. */
@@ -213,6 +214,12 @@ if (parentPort) {
       consoleLogger.info(
         `ready (pid ${process.pid}, data ${dataDir}${engine.registry.fakeMode ? ', scripted fake engines' : ''})`,
       );
+      if (process.env[SELFTEST_ENV] === '1') {
+        selfTest(engine).then(
+          (summary) => consoleLogger.info(`selftest ok: ${summary}`),
+          (error: unknown) => consoleLogger.error(`selftest failed: ${(error as Error).message}`),
+        );
+      }
     })
     .catch((error: unknown) => {
       console.error('[engine] failed to start', error);
