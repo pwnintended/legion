@@ -1,14 +1,16 @@
 import type { ProcedureName, RpcInput, RpcOutput } from '@shared/rpc';
 import { createContext, type ReactNode, useContext, useEffect, useState, useSyncExternalStore } from 'react';
-import type { ConnectionState, EngineConnection } from './engine-connection';
+import type { ConnectionState } from './engine-connection';
+import type { EngineClient } from './sync';
 
-const EngineContext = createContext<EngineConnection | null>(null);
+const EngineContext = createContext<EngineClient | null>(null);
 
-export function EngineProvider({ connection, children }: { connection: EngineConnection; children: ReactNode }) {
+export function EngineProvider({ connection, children }: { connection: EngineClient; children: ReactNode }) {
   return <EngineContext.Provider value={connection}>{children}</EngineContext.Provider>;
 }
 
-export function useEngine(): EngineConnection {
+/** The engine client: `useEngine().call('tasks.retry', {...})`. Works the same in demo mode. */
+export function useEngine(): EngineClient {
   const connection = useContext(EngineContext);
   if (!connection) throw new Error('useEngine must be used inside <EngineProvider>');
   return connection;
@@ -26,8 +28,8 @@ export type QueryState<T> =
   | { status: 'error'; data: null; error: Error };
 
 /**
- * One-shot RPC query, re-run when `key` changes. Stores built on server events should replace this for
- * live data; it is meant for simple reads like `app.info`.
+ * One-shot RPC query, re-run when `key` changes. Live data belongs in the store (see hooks.ts); this is
+ * meant for simple reads like `app.info` or `diff.get`.
  */
 export function useRpcQuery<P extends ProcedureName>(
   method: P,
