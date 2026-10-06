@@ -204,8 +204,10 @@ file so the bearer token stays out of `ps`), explicit `--setting-sources project
 and `.claude/settings.json`, ignores the user's global hooks/plugins/settings) and `--settings
 '{"autoMemoryEnabled":false}'` (otherwise the agent may write `~/.claude/projects/<cwd>/memory/`). Variables of a
 *parent* Claude Code session (`CLAUDECODE`, `CLAUDE_CODE_SESSION_ID`, …) are stripped from the child env. Codex runs with a
-Legion-owned `CODEX_HOME` (copying only `auth.json`/config the user opts into) or `--ignore-user-config`
-(adapter author verifies which keeps auth working).
+Legion-owned `CODEX_HOME` (`<dataDir>/codex-home`) containing only a **symlink** to the user's `auth.json`
+(codex writes it in place, so token refreshes reach the user's file; `app-server` has no `--ignore-user-config`)
+plus `-c features.hooks=false` etc. Codex threads live in that home, so resume/takeover must use it.
+Details: `src/engine/adapters/codex/README.md`.
 
 Structured output: Claude `--json-schema`, Codex `outputSchema` on `turn/start`. Both are re-validated with
 zod in the engine; a schema failure is a retryable attempt failure.
