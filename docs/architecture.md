@@ -336,7 +336,9 @@ The service applies `core/` decisions with CAS transitions; every flow is re-ent
   the session waits for the next message. **Takeover**: `sessions.takeover` interrupts and closes the adapter
   session, marks the attempt `interrupted` (`error: "taken over by a human"`) and opens a PTY running
   `claude --resume <id>` / `codex resume <id>` (with Legion's `CODEX_HOME`) in the attempt's worktree. When the PTY
-  exits, the adapter session is resumed with a hand-back prompt and the attempt is `running` again. The renderer
+  exits, the adapter session is resumed with a hand-back prompt and the attempt is `running` again, but only while
+  the attempt, its run (not terminal, not archived) and its task are still live, checked before and after the
+  resume; otherwise the resumed process is closed and the attempt is `cancelled`. The renderer
   attaches with `terminals.open({target: {kind: "attempt", attemptId}, terminalId, cols, rows})`.
 - **Diffs**: task = `startSha` → the task worktree including uncommitted and untracked files (staged into a
   throwaway index); once the worktree is gone, `startSha..branch`. Run = `base...integration`.

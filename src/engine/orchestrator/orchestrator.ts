@@ -19,7 +19,7 @@ import type {
   TaskNode,
   TaskStatus,
 } from '@shared/domain';
-import { isTerminal, RUN_TRANSITIONS } from '@shared/domain';
+import { isTerminal, RUN_TRANSITIONS, TASK_TRANSITIONS } from '@shared/domain';
 import { type AgentEngine, type JsonSchema, permissionProfileFor, type SessionOptions } from '@shared/engine';
 import type { AgentEvent } from '@shared/events';
 import type { EngineToMainMessage } from '@shared/host-protocol';
@@ -422,6 +422,7 @@ export class Orchestrator {
       onEvent: (run, event) => this.onAgentEvent(run, event),
       onEnd: (run) => this.onAgentEnd(run),
       onTakeover: (run, taken) => this.onTakeover(run, taken),
+      canHandBack: (run) => this.canHandBack(run),
     };
     const run = new AgentRun(
       { id: attempt.id, runId: attempt.runId, taskId: attempt.taskId, role: attempt.role },
@@ -573,6 +574,14 @@ export class Orchestrator {
       }
     }
     if (this.closed) return;
+    if (run.handBackRefused) {
+      const attempt = this.store.getAttempt(run.attempt.id);
+      if (attempt?.status === 'interrupted') {
+        this.store.transitionAttempt(attempt.id, 'interrupted', 'cancelled', {
+          error: 'the run or task ended during the takeover',
+        });
+      }
+    }
     this.dismissOpen(
       run.attempt.runId,
       (item) =>
@@ -580,6 +589,17 @@ export class Orchestrator {
         (item.kind === 'approval' || (item.kind === 'question' && item.payload.source === 'agent')),
       'the agent session ended',
     );
+  }
+
+  /** A taken-over attempt may resume only while it, its run and its task are still live. */
+  private canHandBack(run: AgentRun): boolean {
+    if (this.closed) return false;
+    const attempt = this.store.getAttempt(run.attempt.id);
+    if (attempt?.status !== 'interrupted') return false;
+    const current = this.store.getRun(run.attempt.runId);
+    if (!current || current.archived || isTerminal(RUN_TRANSITIONS, current.status)) return false;
+    const task = run.attempt.taskId ? this.store.getTask(run.attempt.taskId) : null;
+    return !task || !isTerminal(TASK_TRANSITIONS, task.status);
   }
 
   private onTakeover(run: AgentRun, taken: boolean): void {

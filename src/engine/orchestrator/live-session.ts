@@ -40,6 +40,8 @@ export interface AgentRunHooks {
   onEnd(run: AgentRun): void;
   /** A takeover started (`taken: true`) or the session was resumed after it (`taken: false`). */
   onTakeover(run: AgentRun, taken: boolean): void;
+  /** Whether the attempt may continue after a takeover (its run/task still active). Checked before resuming. */
+  canHandBack(run: AgentRun): boolean;
 }
 
 export interface MarkDone {
@@ -55,6 +57,8 @@ export class AgentRun {
   markDone: MarkDone | null = null;
   lastError: AgentError | null = null;
   ended = false;
+  /** The takeover ended after the run/task was cancelled, archived or finished: not resumed. */
+  handBackRefused = false;
   /** Set while a human interrupt / steer is in progress: the interrupted turn is not a result. */
   humanInterrupt = false;
   private readonly results: TurnResult[] = [];
@@ -170,12 +174,22 @@ export class AgentRun {
     if (takeover && !this.closing) {
       await takeover.promise;
       this.takeover = null;
-      if (!this.closing) {
+      if (!this.closing && !this.hooks.canHandBack(this)) {
+        this.handBackRefused = true;
+        this.lastError = { message: 'the run or task ended during the takeover', retryable: false };
+      } else if (!this.closing) {
         try {
-          this.session = await this.engine.resume(session.id, { ...this.opts, prompt: HANDBACK_PROMPT });
-          this.hooks.onTakeover(this, false);
-          void this.pump(this.session);
-          return;
+          const resumed = await this.engine.resume(session.id, { ...this.opts, prompt: HANDBACK_PROMPT });
+          if (this.closing || !this.hooks.canHandBack(this)) {
+            // Cancelled / archived while the resume was in flight: never let the hand-back turn run.
+            this.handBackRefused = !this.closing;
+            await resumed.close().catch(() => undefined);
+          } else {
+            this.session = resumed;
+            this.hooks.onTakeover(this, false);
+            void this.pump(this.session);
+            return;
+          }
         } catch (error) {
           this.lastError = { message: `could not resume after takeover: ${(error as Error).message}`, retryable: true };
         }
