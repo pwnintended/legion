@@ -7,7 +7,7 @@
  */
 import { createStore } from 'zustand/vanilla';
 import { describeTile, itemTargetsTile, tileTaskId } from '../layout/describe';
-import { loadLayout, saveLayout } from '../layout/persist';
+import { clearLayout, loadLayout, saveLayout } from '../layout/persist';
 import { type RunLayoutInput, syncWithRun } from '../layout/sync';
 import { allTiles, focusTile, type LayoutMode, type Workspace } from '../layout/tree';
 import { type DataState, initialData, latestPlan, openInbox, selectRunList, tasksOfRun } from './data';
@@ -130,17 +130,31 @@ function scheduleSave(runId: string): void {
   }, 400);
 }
 
-/** Bring the active run's layout up to date with its data. */
+/**
+ * Bring the active run's layout up to date with its data. Runs inside the data store's subscription, so it
+ * must never throw: a layout the ops can't handle is discarded and re-derived from the run.
+ */
 export function syncActiveLayout(): void {
   const { activeRunId, layouts } = uiStore.getState();
   if (!activeRunId) return;
-  const input = runLayoutInput(dataStore.getState(), activeRunId);
-  if (!input) return;
-  const current = layouts[activeRunId] ?? loadLayout(activeRunId);
-  const next = syncWithRun(current, input);
-  if (next === layouts[activeRunId]) return;
-  uiStore.setState({ layouts: { ...layouts, [activeRunId]: next } });
-  scheduleSave(activeRunId);
+  try {
+    const input = runLayoutInput(dataStore.getState(), activeRunId);
+    if (!input) return;
+    const current = layouts[activeRunId] ?? loadLayout(activeRunId);
+    let next: Workspace;
+    try {
+      next = syncWithRun(current, input);
+    } catch (error) {
+      console.error(`[legion] layout of ${activeRunId} is unusable; rebuilding it`, error);
+      clearLayout(activeRunId);
+      next = syncWithRun(null, input);
+    }
+    if (next === layouts[activeRunId]) return;
+    uiStore.setState({ layouts: { ...uiStore.getState().layouts, [activeRunId]: next } });
+    scheduleSave(activeRunId);
+  } catch (error) {
+    console.error('[legion] layout sync failed', error);
+  }
 }
 
 /** Pick a run when none (or a vanished one) is active. */
