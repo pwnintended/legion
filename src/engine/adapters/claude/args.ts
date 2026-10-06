@@ -5,6 +5,7 @@
  * settings from the transcript.
  */
 import type { McpConnection, PermissionProfile, SessionOptions } from '@shared/engine';
+import { hasShellMeta } from '../../util/shell';
 
 /** Name of the Legion MCP server inside `--mcp-config`; its tools are `mcp__legion__<tool>`. */
 export const LEGION_MCP_SERVER = 'legion';
@@ -47,11 +48,15 @@ export const ALWAYS_DENIED: readonly string[] = [
 /** Tools a read-only session must not even see (removed from the model's context). */
 export const READ_ONLY_DENIED: readonly string[] = [...EDIT_TOOLS, 'AskUserQuestion', 'EnterPlanMode', 'ExitPlanMode'];
 
-/** `Bash(cmd)` + `Bash(cmd *)`: the exact command and the command with arguments. */
+/**
+ * `Bash(cmd)` + `Bash(cmd *)`: the exact command and the command with arguments (the CLI's matcher is
+ * operator-aware, so `Bash(cmd *)` never covers `cmd && other`). A command that itself contains shell
+ * syntax only gets its exact rule, the same strictness as the Codex pre-approval (`util/shell.ts`).
+ */
 export function bashRules(command: string): string[] {
   const trimmed = command.trim();
   if (trimmed.length === 0) return [];
-  return [`Bash(${trimmed})`, `Bash(${trimmed} *)`];
+  return hasShellMeta(trimmed) ? [`Bash(${trimmed})`] : [`Bash(${trimmed})`, `Bash(${trimmed} *)`];
 }
 
 export interface PermissionArgs {

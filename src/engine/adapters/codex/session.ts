@@ -266,10 +266,7 @@ export class CodexSession implements AgentSession {
     if (APPROVAL_METHODS.has(request.method)) {
       if (
         request.method === 'item/commandExecution/requestApproval' &&
-        isPreapproved(
-          (request.params.commandActions ?? []).map((action) => action.command),
-          this.opts.permission.allowedCommands,
-        )
+        isPreapproved(request.params, this.opts.permission.allowedCommands)
       ) {
         return { decision: 'accept' };
       }

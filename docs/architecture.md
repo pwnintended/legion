@@ -203,6 +203,13 @@ scheduling tools (Cron*, ScheduleWakeup, RemoteTrigger, PushNotification). Appro
 `AskUserQuestion`/`ExitPlanMode` from a coder arrive as ordinary `approval_request`s (answer AskUserQuestion with
 `updatedInput: {questions, answers}`); planners never see them.
 
+Auto-allow is strict on both engines (`engine/util/shell.ts`): a command is covered only when it is exactly an
+allowed verify command, or that command followed by plain arguments without shell syntax (`;&|$\`(){}<>*?!~#^[]`,
+quotes, backslashes, newlines). Codex: Legion answers `requestApproval` itself only for `kind: command` requests
+without `additionalPermissions` or network context whose real `command` (the `<shell> -lc '<script>'` wrapper is
+unwrapped; the display-only `commandActions` are ignored) matches; everything else goes to the inbox. Claude: a
+verify command containing shell syntax gets only its exact `Bash(<cmd>)` rule, no `Bash(<cmd> *)`.
+
 Config isolation: Claude runs with `--strict-mcp-config --mcp-config <legion only>` (written to a 0600 temp
 file so the bearer token stays out of `ps`), explicit `--setting-sources project` (keeps the repo's CLAUDE.md
 and `.claude/settings.json`, ignores the user's global hooks/plugins/settings) and `--settings
