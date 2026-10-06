@@ -6,6 +6,7 @@ import { basename } from 'node:path';
 import {
   type InboxItem,
   type Plan,
+  type PlanAnnotation,
   type PlanDag,
   type QuestionAnswer,
   REAL_ENGINE_KINDS,
@@ -33,6 +34,7 @@ import {
   buildPlanPrompt,
   enabledEngines,
   maxAttempts,
+  noteTag,
   type PlanPromptInput,
   type ValidateOptions,
   type ValidationResult,
@@ -330,6 +332,16 @@ export function storePlanVersion(
   });
 }
 
+/** Node pairs whose write overlap a human accepted (`[overlap_accepted]` notes left by `undoAutoEdge`). */
+export function acceptedOverlaps(annotations: readonly PlanAnnotation[]): [string, string][] {
+  const out: [string, string][] = [];
+  for (const a of annotations) {
+    const [x, y] = a.nodeIds;
+    if (x !== undefined && y !== undefined && noteTag(a) === 'overlap_accepted') out.push([x, y]);
+  }
+  return out;
+}
+
 function latestPlanOrConflict(o: Orchestrator, run: Run, planId: string): Plan {
   if (run.status !== 'awaiting_approval') {
     throw new RpcError('conflict', `run ${run.id} is ${run.status}, not awaiting_approval`);
@@ -352,11 +364,19 @@ function validationError(result: ValidationResult): RpcError {
   );
 }
 
-/** Human edit (`runs.updatePlan`): validate and store a new version (source `user`). */
+/**
+ * Human edit (`runs.updatePlan`): validate and store a new version (source `user`). The client's
+ * annotations (when sent) carry its DAG decisions: accepted overlaps (undone auto edges) stay unserialized.
+ */
 export async function updatePlan(o: Orchestrator, input: RpcInput<'runs.updatePlan'>): Promise<Plan> {
   const run = o.store.requireRun(input.runId);
   const base = latestPlanOrConflict(o, run, input.basePlanId);
-  const result = validatePlan({ nodes: input.nodes, annotations: base.dag.annotations }, await validateOptions(o, run));
+  const annotations = input.annotations ?? base.dag.annotations;
+  const options = await validateOptions(o, run);
+  const result = validatePlan(
+    { nodes: input.nodes, annotations },
+    { ...options, acceptedOverlaps: acceptedOverlaps(annotations) },
+  );
   if (!result.ok) throw validationError(result);
   return storePlanVersion(o, run.id, { markdown: input.markdown, dag: result.dag, source: 'user', feedback: null });
 }

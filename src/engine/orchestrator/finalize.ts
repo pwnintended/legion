@@ -3,7 +3,14 @@
  * finalizing (holistic review on the engine other than the coders' majority; blockers → inbox) →
  * pr_ready (inbox item with the PR text) → `runs.createPr` (push + draft PR through the `PrHost`) → done.
  */
-import { isTerminal, type Review, type ReviewFinding, RUN_TRANSITIONS, type Run } from '@shared/domain';
+import {
+  isTerminal,
+  type PullRequest,
+  type Review,
+  type ReviewFinding,
+  RUN_TRANSITIONS,
+  type Run,
+} from '@shared/domain';
 import { RpcError } from '@shared/rpc-transport';
 import { ReviewOutputSchema, reviewOutputJsonSchema } from '@shared/schemas';
 import { gitText, restoreGcAuto } from '../git';
@@ -11,7 +18,6 @@ import {
   buildFinalizerPrompt,
   buildPrBody,
   coderEngineFor,
-  enabledEngines,
   finalizerEngineFor,
   maxAttempts,
   type PrText,
@@ -22,7 +28,7 @@ import {
 import type { AgentRun } from './live-session';
 import { runMeta, taskMeta } from './meta';
 import { AgentFailure, Closed, type Orchestrator } from './orchestrator';
-import { planSummary } from './tasks';
+import { coderModelOf, planSummary } from './tasks';
 import { ensureIntegrationWorktree, provisionIntegration, runVerification } from './worktrees';
 
 export async function finalize(o: Orchestrator, runId: string): Promise<void> {
@@ -124,10 +130,15 @@ async function finalReview(o: Orchestrator, run: Run): Promise<Review | null> {
   const nodes = o.approvedNodes(run.id);
   const byNode = new Map(tasks.map((t) => [t.nodeId, t]));
   const merged = nodes.filter((n) => byNode.get(n.id)?.status === 'merged');
-  const engine = finalizerEngineFor(
-    merged.map((n) => coderEngineFor(n, byNode.get(n.id))),
-    enabledEngines(settings),
-  );
+  const coders = merged.map((n) => coderEngineFor(n, byNode.get(n.id)));
+  const engine = finalizerEngineFor(coders, o.availableEngines());
+  // Same engine as (some of) the coders when the other one is unavailable: review with a different model.
+  const sameEngineCoder = merged.find((n) => coderEngineFor(n, byNode.get(n.id)) === engine);
+  const sameEngineTask = sameEngineCoder ? byNode.get(sameEngineCoder.id) : undefined;
+  const model =
+    sameEngineCoder && sameEngineTask
+      ? o.reviewModel('finalizer', engine, engine, coderModelOf(o, sameEngineTask, sameEngineCoder))
+      : o.modelFor('finalizer', engine);
   const integration = await ensureIntegrationWorktree(o, run);
   const base = runMeta(o.store, run.id).baseSha ?? run.baseRef;
   const [diffStat, diff] = await Promise.all([
@@ -164,7 +175,7 @@ async function finalReview(o: Orchestrator, run: Run): Promise<Review | null> {
         taskId: null,
         role: 'finalizer',
         engine,
-        model: o.modelFor('finalizer', engine),
+        model,
         effort: settings.roles.finalizer.effort,
         prompt,
         outputSchema: reviewOutputJsonSchema,
@@ -207,8 +218,7 @@ async function finalReview(o: Orchestrator, run: Run): Promise<Review | null> {
 
 /** PR title and body from the run's data (§8 step 8). */
 export function prText(o: Orchestrator, run: Run): PrText {
-  const settings = o.settings();
-  const enabled = enabledEngines(settings);
+  const enabled = o.availableEngines();
   const nodes = o.approvedNodes(run.id);
   const tasks = new Map(o.store.listTasks(run.id).map((t) => [t.nodeId, t]));
   const reviews = o.store.listReviews(run.id);
@@ -275,7 +285,8 @@ export function enterPrReady(o: Orchestrator, runId: string): Run {
   });
 }
 
-const prInFlight = new Set<string>();
+/** Runs with a `runs.createPr` in flight (archive and refresh wait for it to settle). */
+export const prInFlight = new Set<string>();
 
 /** Human PR gate (`runs.createPr` / approving the `pr_ready` item): push + draft PR → done. */
 export async function createPr(
@@ -296,23 +307,22 @@ export async function createPr(
     const text = item ? item.payload : prText(o, run);
     const finalTitle = title?.trim() || text.title;
     const finalBody = body ?? text.body;
-    let url: string;
+    let pr: PullRequest;
     try {
       await o.prHost.push(run.repoPath, run.integrationBranch);
-      url = (
-        await o.prHost.createDraftPr({
-          repoPath: run.repoPath,
-          base: run.baseRef,
-          head: run.integrationBranch,
-          title: finalTitle,
-          body: finalBody,
-        })
-      ).url;
+      pr = await o.prHost.createDraftPr({
+        repoPath: run.repoPath,
+        base: run.baseRef,
+        head: run.integrationBranch,
+        title: finalTitle,
+        body: finalBody,
+      });
     } catch (error) {
       throw new RpcError('failed_precondition', `could not create the pull request: ${(error as Error).message}`);
     }
+    const url = pr.url;
     const done = o.store.transaction(() => {
-      o.store.updateRun(runId, { prUrl: url });
+      o.store.updateRun(runId, { prUrl: url, pr });
       if (item) {
         o.store.resolveInboxItem(item.id, { kind: 'pr_ready', approved: true, title: finalTitle, body: finalBody });
       }

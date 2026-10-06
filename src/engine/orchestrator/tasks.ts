@@ -33,7 +33,6 @@ import {
   decideAfterFailure,
   decideAfterReview,
   decideAfterVerify,
-  enabledEngines,
   type Failure,
   markdownSection,
   reviewerEngineFor,
@@ -157,6 +156,15 @@ function attemptNumber(o: Orchestrator, task: Task): number {
   );
   const current = taskMeta(o.store, task.id).coderSessionId;
   return Math.max(1, task.attemptCount, sessions.size + (current && sessions.has(current) ? 0 : 1));
+}
+
+/** The model the task's coder actually ran (latest coder attempt), else the configured one. */
+export function coderModelOf(o: Orchestrator, task: Task, node: TaskNode): string | null {
+  const attempt = o.store
+    .listAttempts(task.runId)
+    .filter((a) => a.taskId === task.id && a.role === 'coder')
+    .at(-1);
+  return attempt?.model ?? task.modelOverride ?? node.agent.model ?? null;
 }
 
 function lastCoderAttemptId(o: Orchestrator, task: Task): string | null {
@@ -369,6 +377,7 @@ async function code(o: Orchestrator, run: Run, task: Task, mode: 'coder' | 'fixe
     patchTaskMeta(o.store, task.id, {
       report: { status: report.status, summary: report.summary, commitMessage: report.commitMessage },
     });
+    o.store.updateTask(task.id, { report: { summary: report.summary, commitMessage: report.commitMessage } });
   }
   if (report?.status === 'done') await commitAll(worktree, report.commitMessage.trim() || `${node.id}: ${node.title}`);
   o.assertOpen();
@@ -426,7 +435,7 @@ async function review(o: Orchestrator, run: Run, task: Task): Promise<Step> {
   const node = o.nodeOf(task);
   const settings = o.settings();
   const coderEngine = coderEngineFor(node, task);
-  const engine = reviewerEngineFor(coderEngine, enabledEngines(settings));
+  const engine = reviewerEngineFor(coderEngine, o.availableEngines());
   const gate = o.gate(run.id, engine);
   if (gate) return park(o, task, gate);
   const worktree = task.worktreePath as string;
@@ -459,7 +468,7 @@ async function review(o: Orchestrator, run: Run, task: Task): Promise<Step> {
       taskId: task.id,
       role: 'reviewer',
       engine,
-      model: o.modelFor('reviewer', engine),
+      model: o.reviewModel('reviewer', engine, coderEngine, coderModelOf(o, task, node)),
       effort: settings.roles.reviewer.effort,
       prompt,
       outputSchema: reviewOutputJsonSchema,

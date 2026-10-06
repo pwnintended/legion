@@ -29,7 +29,9 @@ export function registerCoreHandlers(server: EngineRpcServer, ctx: EngineContext
   server.implement('settings.get', () => ctx.store.getSettings());
   server.implement('settings.set', (patch) => ctx.store.updateSettings(patch));
 
-  server.implement('runs.list', () => ctx.store.listRunSummaries());
+  server.implement('runs.list', ({ includeArchived }) =>
+    ctx.store.listRunSummaries({ includeArchived: includeArchived ?? false }),
+  );
 
   server.implement('repos.recent', () => ctx.store.listRecentRepos());
   server.implement('repos.inspect', async ({ path }) => {

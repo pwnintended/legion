@@ -2,6 +2,10 @@
  * The scripted agent used in fake-engine mode (`LEGION_FAKE_ENGINES=1`): plausible, role-aware behaviour
  * so the whole pipeline (clarify → plan → coders → review → merge → PR) can be demoed without real CLIs.
  * It reads what it needs from the prompts Legion builds (task ids, touches, criteria).
+ *
+ * One run exercises every human touch point once: one clarify question, a 3-task plan (T2 depends on T1),
+ * one tool approval (T3's coder asks to run a linter), one review with a major finding (T2's first review)
+ * that the fix round resolves (the re-review approves), then the PR gate.
  */
 import type { PlanOutput, ReviewOutput, TaskReport } from '@shared/schemas';
 import type { FakeScript, FakeStep } from '../adapters/fake';
@@ -88,6 +92,16 @@ export function taskIdIn(prompt: string): string {
   return /\btask (T\d+)/.exec(prompt)?.[1] ?? 'T?';
 }
 
+/** The task whose first review asks for changes (major finding), and the one whose coder asks for approval. */
+export const DEMO_FIX_TASK = 'T2';
+export const DEMO_APPROVAL_TASK = 'T3';
+const DEMO_FINDING_TITLE = 'The feature doc has no usage example';
+
+/** First file named by a finding in a fixer prompt (`— \`path:line\``). */
+function findingFile(prompt: string): string | null {
+  return /— `([^`:]+)(?::\d+)?`/.exec(prompt)?.[1] ?? null;
+}
+
 const usage = (cost: number): FakeStep => ({
   kind: 'usage',
   inputTokens: Math.round(cost * 400_000),
@@ -125,9 +139,46 @@ export const demoScript: FakeScript = (ctx) => {
       { kind: 'output', value: DEMO_PLAN },
     ];
   }
+  if (role === 'coder' && ctx.message.startsWith('Fix round')) {
+    const id = taskIdIn(ctx.message);
+    const path = findingFile(ctx.message) ?? firstWriteTouch(ctx.message) ?? `legion-demo/${id}.md`;
+    const report: TaskReport = {
+      status: 'done',
+      summary: `Addressed the review of ${id}: added a usage example to \`${path}\`.`,
+      commitMessage: `Implement ${id}`,
+      criteria: criterionIds(ctx.message).map((cid) => ({ id: cid, status: 'met', evidence: `${path} updated` })),
+      notes: null,
+    };
+    return [
+      { kind: 'text', text: `Fixing the review findings of ${id}.` },
+      {
+        kind: 'write_file',
+        path,
+        content: `# ${id}\n\nWritten by the scripted demo coder.\n\n## Usage\n\n    legion-demo --example\n`,
+      },
+      usage(0.04),
+      { kind: 'output', value: report },
+    ];
+  }
   if (role === 'coder' || role === 'resolver') {
     const id = taskIdIn(ctx.message);
     const path = firstWriteTouch(ctx.message) ?? `legion-demo/${id}.md`;
+    const lint = `npx markdownlint-cli2 ${path}`;
+    const approval: FakeStep[] =
+      role === 'coder' && id === DEMO_APPROVAL_TASK && !ctx.resumed
+        ? [
+            {
+              kind: 'approval',
+              tool: 'Bash',
+              input: { command: lint, description: 'Lint the new documentation' },
+              reason: `Run ${lint} (not one of the task's verify commands)`,
+              requestId: `demo-approval-${id}`,
+              onAllow: [
+                { kind: 'tool', name: 'Bash', toolKind: 'command', input: { command: lint }, output: '0 error(s)' },
+              ],
+            },
+          ]
+        : [];
     const report: TaskReport = {
       status: 'done',
       summary: `Implemented ${id} by writing \`${path}\`.`,
@@ -145,9 +196,34 @@ export const demoScript: FakeScript = (ctx) => {
       ...(role === 'coder'
         ? ([{ kind: 'write_file', path, content: `# ${id}\n\nWritten by the scripted demo coder.\n` }] as FakeStep[])
         : []),
+      ...approval,
       { kind: 'tool', name: 'Bash', toolKind: 'command', input: { command: 'test -f' }, output: '' },
       usage(0.08),
       { kind: 'output', value: report },
+    ];
+  }
+  const reviewed = taskIdIn(ctx.message);
+  if (role === 'reviewer' && reviewed === DEMO_FIX_TASK && !ctx.message.includes('Re-review after fix round')) {
+    const changes: ReviewOutput = {
+      verdict: 'request_changes',
+      criteria: criterionIds(ctx.message).map((cid) => ({ id: cid, status: 'met', evidence: 'The file exists.' })),
+      findings: [
+        {
+          severity: 'major',
+          file: 'legion-demo/feature.md',
+          line: 1,
+          title: DEMO_FINDING_TITLE,
+          body: 'Callers have nothing to copy from; the feature is unusable without reading the code.',
+          suggestedFix: 'Add a short "Usage" section with one example invocation.',
+        },
+      ],
+      summary: 'The feature is in place but undocumented for callers. One major finding; a fix round should do.',
+    };
+    return [
+      { kind: 'text', text: 'Reviewing the diff.' },
+      { kind: 'tool', name: 'Bash', toolKind: 'command', input: { command: 'git diff' }, output: '' },
+      usage(0.03),
+      { kind: 'output', value: changes },
     ];
   }
   const review: ReviewOutput = {

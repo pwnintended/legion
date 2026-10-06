@@ -11,6 +11,7 @@ import {
   setTaskEngine,
   skipTask,
 } from './actions';
+import { archiveRun, refreshPr } from './cleanup';
 import { getDiff } from './diff';
 import { createPr } from './finalize';
 import type { Orchestrator } from './orchestrator';
@@ -35,6 +36,8 @@ export function registerOrchestratorHandlers(server: EngineRpcServer, o: Orchest
   server.implement('runs.resume', ({ runId }) => resumeRun(o, runId));
   server.implement('runs.cancel', ({ runId }) => cancelRun(o, runId));
   server.implement('runs.createPr', ({ runId, title, body }) => createPr(o, runId, title, body));
+  server.implement('runs.refreshPr', ({ runId }) => refreshPr(o, runId));
+  server.implement('runs.archive', ({ runId }) => archiveRun(o, runId));
 
   server.implement('tasks.retry', ({ taskId, note }) => retryTask(o, taskId, note));
   server.implement('tasks.skip', ({ taskId }) => skipTask(o, taskId));

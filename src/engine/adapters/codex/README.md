@@ -45,8 +45,9 @@ await codex.resume(threadId, opts);        // thread/resume (same codexHome!) + 
 - Commands whose `commandActions` all match `permission.allowedCommands` (exact or `prefix + ' '`) are
   accepted without asking.
 - MCP: thread `config.mcp_servers.legion = {url, bearer_token_env_var:'LEGION_MCP_TOKEN',
-  default_tools_approval_mode:'approve'}` works inline on `thread/start` (no `-c` needed); the token is set
-  only in the child env.
+  default_tools_approval_mode:'approve', tool_timeout_sec: 86400}` works inline on `thread/start` (no `-c`
+  needed); the token is set only in the child env. The 24 h tool timeout lets `request_human_input` block
+  until a human answers (the server never times out; Claude gets the same via `MCP_TOOL_TIMEOUT`).
 
 ## Config isolation
 

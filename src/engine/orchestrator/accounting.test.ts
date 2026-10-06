@@ -165,6 +165,14 @@ describe('fake-engine demo mode', () => {
         itemId: signoff.id,
         resolution: { kind: 'plan_signoff', approved: true, feedback: null },
       });
+      // The demo's one tool approval (see demo.test.ts for the whole script).
+      const approval = await waitFor(() =>
+        engine.store.listInbox({ runId: run.id, includeResolved: false }).find((i) => i.kind === 'approval'),
+      );
+      await client.call('inbox.resolve', {
+        itemId: approval.id,
+        resolution: { kind: 'approval', decision: { behavior: 'allow', scope: 'once', updatedInput: null } },
+      });
       const prReady = await waitFor(() =>
         engine.store.listInbox({ runId: run.id, includeResolved: false }).find((i) => i.kind === 'pr_ready'),
       );
@@ -202,7 +210,10 @@ describe('engine registry', () => {
     expect(registry.usable('claude')).toEqual({ ok: true });
     await registry.probe('claude');
     expect(registry.usable('claude')).toEqual({ ok: false, reason: 'not logged in' });
-    settings = { ...DEFAULT_SETTINGS, engines: { ...DEFAULT_SETTINGS.engines, codex: { enabled: false, path: null } } };
+    settings = {
+      ...DEFAULT_SETTINGS,
+      engines: { ...DEFAULT_SETTINGS.engines, codex: { ...DEFAULT_SETTINGS.engines.codex, enabled: false } },
+    };
     expect(registry.usable('codex')).toEqual({ ok: true }); // a fake stands in: settings do not disable it
     expect(registry.isFake('codex')).toBe(true);
     expect((await registry.list()).map((i) => i.kind)).toEqual(['claude', 'codex']);
