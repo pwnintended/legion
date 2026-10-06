@@ -124,7 +124,8 @@ Do not add dependencies outside your task. If you need one, say so in your repor
 
 ```
 Run        id, repoPath, baseRef, title, issueText, issueUrl?, status, paused, plannerEngine, plannerModel?,
-           integrationBranch?, prUrl?, error?, createdAt, updatedAt
+           integrationBranch?, prUrl?, pr? {url, number, state: open|closed|merged, isDraft}, archived,
+           error?, createdAt, updatedAt
            status: draft → clarifying → planning → awaiting_approval → executing → integrating
                    → finalizing → pr_ready → done | failed | cancelled   (+ paused flag)
 Plan       id, runId, version, markdown, dag (PlanDag = {nodes, annotations}), source (agent|user), feedback?,
@@ -133,7 +134,7 @@ TaskNode   (inside PlanDag) id "T1".., title, goal, kind (contracts|feature|test
            dependsOn[], acceptanceCriteria[{id,text}], touches[{glob, mode: create|modify|read}],
            size S|M|L, verify{commands[]}, contextHints{files[],notes}, agent{engine, model?, effort?}, risk low|med|high
 Task       runtime row per node: runId, nodeId, status, branch, worktreePath, startSha, attemptCount, fixRounds,
-           mergedSha?, engine/model/effortOverride?, progress?, error?
+           mergedSha?, engine/model/effortOverride?, progress?, report? {summary, commitMessage}, error?
            status: blocked → queued → provisioning → running → verifying → reviewing → fixing
                    → approved → awaiting_human → merging → merged | failed | skipped | cancelled
 Attempt    id, taskId?, runId, role (planner|coder|reviewer|resolver|finalizer), engine, model,
@@ -150,7 +151,9 @@ Verification id, runId, taskId?, attemptId?, phase (setup|task|post_merge|final)
 Event      seq (global, monotonic), runId?, taskId?, attemptId?, ts, type, payload  — append-only
 ```
 
-`?` fields are `null` when absent (never `undefined`), timestamps are epoch ms. The allowed status changes are
+`?` fields are `null` when absent (never `undefined`), timestamps are epoch ms. `Run.pr`, `Run.archived` and
+`Task.report` (migration 002) are optional in the TS types only so older event-log payloads and fixtures stay
+valid; the engine always sets them. The allowed status changes are
 data (`RUN_TRANSITIONS`, `TASK_TRANSITIONS`, `ATTEMPT_TRANSITIONS` in `shared/domain.ts`).
 
 Status changes go through one function per entity that does compare-and-set (`UPDATE … WHERE status = ?`)
@@ -270,7 +273,10 @@ relies on this); when both exist the structured report wins.
    over `base...integration`; blocker findings → inbox.
 8. **PR**: `git push -u origin legion/<run>/integration`, `gh pr create --draft --base <base> --title … --body-file …`.
    Body: issue link, plan summary, task table (engine, reviewer verdict), verification, minor findings, run id.
-9. **Cleanup** on PR merge/close or user action: remove worktrees, delete local task branches.
+9. **Cleanup** (`runs.archive`, also run automatically when the PR is merged or closed): cancel the run if still
+   active, close its sessions and takeover terminals, remove the task worktrees and local task branches and the
+   integration worktree (the integration branch stays while the PR is open), restore `gc.auto`, set
+   `archived: true` (hidden from `runs.list` unless `includeArchived`). Idempotent.
 
 ### 8.1 Lifecycle service (`engine/orchestrator/`)
 
@@ -330,6 +336,21 @@ The service applies `core/` decisions with CAS transitions; every flow is re-ent
   `run:<id>` / `task:<id>`.
 - **Host messages**: `notify` for every new inbox item (main decides about focus), `badge` = open inbox items,
   `power` = any agent process alive.
+- **Plan edits**: `runs.updatePlan` takes the DAG's `annotations` from the client; an `[overlap_accepted]` note
+  (left by `undoAutoEdge`) keeps that pair unserialized on re-validation. Without `annotations` the base version's
+  are used.
+- **Same-engine review**: reviewers and the finalizer use the other engine when it is *available* (enabled and
+  usable per the last probe); otherwise the coder's engine with a different model:
+  `settings.engines.<kind>.fallbackReviewModel` (claude `opus`, codex `null`) unless the coder ran that model, then
+  the Claude sibling (opus ↔ sonnet) or another model from the engine's probe (`core/engines.ts`).
+- **PR status** (`cleanup.ts`): `runs.createPr` stores `run.pr`; `runs.refreshPr` and a 3-minute poll of open PRs
+  read it again through the `PrHost` (`gh pr view`). A merged or closed PR moves a still-open run to `done` and
+  archives it (§8 step 9). The coder's final report is copied to `task.report` (cleared when a fresh attempt starts).
+- **Settings**: `settings.updated` rebuilds an engine whose binary path changed (`EngineRegistry.reconfigure`, then
+  a re-probe); live sessions keep their instance. Models, effort and `enabled` are read at each session start.
+- **Fake mode**: the demo script (`demo.ts`) hits every human touch point once: one clarify question, a 3-task plan
+  (T2 after T1), a tool approval (T3's coder), a major review finding on T2 fixed in the next round, the PR gate. The
+  PR host is `FakePrHost({ push: false })`: nothing is pushed, GitHub is never called.
 
 ## 9. Git & filesystem conventions
 
@@ -392,6 +413,9 @@ re-attaches the transferred port to a live terminal (a detached shell, or the te
   FakePrHost()` and `ptySpawn` for terminals. `orchestrator/test-harness.ts` sets all of that up on a temp repo with a
   bare `origin`.
 - Demo the app without real CLIs: `LEGION_FAKE_ENGINES=1 pnpm dev` (any repo; the PR step never pushes).
+- Test hooks: `LEGION_E2E_PICK_DIR=<path>` makes main answer the folder dialog with that path (Playwright cannot
+  drive native dialogs); `LEGION_SELFTEST=1` makes the engine spawn a PTY and query node:sqlite after start and log
+  `selftest ok …` (`pnpm test:packaged` uses it on the packaged app).
 
 - `pnpm typecheck`, `pnpm lint`, `pnpm test` must pass before you report done. Add tests for logic you write.
 - Never run real `claude`/`codex` sessions in the default test suite. Live tests live under

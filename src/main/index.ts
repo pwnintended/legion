@@ -79,6 +79,9 @@ async function main(): Promise<void> {
 
   ipcMain.on(IPC.requestEnginePort, (event) => supervisor.attach(event.sender));
   ipcMain.handle(IPC.pickDirectory, async (event, options: { title?: string; defaultPath?: string } = {}) => {
+    // Test hook (Playwright can't drive the native dialog): answer with this path instead.
+    const e2ePick = process.env.LEGION_E2E_PICK_DIR;
+    if (e2ePick) return e2ePick;
     const window = BrowserWindow.fromWebContents(event.sender);
     const dialogOptions: Electron.OpenDialogOptions = {
       title: options.title ?? 'Choose a repository',

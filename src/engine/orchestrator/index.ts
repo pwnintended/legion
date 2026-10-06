@@ -3,12 +3,14 @@
  * (`engine/index.ts`) adds the MCP server, terminals, RPC handlers and recovery. See README.md.
  */
 import type { PtyProcess, PtySpawn } from '../pty';
+import { PR_POLL_MS, startPrPolling } from './cleanup';
 import { finalize } from './finalize';
 import { mergeQueue } from './merge';
 import { Orchestrator, type OrchestratorOptions } from './orchestrator';
 import { driveTask } from './tasks';
 
 export * from './actions';
+export { archiveRun, PR_POLL_MS, refreshPr, startPrPolling } from './cleanup';
 export { DEMO_PLAN, demoScript } from './demo';
 export { getDiff } from './diff';
 export { createPr, enterPrReady, prText } from './finalize';
@@ -25,7 +27,7 @@ export {
   RATE_LIMIT_PAUSE_PCT,
 } from './orchestrator';
 export * from './planner';
-export { type DraftPrRequest, FakePrHost, ghPrHost, type PrHost } from './pr-host';
+export { type DraftPrRequest, FakePrHost, ghPrHost, type PrHost, prNumberOf } from './pr-host';
 export { recover } from './recovery';
 export { EngineRegistry, type EngineRegistryOptions, FAKE_ENGINES_ENV } from './registry';
 export { attemptTerminal, resolveAttemptTerminal, takeover } from './sessions';
@@ -37,6 +39,8 @@ export function createOrchestrator(options: OrchestratorOptions): Orchestrator {
     mergeQueue: (runId) => mergeQueue(o, runId),
     finalize: (runId) => finalize(o, runId),
   };
+  const pollMs = options.prPollMs ?? PR_POLL_MS;
+  if (pollMs > 0) o.disposers.push(startPrPolling(o, pollMs));
   return o;
 }
 

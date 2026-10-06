@@ -99,6 +99,8 @@ const runs = new Table<Run>('runs', {
   plannerModel: ['planner_model'],
   integrationBranch: ['integration_branch'],
   prUrl: ['pr_url'],
+  pr: ['pr', 'json'],
+  archived: ['archived', 'bool'],
   error: ['error'],
   createdAt: ['created_at'],
   updatedAt: ['updated_at'],
@@ -131,6 +133,7 @@ const tasks = new Table<Task>('tasks', {
   modelOverride: ['model_override'],
   effortOverride: ['effort_override'],
   progress: ['progress'],
+  report: ['report', 'json'],
   error: ['error'],
   createdAt: ['created_at'],
   updatedAt: ['updated_at'],
@@ -533,6 +536,8 @@ export class Store {
         plannerModel: input.plannerModel,
         integrationBranch: null,
         prUrl: null,
+        pr: null,
+        archived: false,
         error: null,
         createdAt: now,
         updatedAt: now,
@@ -577,7 +582,8 @@ export class Store {
     });
   }
 
-  listRunSummaries(): RunSummary[] {
+  /** Newest first; archived runs are left out unless asked for. */
+  listRunSummaries(options: { includeArchived?: boolean } = {}): RunSummary[] {
     const counts = new Map<string, Partial<Record<TaskStatus, number>>>();
     for (const row of this.all('SELECT run_id, status, COUNT(*) AS n FROM tasks GROUP BY run_id, status')) {
       const runCounts = counts.get(row.run_id as string) ?? {};
@@ -594,12 +600,14 @@ export class Store {
         (row) => [row.run_id as string, Number(row.c)] as const,
       ),
     );
-    return this.listRuns().map((run) => ({
-      run,
-      taskCounts: counts.get(run.id) ?? {},
-      openInbox: inboxCounts.get(run.id) ?? 0,
-      costUsd: costs.get(run.id) ?? 0,
-    }));
+    return this.listRuns()
+      .filter((run) => options.includeArchived || !run.archived)
+      .map((run) => ({
+        run,
+        taskCounts: counts.get(run.id) ?? {},
+        openInbox: inboxCounts.get(run.id) ?? 0,
+        costUsd: costs.get(run.id) ?? 0,
+      }));
   }
 
   runSnapshot(runId: string): RunSnapshot {
@@ -685,6 +693,7 @@ export class Store {
         modelOverride: null,
         effortOverride: null,
         progress: null,
+        report: null,
         error: null,
         createdAt: now,
         updatedAt: now,

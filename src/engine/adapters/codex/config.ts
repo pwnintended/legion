@@ -7,6 +7,7 @@ import { access, lstat, mkdir, readlink, rm, symlink } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { delimiter, isAbsolute, join, resolve } from 'node:path';
 import type { SessionOptions } from '@shared/engine';
+import { CODEX_TOOL_TIMEOUT_SEC } from '../../mcp/config';
 import type { JsonValue } from './protocol/serde_json/JsonValue';
 import type { ThreadResumeParams, ThreadStartParams, TurnStartParams, UserInput } from './protocol/v2';
 
@@ -122,6 +123,8 @@ export function threadConfig(opts: SessionOptions): Record<string, JsonValue> {
         url: opts.mcp.url,
         bearer_token_env_var: MCP_TOKEN_ENV,
         default_tools_approval_mode: 'approve',
+        // request_human_input blocks until a human answers in the inbox (the server never times out).
+        tool_timeout_sec: CODEX_TOOL_TIMEOUT_SEC,
       },
     };
   }

@@ -3,9 +3,13 @@
  *
  * With `fake: true` (`LEGION_FAKE_ENGINES=1`) every kind is served by the scripted `FakeEngine`, so the
  * whole app runs without real CLIs (tests, demos). Tests can also inject engines per kind.
+ *
+ * `reconfigure()` (called on every `settings.updated`) rebuilds an engine whose binary path changed, so a
+ * new path takes effect for the next session without a restart. Live sessions keep the engine instance
+ * they were started with; models and `enabled` are read from the settings at each session start anyway.
  */
 import { join } from 'node:path';
-import type { EngineKind, Settings } from '@shared/domain';
+import { type EngineKind, REAL_ENGINE_KINDS, type RealEngineKind, type Settings } from '@shared/domain';
 import type { AgentEngine, EngineInfo } from '@shared/engine';
 import { ClaudeEngine } from '../adapters/claude';
 import { CodexEngine } from '../adapters/codex';
@@ -39,31 +43,54 @@ export class EngineRegistry {
   private readonly engines: Record<EngineKind, AgentEngine>;
   private readonly infos = new Map<EngineKind, EngineInfo>();
   private readonly probing = new Map<EngineKind, Promise<EngineInfo>>();
+  /** Binary paths the real engines were built with. */
+  private paths: Record<RealEngineKind, string | null>;
 
   constructor(private readonly options: EngineRegistryOptions) {
     this.codexHome = join(options.dataDir, 'codex-home');
     const settings = options.settings();
     const overrides = options.overrides ?? {};
     const fake = overrides.fake ?? new FakeEngine({ script: demoScript, stepDelayMs: options.fakeStepDelayMs ?? 120 });
+    this.paths = { claude: settings.engines.claude.path, codex: settings.engines.codex.path };
     this.engines = {
       fake,
-      claude:
-        overrides.claude ??
-        (options.fake
-          ? fake
-          : new ClaudeEngine({ env: options.env, binaryPath: settings.engines.claude.path, log: options.log })),
-      codex:
-        overrides.codex ??
-        (options.fake
-          ? fake
-          : new CodexEngine({
-              codexHome: this.codexHome,
-              env: options.env,
-              ...(settings.engines.codex.path ? { binary: settings.engines.codex.path } : {}),
-              clientVersion: options.version,
-              onStderr: (line) => options.log.warn(`codex: ${line}`),
-            })),
+      claude: overrides.claude ?? (options.fake ? fake : this.build('claude', this.paths.claude)),
+      codex: overrides.codex ?? (options.fake ? fake : this.build('codex', this.paths.codex)),
     };
+  }
+
+  private build(kind: RealEngineKind, path: string | null): AgentEngine {
+    const { options } = this;
+    if (kind === 'claude') return new ClaudeEngine({ env: options.env, binaryPath: path, log: options.log });
+    return new CodexEngine({
+      codexHome: this.codexHome,
+      env: options.env,
+      ...(path ? { binary: path } : {}),
+      clientVersion: options.version,
+      onStderr: (line) => options.log.warn(`codex: ${line}`),
+    });
+  }
+
+  /**
+   * Apply engine settings that need a new engine instance (binary paths). Returns the kinds that were
+   * rebuilt (and re-probed in the background). Injected and fake engines are never replaced.
+   */
+  reconfigure(): RealEngineKind[] {
+    const settings = this.options.settings();
+    const rebuilt: RealEngineKind[] = [];
+    for (const kind of REAL_ENGINE_KINDS) {
+      const path = settings.engines[kind].path;
+      if (path === this.paths[kind]) continue;
+      this.paths[kind] = path;
+      if (this.options.fake || this.options.overrides?.[kind]) continue;
+      this.engines[kind] = this.build(kind, path);
+      this.infos.delete(kind);
+      this.probing.delete(kind);
+      rebuilt.push(kind);
+      this.options.log.info(`engine ${kind}: binary path changed to ${path ?? '(PATH lookup)'}`);
+      void this.probeOne(kind);
+    }
+    return rebuilt;
   }
 
   get fakeMode(): boolean {
@@ -109,11 +136,13 @@ export class EngineRegistry {
           engine.kind === 'fake' && kind !== 'fake'
             ? { ...raw, kind, account: `scripted fake (${FAKE_ENGINES_ENV}=1)` }
             : { ...raw, kind };
-        this.infos.set(kind, info);
+        if (this.engines[kind] === engine) this.infos.set(kind, info);
         if (info.error) this.options.log.warn(`engine ${kind}: ${info.error}`);
         return info;
       })
-      .finally(() => this.probing.delete(kind));
+      .finally(() => {
+        if (this.probing.get(kind) === promise) this.probing.delete(kind);
+      });
     this.probing.set(kind, promise);
     return promise;
   }
