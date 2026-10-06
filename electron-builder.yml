@@ -1,0 +1,20 @@
+appId: dev.erudiet.legion
+productName: Legion
+directories:
+  output: dist
+  buildResources: build
+files:
+  - out/**
+  - package.json
+  - '!**/*.map'
+# Native modules (and node-pty's spawn-helper) must live outside the asar archive.
+asarUnpack:
+  - '**/*.node'
+  - '**/node_modules/node-pty/**'
+npmRebuild: true
+mac:
+  category: public.app-category.developer-tools
+  target:
+    - target: dir
+  hardenedRuntime: true
+  identity: null
