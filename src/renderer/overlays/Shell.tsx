@@ -2,8 +2,9 @@
  * Floating panel chrome shared by the composer, inbox and palette: scrim, spring in/out (transform/opacity
  * only, reduced motion → fade), focus trap, initial focus. Esc is the registry's `overlay.close` command.
  */
-import { motion, useIsPresent, useReducedMotion } from 'motion/react';
+import { motion, useIsPresent } from 'motion/react';
 import { type ReactNode, useEffect, useRef } from 'react';
+import { useReducedMotionPref } from '../app/prefs';
 import { actions } from '../app/store';
 import { SPRING } from '../theme/motion';
 
@@ -31,7 +32,7 @@ export function OverlayPanel({
 }) {
   const ref = useRef<HTMLDivElement>(null);
   const present = useIsPresent();
-  const reduced = useReducedMotion();
+  const reduced = useReducedMotionPref();
 
   useEffect(() => {
     const el = ref.current;

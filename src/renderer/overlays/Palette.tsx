@@ -13,7 +13,7 @@ import { rpc, useActiveRunId, useData, useLayout } from '../app/hooks';
 import { formatChord } from '../app/keys';
 import { actions } from '../app/store';
 import { Icon, type IconName } from '../chrome/icons';
-import { ENGINE_NAME } from '../layout/describe';
+import { displayEngine, ENGINE_NAME } from '../layout/describe';
 import { focusedTile } from '../layout/tree';
 import { errorMessage, interrupt, openTaskDiff, sessionTileOf, takeOver } from '../tiles/session/actions';
 import { openTileColumn, revealInRun, toast } from './nav';
@@ -230,9 +230,9 @@ function useEntries(): { contextual: Entry[]; data: Entry[] } {
         id: `session:${a.id}`,
         group: 'Sessions',
         title: `Open ${label} session`,
-        value: `open session ${label} ${a.engine}`,
+        value: `open session ${label} ${displayEngine(state, a)}`,
         keywords: task ? [task.nodeId] : [],
-        hint: `${a.engine} · ${a.status}`,
+        hint: `${displayEngine(state, a)} · ${a.status}`,
         icon: 'eye',
         run: closeThen(() =>
           openTileColumn(activeRunId, { kind: 'session', params: { attemptId: a.id, taskId: null } }, null),
@@ -274,6 +274,9 @@ const COMMAND_ICON: Record<string, IconName> = {
   'tile.close': 'close',
   'column.maximize': 'maximize',
   'column.toggleCollapse': 'collapse',
+  'settings.open': 'settings',
+  'run.archive': 'archive',
+  'run.refreshPr': 'refresh',
 };
 const CATEGORY_ICON: Record<string, IconName> = {
   Focus: 'arrowRight',
@@ -284,6 +287,7 @@ const CATEGORY_ICON: Record<string, IconName> = {
   Run: 'play',
   Tile: 'session',
   Overlay: 'search',
+  App: 'settings',
 };
 
 function fromCommand(c: CommandView): Entry {

@@ -203,7 +203,7 @@ function t4Fix(): AgentEvent[] {
     { type: 'session_started', sessionId: 'sess_t4', model: 'claude-opus-4', version: '2.1.289' },
     {
       type: 'message',
-      text: 'Addressing the review finding: switching `sign_count` to `BIGINT` and adding a migration test with a counter above 2³¹.',
+      text: 'Addressing the review finding: switching `sign_count` to `BIGINT` and adding a repository test that bumps the counter past 2³².',
     },
     {
       type: 'tool_call',
@@ -216,11 +216,12 @@ function t4Fix(): AgentEvent[] {
     {
       type: 'tool_call',
       id: 'f2',
-      name: 'Write',
-      input: { file_path: 'db/passkeys.migration.test.ts' },
+      name: 'Edit',
+      input: { file_path: 'server/db/passkeys.repo.test.ts' },
       kind: 'edit',
     },
-    { type: 'file_change', path: 'db/passkeys.migration.test.ts', added: 24, removed: 0 },
+    // Stays inside T4's declared touches (server/db/passkeys.repo*.ts): the review pack's scope gate is green.
+    { type: 'file_change', path: 'server/db/passkeys.repo.test.ts', added: 7, removed: 1 },
     { type: 'tool_call', id: 'f3', name: 'Bash', input: { command: 'pnpm vitest run db' }, kind: 'command' },
   ];
 }
@@ -294,7 +295,7 @@ export function withSessionDemo(world: DemoWorld, now: number): DemoWorld {
     integrationBranch: null,
     prUrl: null,
     error: null,
-    createdAt: now - 3 * MIN,
+    createdAt: now - 85 * MIN,
     updatedAt: now - 50_000,
   };
   const planner: Attempt = {

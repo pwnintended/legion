@@ -173,10 +173,12 @@ export function useConnection() {
   return useData((s) => s.connection);
 }
 
+/** Agents holding a concurrency slot (task sessions) vs the global cap. */
 export function useAgentsRunning(): { running: number; max: number } {
   return useData(
     useShallow((s) => ({
-      running: Object.values(s.attempts).filter((a) => a.status === 'running').length,
+      // Compared with the global cap, which counts task slots (planners and the finalizer don't take one).
+      running: Object.values(s.attempts).filter((a) => a.status === 'running' && a.taskId !== null).length,
       max: s.settings?.concurrency.global ?? 3,
     })),
   );

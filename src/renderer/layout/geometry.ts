@@ -59,6 +59,32 @@ export function scrollTargetFor(box: ColumnBox, scrollLeft: number, viewport: nu
   return null;
 }
 
+export interface RevealState {
+  /** Where the strip is now. */
+  scrollLeft: number;
+  /** Where an in-flight smooth scroll will land (null when the strip is at rest). */
+  pending: number | null;
+  viewport: number;
+  /** Full scrollable width of the strip content. */
+  contentWidth: number;
+}
+
+/**
+ * Scroll target that reveals `box`, measured from where the strip will *end up*: when a smooth scroll is still
+ * in flight, a "no scroll needed" decision against the current, intermediate position would let the old scroll
+ * finish at a target computed for a different column (or different widths) and cut the focused column off.
+ * The result is clamped to the scrollable range; null = stay (or keep the in-flight scroll).
+ */
+export function revealTarget(box: ColumnBox, state: RevealState): number | null {
+  const max = Math.max(0, state.contentWidth - state.viewport);
+  const clamp = (x: number) => Math.min(max, Math.max(0, x));
+  const base = clamp(state.pending ?? state.scrollLeft);
+  const target = scrollTargetFor(box, base, state.viewport);
+  if (target === null) return state.pending === null ? null : base;
+  const next = clamp(target);
+  return Math.abs(next - state.scrollLeft) < 1 && state.pending === null ? null : next;
+}
+
 /** Indexes of columns that intersect the viewport extended by `overscan` viewports on each side. */
 export function visibleRange(
   boxes: readonly ColumnBox[],

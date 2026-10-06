@@ -147,7 +147,7 @@ export function createDemoWorld(now = Date.now()): DemoWorld {
       size: 'S',
       risk: 'low',
       engine: 'claude',
-      touches: ['auth/contracts.ts'],
+      touches: ['auth/**'],
     }),
     node({
       id: 'T2',
@@ -158,7 +158,7 @@ export function createDemoWorld(now = Date.now()): DemoWorld {
       size: 'M',
       risk: 'med',
       engine: 'claude',
-      touches: ['server/auth/webauthn.ts', 'server/routes/auth.ts'],
+      touches: ['server/auth/**', 'server/routes/auth.ts'],
       verify: ['pnpm vitest run server/auth'],
     }),
     node({
@@ -309,7 +309,13 @@ export function createDemoWorld(now = Date.now()): DemoWorld {
       { role: 'reviewer', engine: 'codex', inputTokens: 22_000, startedAt: now - 12 * MIN, endedAt: now - 3 * MIN },
       now,
     ),
-    attempt('att_authv2t4fix1', A, t4.id, { status: 'running', costUsd: 0.12, startedAt: now - 2 * MIN }, now),
+    attempt(
+      'att_authv2t4fix1',
+      A,
+      t4.id,
+      { status: 'running', sessionId: 'sess_att_authv2t4code', costUsd: 0.12, startedAt: now - 2 * MIN },
+      now,
+    ),
   ];
   const reviewsA: Review[] = [
     {
@@ -646,7 +652,7 @@ export function createDemoWorld(now = Date.now()): DemoWorld {
       id: C,
       title: 'Extract UI strings for i18n',
       status: 'awaiting_approval',
-      createdAt: now - 9 * MIN,
+      createdAt: now - 95 * MIN,
       updatedAt: now - 4 * MIN,
       repoPath: '/Users/dev/src/erudiet/web',
     }),
@@ -816,7 +822,7 @@ export const LIVE_SCRIPT: { attemptId: string; event: AgentEvent }[] = [
       kind: 'command',
     },
   },
-  { attemptId: 'att_authv2t4fix1', event: { type: 'message', text: 'Migration test covers counters above 2³¹ now.' } },
+  { attemptId: 'att_authv2t4fix1', event: { type: 'message', text: 'Repository test covers counters past 2³² now.' } },
   {
     attemptId: 'att_authv2t2code',
     event: {

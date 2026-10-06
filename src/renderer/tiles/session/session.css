@@ -136,33 +136,33 @@
   font-weight: 700;
 }
 .evi-claude {
-  background: rgb(203 166 247 / 0.16);
+  background: color-mix(in srgb, var(--mauve) 16%, transparent);
   color: var(--mauve);
 }
 .evi-codex {
-  background: rgb(148 226 213 / 0.14);
+  background: color-mix(in srgb, var(--teal) 14%, transparent);
   color: var(--teal);
 }
 .evi-ok {
-  background: rgb(166 227 161 / 0.14);
+  background: color-mix(in srgb, var(--green) 14%, transparent);
   color: var(--green);
 }
 .evi-bad {
-  background: rgb(243 139 168 / 0.14);
+  background: color-mix(in srgb, var(--red) 14%, transparent);
   color: var(--red);
 }
 .evi-warn {
-  background: rgb(250 179 135 / 0.14);
+  background: color-mix(in srgb, var(--peach) 14%, transparent);
   color: var(--peach);
 }
 .evi-user {
-  background: rgb(180 190 254 / 0.14);
+  background: color-mix(in srgb, var(--lavender) 14%, transparent);
   color: var(--lavender);
 }
 .evi-muted {
   background: transparent;
   box-shadow: inset 0 0 0 1px var(--surface0);
-  color: var(--overlay1);
+  color: var(--overlay2);
 }
 .ev-body {
   flex: 1;
@@ -379,7 +379,7 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  color: var(--overlay1);
+  color: var(--overlay2);
   font-style: italic;
 }
 .reasoning-text {
@@ -400,7 +400,7 @@
   margin: 6px 0;
   font-family: var(--font-code);
   font-size: 10.5px;
-  color: var(--overlay0);
+  color: var(--overlay1);
   white-space: nowrap;
 }
 .tl-divider::before,
@@ -436,7 +436,7 @@
   display: inline-flex;
   gap: 8px;
   font-size: 11px;
-  color: var(--overlay1);
+  color: var(--overlay2);
 }
 
 /* Markdown ----------------------------------------------------------------------------------- */
@@ -521,7 +521,7 @@
   font-family: var(--font-code);
   font-size: 12px;
   color: var(--yellow);
-  background: rgb(249 226 175 / 0.07);
+  background: color-mix(in srgb, var(--yellow) 7%, transparent);
   border-radius: 4px;
   padding: 1px 4px;
 }
@@ -539,7 +539,7 @@
   right: 8px;
   font-family: var(--font-code);
   font-size: 10px;
-  color: var(--overlay0);
+  color: var(--overlay1);
   pointer-events: none;
 }
 .md-code-body,
@@ -586,7 +586,7 @@
   gap: 10px;
   border: 1.5px solid var(--peach);
   border-radius: var(--radius);
-  background: rgb(250 179 135 / 0.07);
+  background: color-mix(in srgb, var(--peach) 7%, transparent);
   animation: ss-rise 0.22s var(--ease-out) both;
 }
 .ap-title {
@@ -632,15 +632,15 @@
   white-space: pre-wrap;
 }
 .ap-line-add {
-  background: rgb(166 227 161 / 0.07);
+  background: color-mix(in srgb, var(--green) 7%, transparent);
 }
 .ap-line-del {
-  background: rgb(243 139 168 / 0.07);
+  background: color-mix(in srgb, var(--red) 7%, transparent);
 }
 .ap-sign {
   display: inline-block;
   width: 14px;
-  color: var(--overlay1);
+  color: var(--overlay2);
 }
 .ap-line-add .ap-sign {
   color: var(--green);
@@ -755,7 +755,7 @@
   border: 1px solid var(--surface1);
   color: var(--text);
   font-size: 12px;
-  box-shadow: 0 8px 22px rgb(0 0 0 / 0.4);
+  box-shadow: 0 8px 22px color-mix(in srgb, var(--shadow) 40%, transparent);
   transform: translateX(-50%);
   animation: ss-pop 0.18s var(--ease-out) both;
 }
@@ -776,14 +776,14 @@
   padding: 4px 4px 4px 10px;
   border-radius: var(--radius-sm);
   font-size: 12px;
-  background: rgb(49 50 68 / 0.6);
+  background: color-mix(in srgb, var(--surface0) 60%, transparent);
   color: var(--subtext1);
 }
 .ss-notice > span {
   flex: 1;
 }
 .ss-notice-error {
-  background: rgb(243 139 168 / 0.1);
+  background: color-mix(in srgb, var(--red) 10%, transparent);
   color: var(--red);
 }
 .ss-empty {
@@ -803,7 +803,7 @@
 .ss-skeleton > div {
   height: 10px;
   border-radius: 4px;
-  background: rgb(49 50 68 / 0.6);
+  background: color-mix(in srgb, var(--surface0) 60%, transparent);
 }
 .ss-plan {
   display: flex;
@@ -874,4 +874,36 @@
     /* biome-ignore lint/complexity/noImportantStyles: reduced motion must override component styles */
     animation: none !important;
   }
+}
+
+/* Escalation (failed task) card: the approval card's shape, in red. */
+.esc-card {
+  border-color: var(--red);
+  background: color-mix(in srgb, var(--red) 6%, transparent);
+}
+.esc-title {
+  color: var(--red);
+}
+.esc-summary {
+  color: var(--text);
+}
+.esc-files {
+  font-size: 11.5px;
+  color: var(--subtext0);
+}
+.esc-edit {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.esc-note {
+  resize: vertical;
+  line-height: 1.45;
+}
+.esc-abort {
+  color: var(--red);
+}
+.esc-error {
+  font-size: 12px;
+  color: var(--red);
 }

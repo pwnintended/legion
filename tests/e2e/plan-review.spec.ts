@@ -31,6 +31,8 @@ async function launchDemo(
     win?.focus();
   });
   await expect(window.getByTestId('titlebar')).toContainText('demo', { timeout: 30_000 });
+  // Workspace shortcuts (⌘2, ⌘3) need the run list loaded.
+  await expect(window.getByTestId('rail-run')).toHaveCount(6);
   return { app, window, home };
 }
 

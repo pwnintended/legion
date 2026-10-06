@@ -156,6 +156,21 @@ const PATHS = {
     </>
   ),
   arrowRight: <path d="M5 12h14M13 6l6 6-6 6" />,
+  settings: (
+    <>
+      <path d="M4 7h9M17 7h3M4 17h3M11 17h9" />
+      <circle cx="15" cy="7" r="2" />
+      <circle cx="9" cy="17" r="2" />
+    </>
+  ),
+  archive: (
+    <>
+      <rect x="3" y="4" width="18" height="5" rx="1.2" />
+      <path d="M5 9v9a2 2 0 002 2h10a2 2 0 002-2V9M10 13h4" />
+    </>
+  ),
+  external: <path d="M14 4h6v6M20 4l-9 9M18 14v4a2 2 0 01-2 2H6a2 2 0 01-2-2V8a2 2 0 012-2h4" />,
+  refresh: <path d="M20 11a8 8 0 10-2.3 5.7M20 4v7h-7" />,
 } as const;
 
 export type IconName = keyof typeof PATHS;

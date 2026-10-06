@@ -1,5 +1,13 @@
 import { describe, expect, it } from 'vitest';
-import { layoutColumns, presetWidth, scrollTargetFor, stripContentWidth, THIN_WIDTH, visibleRange } from './geometry';
+import {
+  layoutColumns,
+  presetWidth,
+  revealTarget,
+  scrollTargetFor,
+  stripContentWidth,
+  THIN_WIDTH,
+  visibleRange,
+} from './geometry';
 import { type Column, makeColumn } from './tree';
 
 const column = (id: string, width: Column['width'], collapsed = false): Column => ({
@@ -35,6 +43,27 @@ describe('geometry', () => {
     expect(scrollTargetFor(box, 1200, 1220)).toBe(990);
     expect(scrollTargetFor({ id: 'w', left: 500, width: 1300 }, 0, 1220)).toBe(490);
     expect(scrollTargetFor({ id: 'w', left: 500, width: 1300 }, 490, 1220)).toBeNull();
+  });
+
+  it('reveals relative to where an in-flight smooth scroll will land', () => {
+    const viewport = 1000;
+    const contentWidth = 4000;
+    const box = { id: 'x', left: 1200, width: 300 };
+    // At rest: minimal scroll, or nothing when the column is in view.
+    expect(revealTarget(box, { scrollLeft: 0, pending: null, viewport, contentWidth })).toBe(1200 + 300 + 10 - 1000);
+    expect(revealTarget(box, { scrollLeft: 800, pending: null, viewport, contentWidth })).toBeNull();
+    // Mid-flight towards 2400 the column happens to be on screen at 800, but the scroll would cut it off at
+    // 2400: retarget from the destination instead of leaving the old scroll running.
+    expect(revealTarget(box, { scrollLeft: 800, pending: 2400, viewport, contentWidth })).toBe(1190);
+    // The destination already shows the column: keep going there.
+    expect(revealTarget(box, { scrollLeft: 300, pending: 600, viewport, contentWidth })).toBe(600);
+    // Clamped to the scrollable range.
+    const last = { id: 'z', left: 3700, width: 290 };
+    expect(revealTarget(last, { scrollLeft: 0, pending: null, viewport, contentWidth })).toBe(3000);
+    // Wider than the viewport: align its left edge.
+    const wide = { id: 'w', left: 500, width: 1300 };
+    expect(revealTarget(wide, { scrollLeft: 0, pending: null, viewport, contentWidth })).toBe(490);
+    expect(revealTarget(wide, { scrollLeft: 900, pending: 2000, viewport, contentWidth })).toBe(490);
   });
 
   it('finds the columns to render around the viewport', () => {

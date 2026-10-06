@@ -8,6 +8,10 @@
  * - Plain keys (Escape, or h/j/k/l inside RESIZE/MOVE mode) never fire while typing in an input, unless the
  *   command sets `inInput: true`.
  * - Terminals are "locked": everything except ⌘-chords passes through to them.
+ * - Overlays own their keys: while one is open, only commands marked `inOverlay` (opening/closing/switching
+ *   overlays) are dispatched from the keyboard; everything else (⌘⏎ Focus layout, ⌘⌥H, plain tile keys, ...)
+ *   passes through untouched to the overlay, so e.g. ⌘⏎ submits the composer even with focus on a button.
+ *   `executeCommand` (palette, app menu) is not guarded: those callers decide for themselves.
  */
 import { useSyncExternalStore } from 'react';
 import { useStore } from 'zustand';
@@ -30,9 +34,12 @@ import {
   toggleCollapsed,
   type Workspace,
 } from '../layout/tree';
+import { toast } from '../overlays/nav';
+import { canArchive, runPr } from './compat';
 import { type DataState, selectRunList, TERMINAL_RUN_STATUSES } from './data';
 import { rpc } from './hooks';
 import { formatChord, isTerminal, isTextInput, matchesChord, parseChord } from './keys';
+import { archiveRun, refreshPr } from './run-actions';
 import { actions, dataStore, jumpToNextUrgent, type KeyMode, type UiState, uiStore } from './store';
 
 export interface CommandContext {
@@ -42,7 +49,7 @@ export interface CommandContext {
   layout: Workspace | null;
 }
 
-export type CommandCategory = 'Run' | 'Layout' | 'Focus' | 'Column' | 'Tile' | 'Overlay' | 'Workspace' | 'Mode';
+export type CommandCategory = 'Run' | 'Layout' | 'Focus' | 'Column' | 'Tile' | 'Overlay' | 'Workspace' | 'Mode' | 'App';
 
 export interface Command {
   /** Stable id, e.g. `layout.overview`. The app menu and palette refer to commands by id. */
@@ -55,6 +62,8 @@ export interface Command {
   mode?: KeyMode;
   /** Override whether the binding fires while a text input has focus (see module doc). */
   inInput?: boolean;
+  /** The binding also fires while an overlay is open (default: overlays own the keyboard; see module doc). */
+  inOverlay?: boolean;
   /** Available right now? Disabled commands are skipped by keys and greyed out in the palette. */
   when?: (ctx: CommandContext) => boolean;
   run: (ctx: CommandContext) => unknown;
@@ -197,6 +206,22 @@ function parsedBindings() {
   return list;
 }
 
+/**
+ * Key-dispatch guard: may `command` handle a key event right now? Separate from `when` (which says whether
+ * the command is available at all, e.g. for the palette) because it depends on where the key was pressed.
+ */
+export function keyGuard(
+  command: Command,
+  ctx: CommandContext,
+  where: { modChord: boolean; inInput: boolean; inTerminal: boolean },
+): boolean {
+  if (ctx.ui.overlay !== null && !command.inOverlay) return false;
+  if (!where.modChord && where.inTerminal) return false;
+  if (where.inInput && (where.modChord ? command.inInput === false : command.inInput !== true)) return false;
+  if (command.mode && command.mode !== ctx.ui.keyMode) return false;
+  return isEnabled(command, ctx);
+}
+
 /** Global keydown handler. Returns true when a command handled the event. */
 export function handleKeyDown(event: KeyboardEvent): boolean {
   if (event.defaultPrevented || event.isComposing) return false;
@@ -208,11 +233,7 @@ export function handleKeyDown(event: KeyboardEvent): boolean {
   for (const { command, chords } of parsedBindings()) {
     for (const chord of chords) {
       if (!matchesChord(chord, event)) continue;
-      const modChord = chord.mod || chord.ctrl;
-      if (!modChord && inTerminal) continue;
-      if (inInput && (modChord ? command.inInput === false : command.inInput !== true)) continue;
-      if (command.mode && command.mode !== keyMode) continue;
-      if (!isEnabled(command, ctx)) continue;
+      if (!keyGuard(command, ctx, { modChord: chord.mod || chord.ctrl, inInput, inTerminal })) continue;
       event.preventDefault();
       event.stopPropagation();
       void Promise.resolve(command.run(ctx)).catch((error: unknown) =>
@@ -222,7 +243,14 @@ export function handleKeyDown(event: KeyboardEvent): boolean {
     }
   }
   // Inside RESIZE/MOVE mode, stray letters must not leak into the page.
-  if (keyMode !== 'normal' && !inTerminal && !inInput && /^Key[A-Z]$/.test(event.code) && !event.metaKey) {
+  if (
+    keyMode !== 'normal' &&
+    ctx.ui.overlay === null &&
+    !inTerminal &&
+    !inInput &&
+    /^Key[A-Z]$/.test(event.code) &&
+    !event.metaKey
+  ) {
     event.preventDefault();
     return true;
   }
@@ -305,6 +333,7 @@ export function builtinCommands(): Command[] {
     // Overlays -----------------------------------------------------------------------------------
     {
       id: 'composer.open',
+      inOverlay: true,
       title: 'New run…',
       category: 'Run',
       keybinding: 'Mod+N',
@@ -312,6 +341,7 @@ export function builtinCommands(): Command[] {
     },
     {
       id: 'inbox.open',
+      inOverlay: true,
       title: 'Open inbox',
       category: 'Overlay',
       keybinding: 'Mod+I',
@@ -319,10 +349,19 @@ export function builtinCommands(): Command[] {
     },
     {
       id: 'palette.open',
+      inOverlay: true,
       title: 'Command palette',
       category: 'Overlay',
       keybinding: 'Mod+K',
       run: () => actions.toggleOverlay('palette'),
+    },
+    {
+      id: 'settings.open',
+      inOverlay: true,
+      title: 'Settings…',
+      category: 'App',
+      keybinding: 'Mod+,',
+      run: (ctx) => (ctx.ui.overlay === 'settings' ? actions.closeOverlay() : actions.openSettings()),
     },
     {
       id: 'overlay.close',
@@ -330,6 +369,7 @@ export function builtinCommands(): Command[] {
       category: 'Overlay',
       keybinding: 'Escape',
       inInput: true,
+      inOverlay: true,
       hidden: true,
       when: (ctx) => ctx.ui.overlay !== null,
       run: () => actions.closeOverlay(),
@@ -397,6 +437,7 @@ export function builtinCommands(): Command[] {
     })),
     {
       id: 'focus.nextUrgent',
+      inOverlay: true,
       title: 'Jump to next tile that needs you',
       category: 'Focus',
       keybinding: 'Mod+U',
@@ -533,6 +574,35 @@ export function builtinCommands(): Command[] {
         return !!run && run.paused;
       },
       run: (ctx) => rpc('runs.resume', { runId: ctx.activeRunId as string }),
+    },
+    {
+      id: 'run.archive',
+      title: 'Archive run (cleans up its worktrees)',
+      category: 'Run',
+      when: (ctx) => canArchive(activeRun(ctx)),
+      run: async (ctx) => {
+        const run = activeRun(ctx);
+        if (!run) return;
+        try {
+          await archiveRun(run.id);
+          toast(`Archived “${run.title}”. Its worktrees are cleaned up.`);
+        } catch (error) {
+          toast(`Couldn't archive: ${error instanceof Error ? error.message : String(error)}`, 'error');
+        }
+      },
+    },
+    {
+      id: 'run.refreshPr',
+      title: 'Refresh pull request status',
+      category: 'Run',
+      when: (ctx) => runPr(activeRun(ctx))?.state === 'open',
+      run: async (ctx) => {
+        try {
+          await refreshPr(ctx.activeRunId as string);
+        } catch (error) {
+          toast(`Couldn't refresh the PR: ${error instanceof Error ? error.message : String(error)}`, 'error');
+        }
+      },
     },
   ];
 
