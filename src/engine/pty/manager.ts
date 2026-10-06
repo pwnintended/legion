@@ -1,9 +1,17 @@
+import { createRequire } from 'node:module';
 import { newId } from '@shared/ids';
 import type { TerminalMessage } from '@shared/rpc';
 import { type MessageEndpoint, type PortLike, toEndpoint } from '@shared/rpc-transport';
-import { SerializeAddon } from '@xterm/addon-serialize';
-import { Terminal } from '@xterm/headless';
+import type { SerializeAddon as SerializeAddonType } from '@xterm/addon-serialize';
+import type { Terminal as HeadlessTerminal } from '@xterm/headless';
 import type { PtyProcess, PtySpawn } from './types';
+
+// Both xterm packages are CommonJS without static named exports, which native ESM (the engine bundle) can't import.
+const nodeRequire = createRequire(import.meta.url);
+const { Terminal } = nodeRequire('@xterm/headless') as typeof import('@xterm/headless');
+const { SerializeAddon } = nodeRequire('@xterm/addon-serialize') as typeof import('@xterm/addon-serialize');
+type Terminal = HeadlessTerminal;
+type SerializeAddon = SerializeAddonType;
 
 export interface PtyOpenOptions {
   cmd: string;

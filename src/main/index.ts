@@ -4,6 +4,7 @@ import { IPC } from '@shared/bridge';
 import type { EngineToMainMessage } from '@shared/host-protocol';
 import { app, BrowserWindow, dialog, ipcMain, Notification, powerSaveBlocker, shell } from 'electron';
 import { EngineSupervisor } from './engine-supervisor';
+import { type CommandBus, createCommandBus, installAppMenu, registerGlobalShortcuts } from './menu';
 import { resolveLoginShellPath } from './shell-env';
 
 /** `LEGION_HOME` overrides the data dir (tests); default ~/Library/Application Support/Legion. */
@@ -42,11 +43,22 @@ async function main(): Promise<void> {
   });
 
   let powerBlocker: number | null = null;
+  let commandBus: CommandBus | null = null;
+  // Keep notifications referenced until dismissed, or they can be collected before the user clicks them.
+  const liveNotifications = new Set<Notification>();
   supervisor.on('message', (message: EngineToMainMessage) => {
     switch (message.type) {
       case 'notify':
         if (Notification.isSupported() && !BrowserWindow.getFocusedWindow()) {
-          new Notification({ title: message.title, body: message.body }).show();
+          const notification = new Notification({ title: message.title, body: message.body });
+          liveNotifications.add(notification);
+          const forget = (): void => void liveNotifications.delete(notification);
+          notification.on('click', () => {
+            forget();
+            commandBus?.showAndSend('focus.nextUrgent');
+          });
+          notification.on('close', forget);
+          notification.show();
         }
         break;
       case 'badge':
@@ -146,6 +158,15 @@ async function main(): Promise<void> {
   await app.whenReady();
   void supervisor.start();
   mainWindow = createWindow();
+  commandBus = createCommandBus(
+    () => mainWindow,
+    () => {
+      mainWindow = createWindow();
+      return mainWindow;
+    },
+  );
+  installAppMenu(commandBus);
+  registerGlobalShortcuts(commandBus);
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) mainWindow = createWindow();

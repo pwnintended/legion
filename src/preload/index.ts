@@ -1,4 +1,4 @@
-import { ENGINE_PORT_MESSAGE, IPC, type LegionBridge } from '@shared/bridge';
+import { type CommandId, ENGINE_PORT_MESSAGE, IPC, type LegionBridge } from '@shared/bridge';
 import { contextBridge, ipcRenderer } from 'electron';
 
 // MessagePorts can't cross the contextBridge, so the engine port is forwarded to the page with
@@ -16,6 +16,13 @@ const bridge: LegionBridge = {
       chrome: process.versions.chrome ?? '',
       node: process.versions.node,
     },
+  },
+  onCommand: (callback) => {
+    const listener = (_event: unknown, command: CommandId): void => callback(command);
+    ipcRenderer.on(IPC.command, listener);
+    return () => {
+      ipcRenderer.removeListener(IPC.command, listener);
+    };
   },
   requestEnginePort: () => ipcRenderer.send(IPC.requestEnginePort),
   pickDirectory: (options) => ipcRenderer.invoke(IPC.pickDirectory, options ?? {}),

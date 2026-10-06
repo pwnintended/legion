@@ -12,8 +12,25 @@ export interface PlatformInfo {
   versions: { electron: string; chrome: string; node: string };
 }
 
+/** Command ids main sends to the renderer (app menu, global shortcut, notification clicks). */
+export const COMMAND_IDS = [
+  'composer.open',
+  'inbox.open',
+  'palette.open',
+  'layout.strip',
+  'layout.focus',
+  'layout.overview',
+  'layout.pipeline',
+  'focus.nextUrgent',
+  'run.pause',
+  'run.resume',
+] as const;
+export type CommandId = (typeof COMMAND_IDS)[number];
+
 export interface LegionBridge {
   readonly platform: PlatformInfo;
+  /** Subscribe to native commands from main (menu items, ⌥⌘L, notification clicks). Returns unsubscribe. */
+  onCommand(callback: (command: CommandId) => void): () => void;
   /**
    * Ask main for a (new) engine port. It arrives as a window `message` event whose data is
    * `{ type: ENGINE_PORT_MESSAGE, generation }` with the port in `event.ports[0]`. Main also pushes a new
@@ -35,4 +52,6 @@ export const IPC = {
   pickDirectory: 'legion:pick-directory',
   openExternal: 'legion:open-external',
   showItemInFolder: 'legion:show-item-in-folder',
+  /** main → renderer: a CommandId. */
+  command: 'legion:command',
 } as const;
