@@ -194,8 +194,10 @@ Normalized `AgentEvent` kinds: `session_started{sessionId, model, version}`, `te
 
 Config isolation: Claude runs with `--strict-mcp-config --mcp-config <legion only>` and explicit
 `--setting-sources project` (keeps the repo's CLAUDE.md, ignores the user's global hooks). Codex runs with a
-Legion-owned `CODEX_HOME` (copying only `auth.json`/config the user opts into) or `--ignore-user-config`
-(adapter author verifies which keeps auth working).
+Legion-owned `CODEX_HOME` (`<dataDir>/codex-home`) containing only a **symlink** to the user's `auth.json`
+(codex writes it in place, so token refreshes reach the user's file; `app-server` has no `--ignore-user-config`)
+plus `-c features.hooks=false` etc. Codex threads live in that home, so resume/takeover must use it.
+Details: `src/engine/adapters/codex/README.md`.
 
 Structured output: Claude `--json-schema`, Codex `outputSchema` on `turn/start`. Both are re-validated with
 zod in the engine; a schema failure is a retryable attempt failure.
