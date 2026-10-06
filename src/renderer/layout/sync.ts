@@ -15,6 +15,7 @@ import {
   type ColumnMode,
   type ExpandedWidth,
   emptyWorkspace,
+  focusTile,
   type LayoutTile,
   normalize,
   type Workspace,
@@ -191,7 +192,7 @@ function defaultFocus(ws: Workspace, input: RunLayoutInput): Workspace {
   // A run past execution lands on its PR (the human gate, or the result).
   const end = PR_STATUSES.includes(input.status) ? ws.strip.columns.find((c) => c.key === 'end') : undefined;
   const prTile = end?.tiles.find((t) => t.kind === 'pr');
-  if (end && prTile) return { ...ws, focus: { column: end.id, tile: prTile.id } };
+  if (end && prTile) return focusTile(ws, prTile.id);
   const plan = ws.strip.columns.find((c) => c.key === 'plan');
   return plan ? { ...ws, focus: { column: plan.id, tile: plan.active } } : normalize(ws);
 }
