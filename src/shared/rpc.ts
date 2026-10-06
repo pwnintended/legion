@@ -18,6 +18,7 @@ import {
   InboxItemSchema,
   InboxResolutionSchema,
   MergeSchema,
+  PlanAnnotationSchema,
   PlanSchema,
   QuestionAnswerSchema,
   ReviewSchema,
@@ -240,7 +241,11 @@ export const rpcContract = {
   'repos.recent': { input: Empty, output: z.array(RecentRepoSchema) },
 
   // runs ----------------------------------------------------------------------------------------
-  'runs.list': { input: Empty, output: z.array(RunSummarySchema) },
+  /** Newest first; archived runs only with `includeArchived: true`. */
+  'runs.list': {
+    input: z.object({ includeArchived: z.boolean().nullish() }),
+    output: z.array(RunSummarySchema),
+  },
   'runs.get': { input: ByRun, output: RunSnapshotSchema },
   'runs.create': {
     input: z.object({
@@ -269,6 +274,12 @@ export const rpcContract = {
       basePlanId: IdSchema,
       markdown: z.string(),
       nodes: z.array(TaskNodeSchema),
+      /**
+       * The edited DAG's annotations. Carries the human's DAG decisions across re-validation: an
+       * `[overlap_accepted]` note (from `undoAutoEdge`) keeps that pair unserialized, a dropped
+       * `serializing_edge` stays dropped. Absent/null = keep the base version's annotations.
+       */
+      annotations: z.array(PlanAnnotationSchema).nullish(),
     }),
     output: PlanSchema,
   },
@@ -285,6 +296,18 @@ export const rpcContract = {
     input: z.object({ runId: IdSchema, title: z.string().nullable(), body: z.string().nullable() }),
     output: z.object({ run: RunSchema, url: z.string() }),
   },
+  /**
+   * Re-read the run's PR from the host (`gh pr view`) and store it in `run.pr`. A merged or closed PR
+   * finishes the run and archives it (cleanup, see `runs.archive`). The engine also polls open PRs.
+   */
+  'runs.refreshPr': { input: ByRun, output: RunSchema },
+  /**
+   * Clean up a run (§8 step 9) and hide it from `runs.list`: cancels it if still active, closes its
+   * sessions and terminals, removes task worktrees + local task branches and the integration worktree
+   * (the integration branch stays while a PR is open), restores `gc.auto`, sets `archived: true`.
+   * Idempotent.
+   */
+  'runs.archive': { input: ByRun, output: RunSchema },
 
   // tasks ---------------------------------------------------------------------------------------
   'tasks.retry': {

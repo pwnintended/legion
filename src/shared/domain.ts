@@ -234,6 +234,23 @@ export type Plan = z.infer<typeof PlanSchema>;
 // Runtime entities
 // ---------------------------------------------------------------------------------------------
 
+export const PR_STATES = ['open', 'closed', 'merged'] as const;
+export const PrStateSchema = z.enum(PR_STATES);
+export type PrState = z.infer<typeof PrStateSchema>;
+
+/** The run's draft PR as last seen on the host (`runs.createPr`, refreshed by `runs.refreshPr` and polling). */
+export const PullRequestSchema = z.object({
+  url: z.string(),
+  number: z.number().int().nonnegative(),
+  state: PrStateSchema,
+  isDraft: z.boolean(),
+});
+export type PullRequest = z.infer<typeof PullRequestSchema>;
+
+/** The coder's final report of a task (structured task report or `mark_task_done`). */
+export const TaskReportInfoSchema = z.object({ summary: z.string(), commitMessage: z.string() });
+export type TaskReportInfo = z.infer<typeof TaskReportInfoSchema>;
+
 export const RunSchema = z.object({
   id: IdSchema,
   repoPath: z.string(),
@@ -247,7 +264,15 @@ export const RunSchema = z.object({
   plannerModel: z.string().nullable(),
   /** `legion/<runShort>/integration`, set when execution starts. */
   integrationBranch: z.string().nullable(),
+  /** Kept for compatibility; equals `pr.url` once a PR exists. */
   prUrl: z.string().nullable(),
+  /**
+   * The draft PR (null until `runs.createPr`). Always present on rows from the engine; optional in the
+   * type only so older event-log payloads and fixtures stay valid (treat `undefined` as `null`).
+   */
+  pr: PullRequestSchema.nullable().optional(),
+  /** Cleaned up and hidden from `runs.list` (`runs.archive`). Always present on engine rows (see `pr`). */
+  archived: z.boolean().optional(),
   error: z.string().nullable(),
   createdAt: TimestampSchema,
   updatedAt: TimestampSchema,
@@ -271,6 +296,11 @@ export const TaskSchema = z.object({
   effortOverride: EffortSchema.nullable(),
   /** Latest one-line status from the agent (`report_progress`). */
   progress: z.string().nullable(),
+  /**
+   * The coder's latest final report (null until the coder finished a turn with one; cleared when a fresh
+   * attempt starts). Always present on engine rows; optional in the type for older payloads (see `Run.pr`).
+   */
+  report: TaskReportInfoSchema.nullable().optional(),
   error: z.string().nullable(),
   createdAt: TimestampSchema,
   updatedAt: TimestampSchema,
@@ -540,6 +570,19 @@ export const RoleDefaultsSchema = z.object({
 });
 export type RoleDefaults = z.infer<typeof RoleDefaultsSchema>;
 
+export const EngineSettingsSchema = z.object({
+  enabled: z.boolean(),
+  /** Binary path; null = resolve from PATH. Changes take effect for new sessions without a restart. */
+  path: z.string().nullable(),
+  /**
+   * Reviewer/finalizer model when this engine has to review its own coders' work (the other engine is
+   * unavailable). If it matches the coder's model, Legion picks a different one (opus ↔ sonnet, or another
+   * model from the engine's probe). null = pick automatically.
+   */
+  fallbackReviewModel: z.string().nullable(),
+});
+export type EngineSettings = z.infer<typeof EngineSettingsSchema>;
+
 export const SettingsSchema = z.object({
   concurrency: z.object({
     /** Max concurrently running agent sessions across all runs (default 3). */
@@ -571,8 +614,8 @@ export const SettingsSchema = z.object({
     maxResolverAttempts: z.number().int().min(0).max(10),
   }),
   engines: z.object({
-    claude: z.object({ enabled: z.boolean(), path: z.string().nullable() }),
-    codex: z.object({ enabled: z.boolean(), path: z.string().nullable() }),
+    claude: EngineSettingsSchema,
+    codex: EngineSettingsSchema,
   }),
 });
 export type Settings = z.infer<typeof SettingsSchema>;
@@ -595,8 +638,8 @@ export const DEFAULT_SETTINGS: Settings = {
   budget: { perRunUsd: null, warnAtPct: 80 },
   limits: { maxRetries: 2, maxFixRounds: 2, maxResolverAttempts: 2 },
   engines: {
-    claude: { enabled: true, path: null },
-    codex: { enabled: true, path: null },
+    claude: { enabled: true, path: null, fallbackReviewModel: 'opus' },
+    codex: { enabled: true, path: null, fallbackReviewModel: null },
   },
 };
 

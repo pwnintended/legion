@@ -58,6 +58,8 @@ export interface StartEngineOptions {
   probeOnStart?: boolean;
   /** Reconcile the DB with reality and resume work (default true). */
   recover?: boolean;
+  /** Interval of the open-PR status poll (default 3 min; 0 = off). */
+  prPollMs?: number;
 }
 
 export interface EngineHandle {
@@ -116,6 +118,11 @@ export async function startEngine(options: StartEngineOptions): Promise<EngineHa
     registry,
     prHost: options.prHost ?? (fake ? new FakePrHost({ push: false }) : ghPrHost),
     ...(options.onHostMessage ? { host: options.onHostMessage } : {}),
+    ...(options.prPollMs !== undefined ? { prPollMs: options.prPollMs } : {}),
+  });
+  // Engine paths (and anything else engine-related) apply without a restart.
+  const offSettings = opened.store.onEvents((events) => {
+    if (events.some((e) => e.type === 'settings.updated')) registry.reconfigure();
   });
 
   let mcp: McpServerHandle;
@@ -160,6 +167,7 @@ export async function startEngine(options: StartEngineOptions): Promise<EngineHa
       if (closed) return;
       closed = true;
       await ready;
+      offSettings();
       await orchestrator.close();
       terminals.dispose();
       await mcp.close();

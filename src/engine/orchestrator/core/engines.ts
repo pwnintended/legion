@@ -16,8 +16,8 @@ export function coderEngineFor(
 }
 
 /**
- * Reviewers use the other engine than the coder; when that one is disabled, the same engine (the
- * lifecycle should then pick a different model and always uses a fresh session).
+ * Reviewers use the other engine than the coder; when that one is unavailable, the same engine (the
+ * lifecycle then picks a different model, `fallbackReviewModel`, and always uses a fresh session).
  */
 export function reviewerEngineFor(
   coder: EngineKind,
@@ -38,4 +38,42 @@ export function finalizerEngineFor(
   const claude = real.filter((e) => e === 'claude').length;
   const majority: EngineKind = claude >= real.length - claude ? 'claude' : 'codex';
   return reviewerEngineFor(majority, enabled);
+}
+
+const CLAUDE_FAMILIES = ['opus', 'sonnet', 'haiku', 'fable'] as const;
+/** Same-engine review: the stronger sibling, or the other one of opus/sonnet. */
+const CLAUDE_SWAP: Readonly<Record<string, string>> = {
+  opus: 'sonnet',
+  sonnet: 'opus',
+  haiku: 'sonnet',
+  fable: 'opus',
+};
+
+/** Comparable model identity: Claude aliases and full ids collapse to their family (`claude-opus-5-5` → opus). */
+export function modelFamily(engine: EngineKind, model: string | null): string | null {
+  if (!model) return null;
+  const lower = model.trim().toLowerCase();
+  if (engine === 'claude') return CLAUDE_FAMILIES.find((f) => lower.includes(f)) ?? lower;
+  return lower;
+}
+
+/**
+ * Model for a reviewer/finalizer that has to run on the coder's own engine (the other engine is
+ * unavailable, §1 "fallback: same engine, different model"): the configured `fallbackReviewModel` unless
+ * the coder already used it; then the Claude sibling (opus ↔ sonnet), or another model the engine's probe
+ * lists. null = the CLI default (nothing better is known).
+ */
+export function fallbackReviewModel(
+  engine: EngineKind,
+  coderModel: string | null,
+  configured: string | null,
+  knownModels: readonly string[] = [],
+): string | null {
+  const coder = modelFamily(engine, coderModel);
+  if (configured && (coder === null || modelFamily(engine, configured) !== coder)) return configured;
+  if (engine === 'claude') {
+    const swap = coder ? CLAUDE_SWAP[coder] : undefined;
+    if (swap) return swap;
+  }
+  return knownModels.find((m) => modelFamily(engine, m) !== coder) ?? configured;
 }

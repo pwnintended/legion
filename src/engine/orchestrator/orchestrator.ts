@@ -32,7 +32,10 @@ import type { TerminalService } from '../pty';
 import {
   type AgentPrompt,
   DEFAULT_TOOL_NAMES,
+  type EnabledEngines,
+  enabledEngines,
   type Failure,
+  fallbackReviewModel,
   type IssueInput,
   type Limits,
   planDispatch,
@@ -60,6 +63,8 @@ export interface OrchestratorOptions {
   prHost: PrHost;
   /** Engine → main messages (notify, badge, power). */
   host?: (message: EngineToMainMessage) => void;
+  /** Interval of the open-PR status poll (default 3 min; 0 = off). */
+  prPollMs?: number;
 }
 
 /** An agent session could not do its job; `failure.kind` feeds the retry policy. */
@@ -162,6 +167,8 @@ export class Orchestrator {
   /** Takeover terminals by attempt id. */
   readonly takeovers = new Map<string, string>();
   closed = false;
+  /** Stopped on close (timers set up by the wiring, e.g. PR polling). */
+  readonly disposers: (() => void)[] = [];
 
   private readonly tokens = new Map<string, string>();
   private readonly waiters = new Map<string, Waiter>();
@@ -276,6 +283,37 @@ export class Orchestrator {
   modelFor(role: keyof Settings['roles'], engine: EngineKind): string | null {
     if (engine === 'fake') return null;
     return this.settings().roles[role].models[engine];
+  }
+
+  /** Engines a new session can use right now: enabled in settings and usable per the last probe. */
+  availableEngines(): EnabledEngines {
+    const enabled = enabledEngines(this.settings());
+    return {
+      claude: enabled.claude && this.registry.usable('claude').ok,
+      codex: enabled.codex && this.registry.usable('codex').ok,
+    };
+  }
+
+  /**
+   * Model of a reviewer/finalizer on `engine` judging work coded on `coderEngine` with `coderModel`: the
+   * role's configured model, or — same engine (the other one is unavailable) — a different model.
+   */
+  reviewModel(
+    role: 'reviewer' | 'finalizer',
+    engine: EngineKind,
+    coderEngine: EngineKind,
+    coderModel: string | null,
+  ): string | null {
+    if (engine === 'fake') return null;
+    if (engine !== coderEngine) return this.modelFor(role, engine);
+    const model = fallbackReviewModel(
+      engine,
+      coderModel ?? this.modelFor('coder', engine),
+      this.settings().engines[engine].fallbackReviewModel,
+      this.registry.info(engine)?.models ?? [],
+    );
+    if (model === null) this.log.warn(`no second ${engine} model known for a same-engine ${role}; using the default`);
+    return model;
   }
 
   /** Track a background job (awaited on close); errors are logged unless the orchestrator is closing. */
@@ -718,6 +756,7 @@ export class Orchestrator {
       }
       if (decision.action === 'retry' || decision.action === 'requeue') {
         patchTaskMeta(this.store, task.id, freshAttemptMeta(options.summary ?? decision.reason));
+        if (task.report) task = this.store.updateTask(task.id, { report: null });
       }
       return task;
     });
@@ -980,6 +1019,7 @@ export class Orchestrator {
     if (this.closed) return;
     this.closed = true;
     this.offEvents();
+    for (const dispose of this.disposers.splice(0)) dispose();
     if (this.wakeTimer) clearTimeout(this.wakeTimer);
     for (const waiter of this.waiters.values()) waiter.reject(new Closed('engine shutting down'));
     this.waiters.clear();
