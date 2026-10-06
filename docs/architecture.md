@@ -30,18 +30,24 @@ Single package (no monorepo), pnpm, electron-vite.
 ```
 src/
   shared/            pure TS, no Node/DOM APIs. Imported by every process.
-    domain.ts        Run, Plan, TaskNode, Attempt, Review, InboxItem, statuses (zod + types)
-    schemas/         zod schemas for agent structured output (plan DAG, review verdict, task report)
-    events.ts        normalized AgentEvent union + EngineEvent/RunEvent stream types
+    domain.ts        Run, Plan, TaskNode, Task, Attempt, Review, InboxItem, Merge, Verification, Settings,
+                     statuses + *_TRANSITIONS tables (zod + inferred types)
+    schemas/         zod schemas for agent structured output (clarify, plan DAG, review, task report)
+                     + toStrictJsonSchema (strict-mode JSON Schema for --json-schema / outputSchema)
+    events.ts        normalized AgentEvent union + ServerEvent (engine → renderer, with seq)
     engine.ts        AgentEngine / AgentSession interfaces, Role, permission profiles
-    rpc.ts           typed RPC contract between renderer and engine (procedures + subscriptions)
-    ids.ts, result.ts, util
+    rpc.ts           typed RPC contract between renderer and engine (procedures + event stream)
+    rpc-transport.ts typed client/server over any MessagePort-like object, RpcError
+    host-protocol.ts main ↔ engine messages over parentPort;  bridge.ts  window.legion (preload) API
+    ids.ts, util.ts
   main/              Electron main: windows, engine supervisor, MessagePort wiring, native niceties
   preload/           minimal contextBridge: hands the renderer its MessagePort
   engine/            runs in an Electron utilityProcess (also runnable in plain Node for tests)
-    index.ts         entry: open DB, start RPC server, start MCP server, recover state
-    rpc/             RPC server over MessagePort (implements shared/rpc.ts)
-    db/              node:sqlite, migrations, typed repositories, append-only event log
+    index.ts         entry: open DB, start RPC server, start MCP server, recover state; startEngine()
+    context.ts       EngineContext handed to handler modules
+    rpc/             RPC server over MessagePort (implements shared/rpc.ts); core procedures
+    db/              node:sqlite, migrations, typed repositories (Store), append-only event log
+    util/            AsyncQueue etc.;  test/  test helpers
     adapters/
       claude/        Claude Code CLI adapter (stream-json + control protocol)
       codex/         Codex app-server adapter (JSON-RPC), protocol/ = generated types
@@ -51,7 +57,7 @@ src/
     orchestrator/    dag validation, scheduler, run lifecycle, review loop, prompts/
     pty/             node-pty sessions for terminal takeover (Electron runtime only)
   renderer/          React 19 UI
-    app/             bootstrap, RPC client, stores
+    app/             bootstrap, EngineConnection (RPC client + reconnect), stores
     layout/          tiling engine (pure TS tree + ops) and its React renderer
     tiles/<kind>/    one folder per tile kind, registered in tiles/registry.ts
     overlays/        inbox, composer, command palette
@@ -60,6 +66,9 @@ src/
 docs/
 tests/e2e/          Playwright _electron smoke tests
 ```
+
+TypeScript projects: `tsconfig.node.json` (shared, main, engine, tests), `tsconfig.preload.json`
+(preload, DOM + node types), `tsconfig.web.json` (renderer + shared). `pnpm typecheck` runs all three.
 
 **Ownership rule:** work stays inside the folder you were assigned. Cross-cutting files
 (`src/shared/**`, `package.json`, `electron.vite.config.ts`, `tiles/registry.ts`) change only when
@@ -78,6 +87,14 @@ renderer        React UI; reconnects after reload and resumes the event stream f
 
 - Main resolves `PATH` from the user's login shell (`$SHELL -ilc 'printf %s "$PATH"'`) at startup and
   passes it to the engine via `env`. GUI-launched apps do not inherit it.
+- Port wiring: the engine posts `ready` on `parentPort`; only then does main create a `MessageChannelMain` per
+  renderer (`connect` to the engine, `legion:engine-port` to the renderer). The preload forwards the port to the
+  page with `window.postMessage` (ports can't cross contextBridge). The renderer asks for a port on every load;
+  main re-wires every renderer after an engine restart (exponential backoff, counter reset after 60 s healthy).
+- `LEGION_HOME` overrides the data dir (`~/Library/Application Support/Legion`); when set, Chromium's profile
+  goes to `$LEGION_HOME/chromium` so isolated instances don't share the single-instance lock.
+- The window uses `vibrancy: 'under-window'` with an opaque `#11111b` background (no white flash). Vibrancy
+  only shows through if the window background is made transparent; that is a design decision for chrome/.
 - The engine must not import `electron` except behind `process.parentPort` checks, so it can run in plain
   Node (tests, headless runs). `node:sqlite` is used precisely so the DB works in both.
 - Engine state survives renderer reloads. On engine start it reconciles the DB with reality (§9).
@@ -87,10 +104,11 @@ renderer        React UI; reconnects after reload and resumes the event stream f
 | Area | Choice |
 |---|---|
 | Runtime / build | Electron (latest stable), electron-vite, electron-builder, TypeScript strict, pnpm |
+| Versions (pinned exact) | electron 44.5.1 (Node 24.21), electron-vite 5.0.0 + **Vite 7** (electron-vite 5 does not accept Vite 8; hence @vitejs/plugin-react 5.2), TypeScript 7.0 (native `tsc`), React 19.3, Tailwind 4.3, zod 4.6, @modelcontextprotocol/sdk 1.32, vitest 5, Playwright 1.63, Biome 2.5 |
 | Lint / format | Biome |
 | Tests | Vitest (engine + shared + renderer logic), Playwright `_electron` (smoke) |
 | IPC | Hand-rolled typed RPC over MessagePort (`shared/rpc.ts`): request/response + server-pushed events with monotonic `seq` |
-| DB | `node:sqlite` (no native rebuilds), WAL, hand-written migrations + typed repositories, zod at boundaries |
+| DB | `node:sqlite` (no native rebuilds; verified in Electron 44's main and utilityProcess), WAL, hand-written migrations + typed repositories, zod at boundaries |
 | MCP | `@modelcontextprotocol/sdk` streamable HTTP server |
 | UI | React 19, Tailwind CSS v4 (tokens as CSS variables), Zustand, Motion, cmdk |
 | DAG | @xyflow/react + @dagrejs/dagre |
@@ -104,25 +122,35 @@ Do not add dependencies outside your task. If you need one, say so in your repor
 ## 5. Domain model
 
 ```
-Run        id, repoPath, baseRef, title, issueText, issueUrl?, status, plannerEngine, createdAt
+Run        id, repoPath, baseRef, title, issueText, issueUrl?, status, paused, plannerEngine, plannerModel?,
+           integrationBranch?, prUrl?, error?, createdAt, updatedAt
            status: draft → clarifying → planning → awaiting_approval → executing → integrating
                    → finalizing → pr_ready → done | failed | cancelled   (+ paused flag)
-Plan       id, runId, version, markdown, dag (PlanDag), createdAt, approvedAt?
+Plan       id, runId, version, markdown, dag (PlanDag = {nodes, annotations}), source (agent|user), feedback?,
+           createdAt, approvedAt?
 TaskNode   (inside PlanDag) id "T1".., title, goal, kind (contracts|feature|test|refactor|docs|integration),
            dependsOn[], acceptanceCriteria[{id,text}], touches[{glob, mode: create|modify|read}],
            size S|M|L, verify{commands[]}, contextHints{files[],notes}, agent{engine, model?, effort?}, risk low|med|high
-Task       runtime row per node: runId, nodeId, status, branch, worktreePath, startSha, attemptCount, mergedSha?
+Task       runtime row per node: runId, nodeId, status, branch, worktreePath, startSha, attemptCount, fixRounds,
+           mergedSha?, engine/model/effortOverride?, progress?, error?
            status: blocked → queued → provisioning → running → verifying → reviewing → fixing
                    → approved → awaiting_human → merging → merged | failed | skipped | cancelled
 Attempt    id, taskId?, runId, role (planner|coder|reviewer|resolver|finalizer), engine, model,
            sessionId (claude session / codex thread), status, startedAt, endedAt, costUsd?, tokens?, error?
+           status: pending → running → succeeded | failed | interrupted | cancelled  (interrupted → running on resume)
 Review     id, taskId (null = final review), attemptId, verdict (approve|request_changes|reject_replan),
            criteria[{id,status: met|unmet|unclear,evidence}], findings[{severity: blocker|major|minor|nit,
            file?, line?, title, body, suggestedFix?}], summary
 InboxItem  id, runId, taskId?, kind (approval|question|plan_signoff|escalation|pr_ready|conflict|budget),
            payload, createdAt, resolvedAt?, resolution?
+Merge      id, runId, taskId, preSha, postSha?, status (pending|merged|conflict|verify_failed|reverted), error?
+Verification id, runId, taskId?, attemptId?, phase (setup|task|post_merge|final), command, exitCode?, outputTail,
+           durationMs
 Event      seq (global, monotonic), runId?, taskId?, attemptId?, ts, type, payload  — append-only
 ```
+
+`?` fields are `null` when absent (never `undefined`), timestamps are epoch ms. The allowed status changes are
+data (`RUN_TRANSITIONS`, `TASK_TRANSITIONS`, `ATTEMPT_TRANSITIONS` in `shared/domain.ts`).
 
 Status changes go through one function per entity that does compare-and-set (`UPDATE … WHERE status = ?`)
 and appends an Event in the same transaction.
@@ -236,8 +264,12 @@ DAG and review output come back as structured output, not via MCP tools.
 ## 10. RPC & events
 
 `shared/rpc.ts` holds a single contract object: procedure names → zod input/output, and an event channel.
-Renderer calls `rpc.call('runs.create', input)`; engine pushes `{seq, event}` batches (coalesced ~16–33 ms).
-On (re)connect the renderer sends `subscribe({sinceSeq})` and receives a snapshot + subsequent events.
+Renderer calls `rpc.call('runs.create', input)`; engine pushes `ServerEvent` batches (coalesced ~16 ms).
+Every ServerEvent is one row of the `events` table (its `seq`), and entity events carry the full updated row, so
+applying them is idempotent. On (re)connect the renderer sends `subscribe({sinceSeq})`: the engine replays missed
+events (`replayed: true`) or, if it cannot (fresh client, gap > 20k events), answers `replayed: false` and the
+client refetches snapshots (`runs.list`, `runs.get` — each carries the `seq` it was read at) and ignores older
+events. Unimplemented procedures answer `RpcError('not_implemented')`.
 Raw PTY bytes use a dedicated MessagePort per terminal, not the RPC channel.
 
 ## 11. UI
@@ -256,6 +288,18 @@ Raw PTY bytes use a dedicated MessagePort per terminal, not the RPC channel.
   attention = peach `#fab387`, ok = green `#a6e3a1`, error = red `#f38ba8`, running = blue `#89b4fa`.
 
 ## 12. Working agreements for contributors
+
+- Adding an RPC procedure: add it to `shared/rpc.ts` (zod input/output; `null` not `undefined`), then
+  `server.implement(name, handler)` from a `register*Handlers(server, ctx)` function wired in `engine/index.ts`.
+  Throw `RpcError` with a meaningful code; anything else becomes `internal`. Transferred ports (terminals) arrive in
+  the handler's `ctx.ports`.
+- Persisting: only through `Store` (`engine/db/store.ts`). Schema changes are new migrations in
+  `engine/db/migrations/` (never edit a released one).
+- Agent structured output: define the zod schema in `shared/schemas/`, export `toStrictJsonSchema(schema)`, re-validate
+  with zod in the engine.
+- Engine tests run in plain Node: `startEngine({ dataDir: tempDir, env, log: silentLogger })` and
+  `engine.connect(new MessageChannel().port1)` with `createRpcClient(port2)`; use `adapters/fake` (`FakeEngine`,
+  scenarios `success|edit|approval|structured|fail` or a custom script) instead of real CLIs.
 
 - `pnpm typecheck`, `pnpm lint`, `pnpm test` must pass before you report done. Add tests for logic you write.
 - Never run real `claude`/`codex` sessions in the default test suite. Live tests live under
