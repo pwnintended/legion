@@ -211,6 +211,20 @@ export default function SessionTile({ tileId, runId, params, focused }: TileProp
   const [extra, setExtra] = useState(0);
   const start = Math.max(0, timeline.rows.length - WINDOW - extra);
   const rows = timeline.rows.slice(start);
+  // Your steer messages sit between the rows that happened before and after them.
+  const feed = useMemo(() => {
+    const tsOf = new Map(transcript.entries.map((e) => [e.seq, e.ts]));
+    const items: ({ kind: 'row'; row: TimelineRow } | { kind: 'sent'; message: (typeof sent)[number] })[] = [];
+    let next = 0;
+    for (const row of rows) {
+      const ts = tsOf.get(row.key) ?? 0;
+      while (next < sent.length && (sent[next] as (typeof sent)[number]).ts < ts)
+        items.push({ kind: 'sent', message: sent[next++] as (typeof sent)[number] });
+      items.push({ kind: 'row', row });
+    }
+    while (next < sent.length) items.push({ kind: 'sent', message: sent[next++] as (typeof sent)[number] });
+    return items;
+  }, [rows, sent, transcript.entries]);
   const growBy = useRef<number | null>(null);
   // biome-ignore lint/correctness/useExhaustiveDependencies: runs after older rows were prepended (`extra`).
   useLayoutEffect(() => {
@@ -362,19 +376,20 @@ export default function SessionTile({ tileId, runId, params, focused }: TileProp
                   {running ? 'Waiting for the first event…' : 'No events recorded for this attempt.'}
                 </div>
               ) : null}
-              {rows.map((row: TimelineRow, i) => (
-                <div className="ss-row" key={row.key}>
-                  <Row row={row} ctx={ctx} last={i === rows.length - 1 && sent.length === 0} />
-                </div>
-              ))}
+              {feed.map((item, i) =>
+                item.kind === 'row' ? (
+                  <div className="ss-row" key={item.row.key}>
+                    <Row row={item.row} ctx={ctx} last={i === feed.length - 1} />
+                  </div>
+                ) : (
+                  <div className="ss-row" key={`you-${item.message.id}`}>
+                    <SentRow message={item.message} attemptId={attempt.id} />
+                  </div>
+                ),
+              )}
               {pendingExtra.map((item) => (
                 <div className="ss-row" key={item.id}>
                   <ApprovalCard item={item} focused={focused} />
-                </div>
-              ))}
-              {sent.map((message) => (
-                <div className="ss-row" key={`you-${message.id}`}>
-                  <SentRow message={message} attemptId={attempt.id} />
                 </div>
               ))}
             </>

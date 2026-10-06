@@ -285,7 +285,16 @@ export class DemoClient implements EngineClient {
     setTimeout(() => {
       const reply =
         priority === 'now' ? `Stopping here to follow your note: "${text}".` : `Noted for the next step: "${text}".`;
-      this.emit([this.attemptEvent(attempt, { type: 'message', text: reply })]);
+      // The current turn ends (or is cut short) before the agent picks the note up.
+      this.emit([
+        this.attemptEvent(attempt, {
+          type: 'turn_complete',
+          structuredOutput: null,
+          isError: false,
+          reason: priority === 'now' ? 'interrupted' : null,
+        }),
+        this.attemptEvent(attempt, { type: 'message', text: reply }),
+      ]);
     }, 900);
     return { ok: true };
   }

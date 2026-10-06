@@ -134,6 +134,14 @@ test('session tiles, approvals, composer, inbox, palette, clarify', async () => 
     await window.keyboard.press('Meta+Enter');
     await window.waitForTimeout(500);
     await window.screenshot({ path: join(shots, 'session-focus.png') });
+
+    // Steer: ⏎ queues a note for the next turn; the agent picks it up after the current one.
+    await t2.getByPlaceholder('Steer T2…').fill('Keep the error codes in SCREAMING_SNAKE_CASE');
+    await window.keyboard.press('Enter');
+    await expect(t2.locator('.ev-you')).toContainText('queued for next turn');
+    await expect(t2.getByText('Noted for the next step')).toBeVisible();
+    await window.waitForTimeout(300);
+    await t2.screenshot({ path: join(shots, 'steer.png') });
   } finally {
     await app.close();
     rmSync(home, { recursive: true, force: true });
