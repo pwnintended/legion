@@ -11,6 +11,7 @@ import { RpcError } from '@shared/rpc-transport';
 import type { ConnectionState } from '../engine-connection';
 import type { EngineClient } from '../sync';
 import { createDemoWorld, type DemoWorld, LIVE_SCRIPT, snapshotOf } from './fixtures';
+import { type DemoRpcContext, extendDemoWorld, handlePlanReviewRpc, isHandled } from './plan-review';
 
 const SNAPSHOT_SEQ = 1000;
 
@@ -28,6 +29,7 @@ export class DemoClient implements EngineClient {
   constructor(options: { live?: boolean; now?: number } = {}) {
     const now = options.now ?? Date.now();
     this.world = createDemoWorld(now);
+    extendDemoWorld(this.world, now);
     // Transcript history gets seqs below the snapshot seq (it happened before the snapshot was read).
     let seq = 100;
     for (const [attemptId, events] of Object.entries(this.world.transcripts)) {
@@ -152,9 +154,23 @@ export class DemoClient implements EngineClient {
         return this.updateRun(input.runId as string, { paused: method === 'runs.pause' });
       case 'runs.approvePlan':
         return this.approvePlan(input.runId as string);
-      default:
+      default: {
+        const handled = handlePlanReviewRpc(this.extraContext, method, input);
+        if (isHandled(handled)) return handled;
         throw new RpcError('not_implemented', `${method} is not available in demo mode`);
+      }
     }
+  }
+
+  /** World access for the plan/review/PR demo procedures (plan-review.ts). */
+  private get extraContext(): DemoRpcContext {
+    return {
+      world: this.world,
+      emit: (bodies) => this.emit(bodies),
+      later: (ms, fn) => {
+        setTimeout(fn, ms);
+      },
+    };
   }
 
   private emit(bodies: ServerEventBody[]): void {
