@@ -92,3 +92,35 @@ export function runLabel(title: string): string {
   if (short.length > 26) return `${short.slice(0, 25)}…`;
   return used < words.length ? `${short}…` : short;
 }
+
+/**
+ * The inbox selection is an item id, never a bare index: items re-sort as they arrive and resolve, and a
+ * key like `a` must act on the item the user is looking at. `index` is where that item was last seen, so
+ * when it leaves the list the selection stays put (on the row that took its place).
+ */
+export interface InboxSelection {
+  id: string | null;
+  index: number;
+}
+
+export const NO_SELECTION: InboxSelection = { id: null, index: 0 };
+
+/** Row index of the selection in `ranked` (clamped; 0 for an empty list). */
+export function selectedIndex(ranked: readonly RankedItem[], selection: InboxSelection): number {
+  if (selection.id !== null) {
+    const at = ranked.findIndex((r) => r.item.id === selection.id);
+    if (at !== -1) return at;
+  }
+  return Math.max(0, Math.min(selection.index, ranked.length - 1));
+}
+
+/** Select the row at `index` (clamped). */
+export function selectAt(ranked: readonly RankedItem[], index: number): InboxSelection {
+  const clamped = Math.max(0, Math.min(index, ranked.length - 1));
+  return { id: ranked[clamped]?.item.id ?? null, index: clamped };
+}
+
+/** Move the selection by `delta` rows (j/k). */
+export function moveSelection(ranked: readonly RankedItem[], selection: InboxSelection, delta: number): InboxSelection {
+  return selectAt(ranked, selectedIndex(ranked, selection) + delta);
+}

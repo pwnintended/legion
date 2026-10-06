@@ -12,7 +12,16 @@ import { Chip, Kbd } from '../chrome/ui';
 import { displayEngine, formatCost, formatDuration, type Tone } from '../layout/describe';
 import { type ApprovalChoice, resolveApproval, trackResolution, usePendingResolution } from '../tiles/session/actions';
 import { ApprovalButtons, ApprovalSubjectView, describeApproval } from '../tiles/session/approval';
-import { type RankedItem, rankInbox, runLabel } from './inbox-model';
+import {
+  type InboxSelection,
+  moveSelection,
+  NO_SELECTION,
+  type RankedItem,
+  rankInbox,
+  runLabel,
+  selectAt,
+  selectedIndex,
+} from './inbox-model';
 import { jumpToItem } from './nav';
 import { OverlayPanel } from './Shell';
 
@@ -35,10 +44,17 @@ export function InboxOverlay() {
   const state = useData((s) => s);
   const ranked = useMemo(() => rankInbox(state, items), [state, items]);
   const agents = useAgentsRunning();
-  const [selected, setSelected] = useState(0);
+  // Selected by item id: a new or resolved item re-sorting above it must not change what `a` approves.
+  const [selection, setSelection] = useState<InboxSelection>(NO_SELECTION);
   const listRef = useRef<HTMLDivElement>(null);
-  const index = Math.min(selected, Math.max(0, ranked.length - 1));
+  const index = selectedIndex(ranked, selection);
   const current = ranked[index]?.item ?? null;
+
+  // Pin the shown row by id (first render, or after the selected item left the list).
+  useEffect(() => {
+    const id = current?.id ?? null;
+    if (id !== selection.id || index !== selection.index) setSelection({ id, index });
+  }, [current, index, selection]);
 
   useEffect(() => {
     listRef.current
@@ -49,8 +65,8 @@ export function InboxOverlay() {
   const onKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
     if (event.metaKey || event.ctrlKey || event.altKey || isTextInput(event.target)) return;
     const key = event.key;
-    if (key === 'j' || key === 'ArrowDown') setSelected(Math.min(ranked.length - 1, index + 1));
-    else if (key === 'k' || key === 'ArrowUp') setSelected(Math.max(0, index - 1));
+    if (key === 'j' || key === 'ArrowDown') setSelection(moveSelection(ranked, selection, 1));
+    else if (key === 'k' || key === 'ArrowUp') setSelection(moveSelection(ranked, selection, -1));
     else if (key === 'Enter' && current && (event.target as HTMLElement).tagName !== 'BUTTON') jumpToItem(current);
     else if (current?.kind === 'approval' && (key === 'a' || key === 'A' || key === 'd')) {
       void resolveApproval(current, key === 'd' ? 'deny' : event.shiftKey || key === 'A' ? 'acceptTask' : 'accept');
@@ -83,7 +99,7 @@ export function InboxOverlay() {
                 entry={entry}
                 index={i}
                 selected={i === index}
-                onSelect={() => setSelected(i)}
+                onSelect={() => setSelection(selectAt(ranked, i))}
               />
             ))}
           </div>

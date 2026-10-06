@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { applySnapshot, initialData, openInbox } from '../app/data';
 import { createDemoWorld, snapshotOf } from '../app/demo/fixtures';
-import { dependentsOf, rankInbox, runLabel } from './inbox-model';
+import { dependentsOf, moveSelection, NO_SELECTION, rankInbox, runLabel, selectAt, selectedIndex } from './inbox-model';
 
 function demoState() {
   const world = createDemoWorld(1_000_000_000);
@@ -52,5 +52,41 @@ describe('helpers', () => {
     expect(runLabel('Add passkey (WebAuthn) login')).toBe('Add passkey login');
     expect(runLabel('Rate-limit the public API')).toBe('Rate-limit the public API');
     expect(runLabel('Extract UI strings for internationalisation')).toBe('Extract UI strings for…');
+  });
+});
+
+describe('selection', () => {
+  it('follows the selected item when another item sorts above it', () => {
+    const state = demoState();
+    const items = openInbox(state.inbox, '*');
+    const approval = items.find((i) => i.kind === 'approval');
+    if (!approval) throw new Error('fixture approval missing');
+    const before = rankInbox(state, items);
+    // The user looks at the question (row 1) and is about to press a key.
+    const question = before[1]?.item;
+    const selection = selectAt(before, 1);
+    expect(selection.id).toBe(question?.id);
+    // A new approval arrives and ranks first: the question moves to row 2, the selection with it.
+    const fresh = { ...approval, id: 'new-approval', createdAt: approval.createdAt - 10 };
+    const after = rankInbox(state, [...items, fresh]);
+    expect(after[1]?.item.id).not.toBe(question?.id);
+    expect(after[selectedIndex(after, selection)]?.item.id).toBe(question?.id);
+  });
+
+  it('stays on the same row when the selected item is resolved, and clamps at the ends', () => {
+    const state = demoState();
+    const items = openInbox(state.inbox, '*');
+    const ranked = rankInbox(state, items);
+    const selection = selectAt(ranked, 1);
+    const remaining = rankInbox(
+      state,
+      items.filter((i) => i.id !== selection.id),
+    );
+    expect(selectedIndex(remaining, selection)).toBe(1);
+    expect(selectedIndex(ranked, NO_SELECTION)).toBe(0);
+    expect(selectedIndex([], selection)).toBe(0);
+    expect(moveSelection(ranked, selectAt(ranked, ranked.length - 1), 1).index).toBe(ranked.length - 1);
+    expect(moveSelection(ranked, NO_SELECTION, -1).index).toBe(0);
+    expect(moveSelection(ranked, selection, 1).id).toBe(ranked[2]?.item.id);
   });
 });
