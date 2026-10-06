@@ -57,7 +57,14 @@ export async function mergeQueue(o: Orchestrator, runId: string): Promise<void> 
       tasks.find((t) => t.status === 'merging') ??
       tasks.filter((t) => t.status === 'approved').sort((a, b) => a.updatedAt - b.updatedAt)[0];
     if (!next) return;
-    const task = next.status === 'approved' ? o.store.transitionTask(next.id, 'approved', 'merging') : next;
+    let task = next;
+    if (next.status === 'approved') {
+      try {
+        task = o.store.transitionTask(next.id, 'approved', 'merging');
+      } catch {
+        continue; // a human moved it meanwhile (requestChanges / skip)
+      }
+    }
     let outcome: Outcome;
     try {
       outcome = await mergeTask(o, run, task);

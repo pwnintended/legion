@@ -5,6 +5,7 @@
  * is re-entrant: recovery and resume simply start it again.
  */
 import type { Run, Task, TaskNode } from '@shared/domain';
+import { RpcError } from '@shared/rpc-transport';
 import type { ReviewOutput, TaskReport } from '@shared/schemas';
 import { ReviewOutputSchema, reviewOutputJsonSchema, TaskReportSchema, taskReportJsonSchema } from '@shared/schemas';
 import {
@@ -13,7 +14,6 @@ import {
   commitAll,
   createWorktree,
   gitText,
-  headSha,
   LOCKFILES,
   mergeIntoTaskBranch,
   provisionFiles,
@@ -44,7 +44,7 @@ import {
 import type { AgentRun } from './live-session';
 import { type FixContext, patchTaskMeta, taskMeta } from './meta';
 import { AgentFailure, Closed, type Orchestrator } from './orchestrator';
-import { ensureIntegrationWorktree, runVerification, verifyCommands } from './worktrees';
+import { confirmedIntegrationSha, runVerification, verifyCommands } from './worktrees';
 
 type Step = 'next' | 'park';
 
@@ -88,8 +88,14 @@ export async function driveTask(o: Orchestrator, taskId: string): Promise<void> 
     }
   } catch (error) {
     if (o.closed || error instanceof Closed) return;
-    o.log.error(`task ${taskId}: driver failed`, error);
     const task = o.store.getTask(taskId);
+    // A human moved the task or the run (cancel, skip, requestChanges) while this step ran: nothing to do.
+    const run = task ? o.store.getRun(task.runId) : null;
+    if (run?.status !== 'executing' || (error instanceof RpcError && error.code === 'conflict')) {
+      o.log.warn(`task ${taskId}: step abandoned (${(error as Error).message})`);
+      return;
+    }
+    o.log.error(`task ${taskId}: driver failed`, error);
     const path = task ? taskStatusPath(task.status, 'failed') : null;
     if (!task || !path || path.length === 0) return;
     o.applyDecision(taskId, {
@@ -169,8 +175,7 @@ async function provision(o: Orchestrator, run: Run, task: Task): Promise<Step> {
   const path = o.taskPath(run, task.id);
   const branch = taskBranchName(run.id, node.id, node.title);
   try {
-    const integration = await ensureIntegrationWorktree(o, run);
-    const startSha = await headSha(integration);
+    const startSha = await confirmedIntegrationSha(o, run);
     await removeWorktree({ repo: run.repoPath, path });
     await createWorktree({ repo: run.repoPath, path, branch, startSha, resetBranch: true });
     o.assertOpen();

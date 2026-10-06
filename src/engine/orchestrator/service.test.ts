@@ -353,6 +353,17 @@ describe('live sessions', () => {
       ),
     ).resolves.toEqual({ terminalId, pid: pty?.pid });
     port.port2.close();
+    // The UI's terminal tile opens by attempt target only: it must attach to the takeover PTY (same key).
+    const byTarget = new MessageChannel();
+    await expect(
+      harness.client.call(
+        'terminals.open',
+        { target: { kind: 'attempt', attemptId: attempt.id }, cols: 100, rows: 30 },
+        { transfer: [byTarget.port1] },
+      ),
+    ).resolves.toEqual({ terminalId, pid: pty?.pid });
+    byTarget.port2.close();
+    expect(harness.ptys).toHaveLength(1);
     await expect(
       harness.client.call('sessions.send', { attemptId: attempt.id, text: 'hi', priority: 'next' }),
     ).rejects.toMatchObject({ code: 'failed_precondition' });

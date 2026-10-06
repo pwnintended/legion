@@ -60,6 +60,20 @@ export async function ensureIntegrationWorktree(o: Orchestrator, run: Run): Prom
   return path;
 }
 
+/**
+ * Integration HEAD as of the last *finished* merge (or the base). A merge in flight may still be reverted
+ * by its post-merge verify, so new task worktrees must not start from it.
+ */
+export async function confirmedIntegrationSha(o: Orchestrator, run: Run): Promise<string> {
+  await ensureIntegrationWorktree(o, run);
+  const merged = o.store
+    .listMerges(run.id)
+    .filter((m) => m.status === 'merged' && m.postSha)
+    .at(-1);
+  if (merged?.postSha) return merged.postSha;
+  return runMeta(o.store, run.id).baseSha ?? resolveSha(run.repoPath, run.baseRef);
+}
+
 export function toVerifyInput(result: CommandResult): VerifyResultInput {
   return {
     command: result.command,
