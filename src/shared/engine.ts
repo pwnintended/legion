@@ -102,6 +102,12 @@ export interface SessionOptions {
   addDirs?: readonly string[];
   /** Aborting it is equivalent to `session.close()`. */
   signal?: AbortSignal;
+  /**
+   * The working directory holds content another agent wrote (reviewer, finalizer): load no configuration
+   * from it. Claude: no setting sources at all (no project `.claude/settings*.json`, hooks or permissions);
+   * Codex: no project docs (`AGENTS.md`). Absent/false = the repo's own project settings apply.
+   */
+  untrustedWorkdir?: boolean;
 }
 
 export interface AgentSession {

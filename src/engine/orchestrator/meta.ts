@@ -45,6 +45,8 @@ export interface TaskMeta {
   previousFailure: string | null;
   lastVerify: VerifyResultInput[];
   scope: ScopeReport | null;
+  /** Sensitive changes found by the last verify (`core/sensitive.ts`). */
+  sensitive: string[];
   /** Reviews of the current attempt (ids), oldest first. */
   reviewIds: string[];
   /** Consecutive reviewer sessions that failed to produce a review. */
@@ -72,6 +74,7 @@ const TASK_DEFAULTS: TaskMeta = {
   previousFailure: null,
   lastVerify: [],
   scope: null,
+  sensitive: [],
   reviewIds: [],
   reviewFailures: 0,
   resolverAttempts: 0,

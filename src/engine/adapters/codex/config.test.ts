@@ -131,6 +131,7 @@ describe('thread parameters', () => {
       mcp_servers: { legion: { tool_timeout_sec: 86_400 } },
     });
     expect(threadConfig(opts({ mcp: null }))).toEqual({});
+    expect(threadConfig(opts({ mcp: null, untrustedWorkdir: true }))).toEqual({ project_doc_max_bytes: 0 });
   });
 
   it('adds extra writable roots for workspace-write sessions only', () => {

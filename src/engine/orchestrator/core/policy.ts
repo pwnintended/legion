@@ -173,6 +173,8 @@ export interface ReviewContext {
   readonly highRiskGlobs?: readonly string[];
   /** Blocking findings of the previous review round, to detect oscillation. */
   readonly previousFindings?: readonly ReviewFinding[];
+  /** Changed agent/CI/hook config or package scripts (`core/sensitive.ts`): always a human gate. */
+  readonly sensitiveChanges?: readonly string[];
 }
 
 /** After the reviewer's structured output was validated. */
@@ -188,11 +190,16 @@ export function decideAfterReview(
     });
   }
   if (reviewApproves(review)) {
-    const gate = requiresHumanGate(context.node, context.highRiskGlobs);
+    const sensitive = context.sensitiveChanges ?? [];
+    const gate = requiresHumanGate(context.node, context.highRiskGlobs) || sensitive.length > 0;
     return decision(
       'approve',
       gate ? ['approved', 'awaiting_human'] : ['approved'],
-      gate ? 'approved; high-risk task waits for a human before merging' : 'approved',
+      sensitive.length > 0
+        ? `approved; changes ${sensitive.join(', ')} (agent/CI/hook config or scripts), so a human approves the merge`
+        : gate
+          ? 'approved; high-risk task waits for a human before merging'
+          : 'approved',
     );
   }
   const blocking = blockingFindings(review);

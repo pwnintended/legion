@@ -405,6 +405,8 @@ export class Orchestrator {
       model: params.model,
       effort: params.effort,
       permission: permissionProfileFor(params.role, params.allowedCommands ?? []),
+      // Reviewers and the finalizer read worktrees that coders wrote: never trust their config.
+      untrustedWorkdir: params.role === 'reviewer' || params.role === 'finalizer',
       outputSchema: params.outputSchema,
       mcp: token && this.mcp ? { url: this.mcp.url, token } : null,
       env: this.sessionEnv(),

@@ -12,3 +12,4 @@ export * from './priority';
 export * from './prompts';
 export * from './scheduler';
 export * from './scope';
+export * from './sensitive';

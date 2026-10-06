@@ -222,6 +222,18 @@ Legion-owned `CODEX_HOME` (`<dataDir>/codex-home`) containing only a **symlink**
 plus `-c features.hooks=false` etc. Codex threads live in that home, so resume/takeover must use it.
 Details: `src/engine/adapters/codex/README.md`.
 
+Trust boundary. Reviewer and finalizer sessions read worktrees that coders wrote, so they load **no**
+configuration from them (`SessionOptions.untrustedWorkdir`): Claude runs with `--setting-sources=` (no project or
+local `.claude/settings*.json`, hence no planted hooks or permission rules), Codex with `project_doc_max_bytes=0`
+(no worktree `AGENTS.md`; project `.codex/config.toml` is only read for trusted projects and the Legion
+`CODEX_HOME` trusts none; hooks are disabled for every session). A task whose diff touches agent or Legion
+config (`.claude/**`, `.codex/**`, `CLAUDE.md`, `AGENTS.md`, `.mcp.json`, `legion.json`), CI configs, git hooks or
+`package.json` `scripts` (`orchestrator/core/sensitive.ts`) is high risk: after an approving review it waits at
+the human gate with the files named. **Verify and setup commands are trusted execution of repository code**:
+Legion runs them unsandboxed in the worktree (`legion.json` and plan verify commands are human-approved, but
+`pnpm test` still executes whatever `package.json` scripts and test files the coder wrote). The Codex sandbox
+and the read-only reviewer profile limit the agents, not the code Legion itself runs on their behalf.
+
 Structured output: Claude `--json-schema`, Codex `outputSchema` on `turn/start`. Both are re-validated with
 zod in the engine; a schema failure is a retryable attempt failure.
 
@@ -270,7 +282,8 @@ relies on this); when both exist the structured report wins.
      verify results, scope report → `Review`. Approve iff all criteria met and no blocker/major.
    - Fix loop: send blocker/major findings back to the coder session (resume), re-verify, re-review.
      Max 2 fix rounds, then escalate to inbox.
-   - High-risk nodes → `awaiting_human` after approval.
+   - High-risk nodes, and tasks whose diff touches agent/CI/hook config or package scripts (§6) →
+     `awaiting_human` after approval.
    - Merge queue (serialized): `git merge-tree --write-tree` forecast; clean → squash-merge into integration
      worktree, commit `T<n>: <title>`, run post-merge verify; failure → reset integration to the pre-merge SHA,
      send the task back to fixing with integration HEAD merged into its branch. Conflicts → resolver session

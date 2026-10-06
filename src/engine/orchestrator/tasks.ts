@@ -13,6 +13,7 @@ import {
   changedFiles,
   commitAll,
   createWorktree,
+  git,
   gitText,
   LOCKFILES,
   mergeIntoTaskBranch,
@@ -35,7 +36,9 @@ import {
   decideAfterVerify,
   type Failure,
   markdownSection,
+  packageScriptsChanged,
   reviewerEngineFor,
+  sensitivePaths,
   type TaskDecision,
   taskStatusPath,
   type UpstreamSummary,
@@ -412,7 +415,8 @@ async function verify(o: Orchestrator, run: Run, task: Task): Promise<Step> {
   const changed = task.startSha ? touchedPaths(await changedFiles(worktree, task.startSha, 'HEAD')) : [];
   const alwaysAllowed = config?.installCommand ? LOCKFILES.map((l) => `**/${l.file}`) : [];
   const scope = checkScope(node, changed, alwaysAllowed);
-  patchTaskMeta(o.store, task.id, { lastVerify: outcome.results, scope });
+  const sensitive = task.startSha ? await sensitiveChanges(worktree, task.startSha, changed) : [];
+  patchTaskMeta(o.store, task.id, { lastVerify: outcome.results, scope, sensitive });
   const current = o.store.requireTask(task.id);
   const decision = decideAfterVerify(current, outcome.ok, o.limits());
   const failed = outcome.results.filter((r) => r.exitCode !== 0);
@@ -427,6 +431,20 @@ async function verify(o: Orchestrator, run: Run, task: Task): Promise<Step> {
       : {}),
   });
   return 'next';
+}
+
+/** Sensitive paths among `changed`, plus every `package.json` whose `scripts` changed since `base`. */
+async function sensitiveChanges(worktree: string, base: string, changed: readonly string[]): Promise<string[]> {
+  const out = sensitivePaths(changed);
+  const show = (rev: string, path: string) =>
+    git(worktree, ['show', `${rev}:${path}`], { okExitCodes: [0, 128] }).then((r) =>
+      r.exitCode === 0 ? r.stdout : null,
+    );
+  for (const path of changed) {
+    if (path !== 'package.json' && !path.endsWith('/package.json')) continue;
+    if (packageScriptsChanged(await show(base, path), await show('HEAD', path))) out.push(`${path} (scripts)`);
+  }
+  return out;
 }
 
 // -- review ----------------------------------------------------------------------------------------
@@ -512,7 +530,7 @@ async function review(o: Orchestrator, run: Run, task: Task): Promise<Step> {
   const decision = decideAfterReview(
     current,
     output,
-    { node, highRiskGlobs: config?.highRiskGlobs ?? [], previousFindings },
+    { node, highRiskGlobs: config?.highRiskGlobs ?? [], previousFindings, sensitiveChanges: meta.sensitive },
     o.limits(),
   );
   if (decision.action === 'fix') {
@@ -530,11 +548,15 @@ async function review(o: Orchestrator, run: Run, task: Task): Promise<Step> {
     ...(decision.escalation ? { summary: `${decision.reason}. Reviewer: ${output.summary}` } : {}),
   });
   if (decision.action === 'approve' && decision.path.includes('awaiting_human')) {
+    const why =
+      meta.sensitive.length > 0
+        ? `changes agent/CI/hook configuration or package scripts (${meta.sensitive.join(', ')})`
+        : 'is high risk';
     o.escalate(
       run.id,
       task.id,
       'other',
-      `${node.id} (${node.title}) is high risk and passed review. Approve the merge (tasks.approveMerge) or request changes (tasks.requestChanges).`,
+      `${node.id} (${node.title}) ${why} and passed review. Approve the merge (tasks.approveMerge) or request changes (tasks.requestChanges).`,
       ['skip', 'abort'],
     );
   }

@@ -139,7 +139,10 @@ export function buildClaudeArgs({ opts, sessionId, resume, mcpConfigPath }: Buil
   if (perms.disallowedTools.length > 0) args.push('--disallowedTools', perms.disallowedTools.join(','));
 
   // Config isolation: only the repo's own settings (CLAUDE.md, .claude/settings.json), only Legion's MCP.
-  args.push('--setting-sources', 'project');
+  // A cwd with agent-written content (reviewer, finalizer) gets no setting source at all: a coder could
+  // have planted hooks or permission rules in the worktree's .claude/ (the CLI reads '' as "none").
+  if (opts.untrustedWorkdir) args.push('--setting-sources=');
+  else args.push('--setting-sources', 'project');
   args.push('--settings', JSON.stringify(LEGION_FLAG_SETTINGS));
   args.push('--strict-mcp-config');
   if (opts.mcp) args.push('--mcp-config', mcpConfigPath ?? JSON.stringify(mcpConfig(opts.mcp)));
