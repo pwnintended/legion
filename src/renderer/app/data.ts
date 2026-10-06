@@ -25,6 +25,7 @@ import type {
 import type { EngineInfo } from '@shared/engine';
 import type { AgentEvent, ServerEvent } from '@shared/events';
 import type { RunSnapshot, RunSummary, TranscriptEntry } from '@shared/rpc';
+import { isArchived } from './compat';
 
 export type EntityKind = 'run' | 'plan' | 'task' | 'attempt' | 'review' | 'inbox' | 'verification' | 'merge';
 
@@ -233,6 +234,19 @@ export function activityLine(event: AgentEvent): string | null {
   }
 }
 
+/**
+ * Append an activity line. A file change right after the edit call that produced it replaces that line
+ * (`Edit a.ts` then `Edit a.ts +7 −1` reads as one step).
+ */
+export function pushActivity(lines: readonly string[], line: string): string[] {
+  const last = lines.at(-1);
+  const merges =
+    last !== undefined &&
+    line.startsWith('Edit ') &&
+    line.startsWith(`${last.replace(/^(Write|Edit|MultiEdit|apply_patch) /, 'Edit ')} +`);
+  return [...(merges ? lines.slice(0, -1) : lines), line].slice(-ACTIVITY_LINES);
+}
+
 function addDiffStat(
   draft: Draft,
   attemptId: string,
@@ -272,7 +286,7 @@ function applyAgentEvent(draft: Draft, event: ServerEvent & { type: 'agent.event
   if (line && (!activity || event.seq > activity.seq)) {
     draft.map('activity')[attemptId] = {
       seq: event.seq,
-      lines: [...(activity?.lines ?? []), line].slice(-ACTIVITY_LINES),
+      lines: pushActivity(activity?.lines ?? [], line),
     };
   }
   if (event.event.type === 'file_change') addDiffStat(draft, attemptId, event.seq, event.event);
@@ -423,7 +437,10 @@ export function applyTranscriptPage(
   }
   // Seed activity lines from history when no live events have produced any yet.
   if (!state.activity[attemptId]) {
-    const lines = merged.map((e) => activityLine(e.event)).filter((l): l is string => l !== null);
+    const lines = merged
+      .map((e) => activityLine(e.event))
+      .filter((l): l is string => l !== null)
+      .reduce<string[]>((acc, line) => pushActivity(acc, line), []);
     if (lines.length > 0)
       draft.map('activity')[attemptId] = { seq: merged.at(-1)?.seq ?? 0, lines: lines.slice(-ACTIVITY_LINES) };
   }
@@ -461,11 +478,27 @@ function memoByRun<C extends object, R>(compute: (collection: C, runId: string) 
 export const TERMINAL_RUN_STATUSES = new Set(['done', 'failed', 'cancelled']);
 
 const runListCache = new WeakMap<Record<string, Run>, Run[]>();
-/** Runs for the rail: active runs oldest first (stable workspace numbers), then finished runs newest first. */
+const archivedCache = new WeakMap<Record<string, Run>, Run[]>();
+
+/** Archived runs (only in the store when "Show archived" is on), most recently updated first. */
+export function selectArchivedRuns(state: DataState): Run[] {
+  const cached = archivedCache.get(state.runs);
+  if (cached) return cached;
+  const list = Object.values(state.runs)
+    .filter(isArchived)
+    .sort((a, b) => b.updatedAt - a.updatedAt);
+  archivedCache.set(state.runs, list);
+  return list;
+}
+
+/**
+ * Runs for the rail: active runs oldest first (stable workspace numbers), then finished runs newest first.
+ * Archived runs are left out (see `selectArchivedRuns`).
+ */
 export function selectRunList(state: DataState): Run[] {
   const cached = runListCache.get(state.runs);
   if (cached) return cached;
-  const runs = Object.values(state.runs);
+  const runs = Object.values(state.runs).filter((r) => !isArchived(r));
   const active = runs.filter((r) => !TERMINAL_RUN_STATUSES.has(r.status)).sort((a, b) => a.createdAt - b.createdAt);
   const finished = runs.filter((r) => TERMINAL_RUN_STATUSES.has(r.status)).sort((a, b) => b.updatedAt - a.updatedAt);
   const list = [...active, ...finished];

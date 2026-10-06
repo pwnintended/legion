@@ -384,7 +384,6 @@ function extendPasskeys(world: DemoWorld, now: number, stage: DemoStage): void {
   );
   world.transcripts.att_authv2t4fix1 = [
     ...fix,
-    { type: 'file_change', path: 'server/db/passkeys.repo.test.ts', added: 7, removed: 1 },
     {
       type: 'message',
       text: 'Switched sign_count to BIGINT (the repository already used bigint) and added a test that bumps the counter to 2³² + 1. Documented credential_id encoding on the schema.',
@@ -433,7 +432,18 @@ function extendPasskeys(world: DemoWorld, now: number, stage: DemoStage): void {
     summary: 'Reversible, indexed and the counter is 64-bit now. One minor note for the PR.',
     createdAt: now - 4 * MIN,
   });
-  Object.assign(t4, { status: 'awaiting_human', fixRounds: 1, progress: null, updatedAt: now - 4 * MIN });
+  Object.assign(t4, {
+    status: 'awaiting_human',
+    fixRounds: 1,
+    progress: null,
+    updatedAt: now - 4 * MIN,
+    // The coder's structured report (Task.report on newer engines): the review pack prefers it.
+    report: {
+      summary:
+        'Passkey credentials table (unique credential_id, 64-bit sign counter) with a reversible migration, plus a typed repository: create, findByCredentialId, bumpCounter.',
+      commitMessage: 'T4: passkey credential table and repository',
+    },
+  });
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -819,6 +829,8 @@ export function handlePlanReviewRpc(ctx: DemoRpcContext, method: ProcedureName, 
         }
       }
       ctx.emit(bodies);
+      // `pr` is the engine's richer PR row (may not be in this build's Run type yet).
+      Object.assign(run, { pr: { url, number: 412, state: 'open', isDraft: true } });
       return { run: setRun(ctx, run, { status: 'done', prUrl: url }), url };
     }
     default:

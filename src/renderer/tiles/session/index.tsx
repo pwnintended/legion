@@ -8,12 +8,15 @@ import type { Attempt, InboxItem, TaskNode } from '@shared/domain';
 import { useCallback, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useShallow } from 'zustand/react/shallow';
 import { type CommandContext, registerCommands } from '../../app/commands';
-import { openInbox } from '../../app/data';
+import { taskReport } from '../../app/compat';
+import { type DataState, openInbox } from '../../app/data';
 import { useActivity, useData, useTask, useTaskNode, useTranscript } from '../../app/hooks';
+import { prefersReducedMotion } from '../../app/prefs';
+import { dataStore } from '../../app/store';
 import { getSync } from '../../app/sync';
 import { Icon } from '../../chrome/icons';
 import { Chip } from '../../chrome/ui';
-import { formatCost, formatTokens } from '../../layout/describe';
+import { displayEngine, formatCost, formatTokens } from '../../layout/describe';
 import { TileActions } from '../../layout/TileFrame';
 import { focusedTile } from '../../layout/tree';
 import type { TileCardProps, TileProps } from '../../layout/types';
@@ -31,6 +34,7 @@ import {
   useSentMessages,
 } from './actions';
 import { ApprovalCard } from './approval';
+import { EscalationCard, type EscalationItem, resolveEscalation } from './escalation';
 import { Glyph } from './glyphs';
 import { Row, type RowContext, SentRow } from './Rows';
 import './session.css';
@@ -56,7 +60,41 @@ function focusedApproval(ctx: CommandContext) {
   );
 }
 
+/** The open escalation / conflict of the focused session tile's task. */
+function focusedEscalation(ctx: CommandContext): EscalationItem | null {
+  if (ctx.ui.overlay || ctx.ui.keyMode !== 'normal' || !ctx.layout || !ctx.activeRunId) return null;
+  if (ctx.ui.layoutMode !== 'strip' && ctx.ui.layoutMode !== 'focus') return null;
+  const tile = focusedTile(ctx.layout);
+  if (tile?.kind !== 'session') return null;
+  const taskId = (tile.params as { taskId: string | null }).taskId;
+  return taskEscalation(ctx.data, ctx.activeRunId, taskId);
+}
+
+function taskEscalation(state: DataState, runId: string, taskId: string | null): EscalationItem | null {
+  if (!taskId) return null;
+  return (
+    openInbox(state.inbox, runId).find(
+      (i): i is EscalationItem => (i.kind === 'escalation' || i.kind === 'conflict') && i.taskId === taskId,
+    ) ?? null
+  );
+}
+
 registerCommands([
+  {
+    id: 'escalation.retry',
+    title: 'Retry the focused failed task',
+    category: 'Tile',
+    keybinding: 'R',
+    hidden: true,
+    when: (ctx) => {
+      const item = focusedEscalation(ctx);
+      return item !== null && (item.kind === 'conflict' || item.payload.actions.includes('retry'));
+    },
+    run: (ctx) => {
+      const item = focusedEscalation(ctx);
+      if (item) return resolveEscalation(item, 'retry', null);
+    },
+  },
   {
     id: 'approval.accept',
     title: 'Accept the focused approval',
@@ -112,7 +150,7 @@ function useStickyScroll() {
     if (!el) return;
     pinnedRef.current = true;
     setPinned(true);
-    const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    const reduced = prefersReducedMotion();
     el.scrollTo({ top: el.scrollHeight, behavior: smooth && !reduced ? 'smooth' : 'auto' });
   }, []);
 
@@ -159,11 +197,29 @@ const ROLE_LABEL: Record<Attempt['role'], string> = {
   resolver: 'conflict resolver',
 };
 
-function attemptLabel(attempt: Attempt, attempts: readonly Attempt[]): string {
-  const sameRole = attempts.filter((a) => a.role === attempt.role);
-  const n = sameRole.indexOf(attempt) + 1;
-  const base = attempt.role === 'coder' ? (n === 1 ? 'coder' : `fix ${n - 1}`) : attempt.role;
-  return attempt.role !== 'coder' && sameRole.length > 1 ? `${base} ${n}` : base;
+/**
+ * Tab label of an attempt. Coder attempts that resume the previous session are fix rounds ("fix 1"); a new
+ * session is a retry ("attempt 2"). Other roles are numbered when there are several ("reviewer 2").
+ */
+export function attemptLabel(attempt: Attempt, attempts: readonly Attempt[]): string {
+  if (attempt.role !== 'coder') {
+    const sameRole = attempts.filter((a) => a.role === attempt.role);
+    return sameRole.length > 1 ? `${attempt.role} ${sameRole.indexOf(attempt) + 1}` : attempt.role;
+  }
+  let tries = 0;
+  let fixes = 0;
+  let previous: string | null = null;
+  for (const a of attempts) {
+    if (a.role !== 'coder') continue;
+    if (a.sessionId && a.sessionId === previous) fixes++;
+    else {
+      tries++;
+      fixes = 0;
+    }
+    previous = a.sessionId;
+    if (a === attempt) return fixes > 0 ? `fix ${fixes}` : tries === 1 ? 'coder' : `attempt ${tries}`;
+  }
+  return 'coder';
 }
 
 const EMPTY_APPROVALS: InboxItem[] = [];
@@ -195,6 +251,7 @@ export default function SessionTile({ tileId, runId, params, focused }: TileProp
     for (const item of approvalItems) if (item.kind === 'approval') map.set(item.payload.requestId, item);
     return map;
   }, [approvalItems]);
+  const escalation = useData((s) => taskEscalation(s, runId, task?.id ?? null));
   const pendingExtra = useData(
     useShallow((s) =>
       openApprovals(s, runId, attempt).filter(
@@ -242,13 +299,13 @@ export default function SessionTile({ tileId, runId, params, focused }: TileProp
   );
   const ctx: RowContext = useMemo(
     () => ({
-      engine: attempt?.engine ?? 'claude',
+      engine: displayEngine(dataStore.getState(), attempt),
       running,
       focused,
       approvals,
       onOpenDiff: task ? onOpenDiff : null,
     }),
-    [attempt?.engine, running, focused, approvals, task, onOpenDiff],
+    [attempt, running, focused, approvals, task, onOpenDiff],
   );
 
   const cost = attempt?.costUsd ?? timeline.usage?.costUsd ?? null;
@@ -321,11 +378,13 @@ export default function SessionTile({ tileId, runId, params, focused }: TileProp
                   aria-selected={a.id === attempt.id}
                   className="ss-attempt"
                   onClick={() => setChosen(a.id)}
-                  title={`${a.engine} · ${a.status}`}
+                  title={`${displayEngine(dataStore.getState(), a)} · ${a.status}`}
                 >
                   <span
                     className={`dot${a.status === 'running' ? ' live' : ''}`}
-                    style={{ color: a.engine === 'codex' ? 'var(--teal)' : 'var(--mauve)' }}
+                    style={{
+                      color: displayEngine(dataStore.getState(), a) === 'codex' ? 'var(--teal)' : 'var(--mauve)',
+                    }}
                   />
                   {attemptLabel(a, attempts)}
                 </button>
@@ -392,6 +451,11 @@ export default function SessionTile({ tileId, runId, params, focused }: TileProp
                   <ApprovalCard item={item} focused={focused} />
                 </div>
               ))}
+              {escalation ? (
+                <div className="ss-row" key={escalation.id}>
+                  <EscalationCard item={escalation} focused={focused} label={task?.nodeId ?? 'this task'} />
+                </div>
+              ) : null}
             </>
           )}
           {notice && attempt ? (
@@ -558,7 +622,9 @@ export function Card({ runId, params }: TileCardProps<'session'>) {
   const lines = activity.slice(-3).map(prettyLine);
   if (lines.length === 0) {
     const facts = attempt
-      ? ['waiting for the first event…']
+      ? attempt.status === 'running' || attempt.status === 'pending'
+        ? ['waiting for the first event…']
+        : [taskReport(task)?.summary ?? `${attempt.role} ${attempt.status}`]
       : node
         ? [
             node.dependsOn.length ? `after ${node.dependsOn.join(', ')}` : 'no dependencies',

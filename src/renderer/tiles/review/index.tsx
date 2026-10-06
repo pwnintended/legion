@@ -10,11 +10,12 @@ import { useStore } from 'zustand';
 import { useShallow } from 'zustand/react/shallow';
 import { createStore } from 'zustand/vanilla';
 import { type CommandContext, registerCommands } from '../../app/commands';
+import { taskReport } from '../../app/compat';
 import { attemptsOfRun, openInbox, reviewsOfRun, verificationsOfRun } from '../../app/data';
 import { rpc, useData, useLatestPlan, useNow, useSettings, useTranscript } from '../../app/hooks';
 import { actions, dataStore } from '../../app/store';
 import { Chip, EngineChip, Kbd } from '../../chrome/ui';
-import { ENGINE_LABEL, ENGINE_NAME, formatDuration, otherEngine } from '../../layout/describe';
+import { displayEngine, ENGINE_LABEL, ENGINE_NAME, formatDuration, otherEngine } from '../../layout/describe';
 import { focusedTile } from '../../layout/tree';
 import type { TileCardProps, TileProps } from '../../layout/types';
 import { focusDiff } from '../diff/data';
@@ -317,8 +318,12 @@ function Header({ pack, reviews, onDiff }: { pack: Pack; reviews: Review[]; onDi
 }
 
 function IntentOutcome({ pack }: { pack: Pack }) {
-  const report = useAgentReport(pack.coderAttempts);
-  const engine = report.attempt?.engine ?? pack.coder?.engine ?? pack.node?.agent.engine ?? 'claude';
+  // Prefer the coder's structured report (Task.report on newer engines) over its last chat message.
+  const structured = taskReport(pack.task);
+  const fromTranscript = useAgentReport(structured ? [] : pack.coderAttempts);
+  const report = structured ? { text: structured.summary, attempt: pack.coderAttempts.at(-1) ?? null } : fromTranscript;
+  const shown = report.attempt ?? pack.coder;
+  const engine = shown ? displayEngine(dataStore.getState(), shown) : (pack.node?.agent.engine ?? 'claude');
   const running = report.attempt?.status === 'running';
   return (
     <>
@@ -476,7 +481,7 @@ function Actions({
         {approve.error ? <div className="text-[12px] text-red">{approve.error}</div> : null}
         {requesting ? (
           <InlineComposer
-            placeholder={`What should ${ENGINE_NAME[coder?.engine ?? 'claude']} change?`}
+            placeholder={`What should ${ENGINE_NAME[displayEngine(dataStore.getState(), coder)]} change?`}
             submitLabel="Request changes"
             tone="warn"
             hint="goes back to the coder session"
@@ -520,8 +525,11 @@ function Actions({
   if (task.status === 'fixing')
     line = (
       <>
-        <span className="dot live" style={{ color: `var(--${coder?.engine === 'codex' ? 'teal' : 'mauve'})` }} />
-        {ENGINE_NAME[coder?.engine ?? 'claude']} is fixing round {task.fixRounds}
+        <span
+          className="dot live"
+          style={{ color: `var(--${displayEngine(dataStore.getState(), coder) === 'codex' ? 'teal' : 'mauve'})` }}
+        />
+        {ENGINE_NAME[displayEngine(dataStore.getState(), coder)]} is fixing round {task.fixRounds}
         {coder?.status === 'running' ? ` · ${formatDuration(now - coder.startedAt)}` : ''}
         <span className="faint ml-auto">then gates and a fresh review run again</span>
       </>

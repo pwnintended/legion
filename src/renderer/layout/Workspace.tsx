@@ -1,6 +1,7 @@
 /** The active run's workspace in the current layout mode. */
-import { AnimatePresence, motion, useReducedMotion } from 'motion/react';
+import { AnimatePresence, motion } from 'motion/react';
 import { useLayout, useUi } from '../app/hooks';
+import { useReducedMotionPref } from '../app/prefs';
 import { FocusView } from './FocusView';
 import { OverviewView } from './OverviewView';
 import { PipelineView } from './PipelineView';
@@ -9,7 +10,7 @@ import { StripView } from './StripView';
 export function Workspace({ runId }: { runId: string }) {
   const layout = useLayout(runId);
   const mode = useUi((s) => s.layoutMode);
-  const reduced = useReducedMotion() ?? false;
+  const reduced = useReducedMotionPref();
   if (!layout) return <WorkspaceSkeleton />;
   const view =
     mode === 'focus' ? (

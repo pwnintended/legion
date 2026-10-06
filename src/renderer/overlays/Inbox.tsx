@@ -9,7 +9,7 @@ import { rpc, useAgentsRunning, useData, useInbox } from '../app/hooks';
 import { isTextInput } from '../app/keys';
 import { Icon } from '../chrome/icons';
 import { Chip, Kbd } from '../chrome/ui';
-import { formatCost, formatDuration, type Tone } from '../layout/describe';
+import { displayEngine, formatCost, formatDuration, type Tone } from '../layout/describe';
 import { type ApprovalChoice, resolveApproval, trackResolution, usePendingResolution } from '../tiles/session/actions';
 import { ApprovalButtons, ApprovalSubjectView, describeApproval } from '../tiles/session/approval';
 import { type RankedItem, rankInbox, runLabel } from './inbox-model';
@@ -114,7 +114,10 @@ function InboxRow({
   const { item } = entry;
   const run = useData((s) => s.runs[item.runId] ?? null);
   const task = useData((s) => (item.taskId ? (s.tasks[item.taskId] ?? null) : null));
-  const engine = useData((s) => (item.attemptId ? (s.attempts[item.attemptId]?.engine ?? null) : null));
+  const engine = useData((s) => {
+    const attempt = item.attemptId ? s.attempts[item.attemptId] : null;
+    return attempt ? displayEngine(s, attempt) : null;
+  });
   const pending = usePendingResolution(item.id);
   const chip = KIND_CHIP[item.kind];
   const context = [run ? runLabel(run.title) : null, task?.nodeId ?? null, engine].filter(Boolean).join(' · ');
@@ -182,11 +185,14 @@ function ItemBody({ item, selected }: { item: InboxItem; selected: boolean }) {
                   className={`btn btn-sm${action === 'retry' ? ' btn-warn' : action === 'abort' ? ' btn-ghost' : ''}`}
                   onClick={() => void resolve(item, { kind: 'escalation', action, note: null })}
                 >
-                  {action[0]?.toUpperCase()}
-                  {action.slice(1)}
+                  {action === 'retry' ? 'Retry' : action === 'skip' ? 'Skip task' : 'Abort run'}
                 </button>
               ))}
-            <JumpButton item={item} label={item.payload.actions.includes('edit') ? 'Edit plan' : 'Jump to tile'} />
+            {/* "edit" = retry with a note for the next attempt: written in the task's tile. */}
+            <JumpButton
+              item={item}
+              label={item.payload.actions.includes('edit') ? 'Retry with a note' : 'Jump to tile'}
+            />
           </div>
         </>
       );

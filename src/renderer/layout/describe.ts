@@ -3,6 +3,7 @@
  * id, title, engine chip, status chip, urgency. Pure: derived from the client data store.
  */
 import type { Attempt, EngineKind, InboxItem, Plan, Task, TaskNode, TaskStatus } from '@shared/domain';
+import { type PullRequestInfo, runPr } from '../app/compat';
 import {
   type DataState,
   latestAttempt,
@@ -79,8 +80,50 @@ export function taskNode(plan: Plan | null, nodeId: string): TaskNode | null {
   return plan?.dag.nodes.find((n) => n.id === nodeId) ?? null;
 }
 
+/**
+ * The engine to show for a task. In fake mode (`LEGION_FAKE_ENGINES=1`) attempts record engine `fake`; the UI
+ * shows the engine the plan (or an override) assigned instead.
+ */
+/** `draft PR #412 open`, `PR #398 merged`, ... */
+export function prLabel(pr: PullRequestInfo): string {
+  const n = pr.number ? ` #${pr.number}` : '';
+  if (pr.state === 'open') return `${pr.isDraft ? 'draft PR' : 'PR'}${n} open`;
+  return `PR${n} ${pr.state}`;
+}
+
 export function taskEngine(task: Task, node: TaskNode | null, attempt: Attempt | null): EngineKind {
-  return attempt?.engine ?? task.engineOverride ?? node?.agent.engine ?? 'claude';
+  const real = (e: EngineKind | null | undefined) => (e && e !== 'fake' ? e : null);
+  return real(attempt?.engine) ?? real(task.engineOverride) ?? node?.agent.engine ?? 'claude';
+}
+
+/** Display engine of any attempt (see `taskEngine`): fake-mode attempts show the engine their role implies. */
+export function displayEngine(
+  state: DataState,
+  attempt: Attempt | null | undefined,
+  fallback: EngineKind = 'claude',
+): EngineKind {
+  if (!attempt) return fallback;
+  if (attempt.engine !== 'fake') return attempt.engine;
+  const task = attempt.taskId ? state.tasks[attempt.taskId] : null;
+  const node = task ? (taskNode(latestPlan(state, attempt.runId), task.nodeId) ?? null) : null;
+  const planned = task ? taskEngine(task, node, null) : null;
+  const configured = (role: 'planner' | 'finalizer', otherwise: EngineKind) => {
+    const engine = state.settings?.roles[role].engine;
+    return engine && engine !== 'fake' ? engine : otherwise;
+  };
+  switch (attempt.role) {
+    case 'coder':
+    case 'resolver':
+      return planned ?? fallback;
+    case 'reviewer':
+      return otherEngine(planned ?? fallback);
+    case 'planner': {
+      const engine = state.runs[attempt.runId]?.plannerEngine;
+      return engine && engine !== 'fake' ? engine : configured('planner', 'claude');
+    }
+    case 'finalizer':
+      return configured('finalizer', 'codex');
+  }
 }
 
 /** Does an open inbox item belong to this tile? */
@@ -110,6 +153,7 @@ export function tileTaskId(tile: LayoutTile): string | null {
 }
 
 function taskStatusChip(
+  state: DataState,
   task: Task,
   coder: Attempt | null,
   reviewer: Attempt | null,
@@ -129,11 +173,11 @@ function taskStatusChip(
     case 'verifying':
       return { label: 'verifying', tone: 'run', live: true };
     case 'reviewing': {
-      const engine = reviewer?.engine ?? otherEngine(coder?.engine ?? 'claude');
+      const engine = reviewer ? displayEngine(state, reviewer) : otherEngine(taskEngine(task, null, coder));
       return { label: `${ENGINE_LABEL[engine]} reviewing`, tone: engineTone(engine), live: true };
     }
     case 'fixing':
-      return { label: `fixing ${task.fixRounds}/2`, tone: engineTone(coder?.engine ?? 'claude'), live: true };
+      return { label: `fixing ${task.fixRounds}/2`, tone: engineTone(taskEngine(task, null, coder)), live: true };
     case 'approved':
       return { label: 'approved', tone: 'ok', live: false };
     case 'awaiting_human':
@@ -185,6 +229,7 @@ export function describeTile(state: DataState, runId: string, tile: LayoutTile, 
   const taskId = tileTaskId(tile);
   const task = taskId ? (state.tasks[taskId] ?? null) : null;
   const urgent = inbox.filter((item) => itemTargetsTile(item, tile, taskId));
+  const pr = runPr(run);
   const base: TileMeta = {
     label: null,
     title: TITLES[tile.kind],
@@ -211,7 +256,7 @@ export function describeTile(state: DataState, runId: string, tile: LayoutTile, 
       const pendingDeps = (node?.dependsOn ?? []).filter(
         (dep) => tasks.find((t) => t.nodeId === dep)?.status !== 'merged',
       );
-      let status = taskStatusChip(task, coder, reviewer, pendingDeps, now);
+      let status = taskStatusChip(state, task, coder, reviewer, pendingDeps, now);
       if (urgent.length > 0 && tile.kind === 'session') status = { label: 'needs you', tone: 'warn', live: false };
       const stat = taskDiffStat(state, task);
       let note = status.label;
@@ -221,7 +266,7 @@ export function describeTile(state: DataState, runId: string, tile: LayoutTile, 
       const effort = task.effortOverride ?? coder?.effort ?? node?.agent.effort ?? null;
       if (tile.kind === 'review') {
         const review = latestReview(state, task.id, runId);
-        const reviewerEngine = reviewer?.engine ?? otherEngine(engine);
+        const reviewerEngine = reviewer ? displayEngine(state, reviewer) : otherEngine(engine);
         let reviewStatus: StatusChip;
         if (reviewer?.status === 'running' || task.status === 'reviewing')
           reviewStatus = {
@@ -314,17 +359,21 @@ export function describeTile(state: DataState, runId: string, tile: LayoutTile, 
         : merging
           ? { label: 'merging', tone: 'run', live: true }
           : { label: `${merged}/${tasks.length} merged`, tone: merged > 0 ? 'ok' : 'idle', live: false };
-      return { ...base, status, note: run?.prUrl ? 'draft PR open' : 'PR: not yet', tone: status.tone };
+      return { ...base, status, note: pr ? prLabel(pr) : 'PR: not yet', tone: status.tone };
     }
     case 'pr': {
-      const status: StatusChip = run?.prUrl
-        ? { label: 'draft PR open', tone: 'ok', live: false }
+      const status: StatusChip = pr
+        ? {
+            label: prLabel(pr),
+            tone: pr.state === 'merged' ? 'accent' : pr.state === 'closed' ? 'idle' : 'ok',
+            live: false,
+          }
         : urgent.length > 0
           ? { label: 'ready for you', tone: 'warn', live: false }
           : run?.status === 'finalizing'
             ? { label: 'final review', tone: 'run', live: true }
             : { label: 'not yet', tone: 'idle', live: false };
-      return { ...base, status, note: run?.prUrl ?? status.label, tone: status.tone };
+      return { ...base, status, note: pr?.url ?? status.label, tone: status.tone };
     }
     case 'clarify':
       return {

@@ -5,6 +5,7 @@
  */
 import { createElement, memo, type ReactNode, useEffect, useState } from 'react';
 import { type Components, Streamdown } from 'streamdown';
+import { themeHtml } from '../../theme/palette';
 
 type El = keyof React.JSX.IntrinsicElements;
 
@@ -55,7 +56,7 @@ const highlighted = new Map<string, string>();
 function getHighlighter(): Promise<Highlighter> {
   highlighter ??= import('shiki').then((shiki) => async (code: string, lang: string) => {
     const language = lang && lang in shiki.bundledLanguages ? lang : 'text';
-    return shiki.codeToHtml(code, { lang: language, theme: 'catppuccin-mocha' });
+    return themeHtml(await shiki.codeToHtml(code, { lang: language, theme: 'catppuccin-mocha' }));
   });
   return highlighter;
 }

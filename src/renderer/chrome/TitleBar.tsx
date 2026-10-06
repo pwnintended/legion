@@ -2,9 +2,10 @@
  * Title bar (hiddenInset window): drag region with room for the traffic lights, run breadcrumb, layout
  * switcher, and the Commands / Inbox / New run buttons.
  */
-import { motion, useReducedMotion } from 'motion/react';
+import { motion } from 'motion/react';
 import { commandTooltip, executeCommand } from '../app/commands';
 import { useActiveRun, useInbox, useUi } from '../app/hooks';
+import { useReducedMotionPref } from '../app/prefs';
 import type { LayoutMode } from '../layout/tree';
 import { SPRING } from '../theme/motion';
 import { Icon, type IconName, LegionMark } from './icons';
@@ -25,7 +26,7 @@ export function TitleBar() {
   const run = useActiveRun();
   const mode = useUi((s) => s.layoutMode);
   const inbox = useInbox(null);
-  const reduced = useReducedMotion() ?? false;
+  const reduced = useReducedMotionPref();
   const demo = useUi((s) => s.demo);
   return (
     <header

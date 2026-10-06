@@ -12,7 +12,8 @@ import { type RunLayoutInput, syncWithRun } from '../layout/sync';
 import { allTiles, focusTile, type LayoutMode, type Workspace } from '../layout/tree';
 import { type DataState, initialData, latestPlan, openInbox, selectRunList, tasksOfRun } from './data';
 
-export type Overlay = 'composer' | 'inbox' | 'palette';
+export type Overlay = 'composer' | 'inbox' | 'palette' | 'settings';
+export type SettingsSection = 'engines' | 'agents' | 'runs' | 'appearance';
 export type KeyMode = 'normal' | 'resize' | 'move';
 
 export interface UiState {
@@ -31,6 +32,8 @@ export interface UiState {
   focusRequest: number;
   /** Renderer-only fixture mode (`?demo=1`). */
   demo: boolean;
+  /** Section the settings overlay scrolls to when it opens. */
+  settingsSection: SettingsSection | null;
 }
 
 const UI_PREFS_KEY = 'legion.ui';
@@ -72,6 +75,7 @@ export function initialUi(): UiState {
     acknowledged: {},
     focusRequest: 0,
     demo: false,
+    settingsSection: null,
   };
 }
 
@@ -174,6 +178,9 @@ export const actions = {
 
   openOverlay(overlay: Overlay): void {
     uiStore.setState({ overlay });
+  },
+  openSettings(section: SettingsSection | null = null): void {
+    uiStore.setState({ overlay: 'settings', settingsSection: section });
   },
   toggleOverlay(overlay: Overlay): void {
     uiStore.setState((s) => ({ overlay: s.overlay === overlay ? null : overlay }));

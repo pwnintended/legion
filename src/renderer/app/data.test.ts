@@ -13,6 +13,7 @@ import {
   initialData,
   openInbox,
   openInboxCount,
+  pushActivity,
   runCost,
   selectRunList,
   taskCounts,
@@ -295,5 +296,14 @@ describe('selectors', () => {
       }),
     ).toBe('todo 1/2 · b');
     expect(activityLine({ type: 'text_delta', text: 'x' })).toBeNull();
+  });
+});
+
+describe('pushActivity', () => {
+  it('folds an edit call and its file change into one line', () => {
+    expect(pushActivity(['Read a.ts', 'Edit b.ts'], 'Edit b.ts +7 −1')).toEqual(['Read a.ts', 'Edit b.ts +7 −1']);
+    expect(pushActivity(['Write c.ts'], 'Edit c.ts +3 −0')).toEqual(['Edit c.ts +3 −0']);
+    expect(pushActivity(['Edit b.ts'], 'Edit c.ts +1 −0')).toEqual(['Edit b.ts', 'Edit c.ts +1 −0']);
+    expect(pushActivity(['1', '2', '3', '4'], '5')).toEqual(['2', '3', '4', '5']);
   });
 });

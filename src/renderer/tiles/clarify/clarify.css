@@ -56,7 +56,7 @@
     color 0.2s;
 }
 .cl-q[data-answered="true"] .cl-num {
-  background: rgb(166 227 161 / 0.14);
+  background: color-mix(in srgb, var(--green) 14%, transparent);
   color: var(--green);
 }
 .cl-question {

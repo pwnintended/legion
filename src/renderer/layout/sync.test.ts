@@ -191,3 +191,20 @@ describe('syncWithRun', () => {
     expect(keys(other)).toEqual(['plan']);
   });
 });
+
+describe('initial focus', () => {
+  const merged = { T1: 'merged', T2: 'merged', T3: 'merged', T4: 'merged', T5: 'merged', T6: 'merged' } as const;
+
+  it('lands on a failed task before running ones', () => {
+    const ws = syncWithRun(null, input({ T1: 'merged', T2: 'running', T3: 'failed' }));
+    expect(ws.focus?.tile).toBe('session:T3');
+  });
+
+  it('lands a finished run on its PR, active in its column', () => {
+    for (const status of ['pr_ready', 'done'] as const) {
+      const ws = syncWithRun(null, input(merged, { status }));
+      expect(ws.focus?.tile).toBe('pr');
+      expect(col(ws, 'end').active).toBe('pr');
+    }
+  });
+});

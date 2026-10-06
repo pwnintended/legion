@@ -39,13 +39,13 @@ test('demo workspace: strip, keyboard focus/move, layout modes', async () => {
   mkdirSync(shots, { recursive: true });
   const { app, window, home } = await launchDemo();
   try {
-    // Chrome: demo badge, three runs in the rail, the passkeys run active.
+    // Chrome: demo badge, six runs in the rail (an archived seventh is hidden), the passkeys run active.
     await expect(window.getByTestId('titlebar')).toContainText('demo', { timeout: 30_000 });
-    await expect(window.getByTestId('rail-run')).toHaveCount(4);
+    await expect(window.getByTestId('rail-run')).toHaveCount(6);
     await expect(window.getByTestId('titlebar')).toContainText('Add passkey (WebAuthn) login');
     await expect(window.locator('[data-tile-id="session:T2"]')).toBeVisible();
     await expect(window.getByTestId('mode-pill')).toHaveText('NORMAL');
-    await expect(window.getByTestId('needs-you')).toContainText('needs you 5');
+    await expect(window.getByTestId('needs-you')).toContainText('needs you 6');
 
     // Initial layout: plan, thin T1, then live tasks; T3 (approval pending) pulses.
     expect((await columnOrder(window)).slice(0, 4)).toEqual(['col:plan', 'col:task:T1', 'col:task:T2', 'col:task:T3']);
@@ -138,6 +138,150 @@ test('demo workspace: strip, keyboard focus/move, layout modes', async () => {
     await expect.poll(() => window.locator('body').getAttribute('data-overlay')).toBe('palette');
     await window.keyboard.press('Escape');
     await expect.poll(() => window.locator('body').getAttribute('data-overlay')).toBe(null);
+  } finally {
+    await app.close();
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+/** Where the focused column sits in the strip's viewport (layout boxes, transforms ignored): 'ok' when fully in view. */
+const focusedInView = (window: Page) =>
+  window.evaluate(() => {
+    const strip = document.querySelector<HTMLElement>('[data-workspace] .strip');
+    const column = document
+      .querySelector<HTMLElement>('[data-workspace] [data-focused="true"]')
+      ?.closest<HTMLElement>('[data-column]');
+    if (!strip || !column) return 'missing';
+    const left = column.offsetLeft - strip.scrollLeft;
+    const right = left + column.offsetWidth;
+    const fits = column.offsetWidth <= strip.clientWidth;
+    // A column wider than the viewport aligns its left edge.
+    const ok = fits ? left >= -1 && right <= strip.clientWidth + 1 : Math.abs(left - 10) <= 1;
+    return ok ? 'ok' : `${column.dataset.column} at ${Math.round(left)}..${Math.round(right)} of ${strip.clientWidth}`;
+  });
+
+async function expectFocusedInView(window: Page): Promise<void> {
+  await expect.poll(() => focusedInView(window), { timeout: 4000 }).toBe('ok');
+  // ...and it stays there once smooth scrolling and layout animations have settled.
+  await window.waitForTimeout(700);
+  expect(await focusedInView(window)).toBe('ok');
+}
+
+test('strip: the focused column is always fully in view (bursts, resizes, inserted columns)', async () => {
+  const { app, window, home } = await launchDemo();
+  try {
+    await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]?.setSize(1280, 800));
+    await expect(window.locator('[data-tile-id="session:T2"]')).toBeVisible({ timeout: 30_000 });
+    await expectFocusedInView(window);
+
+    // Bursts of focus moves while the previous smooth scroll is still in flight.
+    for (const key of ['l', 'l', 'l', 'l']) await window.keyboard.press(`Meta+Alt+${key}`);
+    await expectFocusedInView(window);
+    for (const key of ['h', 'h', 'h', 'h', 'h']) await window.keyboard.press(`Meta+Alt+${key}`);
+    await expectFocusedInView(window);
+    for (const key of ['l', 'l', 'h', 'l', 'l', 'l']) {
+      await window.keyboard.press(`Meta+Alt+${key}`);
+      await window.waitForTimeout(60);
+    }
+    await expectFocusedInView(window);
+
+    // Widen the focused column to 2/3, then full: still entirely visible (full aligns left).
+    await window.keyboard.press('Meta+r');
+    await window.keyboard.press('l');
+    await window.keyboard.press('l');
+    await expectFocusedInView(window);
+    await window.keyboard.press('l');
+    await window.keyboard.press('Escape');
+    await expectFocusedInView(window);
+
+    // An inserted column (the review's diff, opened with D) is revealed, also after moving it left.
+    await window.locator('[data-tile-id="review:T4"]').click({ position: { x: 160, y: 12 } });
+    await expectFocusedInView(window);
+    await window.keyboard.press('d');
+    await expect(window.getByTestId('diff-tile')).toBeVisible();
+    await expectFocusedInView(window);
+    await window.keyboard.press('Meta+Alt+Shift+h');
+    await window.keyboard.press('Meta+r');
+    await window.keyboard.press('l');
+    await window.keyboard.press('Escape');
+    await expectFocusedInView(window);
+    await window.keyboard.press('Meta+Alt+l');
+    await expectFocusedInView(window);
+    await window.keyboard.press('Meta+Alt+h');
+    await expectFocusedInView(window);
+  } finally {
+    await app.close();
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test('settings, a failed task escalated to you, a finished run archived', async () => {
+  mkdirSync(shots, { recursive: true });
+  const { app, window, home } = await launchDemo();
+  try {
+    await expect(window.getByTestId('titlebar')).toContainText('Add passkey (WebAuthn) login', { timeout: 30_000 });
+
+    // Settings (⌘,): engines with detected version/login, inline validation, saves on commit.
+    await window.keyboard.press('Meta+,');
+    const settings = window.getByTestId('settings');
+    await expect(settings).toBeVisible();
+    await expect(settings.getByTestId('engine-claude')).toContainText('2.1.289');
+    await expect(settings.getByTestId('engine-claude').getByTestId('engine-status')).toHaveText('logged in');
+    const global = settings.getByLabel('All engines');
+    await global.fill('0');
+    await global.press('Enter');
+    await expect(settings).toContainText('Must be between 1 and 32.');
+    await global.fill('5');
+    await global.press('Enter');
+    await expect(settings.getByTestId('settings-save')).toContainText('Saved');
+    await window.waitForTimeout(400);
+    await window.screenshot({ path: join(shots, 'settings.png') });
+    await settings.locator('.st-nav-item', { hasText: 'Agents' }).click();
+    await window.waitForTimeout(600);
+    await window.screenshot({ path: join(shots, 'settings-agents.png') });
+    // ⌘⏎ inside an overlay is not the Focus layout.
+    await window.keyboard.press('Meta+Enter');
+    await expect(settings).toBeVisible();
+    await window.keyboard.press('Escape');
+    await expect(settings).toHaveCount(0);
+    await expect(window.locator('[data-layout-mode="strip"]')).toBeVisible();
+    // The rail footer opens it too.
+    await window.getByTestId('rail-settings').click();
+    await expect(settings).toBeVisible();
+    await window.keyboard.press('Escape');
+
+    // ⌘5: T2 failed all its attempts; the run lands on it with the escalation inline.
+    await window.keyboard.press('Meta+5');
+    await expect(window.getByTestId('titlebar')).toContainText('Move cron jobs onto the queue');
+    await expect.poll(() => focusedTile(window)).toBe('session:T2');
+    const t2 = window.locator('[data-tile-id="session:T2"]');
+    await expect(t2).toHaveAttribute('data-urgent', 'true');
+    await expect(t2.getByTestId('escalation-card')).toContainText('Out of attempts');
+    await expect(t2.locator('.ss-attempt')).toHaveText(['coder', 'attempt 2', 'attempt 3']);
+    await window.waitForTimeout(500);
+    await window.screenshot({ path: join(shots, 'failed-task.png') });
+    // R retries it from the keyboard.
+    await t2.locator('.tile-head').click();
+    await window.keyboard.press('r');
+    await expect(t2.getByTestId('escalation-card')).toHaveCount(0);
+    await expect(t2).toHaveAttribute('data-urgent', 'false');
+
+    // ⌘6: a finished run whose PR merged, archived from its PR tile.
+    await window.keyboard.press('Meta+6');
+    await expect(window.getByTestId('titlebar')).toContainText('Dark mode tokens');
+    await expect.poll(() => focusedTile(window)).toBe('pr');
+    const opened = window.getByTestId('pr-opened');
+    await expect(opened).toHaveAttribute('data-pr-state', 'merged');
+    await expect(opened).toContainText('PR #398 is merged');
+    await window.waitForTimeout(1200);
+    await window.screenshot({ path: join(shots, 'done-run.png') });
+    await opened.getByTestId('pr-archive').click();
+    await expect(window.getByTestId('rail-run')).toHaveCount(5);
+    await expect(window.getByTestId('titlebar')).not.toContainText('Dark mode tokens');
+    await window.getByTestId('show-archived').click();
+    await expect(window.getByTestId('rail-archived-run')).toHaveCount(2);
+    await window.waitForTimeout(400);
+    await window.screenshot({ path: join(shots, 'archived.png') });
   } finally {
     await app.close();
     rmSync(home, { recursive: true, force: true });

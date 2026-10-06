@@ -20,6 +20,7 @@ import {
   TERMINAL_RUN_STATUSES,
 } from './data';
 import type { ConnectionState } from './engine-connection';
+import { prefsStore } from './prefs';
 import { dataStore, uiStore } from './store';
 
 /** What the store needs from a connection; implemented by EngineConnection and the demo client. */
@@ -117,7 +118,11 @@ export class StoreSync {
     try {
       const atSeq = this.client.seq;
       const [list, inbox] = await Promise.all([
-        this.client.call('runs.list', {}),
+        // `includeArchived` is new on the engine side; older engines ignore the extra key.
+        this.client.call(
+          'runs.list',
+          (prefsStore.getState().showArchived ? { includeArchived: true } : {}) as RpcInput<'runs.list'>,
+        ),
         this.client.call('inbox.list', { runId: null, includeResolved: false }).catch(() => null),
       ]);
       this.update((s) => applyRunList(s, list, atSeq));
