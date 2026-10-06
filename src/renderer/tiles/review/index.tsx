@@ -136,16 +136,16 @@ function useAgentReport(attempts: Attempt[]): { text: string | null; attempt: At
   const previous = attempts.at(-2) ?? null;
   const t1 = useTranscript(latest?.id);
   const t0 = useTranscript(previous?.id);
-  const last = (entries: typeof t1.entries) => {
-    for (let i = entries.length - 1; i >= 0; i--) {
-      const e = entries[i]?.event;
+  const last = (t: typeof t1) => {
+    for (let i = t.count - 1; i >= 0; i--) {
+      const e = t.entries[i]?.event;
       if (e?.type === 'message') return e.text;
     }
     return null;
   };
-  const text = last(t1.entries);
+  const text = last(t1);
   if (text) return { text, attempt: latest };
-  return { text: last(t0.entries), attempt: previous };
+  return { text: last(t0), attempt: previous };
 }
 
 // ---------------------------------------------------------------------------------------------

@@ -18,6 +18,7 @@ import {
   selectRunList,
   taskCounts,
   tasksOfRun,
+  transcriptEntries,
 } from './data';
 
 const run = (id: string, patch: Partial<Run> = {}): Run => ({
@@ -244,6 +245,34 @@ describe('transcripts', () => {
     );
     expect(s.transcripts.a).toMatchObject({ status: 'ready', lastSeq: 7 });
     expect(s.transcripts.a?.entries.map((e) => e.seq)).toEqual([3, 7]);
+  });
+
+  it('appends live entries in place (O(1)) and copies only when an older state is extended', () => {
+    const live = (seq: number) =>
+      ev(seq, {
+        type: 'agent.event',
+        runId: 'r',
+        taskId: null,
+        attemptId: 'a',
+        event: { type: 'text_delta', text: 'x' },
+      });
+    let s = beginTranscript(initialData(), 'a');
+    s = applyEvents(s, [live(1)]);
+    const first = s.transcripts.a;
+    if (!first) throw new Error('transcript missing');
+    let next = s;
+    for (let seq = 2; seq <= 500; seq++) next = applyEvents(next, [live(seq)]);
+    const grown = next.transcripts.a;
+    // Same backing array, no per-event copy; each state knows how many entries are its own.
+    expect(grown?.entries).toBe(first.entries);
+    expect(grown?.count).toBe(500);
+    expect(first.count).toBe(1);
+    expect(transcriptEntries(first).map((e) => e.seq)).toEqual([1]);
+    // Extending the older state again must not clobber the newer one.
+    const branch = applyEvents(s, [live(900)]).transcripts.a;
+    expect(branch?.entries).not.toBe(first.entries);
+    expect(branch ? transcriptEntries(branch).map((e) => e.seq) : null).toEqual([1, 900]);
+    expect(grown?.entries.at(-1)?.seq).toBe(500);
   });
 
   it('seeds activity lines from history', () => {

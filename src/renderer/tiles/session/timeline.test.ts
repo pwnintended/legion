@@ -1,7 +1,7 @@
 import type { AgentEvent } from '@shared/events';
 import type { TranscriptEntry } from '@shared/rpc';
-import { describe, expect, it } from 'vitest';
-import { buildTimeline, commandText, splitMcpName } from './timeline';
+import { describe, expect, it, vi } from 'vitest';
+import { buildTimeline, commandText, entryTs, splitMcpName, TimelineBuilder, timelineCursor } from './timeline';
 
 const entries = (events: AgentEvent[]): TranscriptEntry[] =>
   events.map((event, i) => ({ seq: 10 + i, ts: 1000 + i, event }));
@@ -96,6 +96,54 @@ describe('buildTimeline', () => {
     expect(t.rows.map((r) => r.kind)).toEqual(['start', 'mcp', 'approval', 'text', 'turn', 'exited']);
     expect(t.rows[1]).toMatchObject({ server: 'legion', tool: 'report_progress', summary: 'half way' });
     expect(t.rows[3]).toMatchObject({ streaming: false });
+  });
+});
+
+describe('incremental building', () => {
+  const script: AgentEvent[] = [
+    { type: 'session_started', sessionId: 's', model: 'opus', version: '2' },
+    { type: 'todo', items: [{ text: 'a', status: 'in_progress' }] },
+    { type: 'text_delta', text: 'Look' },
+    { type: 'text_delta', text: 'ing' },
+    { type: 'tool_call', id: 'c1', name: 'Bash', input: { command: 'ls' }, kind: 'command' },
+    { type: 'todo', items: [{ text: 'a', status: 'completed' }] },
+    // The result arrives after the todo row moved: it must still land on its command.
+    { type: 'tool_result', id: 'c1', ok: true, output: 'a.ts' },
+    { type: 'text_delta', text: 'Done' },
+    { type: 'message', text: 'Done.' },
+    { type: 'approval_request', requestId: 'r1', tool: 'Bash', input: { command: 'rm x' }, reason: null },
+    { type: 'turn_complete', structuredOutput: null, isError: false, reason: null },
+  ];
+
+  it('folds only new entries and ends up equal to a full build', () => {
+    const all = entries(script);
+    const buffer: TranscriptEntry[] = [];
+    const cursor = timelineCursor();
+    const push = vi.spyOn(TimelineBuilder.prototype, 'push');
+    let timeline = cursor(buffer, 0);
+    for (const entry of all) {
+      buffer.push(entry);
+      timeline = cursor(buffer, buffer.length);
+    }
+    // One fold per entry: no rebuild per event.
+    expect(push).toHaveBeenCalledTimes(all.length);
+    push.mockRestore();
+    const full = buildTimeline(all);
+    expect(timeline.rows).toEqual(full.rows);
+    expect(timeline.rows.find((r) => r.kind === 'command')).toMatchObject({ status: 'ok', output: 'a.ts' });
+    expect(timeline.rows.filter((r) => r.kind === 'todo')).toHaveLength(1);
+    expect(timeline.approvalIds.has('r1')).toBe(true);
+    expect(timeline.rows.find((r) => r.kind === 'text' && r.text === 'Done.')).toMatchObject({ streaming: false });
+    // Same input → same snapshot; a different array (history merged in) starts over.
+    expect(cursor(buffer, buffer.length)).toBe(timeline);
+    expect(cursor([...buffer], buffer.length).rows).toEqual(full.rows);
+  });
+
+  it('finds entry timestamps by seq', () => {
+    const all = entries(script);
+    expect(entryTs(all, all.length, 12)).toBe(1002);
+    expect(entryTs(all, all.length, 999)).toBe(0);
+    expect(entryTs(all, 2, 12)).toBe(0);
   });
 });
 

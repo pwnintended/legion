@@ -132,7 +132,7 @@ export function useAcknowledged(itemIds: readonly string[]): boolean {
 // Live sessions
 // ---------------------------------------------------------------------------------------------
 
-const EMPTY_TRANSCRIPT: Transcript = { status: 'loading', entries: [], lastSeq: 0, error: null };
+const EMPTY_TRANSCRIPT: Transcript = { status: 'loading', entries: [], count: 0, lastSeq: 0, error: null };
 
 /**
  * An attempt's transcript: fetched once on first use, then appended live from agent events.

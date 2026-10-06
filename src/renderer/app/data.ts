@@ -31,8 +31,15 @@ export type EntityKind = 'run' | 'plan' | 'task' | 'attempt' | 'review' | 'inbox
 
 export interface Transcript {
   status: 'loading' | 'ready' | 'error';
-  /** Sorted by seq, unique. */
+  /**
+   * Sorted by seq, unique. Live events are appended in place (O(1)): the array is shared by successive
+   * states and only `entries[0 .. count)` belongs to this one, so read it through the latest Transcript and
+   * key memos on the Transcript (or `count`), not on the array. It is replaced (new identity) when history
+   * pages are merged in or it is trimmed.
+   */
   entries: TranscriptEntry[];
+  /** Entries of this state (`entries.length` for the latest state). */
+  count: number;
   /** Highest seq in `entries` (0 when empty). */
   lastSeq: number;
   error: string | null;
@@ -263,23 +270,37 @@ function addDiffStat(
   };
 }
 
+/** Bound a transcript's size; trims well below the cap so the O(n) trim is amortized over many appends. */
+function bounded(entries: TranscriptEntry[]): TranscriptEntry[] {
+  if (entries.length <= MAX_TRANSCRIPT_ENTRIES) return entries;
+  return entries.slice(entries.length - Math.floor(MAX_TRANSCRIPT_ENTRIES * 0.9));
+}
+
+/** Merge history into a transcript (deduplicated by seq, sorted). Always returns a new array. */
 function mergeEntries(a: readonly TranscriptEntry[], b: readonly TranscriptEntry[]): TranscriptEntry[] {
   const bySeq = new Map<number, TranscriptEntry>();
   for (const entry of a) bySeq.set(entry.seq, entry);
   for (const entry of b) bySeq.set(entry.seq, entry);
-  const merged = [...bySeq.values()].sort((x, y) => x.seq - y.seq);
-  return merged.length > MAX_TRANSCRIPT_ENTRIES ? merged.slice(merged.length - MAX_TRANSCRIPT_ENTRIES) : merged;
+  return bounded([...bySeq.values()].sort((x, y) => x.seq - y.seq));
+}
+
+/**
+ * Append one live entry (seq > lastSeq) in O(1) amortized: pushes onto the shared array when this state owns
+ * its tail, copies only when an older state is being extended (never in practice).
+ */
+export function appendEntry(transcript: Transcript, entry: TranscriptEntry): Transcript {
+  let entries = transcript.entries;
+  if (entries.length !== transcript.count) entries = entries.slice(0, transcript.count);
+  entries.push(entry);
+  entries = bounded(entries);
+  return { ...transcript, entries, count: entries.length, lastSeq: entry.seq };
 }
 
 function applyAgentEvent(draft: Draft, event: ServerEvent & { type: 'agent.event' }): void {
   const { attemptId } = event;
   const transcript = draft.next.transcripts[attemptId];
   if (transcript && event.seq > transcript.lastSeq) {
-    draft.map('transcripts')[attemptId] = {
-      ...transcript,
-      entries: mergeEntries(transcript.entries, [{ seq: event.seq, ts: event.ts, event: event.event }]),
-      lastSeq: event.seq,
-    };
+    draft.map('transcripts')[attemptId] = appendEntry(transcript, { seq: event.seq, ts: event.ts, event: event.event });
   }
   const line = activityLine(event.event);
   const activity = draft.next.activity[attemptId];
@@ -409,9 +430,21 @@ export function beginTranscript(state: DataState, attemptId: string): DataState 
     ...state,
     transcripts: {
       ...state.transcripts,
-      [attemptId]: { status: 'loading', entries: current?.entries ?? [], lastSeq: current?.lastSeq ?? 0, error: null },
+      [attemptId]: { ...(current ?? emptyTranscript()), status: 'loading', error: null },
     },
   };
+}
+
+/** A fresh transcript (its own entries array: live events are appended to it in place). */
+function emptyTranscript(): Transcript {
+  return { status: 'loading', entries: [], count: 0, lastSeq: 0, error: null };
+}
+
+/** The entries of this state (see `Transcript.entries`). */
+export function transcriptEntries(transcript: Transcript): readonly TranscriptEntry[] {
+  return transcript.entries.length === transcript.count
+    ? transcript.entries
+    : transcript.entries.slice(0, transcript.count);
 }
 
 export function applyTranscriptPage(
@@ -421,11 +454,12 @@ export function applyTranscriptPage(
   complete: boolean,
 ): DataState {
   const current = state.transcripts[attemptId];
-  const merged = mergeEntries(current?.entries ?? [], entries);
+  const merged = mergeEntries(current ? transcriptEntries(current) : [], entries);
   const draft = new Draft(state);
   draft.map('transcripts')[attemptId] = {
     status: complete ? 'ready' : 'loading',
     entries: merged,
+    count: merged.length,
     lastSeq: merged.at(-1)?.seq ?? 0,
     error: null,
   };
@@ -437,7 +471,9 @@ export function applyTranscriptPage(
   }
   // Seed activity lines from history when no live events have produced any yet.
   if (!state.activity[attemptId]) {
+    // The last few lines only need the tail of the history.
     const lines = merged
+      .slice(-64)
       .map((e) => activityLine(e.event))
       .filter((l): l is string => l !== null)
       .reduce<string[]>((acc, line) => pushActivity(acc, line), []);
@@ -453,7 +489,7 @@ export function failTranscript(state: DataState, attemptId: string, error: strin
     ...state,
     transcripts: {
       ...state.transcripts,
-      [attemptId]: { status: 'error', entries: current?.entries ?? [], lastSeq: current?.lastSeq ?? 0, error },
+      [attemptId]: { ...(current ?? emptyTranscript()), status: 'error', error },
     },
   };
 }
