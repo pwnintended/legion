@@ -1,0 +1,989 @@
+/**
+ * The run lifecycle service (architecture §8): shared state and plumbing. The flows live next to it —
+ * `planner.ts` (clarify / plan / approval), `tasks.ts` (per-task driver: provision → code → verify →
+ * review → fix), `merge.ts` (serialized merge queue), `finalize.ts` (integration verify, final review,
+ * PR), `recovery.ts` (§9), `actions.ts` (human actions behind the RPC procedures).
+ *
+ * Every decision comes from `core/` (pure); this layer applies them with CAS transitions through the
+ * Store, runs git through `engine/git`, and drives agents through `AgentRun`s.
+ */
+import type {
+  Effort,
+  EngineKind,
+  InboxItem,
+  InboxKind,
+  InboxResolution,
+  Run,
+  Settings,
+  Task,
+  TaskNode,
+  TaskStatus,
+} from '@shared/domain';
+import { isTerminal, RUN_TRANSITIONS } from '@shared/domain';
+import { type AgentEngine, type JsonSchema, permissionProfileFor, type SessionOptions } from '@shared/engine';
+import type { AgentEvent } from '@shared/events';
+import type { EngineToMainMessage } from '@shared/host-protocol';
+import type { z } from 'zod';
+import type { EngineContext, Logger } from '../context';
+import type { Store } from '../db';
+import { integrationWorktreePath, type LegionConfig, loadLegionConfig, repoHash, taskWorktreePath } from '../git';
+import { type ApproveResult, CLAUDE_TOOL_NAMES, type McpBinding, type McpHost, type McpServerHandle } from '../mcp';
+import type { TerminalService } from '../pty';
+import {
+  type AgentPrompt,
+  DEFAULT_TOOL_NAMES,
+  type Failure,
+  type IssueInput,
+  type Limits,
+  planDispatch,
+  type RateLimit,
+  type RepoInput,
+  SLOT_STATUSES,
+  type TaskDecision,
+  type ToolNames,
+} from './core';
+import { AgentRun, type AgentRunHooks, type TurnResult } from './live-session';
+import { freshAttemptMeta, patchTaskMeta, runMeta } from './meta';
+import type { PrHost } from './pr-host';
+import type { EngineRegistry } from './registry';
+
+/** `usedPct` at or above which a `rate_limit` event pauses new sessions on that engine until the reset. */
+export const RATE_LIMIT_PAUSE_PCT = 95;
+/** Pause after a retryable 429 without a known reset time. */
+export const RATE_LIMIT_BACKOFF_MS = 60_000;
+/** Claude Code's MCP tool-call timeout (ms): `request_human_input` may wait for hours. */
+export const MCP_TOOL_TIMEOUT_MS = 24 * 60 * 60 * 1000;
+
+export interface OrchestratorOptions {
+  ctx: EngineContext;
+  registry: EngineRegistry;
+  prHost: PrHost;
+  /** Engine → main messages (notify, badge, power). */
+  host?: (message: EngineToMainMessage) => void;
+}
+
+/** An agent session could not do its job; `failure.kind` feeds the retry policy. */
+export class AgentFailure extends Error {
+  override readonly name = 'AgentFailure';
+  constructor(readonly failure: Failure) {
+    super(failure.message);
+  }
+}
+
+/** The orchestrator was closed (engine shutdown) while a flow was running: stop silently. */
+export class Closed extends Error {
+  override readonly name = 'Closed';
+}
+
+export type ParkReason = { kind: 'paused' } | { kind: 'rate'; engine: EngineKind };
+
+export interface OpenSessionParams {
+  run: Run;
+  taskId: string | null;
+  role: 'planner' | 'coder' | 'reviewer' | 'resolver' | 'finalizer';
+  /** Nominal engine (the registry maps it to an instance; may be a fake). */
+  engine: EngineKind;
+  model: string | null;
+  effort: Effort | null;
+  prompt: AgentPrompt;
+  outputSchema: JsonSchema | null;
+  cwd: string;
+  allowedCommands?: readonly string[];
+  /** Resume this engine-native session instead of starting a new one. */
+  resumeSessionId?: string | null;
+  /** Re-use this `interrupted` attempt row (recovery) instead of inserting a new one. */
+  reuseAttemptId?: string | null;
+}
+
+type Waiter = {
+  attemptId: string | null;
+  resolve: (resolution: InboxResolution) => void;
+  reject: (error: Error) => void;
+};
+
+const RATE_LIMIT_RE = /\b429\b|rate.?limit|too many requests|usage limit|quota exceeded/i;
+const AUTH_RE = /not logged in|unauthori[sz]ed|\b401\b|authenticat|login required|\blog ?in\b/i;
+
+export function classifyFailure(message: string): Failure {
+  if (RATE_LIMIT_RE.test(message)) return { kind: 'rate_limited', message };
+  if (AUTH_RE.test(message)) return { kind: 'auth', message };
+  return { kind: 'agent_error', message };
+}
+
+/** A resolution for an item nobody will answer any more (run cancelled, session gone). */
+export function dismissal(kind: InboxKind, note: string): InboxResolution {
+  switch (kind) {
+    case 'approval':
+      return { kind, decision: { behavior: 'deny', message: note, interrupt: false } };
+    case 'question':
+      return { kind, answers: [] };
+    case 'plan_signoff':
+      return { kind, approved: false, feedback: note };
+    case 'escalation':
+      return { kind, action: 'abort', note };
+    case 'pr_ready':
+      return { kind, approved: false, title: null, body: null };
+    case 'conflict':
+      return { kind, action: 'abort', note };
+    case 'budget':
+      return { kind, action: 'stop', newLimitUsd: null };
+  }
+}
+
+/** Legion MCP tool names as Claude Code exposes them (prompts name them exactly). */
+export const CLAUDE_PROMPT_TOOLS: ToolNames = {
+  markTaskDone: CLAUDE_TOOL_NAMES.markTaskDone,
+  requestHumanInput: CLAUDE_TOOL_NAMES.requestHumanInput,
+  reportProgress: CLAUDE_TOOL_NAMES.reportProgress,
+};
+
+export const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms).unref?.());
+
+export class Orchestrator {
+  readonly store: Store;
+  readonly log: Logger;
+  readonly ctx: EngineContext;
+  readonly registry: EngineRegistry;
+  readonly prHost: PrHost;
+  mcp: McpServerHandle | null = null;
+  terminals: TerminalService | null = null;
+  /** Resolves with the exit code of a PTY process by pid (set by the engine wiring). */
+  ptyExit: ((pid: number) => Promise<number | null> | null) | null = null;
+
+  /** Live agent processes by attempt id. */
+  readonly live = new Map<string, AgentRun>();
+  /** Tasks with a running driver. */
+  readonly drivers = new Set<string>();
+  /** Slot-holding tasks whose driver stopped until the run resumes / a rate limit resets. */
+  readonly parked = new Map<string, ParkReason>();
+  readonly mergeLoops = new Set<string>();
+  /** Runs with a planner or finalize job in flight. */
+  readonly runJobs = new Set<string>();
+  /** Takeover terminals by attempt id. */
+  readonly takeovers = new Map<string, string>();
+  closed = false;
+
+  private readonly tokens = new Map<string, string>();
+  private readonly waiters = new Map<string, Waiter>();
+  private readonly usageBaselines = new WeakMap<
+    AgentRun,
+    { cost: number; input: number; output: number; decided: boolean }
+  >();
+  private rateLimits: RateLimit[] = [];
+  private readonly jobs = new Set<Promise<unknown>>();
+  private tickPending = false;
+  private tickChain: Promise<void> = Promise.resolve();
+  private wakeTimer: ReturnType<typeof setTimeout> | null = null;
+  private wakeAt: number | null = null;
+  private poweredOn = false;
+  private readonly host: (message: EngineToMainMessage) => void;
+  private readonly offEvents: () => void;
+
+  constructor(options: OrchestratorOptions) {
+    this.ctx = options.ctx;
+    this.store = options.ctx.store;
+    this.log = options.ctx.log;
+    this.registry = options.registry;
+    this.prHost = options.prHost;
+    this.host = options.host ?? (() => {});
+    this.offEvents = this.store.onEvents((events) => {
+      let inboxChanged = false;
+      for (const event of events) {
+        if (event.type !== 'inbox.updated') continue;
+        inboxChanged = true;
+        if (event.item.resolvedAt === null) this.notifyItem(event.item);
+      }
+      if (inboxChanged) this.host({ type: 'badge', count: this.openInboxCount() });
+    });
+  }
+
+  // -- small accessors ---------------------------------------------------------------------------
+
+  now(): number {
+    return Date.now();
+  }
+
+  settings(): Settings {
+    return this.store.getSettings();
+  }
+
+  limits(): Limits {
+    return this.settings().limits;
+  }
+
+  openInboxCount(): number {
+    return this.store.listInbox({ runId: null, includeResolved: false }).length;
+  }
+
+  async config(run: Pick<Run, 'repoPath'>): Promise<LegionConfig | null> {
+    try {
+      return await loadLegionConfig(run.repoPath);
+    } catch (error) {
+      this.log.warn(`legion.json in ${run.repoPath}: ${(error as Error).message}`);
+      return null;
+    }
+  }
+
+  repoInput(run: Run, config: LegionConfig | null): RepoInput {
+    return {
+      baseRef: run.baseRef,
+      verifyCommands: config?.verify ?? [],
+      setupCommands: config?.setup ?? [],
+      installCommand: config?.installCommand ?? null,
+    };
+  }
+
+  issue(run: Run): IssueInput {
+    return { title: run.title, text: run.issueText, url: run.issueUrl };
+  }
+
+  integrationPath(run: Pick<Run, 'id' | 'repoPath'>): string {
+    return integrationWorktreePath(this.ctx.dataDir, repoHash(run.repoPath), run.id);
+  }
+
+  taskPath(run: Pick<Run, 'id' | 'repoPath'>, taskId: string): string {
+    return taskWorktreePath(this.ctx.dataDir, repoHash(run.repoPath), run.id, taskId);
+  }
+
+  /** Nodes of the approved plan (latest approved version). */
+  approvedNodes(runId: string): TaskNode[] {
+    const plan = this.store
+      .listPlans(runId)
+      .filter((p) => p.approvedAt !== null)
+      .at(-1);
+    return plan ? plan.dag.nodes : [];
+  }
+
+  approvedPlan(runId: string) {
+    return (
+      this.store
+        .listPlans(runId)
+        .filter((p) => p.approvedAt !== null)
+        .at(-1) ?? null
+    );
+  }
+
+  nodeOf(task: Pick<Task, 'runId' | 'nodeId'>): TaskNode {
+    const node = this.approvedNodes(task.runId).find((n) => n.id === task.nodeId);
+    if (!node) throw new Error(`no approved plan node ${task.nodeId} for run ${task.runId}`);
+    return node;
+  }
+
+  toolNames(engine: EngineKind): ToolNames {
+    return this.registry.get(engine).kind === 'claude' ? CLAUDE_PROMPT_TOOLS : DEFAULT_TOOL_NAMES;
+  }
+
+  modelFor(role: keyof Settings['roles'], engine: EngineKind): string | null {
+    if (engine === 'fake') return null;
+    return this.settings().roles[role].models[engine];
+  }
+
+  /** Track a background job (awaited on close); errors are logged unless the orchestrator is closing. */
+  background(name: string, job: () => Promise<unknown>): void {
+    if (this.closed) return;
+    const promise = job()
+      .catch((error: unknown) => {
+        if (this.closed || error instanceof Closed) return;
+        this.log.error(`${name} failed`, error);
+      })
+      .finally(() => this.jobs.delete(promise));
+    this.jobs.add(promise);
+  }
+
+  assertOpen(): void {
+    if (this.closed) throw new Closed('orchestrator closed');
+  }
+
+  // -- rate limits & gates -----------------------------------------------------------------------
+
+  registerRateLimit(engine: EngineKind, resetsAt: number | null): void {
+    const until = resetsAt ?? this.now() + RATE_LIMIT_BACKOFF_MS;
+    this.rateLimits = [...this.rateLimits.filter((r) => r.engine !== engine), { engine, resetsAt: until }];
+    this.log.warn(`rate limited on ${engine} until ${new Date(until).toISOString()}`);
+    this.armWake(until);
+  }
+
+  activeRateLimits(): RateLimit[] {
+    const now = this.now();
+    this.rateLimits = this.rateLimits.filter((r) => r.resetsAt === null || r.resetsAt > now);
+    return this.rateLimits;
+  }
+
+  limitedUntil(engine: EngineKind): number | null {
+    const limit = this.activeRateLimits().find((r) => r.engine === engine);
+    return limit ? (limit.resetsAt ?? this.now() + RATE_LIMIT_BACKOFF_MS) : null;
+  }
+
+  /** Why a new agent session on `engine` must wait, or null. */
+  gate(runId: string, engine: EngineKind): ParkReason | null {
+    if (this.store.requireRun(runId).paused) return { kind: 'paused' };
+    if (this.limitedUntil(engine) !== null) return { kind: 'rate', engine };
+    return null;
+  }
+
+  /** Wait (for run-level jobs) until `engine` is no longer rate limited. */
+  async waitForEngine(engine: EngineKind): Promise<void> {
+    for (;;) {
+      this.assertOpen();
+      const until = this.limitedUntil(engine);
+      if (until === null) return;
+      await sleep(Math.min(Math.max(until - this.now(), 50), 60_000));
+    }
+  }
+
+  // -- sessions ----------------------------------------------------------------------------------
+
+  sessionEnv(): Record<string, string> {
+    return { ...this.ctx.env, MCP_TOOL_TIMEOUT: String(MCP_TOOL_TIMEOUT_MS) };
+  }
+
+  async openSession(params: OpenSessionParams): Promise<AgentRun> {
+    this.assertOpen();
+    const usable = this.registry.usable(params.engine);
+    if (!usable.ok) throw new AgentFailure({ kind: 'auth', message: usable.reason });
+    const engine: AgentEngine = this.registry.get(params.engine);
+    const attempt = params.reuseAttemptId
+      ? this.store.transitionAttempt(params.reuseAttemptId, 'interrupted', 'running', { error: null })
+      : this.store.insertAttempt({
+          runId: params.run.id,
+          taskId: params.taskId,
+          role: params.role,
+          engine: engine.kind,
+          model: params.model,
+          effort: params.effort,
+          status: 'running',
+          sessionId: params.resumeSessionId ?? null,
+        });
+    const token =
+      this.mcp?.issueToken({ runId: params.run.id, taskId: params.taskId, attemptId: attempt.id, role: params.role }) ??
+      null;
+    const opts: SessionOptions = {
+      role: params.role,
+      cwd: params.cwd,
+      prompt: params.prompt.prompt,
+      systemPrompt: params.prompt.systemPrompt,
+      model: params.model,
+      effort: params.effort,
+      permission: permissionProfileFor(params.role, params.allowedCommands ?? []),
+      outputSchema: params.outputSchema,
+      mcp: token && this.mcp ? { url: this.mcp.url, token } : null,
+      env: this.sessionEnv(),
+    };
+    let session: Awaited<ReturnType<AgentEngine['start']>>;
+    try {
+      session = params.resumeSessionId ? await engine.resume(params.resumeSessionId, opts) : await engine.start(opts);
+    } catch (error) {
+      if (token) this.mcp?.revokeToken(token);
+      const message = `could not start ${params.engine} ${params.role} session: ${(error as Error).message}`;
+      if (!this.closed) this.store.transitionAttempt(attempt.id, 'running', 'failed', { error: message });
+      throw new AgentFailure(classifyFailure(message));
+    }
+    const hooks: AgentRunHooks = {
+      onEvent: (run, event) => this.onAgentEvent(run, event),
+      onEnd: (run) => this.onAgentEnd(run),
+      onTakeover: (run, taken) => this.onTakeover(run, taken),
+    };
+    const run = new AgentRun(
+      { id: attempt.id, runId: attempt.runId, taskId: attempt.taskId, role: attempt.role },
+      params.engine,
+      engine,
+      session,
+      opts,
+      hooks,
+    );
+    if (token) this.tokens.set(attempt.id, token);
+    this.live.set(attempt.id, run);
+    this.updatePower();
+    if (session.id && session.id !== attempt.sessionId) this.store.updateAttempt(attempt.id, { sessionId: session.id });
+    run.start();
+    return run;
+  }
+
+  /** Close the process and settle the attempt row. */
+  async finishAttempt(run: AgentRun, status: 'succeeded' | 'failed' | 'cancelled', error: string | null = null) {
+    await run.close();
+    if (this.closed) return;
+    const attempt = this.store.getAttempt(run.attempt.id);
+    if (attempt && (attempt.status === 'running' || attempt.status === 'interrupted')) {
+      this.store.transitionAttempt(attempt.id, attempt.status, status, { error });
+    }
+  }
+
+  /** Wait for a turn whose structured output parses with `schema`, nudging the agent on schema misses. */
+  async structuredTurn<T>(run: AgentRun, schema: z.ZodType<T>, retries = 2): Promise<T> {
+    for (let i = 0; ; i++) {
+      const turn = await run.nextTurn();
+      this.assertOpen();
+      const failure = this.turnFailure(turn);
+      if (failure && (failure.kind !== 'agent_error' || turn.kind === 'exited' || turn.reason === 'interrupted')) {
+        throw new AgentFailure(failure);
+      }
+      const parsed = turn.kind === 'turn' && !turn.isError ? schema.safeParse(turn.structuredOutput) : null;
+      if (parsed?.success) return parsed.data;
+      const why = parsed
+        ? parsed.error.issues
+            .slice(0, 5)
+            .map((issue) => `${issue.path.join('.') || '(root)'}: ${issue.message}`)
+            .join('; ')
+        : (failure?.message ?? 'missing structured output');
+      if (i >= retries) throw new AgentFailure({ kind: 'agent_error', message: `invalid structured output: ${why}` });
+      await run.send(
+        `Your final structured output was missing or did not match the required schema (${why}). Reply again with only the structured output, exactly in the required shape.`,
+      );
+    }
+  }
+
+  /** Failure described by a turn, or null when the turn ended normally. */
+  turnFailure(turn: TurnResult): Failure | null {
+    if (turn.kind === 'exited') {
+      return classifyFailure(turn.error?.message ?? `the agent process exited (code ${turn.code ?? 'null'})`);
+    }
+    if (!turn.isError) return null;
+    return classifyFailure(turn.error?.message ?? turn.reason ?? 'the turn failed');
+  }
+
+  private onAgentEvent(run: AgentRun, event: AgentEvent): void {
+    if (this.closed) return;
+    const ref = run.attempt;
+    this.store.appendAgentEvent(ref, event);
+    switch (event.type) {
+      case 'session_started': {
+        const attempt = this.store.getAttempt(ref.id);
+        if (attempt && attempt.sessionId !== event.sessionId) {
+          this.store.updateAttempt(ref.id, { sessionId: event.sessionId, model: event.model ?? attempt.model });
+        }
+        if (ref.taskId && ref.role === 'coder')
+          patchTaskMeta(this.store, ref.taskId, { coderSessionId: event.sessionId });
+        return;
+      }
+      case 'usage':
+        this.applyUsage(run, event);
+        return;
+      case 'rate_limit':
+        if (event.usedPct >= RATE_LIMIT_PAUSE_PCT) this.registerRateLimit(run.nominal, event.resetsAt);
+        return;
+      case 'error':
+        if (event.retryable && RATE_LIMIT_RE.test(event.message)) this.registerRateLimit(run.nominal, null);
+        return;
+      case 'approval_request':
+        this.store.insertInboxItem({
+          runId: ref.runId,
+          taskId: ref.taskId,
+          attemptId: ref.id,
+          kind: 'approval',
+          payload: { requestId: event.requestId, tool: event.tool, input: event.input ?? null, reason: event.reason },
+        });
+        return;
+      case 'turn_complete':
+        // Pending approvals die with the turn (the CLIs drop them).
+        this.dismissOpen(ref.runId, (item) => item.attemptId === ref.id && item.kind === 'approval', 'turn ended');
+        return;
+      default:
+        return;
+    }
+  }
+
+  /** Usage events are cumulative per engine session: attempt cost = latest total − other attempts' share. */
+  private applyUsage(run: AgentRun, event: Extract<AgentEvent, { type: 'usage' }>): void {
+    let base = this.usageBaselines.get(run);
+    if (!base) {
+      const others = this.store
+        .listAttempts(run.attempt.runId)
+        .filter((a) => a.id !== run.attempt.id && a.sessionId !== null && a.sessionId === run.sessionId);
+      base = {
+        cost: others.reduce((sum, a) => sum + (a.costUsd ?? 0), 0),
+        input: others.reduce((sum, a) => sum + (a.inputTokens ?? 0), 0),
+        output: others.reduce((sum, a) => sum + (a.outputTokens ?? 0), 0),
+        decided: false,
+      };
+      this.usageBaselines.set(run, base);
+    }
+    if (!base.decided) {
+      // An engine whose totals restart with each process reports less than what earlier attempts spent.
+      const restarted =
+        (event.costUsd !== null && base.cost > 0 && event.costUsd <= base.cost) ||
+        (base.input > 0 && event.inputTokens <= base.input);
+      if (restarted) {
+        base.cost = 0;
+        base.input = 0;
+        base.output = 0;
+      }
+      base.decided = true;
+    }
+    const attempt = this.store.getAttempt(run.attempt.id);
+    if (!attempt) return;
+    this.store.updateAttempt(attempt.id, {
+      costUsd: event.costUsd === null ? attempt.costUsd : Math.max(0, event.costUsd - base.cost),
+      inputTokens: Math.max(0, event.inputTokens - base.input),
+      outputTokens: Math.max(0, event.outputTokens - base.output),
+    });
+    this.checkBudget(attempt.runId);
+  }
+
+  private onAgentEnd(run: AgentRun): void {
+    const token = this.tokens.get(run.attempt.id);
+    if (token) this.mcp?.revokeToken(token);
+    this.tokens.delete(run.attempt.id);
+    this.live.delete(run.attempt.id);
+    this.updatePower();
+    for (const [itemId, waiter] of this.waiters) {
+      if (waiter.attemptId === run.attempt.id) {
+        this.waiters.delete(itemId);
+        waiter.reject(new Error('the session ended'));
+      }
+    }
+    if (this.closed) return;
+    this.dismissOpen(
+      run.attempt.runId,
+      (item) =>
+        item.attemptId === run.attempt.id &&
+        (item.kind === 'approval' || (item.kind === 'question' && item.payload.source === 'agent')),
+      'the agent session ended',
+    );
+  }
+
+  private onTakeover(run: AgentRun, taken: boolean): void {
+    if (this.closed) return;
+    const attempt = this.store.getAttempt(run.attempt.id);
+    if (!attempt) return;
+    if (taken && attempt.status === 'running') {
+      this.store.transitionAttempt(attempt.id, 'running', 'interrupted', { error: 'taken over by a human' });
+    } else if (!taken && attempt.status === 'interrupted') {
+      this.store.transitionAttempt(attempt.id, 'interrupted', 'running', { error: null });
+      if (run.sessionId !== attempt.sessionId) this.store.updateAttempt(attempt.id, { sessionId: run.sessionId });
+    }
+  }
+
+  // -- inbox -------------------------------------------------------------------------------------
+
+  /** Resolve open items of a run matching `filter` with a dismissal (stale / superseded). */
+  dismissOpen(runId: string, filter: (item: InboxItem) => boolean, note: string): void {
+    for (const item of this.store.listInbox({ runId, includeResolved: false })) {
+      if (!filter(item)) continue;
+      try {
+        this.store.resolveInboxItem(item.id, dismissal(item.kind, note));
+      } catch {
+        // resolved concurrently
+      }
+      const waiter = this.waiters.get(item.id);
+      if (waiter) {
+        this.waiters.delete(item.id);
+        waiter.reject(new Error(note));
+      }
+    }
+  }
+
+  /** Wait for a human's resolution of `itemId` (MCP tool calls). */
+  awaitResolution(itemId: string, attemptId: string | null): Promise<InboxResolution> {
+    return new Promise((resolve, reject) => this.waiters.set(itemId, { attemptId, resolve, reject }));
+  }
+
+  /** Called after an item was resolved; true when an MCP tool call was waiting for it. */
+  deliverResolution(itemId: string, resolution: InboxResolution): boolean {
+    const waiter = this.waiters.get(itemId);
+    if (!waiter) return false;
+    this.waiters.delete(itemId);
+    waiter.resolve(resolution);
+    return true;
+  }
+
+  escalate(
+    runId: string,
+    taskId: string | null,
+    reason: Extract<InboxItem, { kind: 'escalation' }>['payload']['reason'],
+    summary: string,
+    actions: Extract<InboxItem, { kind: 'escalation' }>['payload']['actions'],
+  ): void {
+    this.dismissOpen(
+      runId,
+      (item) => item.kind === 'escalation' && item.taskId === taskId,
+      'superseded by a newer escalation',
+    );
+    this.store.insertInboxItem({
+      runId,
+      taskId,
+      attemptId: null,
+      kind: 'escalation',
+      payload: { reason, summary, actions },
+    });
+  }
+
+  private notifyItem(item: InboxItem): void {
+    const run = this.store.getRun(item.runId);
+    const task = item.taskId ? this.store.getTask(item.taskId) : null;
+    const where = [run?.title, task?.nodeId].filter(Boolean).join(' · ');
+    const titles: Record<InboxKind, string> = {
+      approval: 'Approval needed',
+      question: item.kind === 'question' && item.payload.source === 'clarify' ? 'Clarifying questions' : 'Question',
+      plan_signoff: 'Plan ready for review',
+      escalation: 'Needs your attention',
+      pr_ready: 'Ready for a pull request',
+      conflict: 'Merge conflict',
+      budget: 'Budget reached',
+    };
+    let detail = '';
+    if (item.kind === 'approval') detail = `${item.payload.tool} wants to run`;
+    else if (item.kind === 'question') detail = item.payload.questions[0]?.question ?? '';
+    else if (item.kind === 'escalation') detail = item.payload.summary;
+    else if (item.kind === 'conflict') detail = item.payload.summary;
+    else if (item.kind === 'budget') detail = `$${item.payload.spentUsd.toFixed(2)} of $${item.payload.limitUsd}`;
+    this.host({
+      type: 'notify',
+      title: titles[item.kind],
+      body: [where, detail].filter(Boolean).join(': ').slice(0, 240),
+      runId: item.runId,
+    });
+  }
+
+  notify(title: string, body: string, runId: string | null): void {
+    this.host({ type: 'notify', title, body, runId });
+  }
+
+  private updatePower(): void {
+    const on = this.live.size > 0;
+    if (on === this.poweredOn) return;
+    this.poweredOn = on;
+    this.host({ type: 'power', preventSleep: on });
+  }
+
+  // -- budget ------------------------------------------------------------------------------------
+
+  runCost(runId: string): number {
+    return this.store.listAttempts(runId).reduce((sum, a) => sum + (a.costUsd ?? 0), 0);
+  }
+
+  checkBudget(runId: string): void {
+    const run = this.store.getRun(runId);
+    if (!run || isTerminal(RUN_TRANSITIONS, run.status)) return;
+    const settings = this.settings();
+    const meta = runMeta(this.store, runId);
+    const limit = meta.budgetLimitUsd ?? settings.budget.perRunUsd;
+    if (limit === null) return;
+    const spent = this.runCost(runId);
+    if (spent >= limit) {
+      const open = this.store.listInbox({ runId, includeResolved: false }).some((i) => i.kind === 'budget');
+      if (open) return;
+      this.store.transaction(() => {
+        if (!run.paused) this.store.updateRun(runId, { paused: true });
+        this.store.insertInboxItem({
+          runId,
+          taskId: null,
+          attemptId: null,
+          kind: 'budget',
+          payload: { spentUsd: spent, limitUsd: limit },
+        });
+      });
+    } else if (spent >= (limit * settings.budget.warnAtPct) / 100 && !meta.budgetWarned) {
+      this.store.setMeta(`run:${runId}`, { ...meta, budgetWarned: true });
+      this.notify('Budget warning', `${run.title}: $${spent.toFixed(2)} of $${limit} spent`, runId);
+    }
+  }
+
+  // -- task decisions ----------------------------------------------------------------------------
+
+  /**
+   * Apply a `core/policy` decision: walk its status path with CAS transitions, apply the counter patch,
+   * raise the escalation, reset the attempt state on retry. One transaction.
+   */
+  applyDecision(
+    taskId: string,
+    decision: TaskDecision,
+    options: { summary?: string; error?: string | null; patch?: Partial<Pick<Task, 'mergedSha'>> } = {},
+  ) {
+    const result = this.store.transaction(() => {
+      let task = this.store.requireTask(taskId);
+      const failing = decision.action === 'fail' || decision.action === 'escalate';
+      const patch = {
+        ...decision.patch,
+        ...options.patch,
+        error: options.error !== undefined ? options.error : failing ? decision.reason : null,
+      };
+      if (decision.path.length === 0) {
+        task = this.store.updateTask(task.id, patch);
+      } else {
+        decision.path.forEach((status, i) => {
+          task = this.store.transitionTask(task.id, task.status, status, i === decision.path.length - 1 ? patch : {});
+        });
+      }
+      if (decision.escalation) {
+        this.escalate(
+          task.runId,
+          task.id,
+          decision.escalation,
+          `${task.nodeId}: ${options.summary ?? decision.reason}`,
+          task.status === 'failed' ? ['retry', 'skip', 'edit', 'abort'] : ['retry', 'skip', 'abort'],
+        );
+      }
+      if (decision.action === 'retry' || decision.action === 'requeue') {
+        patchTaskMeta(this.store, task.id, freshAttemptMeta(options.summary ?? decision.reason));
+      }
+      return task;
+    });
+    this.scheduleTick();
+    return result;
+  }
+
+  /** Move a task to `to` via the shortest legal path (no-op when already there). */
+  moveTask(taskId: string, path: readonly TaskStatus[], patch: Partial<Task> = {}): Task {
+    return this.store.transaction(() => {
+      let task = this.store.requireTask(taskId);
+      if (path.length === 0) return Object.keys(patch).length > 0 ? this.store.updateTask(task.id, patch) : task;
+      path.forEach((status, i) => {
+        task = this.store.transitionTask(task.id, task.status, status, i === path.length - 1 ? patch : {});
+      });
+      return task;
+    });
+  }
+
+  // -- scheduling --------------------------------------------------------------------------------
+
+  /** Re-plan dispatch for every executing run (coalesced). */
+  scheduleTick(): void {
+    if (this.closed || this.tickPending) return;
+    this.tickPending = true;
+    setImmediate(() => {
+      this.tickPending = false;
+      this.tickChain = this.tickChain
+        .then(() => this.tick())
+        .catch((error: unknown) => {
+          if (!this.closed) this.log.error('tick failed', error);
+        });
+    });
+  }
+
+  private armWake(at: number): void {
+    if (this.closed) return;
+    if (this.wakeAt !== null && this.wakeAt <= at && this.wakeAt > this.now()) return;
+    if (this.wakeTimer) clearTimeout(this.wakeTimer);
+    this.wakeAt = at;
+    this.wakeTimer = setTimeout(
+      () => {
+        this.wakeTimer = null;
+        this.wakeAt = null;
+        this.scheduleTick();
+      },
+      Math.max(0, at - this.now()) + 5,
+    );
+    this.wakeTimer.unref?.();
+  }
+
+  /** Flow starters, set by the wiring in `index.ts` (keeps this module free of import cycles). */
+  flows: {
+    driveTask(taskId: string): Promise<void>;
+    mergeQueue(runId: string): Promise<void>;
+    finalize(runId: string): Promise<void>;
+  } | null = null;
+
+  startDriver(taskId: string): void {
+    if (this.closed || this.drivers.has(taskId) || !this.flows) return;
+    const flows = this.flows;
+    this.drivers.add(taskId);
+    this.parked.delete(taskId);
+    this.background(`task ${taskId}`, () =>
+      flows.driveTask(taskId).finally(() => {
+        this.drivers.delete(taskId);
+        this.scheduleTick();
+      }),
+    );
+  }
+
+  startMergeQueue(runId: string): void {
+    if (this.closed || this.mergeLoops.has(runId) || !this.flows) return;
+    const flows = this.flows;
+    this.mergeLoops.add(runId);
+    this.background(`merge queue ${runId}`, () =>
+      flows.mergeQueue(runId).finally(() => {
+        this.mergeLoops.delete(runId);
+        this.scheduleTick();
+      }),
+    );
+  }
+
+  startFinalize(runId: string): void {
+    const flows = this.flows;
+    if (!flows || this.runJobs.has(runId)) return;
+    this.runJob(runId, 'finalize', () => flows.finalize(runId));
+  }
+
+  /**
+   * Run a run-level job (planner steps, finalize), one at a time per run. A job requested while another
+   * runs is started when it finishes (the latest request wins).
+   */
+  runJob(runId: string, name: string, job: () => Promise<void>): void {
+    if (this.closed) return;
+    if (this.runJobs.has(runId)) {
+      this.pendingJobs.set(runId, { name, job });
+      return;
+    }
+    this.runJobs.add(runId);
+    this.background(`${name} ${runId}`, () =>
+      job().finally(() => {
+        this.runJobs.delete(runId);
+        const next = this.pendingJobs.get(runId);
+        this.pendingJobs.delete(runId);
+        if (next) this.runJob(runId, next.name, next.job);
+        else this.scheduleTick();
+      }),
+    );
+  }
+
+  private readonly pendingJobs = new Map<string, { name: string; job: () => Promise<void> }>();
+
+  /** Slot-holding tasks per coder engine for every executing run. */
+  private slotsByRun(runs: readonly Run[]): Map<string, Partial<Record<EngineKind, number>>> {
+    const out = new Map<string, Partial<Record<EngineKind, number>>>();
+    for (const run of runs) {
+      const nodes = new Map(this.approvedNodes(run.id).map((n) => [n.id, n]));
+      const counts: Partial<Record<EngineKind, number>> = {};
+      for (const task of this.store.listTasks(run.id)) {
+        if (!SLOT_STATUSES.has(task.status)) continue;
+        const engine = task.engineOverride ?? nodes.get(task.nodeId)?.agent.engine ?? 'claude';
+        counts[engine] = (counts[engine] ?? 0) + 1;
+      }
+      out.set(run.id, counts);
+    }
+    return out;
+  }
+
+  private async tick(): Promise<void> {
+    if (this.closed || !this.flows) return;
+    const settings = this.settings();
+    const runs = this.store.listRuns().filter((r) => r.status === 'executing');
+    for (const run of runs) {
+      const slots = this.slotsByRun(runs);
+      const others: Partial<Record<EngineKind, number>> = {};
+      for (const [runId, counts] of slots) {
+        if (runId === run.id) continue;
+        for (const [engine, n] of Object.entries(counts) as [EngineKind, number][]) {
+          others[engine] = (others[engine] ?? 0) + n;
+        }
+      }
+      this.tickRun(run, settings, others);
+    }
+  }
+
+  private tickRun(run: Run, settings: Settings, otherRunsInFlight: Partial<Record<EngineKind, number>>): void {
+    const nodes = this.approvedNodes(run.id);
+    if (nodes.length === 0) return;
+    const now = this.now();
+    const plan = planDispatch({
+      nodes,
+      tasks: this.store.listTasks(run.id),
+      settings,
+      otherRunsInFlight,
+      paused: run.paused,
+      rateLimits: this.activeRateLimits(),
+      now,
+    });
+    const byNode = new Map(this.store.listTasks(run.id).map((t) => [t.nodeId, t]));
+    this.store.transaction(() => {
+      for (const nodeId of plan.enqueue) {
+        const task = byNode.get(nodeId);
+        if (task) this.store.transitionTask(task.id, 'blocked', 'queued');
+      }
+      for (const nodeId of plan.block) {
+        const task = byNode.get(nodeId);
+        if (task) this.store.transitionTask(task.id, 'queued', 'blocked');
+      }
+      for (const decision of plan.dispatch) {
+        const task = byNode.get(decision.nodeId);
+        if (!task) continue;
+        const fresh = this.store.requireTask(task.id);
+        this.store.transitionTask(task.id, 'queued', 'provisioning', {
+          attemptCount: fresh.attemptCount + 1,
+          fixRounds: 0,
+          error: null,
+          progress: null,
+        });
+      }
+    });
+    for (const task of this.store.listTasks(run.id)) {
+      if (!SLOT_STATUSES.has(task.status) || this.drivers.has(task.id)) continue;
+      const parked = this.parked.get(task.id);
+      if (parked?.kind === 'paused' && run.paused) continue;
+      if (parked?.kind === 'rate') {
+        const until = this.limitedUntil(parked.engine);
+        if (until !== null) {
+          this.armWake(until);
+          continue;
+        }
+      }
+      this.startDriver(task.id);
+    }
+    const tasks = this.store.listTasks(run.id);
+    if (tasks.some((t) => t.status === 'approved' || t.status === 'merging')) this.startMergeQueue(run.id);
+    if (plan.run.state === 'complete' && !this.mergeLoops.has(run.id)) this.startFinalize(run.id);
+    if (plan.nextWakeAt !== null) this.armWake(plan.nextWakeAt);
+  }
+
+  // -- MCP host ----------------------------------------------------------------------------------
+
+  readonly mcpHost: McpHost = {
+    onProgress: (binding, summary) => {
+      if (this.closed || !binding.taskId) return;
+      this.store.updateTask(binding.taskId, { progress: summary.slice(0, 500) });
+    },
+    askHuman: async (binding, question, options) => {
+      this.assertOpen();
+      const item = this.store.insertInboxItem({
+        runId: binding.runId,
+        taskId: binding.taskId,
+        attemptId: binding.attemptId,
+        kind: 'question',
+        payload: { source: 'agent', questions: [{ id: 'q1', question, options: options ?? [] }] },
+      });
+      const resolution = await this.awaitResolution(item.id, binding.attemptId);
+      if (resolution.kind !== 'question') throw new Error('unexpected resolution');
+      const answer = resolution.answers.find((a) => a.questionId === 'q1') ?? resolution.answers[0];
+      if (!answer) throw new Error('the human dismissed the question; decide yourself and explain in your summary');
+      return answer.answer;
+    },
+    approve: async (binding: McpBinding, request): Promise<ApproveResult> => {
+      this.assertOpen();
+      const item = this.store.insertInboxItem({
+        runId: binding.runId,
+        taskId: binding.taskId,
+        attemptId: binding.attemptId,
+        kind: 'approval',
+        payload: {
+          requestId: request.toolUseId ?? `mcp-${Date.now()}`,
+          tool: request.toolName,
+          input: request.input,
+          reason: null,
+        },
+      });
+      const resolution = await this.awaitResolution(item.id, binding.attemptId);
+      if (resolution.kind !== 'approval') throw new Error('unexpected resolution');
+      const decision = resolution.decision;
+      if (decision.behavior === 'deny') return { behavior: 'deny', message: decision.message };
+      const updated = decision.updatedInput;
+      return {
+        behavior: 'allow',
+        ...(updated && typeof updated === 'object' ? { updatedInput: updated as Record<string, unknown> } : {}),
+      };
+    },
+    markDone: (binding, done) => {
+      const run = this.live.get(binding.attemptId);
+      if (run) run.markDone = done;
+    },
+  };
+
+  // -- shutdown ----------------------------------------------------------------------------------
+
+  /**
+   * Stop everything without touching the DB state of in-flight work (like a crash, so recovery can
+   * resume it): close live sessions, cancel timers, wait briefly for background jobs.
+   */
+  async close(): Promise<void> {
+    if (this.closed) return;
+    this.closed = true;
+    this.offEvents();
+    if (this.wakeTimer) clearTimeout(this.wakeTimer);
+    for (const waiter of this.waiters.values()) waiter.reject(new Closed('engine shutting down'));
+    this.waiters.clear();
+    await Promise.allSettled([...this.live.values()].map((run) => run.close()));
+    await Promise.race([Promise.allSettled([...this.jobs]), sleep(5_000)]);
+    await this.tickChain.catch(() => undefined);
+    if (this.poweredOn) this.host({ type: 'power', preventSleep: false });
+  }
+}

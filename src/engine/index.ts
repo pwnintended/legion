@@ -7,12 +7,29 @@
  * This module must never import `electron`.
  */
 import { join } from 'node:path';
+import type { EngineKind } from '@shared/domain';
+import type { AgentEngine } from '@shared/engine';
 import type { ServerEvent } from '@shared/events';
 import type { EngineToMainMessage, MainToEngineMessage } from '@shared/host-protocol';
 import { ENGINE_ENV } from '@shared/host-protocol';
 import type { MessageEndpoint, PortLike, RpcConnection } from '@shared/rpc-transport';
 import { consoleLogger, type EngineContext, type Logger } from './context';
 import { openStore, type Store } from './db';
+import { type McpServerHandle, startMcpServer } from './mcp';
+import {
+  createOrchestrator,
+  EngineRegistry,
+  FAKE_ENGINES_ENV,
+  FakePrHost,
+  ghPrHost,
+  type Orchestrator,
+  type PrHost,
+  recover,
+  registerOrchestratorHandlers,
+  resolveAttemptTerminal,
+  trackPtyExits,
+} from './orchestrator';
+import { createNodePtySpawn, type PtySpawn, registerTerminalHandlers, type TerminalService } from './pty';
 import { registerCoreHandlers } from './rpc/core';
 import { createEngineRpcServer, type EngineRpcServer } from './rpc/server';
 
@@ -25,15 +42,35 @@ export interface StartEngineOptions {
   log?: Logger;
   /** Override the clock (tests). */
   now?: () => number;
+  /** Serve every engine kind with the scripted fake. Default: `LEGION_FAKE_ENGINES=1` in `env`. */
+  fakeEngines?: boolean;
+  /** Engines per kind (tests inject fakes standing in for claude / codex). */
+  engines?: Partial<Record<EngineKind, AgentEngine>>;
+  /** GitHub side of the PR step. Default: `gh` (a push-less fake in fake-engine mode). */
+  prHost?: PrHost;
+  /** Engine → main messages (notify / badge / power). */
+  onHostMessage?: (message: EngineToMainMessage) => void;
+  /** PTY spawn (tests inject a fake; default node-pty, loaded lazily). */
+  ptySpawn?: PtySpawn;
+  /** Probe the engines right away (default true). */
+  probeOnStart?: boolean;
+  /** Reconcile the DB with reality and resume work (default true). */
+  recover?: boolean;
 }
 
 export interface EngineHandle {
   readonly ctx: EngineContext;
   readonly store: Store;
   readonly server: EngineRpcServer;
+  readonly orchestrator: Orchestrator;
+  readonly registry: EngineRegistry;
+  readonly terminals: TerminalService;
+  readonly mcp: McpServerHandle;
+  /** Settles when crash recovery has finished (work is resumed in the background). */
+  readonly ready: Promise<void>;
   /** Attach a renderer (or test) port; the connection closes when the port does. */
   connect(port: PortLike | MessageEndpoint): RpcConnection<ServerEvent>;
-  /** Close all connections and the database. */
+  /** Stop agents (state stays resumable), close connections, the MCP server and the database. */
   close(): Promise<void>;
 }
 
@@ -61,15 +98,68 @@ export async function startEngine(options: StartEngineOptions): Promise<EngineHa
   const server = createEngineRpcServer(ctx);
   registerCoreHandlers(server, ctx);
 
+  const fake = options.fakeEngines ?? env[FAKE_ENGINES_ENV] === '1';
+  const registry = new EngineRegistry({
+    dataDir: options.dataDir,
+    env,
+    version: ctx.version,
+    log,
+    settings: () => opened.store.getSettings(),
+    fake,
+    ...(options.engines ? { overrides: options.engines } : {}),
+  });
+  const orchestrator = createOrchestrator({
+    ctx,
+    registry,
+    prHost: options.prHost ?? (fake ? new FakePrHost({ push: false }) : ghPrHost),
+    ...(options.onHostMessage ? { host: options.onHostMessage } : {}),
+  });
+
+  let mcp: McpServerHandle;
+  try {
+    mcp = await startMcpServer({
+      host: orchestrator.mcpHost,
+      log: (level, message, extra) => log[level](`mcp: ${message}`, ...(extra ? [extra] : [])),
+    });
+  } catch (error) {
+    opened.close();
+    throw error;
+  }
+  orchestrator.mcp = mcp;
+
+  const pty = trackPtyExits(options.ptySpawn ?? createNodePtySpawn());
+  const terminals = registerTerminalHandlers(server, ctx, {
+    spawn: pty.spawn,
+    resolveAttempt: (attemptId) => resolveAttemptTerminal(orchestrator, attemptId),
+  });
+  orchestrator.terminals = terminals;
+  orchestrator.ptyExit = pty.exitOf;
+  registerOrchestratorHandlers(server, orchestrator);
+
+  if (options.probeOnStart ?? true) void registry.probe().catch(() => undefined);
+  const ready =
+    options.recover === false
+      ? Promise.resolve()
+      : recover(orchestrator).catch((error: unknown) => log.error('recovery failed', error));
+
   let closed = false;
   return {
     ctx,
     store: opened.store,
     server,
+    orchestrator,
+    registry,
+    terminals,
+    mcp,
+    ready,
     connect: (port) => server.connect(port),
     async close() {
       if (closed) return;
       closed = true;
+      await ready;
+      await orchestrator.close();
+      terminals.dispose();
+      await mcp.close();
       server.close();
       opened.close();
     },
@@ -96,7 +186,7 @@ if (parentPort) {
     process.exit(2);
   }
 
-  startEngine({ dataDir })
+  startEngine({ dataDir, onHostMessage: post })
     .then((engine) => {
       port.on('message', (event) => {
         const message = event.data as MainToEngineMessage;
@@ -108,7 +198,10 @@ if (parentPort) {
         }
       });
       post({ type: 'ready', pid: process.pid, dataDir });
-      consoleLogger.info(`ready (pid ${process.pid}, data ${dataDir})`);
+      post({ type: 'badge', count: engine.orchestrator.openInboxCount() });
+      consoleLogger.info(
+        `ready (pid ${process.pid}, data ${dataDir}${engine.registry.fakeMode ? ', scripted fake engines' : ''})`,
+      );
     })
     .catch((error: unknown) => {
       console.error('[engine] failed to start', error);
