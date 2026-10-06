@@ -198,8 +198,10 @@ Normalized `AgentEvent` kinds: `session_started{sessionId, model, version}`, `te
 
 Every Claude profile also denies `Bash(git commit *)`, `Bash(git push *)`, Enter/ExitWorktree and the
 scheduling tools (Cron*, ScheduleWakeup, RemoteTrigger, PushNotification). Approval decisions: allow →
-`{behavior:"allow", updatedInput}`; allow with scope `session` adds the CLI's own rule suggestions with
-`destination:"session"` (never `localSettings`); deny → `{behavior:"deny", message, interrupt?}`.
+`{behavior:"allow", updatedInput}`; allow with scope `session` adds the CLI's own scoped rule (`Tool(content)` or
+one MCP tool) and directory suggestions with `destination:"session"` (never `localSettings`). Without such a rule it
+adds an exact `Bash(<command>)` rule for a plain Bash command and otherwise no rule (= allow once): never a
+whole-tool rule. Deny → `{behavior:"deny", message, interrupt?}`.
 `AskUserQuestion`/`ExitPlanMode` from a coder arrive as ordinary `approval_request`s (answer AskUserQuestion with
 `updatedInput: {questions, answers}`); planners never see them.
 
