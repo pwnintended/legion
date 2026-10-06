@@ -49,6 +49,9 @@ export default defineConfig({
     plugins: [react(), tailwindcss()],
     build: {
       outDir: 'out/renderer',
+      // electron-vite leaves renderer output unminified by default; ship a minified production bundle.
+      minify: 'esbuild',
+      cssMinify: true,
       rollupOptions: {
         onwarn,
         input: { index: resolve(import.meta.dirname, 'src/renderer/index.html') },
