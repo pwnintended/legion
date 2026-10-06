@@ -309,7 +309,13 @@ export function createDemoWorld(now = Date.now()): DemoWorld {
       { role: 'reviewer', engine: 'codex', inputTokens: 22_000, startedAt: now - 12 * MIN, endedAt: now - 3 * MIN },
       now,
     ),
-    attempt('att_authv2t4fix1', A, t4.id, { status: 'running', costUsd: 0.12, startedAt: now - 2 * MIN }, now),
+    attempt(
+      'att_authv2t4fix1',
+      A,
+      t4.id,
+      { status: 'running', sessionId: 'sess_att_authv2t4code', costUsd: 0.12, startedAt: now - 2 * MIN },
+      now,
+    ),
   ];
   const reviewsA: Review[] = [
     {

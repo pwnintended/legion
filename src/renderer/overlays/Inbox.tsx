@@ -185,11 +185,14 @@ function ItemBody({ item, selected }: { item: InboxItem; selected: boolean }) {
                   className={`btn btn-sm${action === 'retry' ? ' btn-warn' : action === 'abort' ? ' btn-ghost' : ''}`}
                   onClick={() => void resolve(item, { kind: 'escalation', action, note: null })}
                 >
-                  {action[0]?.toUpperCase()}
-                  {action.slice(1)}
+                  {action === 'retry' ? 'Retry' : action === 'skip' ? 'Skip task' : 'Abort run'}
                 </button>
               ))}
-            <JumpButton item={item} label={item.payload.actions.includes('edit') ? 'Edit plan' : 'Jump to tile'} />
+            {/* "edit" = retry with a note for the next attempt: written in the task's tile. */}
+            <JumpButton
+              item={item}
+              label={item.payload.actions.includes('edit') ? 'Retry with a note' : 'Jump to tile'}
+            />
           </div>
         </>
       );

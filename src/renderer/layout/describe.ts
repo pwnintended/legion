@@ -3,6 +3,7 @@
  * id, title, engine chip, status chip, urgency. Pure: derived from the client data store.
  */
 import type { Attempt, EngineKind, InboxItem, Plan, Task, TaskNode, TaskStatus } from '@shared/domain';
+import { type PullRequestInfo, runPr } from '../app/compat';
 import {
   type DataState,
   latestAttempt,
@@ -83,6 +84,13 @@ export function taskNode(plan: Plan | null, nodeId: string): TaskNode | null {
  * The engine to show for a task. In fake mode (`LEGION_FAKE_ENGINES=1`) attempts record engine `fake`; the UI
  * shows the engine the plan (or an override) assigned instead.
  */
+/** `draft PR #412 open`, `PR #398 merged`, ... */
+export function prLabel(pr: PullRequestInfo): string {
+  const n = pr.number ? ` #${pr.number}` : '';
+  if (pr.state === 'open') return `${pr.isDraft ? 'draft PR' : 'PR'}${n} open`;
+  return `PR${n} ${pr.state}`;
+}
+
 export function taskEngine(task: Task, node: TaskNode | null, attempt: Attempt | null): EngineKind {
   const real = (e: EngineKind | null | undefined) => (e && e !== 'fake' ? e : null);
   return real(attempt?.engine) ?? real(task.engineOverride) ?? node?.agent.engine ?? 'claude';
@@ -221,6 +229,7 @@ export function describeTile(state: DataState, runId: string, tile: LayoutTile, 
   const taskId = tileTaskId(tile);
   const task = taskId ? (state.tasks[taskId] ?? null) : null;
   const urgent = inbox.filter((item) => itemTargetsTile(item, tile, taskId));
+  const pr = runPr(run);
   const base: TileMeta = {
     label: null,
     title: TITLES[tile.kind],
@@ -350,17 +359,21 @@ export function describeTile(state: DataState, runId: string, tile: LayoutTile, 
         : merging
           ? { label: 'merging', tone: 'run', live: true }
           : { label: `${merged}/${tasks.length} merged`, tone: merged > 0 ? 'ok' : 'idle', live: false };
-      return { ...base, status, note: run?.prUrl ? 'draft PR open' : 'PR: not yet', tone: status.tone };
+      return { ...base, status, note: pr ? prLabel(pr) : 'PR: not yet', tone: status.tone };
     }
     case 'pr': {
-      const status: StatusChip = run?.prUrl
-        ? { label: 'draft PR open', tone: 'ok', live: false }
+      const status: StatusChip = pr
+        ? {
+            label: prLabel(pr),
+            tone: pr.state === 'merged' ? 'accent' : pr.state === 'closed' ? 'idle' : 'ok',
+            live: false,
+          }
         : urgent.length > 0
           ? { label: 'ready for you', tone: 'warn', live: false }
           : run?.status === 'finalizing'
             ? { label: 'final review', tone: 'run', live: true }
             : { label: 'not yet', tone: 'idle', live: false };
-      return { ...base, status, note: run?.prUrl ?? status.label, tone: status.tone };
+      return { ...base, status, note: pr?.url ?? status.label, tone: status.tone };
     }
     case 'clarify':
       return {

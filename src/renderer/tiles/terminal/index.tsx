@@ -279,7 +279,7 @@ export default function TerminalTile({ tileId, params, focused, visible }: TileP
   const label = params.attemptId ? 'session' : (params.cwd?.split('/').filter(Boolean).at(-1) ?? 'terminal');
   return (
     <div className="flex h-full min-h-0 flex-col bg-base" data-tile="terminal" data-status={status}>
-      <div className="flex h-[22px] shrink-0 items-center gap-2 border-b border-surface0 bg-mantle px-2.5 font-mono text-[10px] text-overlay1">
+      <div className="flex h-[22px] shrink-0 items-center gap-2 border-b border-surface0 bg-mantle px-2.5 font-mono text-[10px] text-overlay2">
         <span
           className="rounded-sm bg-surface0 px-1 py-px text-[9px] uppercase tracking-wider text-subtext0"
           title="Keys go to the terminal. Only ⌘-chords reach Legion."

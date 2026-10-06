@@ -48,7 +48,14 @@ const PR_STATUSES: readonly RunStatus[] = ['finalizing', 'pr_ready', 'done'];
 const THIN_TASK_STATUSES: readonly TaskStatus[] = ['blocked', 'queued', 'merged', 'skipped', 'cancelled'];
 const REVIEW_TASK_STATUSES: readonly TaskStatus[] = ['reviewing', 'fixing'];
 /** Where initial focus goes, best first. */
-const FOCUS_PRIORITY: readonly TaskStatus[] = ['awaiting_human', 'running', 'fixing', 'reviewing', 'verifying'];
+const FOCUS_PRIORITY: readonly TaskStatus[] = [
+  'awaiting_human',
+  'failed',
+  'running',
+  'fixing',
+  'reviewing',
+  'verifying',
+];
 
 export const columnIdForKey = (key: string): string => `col:${key}`;
 export const taskKey = (nodeId: string): string => `task:${nodeId}`;
@@ -181,6 +188,10 @@ function defaultFocus(ws: Workspace, input: RunLayoutInput): Workspace {
     const column = task && ws.strip.columns.find((c) => c.key === taskKey(task.nodeId));
     if (column) return { ...ws, focus: { column: column.id, tile: column.active } };
   }
+  // A run past execution lands on its PR (the human gate, or the result).
+  const end = PR_STATUSES.includes(input.status) ? ws.strip.columns.find((c) => c.key === 'end') : undefined;
+  const prTile = end?.tiles.find((t) => t.kind === 'pr');
+  if (end && prTile) return { ...ws, focus: { column: end.id, tile: prTile.id } };
   const plan = ws.strip.columns.find((c) => c.key === 'plan');
   return plan ? { ...ws, focus: { column: plan.id, tile: plan.active } } : normalize(ws);
 }

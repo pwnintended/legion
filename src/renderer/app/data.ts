@@ -234,6 +234,19 @@ export function activityLine(event: AgentEvent): string | null {
   }
 }
 
+/**
+ * Append an activity line. A file change right after the edit call that produced it replaces that line
+ * (`Edit a.ts` then `Edit a.ts +7 −1` reads as one step).
+ */
+export function pushActivity(lines: readonly string[], line: string): string[] {
+  const last = lines.at(-1);
+  const merges =
+    last !== undefined &&
+    line.startsWith('Edit ') &&
+    line.startsWith(`${last.replace(/^(Write|Edit|MultiEdit|apply_patch) /, 'Edit ')} +`);
+  return [...(merges ? lines.slice(0, -1) : lines), line].slice(-ACTIVITY_LINES);
+}
+
 function addDiffStat(
   draft: Draft,
   attemptId: string,
@@ -273,7 +286,7 @@ function applyAgentEvent(draft: Draft, event: ServerEvent & { type: 'agent.event
   if (line && (!activity || event.seq > activity.seq)) {
     draft.map('activity')[attemptId] = {
       seq: event.seq,
-      lines: [...(activity?.lines ?? []), line].slice(-ACTIVITY_LINES),
+      lines: pushActivity(activity?.lines ?? [], line),
     };
   }
   if (event.event.type === 'file_change') addDiffStat(draft, attemptId, event.seq, event.event);
@@ -424,7 +437,10 @@ export function applyTranscriptPage(
   }
   // Seed activity lines from history when no live events have produced any yet.
   if (!state.activity[attemptId]) {
-    const lines = merged.map((e) => activityLine(e.event)).filter((l): l is string => l !== null);
+    const lines = merged
+      .map((e) => activityLine(e.event))
+      .filter((l): l is string => l !== null)
+      .reduce<string[]>((acc, line) => pushActivity(acc, line), []);
     if (lines.length > 0)
       draft.map('activity')[attemptId] = { seq: merged.at(-1)?.seq ?? 0, lines: lines.slice(-ACTIVITY_LINES) };
   }

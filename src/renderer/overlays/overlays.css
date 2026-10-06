@@ -469,7 +469,7 @@
   letter-spacing: 0.08em;
   text-transform: uppercase;
   font-weight: 600;
-  color: var(--overlay1);
+  color: var(--overlay2);
 }
 .pal-item {
   display: flex;
@@ -517,7 +517,7 @@
 }
 .pal-hint {
   font-size: 11.5px;
-  color: var(--overlay1);
+  color: var(--overlay2);
   white-space: nowrap;
 }
 .pal-empty {

@@ -7,7 +7,7 @@
  * `Run.pr`, `Run.archived` and `Task.report` are engine fields that may not exist in this build's types yet,
  * hence the loose `extra()` writes.
  */
-import type { Attempt, InboxItem, Plan, Run, Task, TaskNode } from '@shared/domain';
+import type { Attempt, InboxItem, Merge, Plan, Run, Task, TaskNode, Verification } from '@shared/domain';
 import type { AgentEvent } from '@shared/events';
 import type { DemoWorld } from './fixtures';
 
@@ -220,7 +220,7 @@ export function withLifecycleDemo(world: DemoWorld, now: number): DemoWorld {
     payload: {
       reason: 'attempts_exhausted',
       summary:
-        'T2 failed 3 attempts: `pnpm test jobs` times out in "drains the nightly digest queue". The queue waits on a real Redis connection the test environment does not have.',
+        'T2 failed 3 attempts: pnpm test jobs times out in "drains the nightly digest queue". The queue waits on a real Redis connection the test environment does not have.',
       actions: ['retry', 'skip', 'edit', 'abort'],
     },
     createdAt: now - 40_000,
@@ -291,6 +291,50 @@ export function withLifecycleDemo(world: DemoWorld, now: number): DemoWorld {
   const nodesG = [node('T1', 'Bump engines and CI images', 'Node 24 everywhere.', [], 'codex', ['**'])];
   const tasksG = [task(G, 'T1', { updatedAt: now - 5 * 24 * HOUR }, now - 6 * 24 * HOUR)];
 
+  // Merges (in order) with post-merge verification, plus the final verify, for the finished runs.
+  const merges: Merge[] = [];
+  const verifications: Verification[] = [];
+  for (const t of [...tasksE, ...tasksF].filter((t) => t.status === 'merged')) {
+    const i = merges.filter((m) => m.runId === t.runId).length;
+    const pre = i === 0 ? '9c0e4a1' : (merges.at(-1)?.postSha ?? '9c0e4a1');
+    merges.push({
+      id: `mrg_${t.id.slice(-10)}`,
+      runId: t.runId,
+      taskId: t.id,
+      preSha: pre,
+      postSha: t.mergedSha,
+      status: 'merged',
+      error: null,
+      createdAt: t.updatedAt - 50_000,
+      endedAt: t.updatedAt,
+    });
+    verifications.push({
+      id: `ver_${t.id.slice(-10)}pm`,
+      runId: t.runId,
+      taskId: t.id,
+      attemptId: null,
+      phase: 'post_merge',
+      command: t.runId === F ? 'pnpm typecheck && pnpm test' : 'pnpm test jobs',
+      exitCode: 0,
+      outputTail: `✓ ${180 + i * 7} passed`,
+      durationMs: 31_000 + i * 1_800,
+      createdAt: t.updatedAt + 1,
+    });
+  }
+  for (const [i, command] of ['pnpm typecheck', 'pnpm lint', 'pnpm test'].entries())
+    verifications.push({
+      id: `ver_darkfinal${i}`,
+      runId: F,
+      taskId: null,
+      attemptId: null,
+      phase: 'final',
+      command,
+      exitCode: 0,
+      outputTail: ['tsc --noEmit · 0 errors', 'Checked 311 files · 0 problems', '✓ 201 passed'][i] ?? '',
+      durationMs: [8_200, 1_100, 19_400][i] ?? 0,
+      createdAt: createdF + 6 * HOUR + i,
+    });
+
   // Every finished task carries the coder's structured report (the review pack's "Agent reports").
   for (const t of [...tasksE.filter((t) => t.status === 'merged'), ...tasksF, ...tasksG])
     extra(t, {
@@ -314,6 +358,8 @@ export function withLifecycleDemo(world: DemoWorld, now: number): DemoWorld {
     tasks: [...world.tasks, ...tasksE, ...tasksF, ...tasksG],
     attempts: [...world.attempts, ...attemptsE, ...attemptsF],
     inbox: [...world.inbox, escalation],
+    merges: [...world.merges, ...merges],
+    verifications: [...world.verifications, ...verifications],
     transcripts: {
       ...world.transcripts,
       att_cront2code01: failedAttempt(1),

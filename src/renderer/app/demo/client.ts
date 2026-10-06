@@ -57,9 +57,19 @@ export class DemoClient implements EngineClient {
       }));
     }
     this.headSeq = Math.max(SNAPSHOT_SEQ, seq);
-    queueMicrotask(() => {
-      this.setState({ status: 'connected', generation: 1 });
-      // Replay history the way the engine does for subscribe({ sinceSeq: 0 }).
+    queueMicrotask(() => this.setState({ status: 'connected', generation: 1 }));
+    if (options.live !== false) this.timer = setInterval(() => this.tick(), 4000);
+  }
+
+  /**
+   * Replay history the way the engine does for subscribe({ sinceSeq: 0 }), once someone listens (the client
+   * may be created before the store subscribes, e.g. when demo mode is loaded lazily).
+   */
+  private replayed = false;
+  private replay(): void {
+    if (this.replayed) return;
+    this.replayed = true;
+    {
       const replay: ServerEvent[] = [];
       for (const [attemptId, entries] of Object.entries(this.history)) {
         const attempt = this.world.attempts.find((a) => a.id === attemptId);
@@ -75,8 +85,7 @@ export class DemoClient implements EngineClient {
           });
       }
       this.deliver(replay.sort((a, b) => a.seq - b.seq));
-    });
-    if (options.live !== false) this.timer = setInterval(() => this.tick(), 4000);
+    }
   }
 
   getState = (): ConnectionState => this.state;
@@ -92,6 +101,7 @@ export class DemoClient implements EngineClient {
 
   onEvents(listener: (events: ServerEvent[]) => void): () => void {
     this.eventListeners.add(listener);
+    queueMicrotask(() => this.replay());
     return () => this.eventListeners.delete(listener);
   }
 

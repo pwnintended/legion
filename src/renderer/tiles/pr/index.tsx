@@ -330,11 +330,11 @@ function Opened({ run, pr }: { run: Run; pr: PullRequestInfo }) {
           ? 'Mark it ready for review on GitHub when you are happy with it.'
           : 'Waiting for review on GitHub.';
   return (
-    <div className="lg-col" data-testid="pr-opened" data-pr-state={pr.state}>
+    <div className="lg-col lg-pr-opened" data-testid="pr-opened" data-pr-state={pr.state}>
       <div className="lg-scroll flex flex-col px-6 py-6">
         {/* my-auto (not justify-center): centred when it fits, scrollable from the top when it doesn't. */}
         <div className="my-auto flex flex-col items-center text-center">
-          <div className="lg-done-ring lg-rise flex-none" data-state={pr.state}>
+          <div className="lg-done-ring lg-done-ring-sm lg-rise flex-none" data-state={pr.state}>
             {pr.state === 'closed' ? (
               <Icon name="close" size={26} strokeWidth={2.4} />
             ) : pr.state === 'merged' ? (
@@ -343,7 +343,7 @@ function Opened({ run, pr }: { run: Run; pr: PullRequestInfo }) {
               <Icon name="check" size={28} strokeWidth={2.4} />
             )}
           </div>
-          <div className="lg-rise mt-5 text-[17px] font-semibold" style={{ animationDelay: '80ms' }}>
+          <div className="lg-rise mt-4 text-[17px] font-semibold" style={{ animationDelay: '80ms' }}>
             {headline}
           </div>
           <div
@@ -353,12 +353,12 @@ function Opened({ run, pr }: { run: Run; pr: PullRequestInfo }) {
             {run.title}. {note}
           </div>
           <div
-            className="lg-rise mono faint mt-3 max-w-full truncate text-[11.5px]"
+            className="lg-rise mono faint mt-2 max-w-full truncate text-[11.5px]"
             style={{ animationDelay: '160ms' }}
           >
             {pr.url}
           </div>
-          <div className="lg-rise mt-4 flex flex-wrap justify-center gap-2" style={{ animationDelay: '200ms' }}>
+          <div className="lg-rise mt-3.5 flex flex-wrap justify-center gap-2" style={{ animationDelay: '200ms' }}>
             {archivable && pr.state !== 'open' ? (
               <button
                 type="button"
@@ -430,11 +430,9 @@ function Opened({ run, pr }: { run: Run; pr: PullRequestInfo }) {
               <Icon name="refresh" size={12} />
               {refreshing.pending ? 'Checking…' : 'Refresh status'}
             </button>
-          ) : (
-            <span className="ml-auto">
-              {isArchived(run) ? 'archived · worktrees removed' : 'archiving removes the run’s worktrees'}
-            </span>
-          )}
+          ) : isArchived(run) ? (
+            <span className="ml-auto">archived · worktrees removed</span>
+          ) : null}
         </div>
       </div>
     </div>

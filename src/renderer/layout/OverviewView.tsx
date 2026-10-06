@@ -4,6 +4,7 @@
  * generic body built from run data.
  */
 import { type ComponentType, lazy, Suspense } from 'react';
+import { type PullRequestInfo, runPr } from '../app/compat';
 import type { DataState } from '../app/data';
 import { latestPlan, latestReview, mergesOfRun, tasksOfRun, verificationsOfRun } from '../app/data';
 import { useAcknowledged, useActivity, useData, useRun, useTileMeta } from '../app/hooks';
@@ -11,7 +12,7 @@ import { actions } from '../app/store';
 import { Icon } from '../chrome/icons';
 import { EngineChip, StatusChipView } from '../chrome/ui';
 import { criticalPath, depths } from './dag';
-import { formatCost, formatDuration, formatTokens, type TileMeta, taskDiffStat } from './describe';
+import { formatCost, formatDuration, formatTokens, prLabel, type TileMeta, taskDiffStat } from './describe';
 import { KIND_ICON } from './TileFrame';
 import { allTiles, type LayoutTile, type Workspace } from './tree';
 import type { TileCardProps, TileKind } from './types';
@@ -198,7 +199,7 @@ function runFacts(s: DataState, runId: string, kind: TileKind, taskId: string | 
       const merged = tasks.filter((t) => t.status === 'merged').length;
       const final = latestReview(s, null, runId);
       return [
-        run?.prUrl ?? 'draft PR not opened yet',
+        run?.prUrl ? `${prLabel(runPr(run) as PullRequestInfo)} · ${run.prUrl}` : 'draft PR not opened yet',
         `${merged}/${tasks.length} tasks merged`,
         final ? `final review: ${final.verdict.replace('_', ' ')}` : 'final review pending',
       ].join('\n');

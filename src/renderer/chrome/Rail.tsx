@@ -159,17 +159,6 @@ export function Rail() {
         {runs.map((run, i) => (
           <RailItem key={run.id} run={run} index={i} active={run.id === activeRunId} />
         ))}
-        <button
-          type="button"
-          className="rail-item items-center"
-          onClick={() => void executeCommand('composer.open')}
-          title={commandTooltip('composer.open')}
-        >
-          <span className="ws border-[1.5px] border-dashed border-surface1 bg-transparent">
-            <Icon name="plus" size={12} strokeWidth={2.4} />
-          </span>
-          <span className="muted text-[12.5px]">New run</span>
-        </button>
         {showArchived ? (
           <>
             <div className="sec mx-2 mt-3 mb-1">Archived</div>
@@ -181,6 +170,17 @@ export function Rail() {
           </>
         ) : null}
       </nav>
+      <button
+        type="button"
+        className="rail-item items-center"
+        onClick={() => void executeCommand('composer.open')}
+        title={commandTooltip('composer.open')}
+      >
+        <span className="ws border-[1.5px] border-dashed border-surface1 bg-transparent">
+          <Icon name="plus" size={12} strokeWidth={2.4} />
+        </span>
+        <span className="muted text-[12.5px]">New run</span>
+      </button>
       <button
         type="button"
         className="rail-toggle"
