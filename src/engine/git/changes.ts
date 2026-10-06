@@ -45,6 +45,18 @@ export async function commitAll(worktree: string, message: string): Promise<Comm
   });
 }
 
+/** Stage exactly `paths` and commit them. No-op when they have no changes. */
+export async function commitPaths(worktree: string, paths: readonly string[], message: string): Promise<CommitResult> {
+  return withRepoLock(worktree, async () => {
+    if (paths.length > 0) await git(worktree, ['add', '-A', '--', ...paths]);
+    const staged = await git(worktree, ['diff', '--cached', '--quiet'], { okExitCodes: [0, 1] });
+    if (staged.exitCode === 0) return { committed: false, sha: await headSha(worktree) };
+    const id = await identityArgs(worktree);
+    await git(worktree, [...id, ...NO_HOOKS, 'commit', '--no-verify', '--no-gpg-sign', '-F', '-'], { input: message });
+    return { committed: true, sha: await headSha(worktree) };
+  });
+}
+
 // ---------------------------------------------------------------------------------------------
 // Changed files
 // ---------------------------------------------------------------------------------------------

@@ -369,6 +369,64 @@ describe('run lifecycle (fake engines, real git)', () => {
     expect(reviewerPrompt).toContain('Out of scope: `shared.txt`');
   });
 
+  describe('lockfile conflicts', () => {
+    // A fake package manager: the lockfile is the sorted list of declared deps (deps/*.txt).
+    const files = (lockfileCommand: string) => ({
+      'deps/base.txt': 'base\n',
+      'pnpm-lock.yaml': 'base\n',
+      'bin/fakepm': 'set -e\n[ "$1" = lock ] || exit 64\ncat deps/*.txt | sort > pnpm-lock.yaml\n',
+      'legion.json': JSON.stringify({ installCommand: 'true', lockfileCommand }),
+    });
+    const script: Script = (ctx) => {
+      if (ctx.opts.role === 'planner') {
+        // Lockfiles are not declared (always in scope with an install command), so the tasks run in parallel.
+        const writes = (id: string) => [`src/${id}.txt`, `deps/${id}.txt`];
+        return [planOutput([node('T1', { writes: writes('t1') }), node('T2', { writes: writes('t2') })])];
+      }
+      if (ctx.opts.role === 'reviewer' || ctx.opts.role === 'finalizer') return [approve(ctx)];
+      const id = taskIdIn(ctx.message).toLowerCase();
+      return [
+        { kind: 'write_file', path: `src/${id}.txt`, content: `${id}\n` },
+        { kind: 'write_file', path: `deps/${id}.txt`, content: `${id}\n` },
+        // Each task "installs" its dependency: the lockfiles conflict.
+        { kind: 'write_file', path: 'pnpm-lock.yaml', content: `base\n${id}\n` },
+        report(`Implement ${id}`),
+      ];
+    };
+
+    it('regenerates the lockfile with the non-frozen command and commits it', async () => {
+      h = await startHarness({ script, files: files('sh bin/fakepm lock') });
+      const harness = h;
+      const run = await createRun(harness, true);
+      await approveLatestPlan(harness, run.id);
+      await harness.waitFor(() => runOf(harness, run.id).status === 'pr_ready', 'pr_ready', 30_000);
+      const snapshot = await harness.client.call('runs.get', { runId: run.id });
+      expect(snapshot.attempts.filter((a) => a.role === 'resolver')).toHaveLength(0);
+      const integration = runOf(harness, run.id).integrationBranch as string;
+      expect(await harness.repo.git('show', `${integration}:pnpm-lock.yaml`)).toBe('base\nt1\nt2');
+      const setup = harness.engine.store.listVerifications(run.id).filter((v) => v.command === 'sh bin/fakepm lock');
+      expect(setup.map((v) => v.exitCode)).toEqual([0]);
+    });
+
+    it('escalates when the lockfile cannot be regenerated', async () => {
+      h = await startHarness({ script, files: files('sh bin/fakepm broken') });
+      const harness = h;
+      const run = await createRun(harness, true);
+      await approveLatestPlan(harness, run.id);
+      const item = await harness.waitFor(
+        () => openInbox(harness, run.id).find((i) => i.kind === 'escalation'),
+        'lockfile escalation',
+        30_000,
+      );
+      expect(item.kind === 'escalation' && item.payload.summary).toMatch(/regenerating the lockfile .* exited with 64/);
+      expect(
+        tasksOf(harness, run.id)
+          .map((t) => t.status)
+          .sort(),
+      ).toEqual(['awaiting_human', 'merged']);
+    });
+  });
+
   it('recovers after an engine restart mid-run and completes', async () => {
     let phase: 'before' | 'after' = 'before';
     const script: Script = (ctx) => {

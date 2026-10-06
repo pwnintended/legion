@@ -287,8 +287,8 @@ relies on this); when both exist the structured report wins.
    - Merge queue (serialized): `git merge-tree --write-tree` forecast; clean → squash-merge into integration
      worktree, commit `T<n>: <title>`, run post-merge verify; failure → reset integration to the pre-merge SHA,
      send the task back to fixing with integration HEAD merged into its branch. Conflicts → resolver session
-     (coder engine) in the task worktree; 2 failures → inbox. Lockfiles: never hand-merged — take ours, re-run
-     the install command.
+     (coder engine) in the task worktree; 2 failures → inbox. Lockfiles: never hand-merged — take integration's
+     side, regenerate with the non-frozen lockfile command, commit it; a failed regeneration → inbox.
    - Failure: retry up to 2 more attempts from a reset worktree with the failure summary; then `failed`,
      downstream `blocked`, inbox escalation (retry / skip / edit / abort).
 7. **Finalize**: full verify on integration; final holistic review (engine other than the majority of coders)
@@ -330,8 +330,10 @@ The service applies `core/` decisions with CAS transitions; every flow is re-ent
 - **Merge queue** (`merge.ts`, serialized per run): `merging` tasks first (resume), then `approved` FIFO. Clean
   forecast → `insertMerge(preSha)` → squash → post-merge verify (install command first when a lockfile changed) →
   `merged`; a failed verify resets to `preSha` (merge `reverted`) and starts a fix round with integration merged into
-  the task branch. Conflict → merge integration into the task branch, lockfiles take integration's side and the
-  install command reruns, a `resolver` session (coder engine) handles the rest, `finishMerge`, forecast again.
+  the task branch. Conflict → merge integration into the task branch, lockfiles take integration's side and are
+  regenerated with the lockfile command (`legion.json` `lockfileCommand`, else `pnpm install --lockfile-only`,
+  `npm install --package-lock-only`, `yarn install`, `bun install --lockfile-only`; exit code checked, the lockfile
+  committed, a failure escalates the task), a `resolver` session (coder engine) handles the rest, `finishMerge`, forecast again.
   Exhausted resolver attempts → `conflict` item (`retry` = back into the merge queue with a fresh budget).
 - **Escalations**: task items carry `taskId`; run-level items (`taskId: null`) come from the final verify
   (`verify_failed`), the final review (`final_review`) or a finalizer that cannot run (`other`), with actions `[retry,
@@ -394,7 +396,8 @@ The service applies `core/` decisions with CAS transitions; every flow is re-ent
   attempt; unknown worktrees under Legion's directory are only logged. Conflict merges left in progress are aborted.
   Planner and finalize jobs restart; dispatch resumes. Before every integration merge record the pre-merge SHA.
 - Per-repo config `legion.json` (optional): `{ setup?: string[], verify?: string[], copy?: string[],
-  symlink?: string[], highRiskGlobs?: string[], installCommand?: string }`.
+  symlink?: string[], highRiskGlobs?: string[], installCommand?: string,
+  lockfileCommand?: string }`.
 - App data: `~/Library/Application Support/Legion/legion.db` (override with `LEGION_HOME` for tests).
 
 ## 10. RPC & events

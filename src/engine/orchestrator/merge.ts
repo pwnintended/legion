@@ -5,12 +5,13 @@
  * take integration's side of lockfiles (then re-run the install command), resolver session for the rest,
  * `finishMerge`; after `maxResolverAttempts` failures → `conflict` inbox item.
  */
+import { join } from 'node:path';
 import type { Run, Task, TaskNode } from '@shared/domain';
 import { taskReportJsonSchema } from '@shared/schemas';
 import {
   abortMerge,
   changedFiles,
-  commitAll,
+  commitPaths,
   finishMerge,
   forecastMerge,
   headSha,
@@ -19,6 +20,7 @@ import {
   isLockfilePath,
   isMergeInProgress,
   type LegionConfig,
+  lockfileCommand,
   mergeIntoTaskBranch,
   resetIntegration,
   resolveLockfileConflicts,
@@ -297,14 +299,49 @@ async function resolveConflicts(
       continue;
     }
     if (locks.resolved.length > 0) {
-      const install = await installCommand(path, config);
-      if (install) {
-        await runVerification(o, { run, task, attemptId: null, phase: 'setup', commands: [install], cwd: path });
-        await commitAll(path, `Regenerate lockfile after merging ${integrationRef}`);
+      const failure = await regenerateLockfiles(o, run, task, path, locks.resolved, config, integrationRef);
+      if (failure) {
+        o.applyDecision(taskId, {
+          action: 'escalate',
+          path: taskStatusPath(task.status, 'awaiting_human') ?? [],
+          patch: {},
+          escalation: 'other',
+          reason: `${node.id}: regenerating the lockfile after merging ${integrationRef} failed (${failure})`,
+        });
+        return 'done';
       }
     }
     return 'resolved';
   }
+}
+
+/**
+ * After lockfile conflicts were resolved by taking integration's side: regenerate each lockfile from the
+ * merged manifest with a non-frozen command (`lockfileCommand`, per lockfile directory) and commit it.
+ * Returns why it failed (non-zero exit), or null.
+ */
+async function regenerateLockfiles(
+  o: Orchestrator,
+  run: Run,
+  task: Task,
+  worktree: string,
+  lockfiles: readonly string[],
+  config: LegionConfig | null,
+  integrationRef: string,
+): Promise<string | null> {
+  const dirs = [...new Set(lockfiles.map((f) => (f.includes('/') ? f.slice(0, f.lastIndexOf('/')) : '')))];
+  for (const dir of dirs) {
+    const cwd = dir ? join(worktree, dir) : worktree;
+    const command = await lockfileCommand(cwd, config);
+    if (!command) continue;
+    const outcome = await runVerification(o, { run, task, attemptId: null, phase: 'setup', commands: [command], cwd });
+    if (!outcome.ok) {
+      const result = outcome.results.at(-1);
+      return `\`${command}\` exited with ${result?.exitCode ?? 'no exit code'}`;
+    }
+  }
+  await commitPaths(worktree, lockfiles, `Regenerate lockfile after merging ${integrationRef}`);
+  return null;
 }
 
 async function conflictFilesOf(run: Run, task: Task): Promise<string[]> {
