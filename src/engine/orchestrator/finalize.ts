@@ -6,7 +6,7 @@
 import type { PullRequest, Review, ReviewFinding, Run } from '@shared/domain';
 import { RpcError } from '@shared/rpc-transport';
 import { ReviewOutputSchema, reviewOutputJsonSchema } from '@shared/schemas';
-import { gitText } from '../git';
+import { cleanWorktree, gitText } from '../git';
 import {
   buildFinalizerPrompt,
   buildPrBody,
@@ -23,7 +23,7 @@ import { runMeta, taskMeta } from './meta';
 import { AgentFailure, Closed, type Orchestrator } from './orchestrator';
 import { releaseRepo } from './repo-gc';
 import { coderModelOf, planSummary } from './tasks';
-import { ensureIntegrationWorktree, provisionIntegration, runVerification } from './worktrees';
+import { ensureIntegrationWorktree, integrationKeep, provisionIntegration, runVerification } from './worktrees';
 
 export async function finalize(o: Orchestrator, runId: string): Promise<void> {
   let run = o.store.requireRun(runId);
@@ -48,6 +48,7 @@ export async function finalize(o: Orchestrator, runId: string): Promise<void> {
         commands,
         cwd: integration,
       });
+      await cleanWorktree(integration, integrationKeep(o, run));
       if (!outcome.ok) {
         const failed = outcome.results.filter((r) => r.exitCode !== 0).map((r) => r.command);
         o.escalate(

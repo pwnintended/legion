@@ -1,7 +1,7 @@
-import { identityArgs, NO_HOOKS, RERERE } from './changes';
-import { GitError, git, gitSucceeds, gitText, splitZ, withRepoLock } from './exec';
+import { excludePathspecs, identityArgs, NO_HOOKS, RERERE } from './changes';
+import { GitError, git, gitSucceeds, gitText, parsePorcelainZ, splitZ, withRepoLock } from './exec';
 import { isLockfilePath } from './provision';
-import { headSha, isDirty } from './repo';
+import { headSha } from './repo';
 
 /** A precondition on the worktree (dirty, merge in progress, ...) failed before anything was changed. */
 export class IntegrationError extends Error {
@@ -64,10 +64,56 @@ export async function isMergeInProgress(worktree: string): Promise<boolean> {
   return gitSucceeds(worktree, ['rev-parse', '-q', '--verify', 'MERGE_HEAD']);
 }
 
-async function assertCleanWorktree(worktree: string, what: string): Promise<void> {
+/**
+ * Paths with uncommitted changes (tracked, staged or untracked-not-ignored; untracked directories listed
+ * file by file), minus untracked files in `allowUntracked` (exact repo-relative paths Legion put there).
+ */
+export async function uncommittedPaths(worktree: string, allowUntracked: readonly string[] = []): Promise<string[]> {
+  const out = (await git(worktree, ['status', '--porcelain=v1', '-z', '--untracked-files=all'])).stdout;
+  const allowed = new Set(allowUntracked);
+  return parsePorcelainZ(out)
+    .filter((e) => !(e.xy === '??' && allowed.has(e.path)))
+    .map((e) => e.path);
+}
+
+/** Untracked, not ignored files (listed individually), sorted. */
+export async function untrackedFiles(worktree: string): Promise<string[]> {
+  const out = (await git(worktree, ['status', '--porcelain=v1', '-z', '--untracked-files=all'])).stdout;
+  return parsePorcelainZ(out)
+    .filter((e) => e.xy === '??')
+    .map((e) => e.path)
+    .sort();
+}
+
+async function assertCleanWorktree(worktree: string, what: string, allowUntracked: readonly string[]): Promise<void> {
   if (await isMergeInProgress(worktree))
     throw new IntegrationError(`${what}: a merge is already in progress in ${worktree}`);
-  if (await isDirty(worktree)) throw new IntegrationError(`${what}: worktree ${worktree} has uncommitted changes`);
+  const dirty = await uncommittedPaths(worktree, allowUntracked);
+  if (dirty.length > 0) {
+    const shown = `${dirty.slice(0, 5).join(', ')}${dirty.length > 5 ? ', ...' : ''}`;
+    throw new IntegrationError(`${what}: worktree ${worktree} has uncommitted changes (${shown})`);
+  }
+}
+
+/** `-e` patterns that keep exactly these repo-relative paths out of `git clean`. */
+function keepArgs(keep: readonly string[]): string[] {
+  return keep.flatMap((path) => ['-e', `/${path.replace(/[\\*?[\]!#]/g, (c) => `\\${c}`)}`]);
+}
+
+async function cleanUnlocked(worktree: string, keep: readonly string[]): Promise<void> {
+  await git(worktree, [...RERERE, 'merge', '--abort'], { okExitCodes: [0, 128] });
+  await git(worktree, ['reset', '-q', '--hard', 'HEAD']);
+  await git(worktree, ['clean', '-fdq', ...keepArgs(keep)]);
+}
+
+/**
+ * Discard every uncommitted change in a worktree Legion owns at that moment (the integration worktree, or a
+ * task worktree between Legion's commit and the next agent turn): `reset --hard HEAD` + `clean -fd`.
+ * Ignored files (dependencies, build caches the next verify needs) and the `keep` paths (files Legion
+ * provisioned) stay; `-x` is deliberately not used.
+ */
+export async function cleanWorktree(worktree: string, keep: readonly string[] = []): Promise<void> {
+  await withRepoLock(worktree, () => cleanUnlocked(worktree, keep));
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -94,9 +140,18 @@ export async function squashMergeIntoIntegration(
   integrationWorktree: string,
   taskBranch: string,
   message: string,
+  opts: {
+    /**
+     * Clean the worktree first ({@link cleanWorktree}, keeping these provisioned paths). Only for Legion's own
+     * integration worktree, where any dirt comes from Legion's setup/verify commands.
+     */
+    cleanFirst?: readonly string[] | null;
+  } = {},
 ): Promise<SquashMergeResult> {
   return withRepoLock(integrationWorktree, async () => {
-    await assertCleanWorktree(integrationWorktree, 'squash merge');
+    const keep = opts.cleanFirst ?? [];
+    if (opts.cleanFirst) await cleanUnlocked(integrationWorktree, keep);
+    await assertCleanWorktree(integrationWorktree, 'squash merge', keep);
     const preMergeSha = await headSha(integrationWorktree);
     const merge = await git(
       integrationWorktree,
@@ -129,14 +184,18 @@ export async function squashMergeIntoIntegration(
 }
 
 /**
- * `git reset --hard <sha>` + `git clean -fd` (ignored files are kept) in the integration worktree.
- * Only ever use on Legion's own integration worktree.
+ * `git reset --hard <sha>` + `git clean -fd` (ignored files and the `keep` paths are kept) in the integration
+ * worktree. Only ever use on Legion's own integration worktree.
  */
-export async function resetIntegration(integrationWorktree: string, sha: string): Promise<void> {
+export async function resetIntegration(
+  integrationWorktree: string,
+  sha: string,
+  keep: readonly string[] = [],
+): Promise<void> {
   await withRepoLock(integrationWorktree, async () => {
     await git(integrationWorktree, ['merge', '--abort'], { okExitCodes: [0, 128] });
     await git(integrationWorktree, ['reset', '--hard', sha]);
-    await git(integrationWorktree, ['clean', '-fd']);
+    await git(integrationWorktree, ['clean', '-fd', ...keepArgs(keep)]);
   });
 }
 
@@ -155,9 +214,14 @@ export type MergeIntoTaskResult =
  * Merge `integrationRef` into the task worktree's branch. On conflict the markers and merge state are
  * left in place (so a resolver agent can work on them) and the conflicting files are returned.
  */
-export async function mergeIntoTaskBranch(taskWorktree: string, integrationRef: string): Promise<MergeIntoTaskResult> {
+export async function mergeIntoTaskBranch(
+  taskWorktree: string,
+  integrationRef: string,
+  /** Untracked files Legion provisioned (copy/symlink/setup) that do not count as uncommitted work. */
+  allowUntracked: readonly string[] = [],
+): Promise<MergeIntoTaskResult> {
   return withRepoLock(taskWorktree, async () => {
-    await assertCleanWorktree(taskWorktree, 'merge into task branch');
+    await assertCleanWorktree(taskWorktree, 'merge into task branch', allowUntracked);
     const before = await headSha(taskWorktree);
     const id = await identityArgs(taskWorktree);
     const r = await git(
@@ -196,10 +260,15 @@ export async function abortMerge(worktree: string): Promise<void> {
  * (IntegrationError) while any path still has unmerged index entries *after staging* or while files
  * still contain `<<<<<<<` markers.
  */
-export async function finishMerge(worktree: string, message?: string): Promise<{ sha: string }> {
+export async function finishMerge(
+  worktree: string,
+  message?: string,
+  /** Paths never staged (files Legion provisioned). */
+  exclude: readonly string[] = [],
+): Promise<{ sha: string }> {
   return withRepoLock(worktree, async () => {
     if (!(await isMergeInProgress(worktree))) throw new IntegrationError('no merge in progress');
-    await git(worktree, ['add', '-A']);
+    await git(worktree, ['add', '-A', '--', ...excludePathspecs(exclude)]);
     const stillUnmerged = await unmergedFiles(worktree);
     if (stillUnmerged.length > 0) throw new IntegrationError(`unresolved conflicts: ${stillUnmerged.join(', ')}`);
     const markers = await git(worktree, ['grep', '--cached', '-l', '-E', '^(<<<<<<<|>>>>>>>) ', '--', '.'], {

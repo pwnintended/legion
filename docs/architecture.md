@@ -395,6 +395,14 @@ The service applies `core/` decisions with CAS transitions; every flow is re-ent
   with the DB: missing worktrees are restored from their branch, else the task is re-queued without charging the
   attempt; unknown worktrees under Legion's directory are only logged. Conflict merges left in progress are aborted.
   Planner and finalize jobs restart; dispatch resumes. Before every integration merge record the pre-merge SHA.
+- Worktree hygiene: what provisioning leaves untracked (copy/symlink targets, setup output) is recorded
+  (`task:<id>.provisioned`, `run:<id>.integrationKeep`), never committed (`commitAll`/`finishMerge` exclude it)
+  and kept when cleaning. Everything else Legion's own commands leave behind is discarded with
+  `reset --hard HEAD` + `clean -fd` (never `-x`: ignored dependencies and caches stay for the next verify): in
+  the integration worktree after setup, after a passing post-merge verify, after the final verify and before
+  every squash merge (Legion owns that tree, so its dirt can only be Legion's); in a task worktree right after
+  verify (the agent's work is already committed, so the rest is verify output: stamps, coverage, formatter
+  rewrites). Setup output a later verify needs must therefore be untracked by setup itself or gitignored.
 - Per-repo config `legion.json` (optional): `{ setup?: string[], verify?: string[], copy?: string[],
   symlink?: string[], highRiskGlobs?: string[], installCommand?: string,
   lockfileCommand?: string }`.

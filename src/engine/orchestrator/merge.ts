@@ -11,6 +11,7 @@ import { taskReportJsonSchema } from '@shared/schemas';
 import {
   abortMerge,
   changedFiles,
+  cleanWorktree,
   commitPaths,
   finishMerge,
   forecastMerge,
@@ -42,6 +43,7 @@ import { coderTurn } from './tasks';
 import {
   ensureIntegrationWorktree,
   ensureWorktree,
+  integrationKeep,
   provisionIntegration,
   runVerification,
   verifyCommands,
@@ -96,6 +98,7 @@ async function mergeTask(o: Orchestrator, run: Run, task: Task): Promise<Outcome
   const branch = task.branch;
   if (!branch) throw new Error(`task ${task.nodeId} has no branch`);
   const message = `${node.id}: ${node.title}`;
+  const keep = integrationKeep(o, run);
   for (;;) {
     o.assertOpen();
     if (o.store.requireRun(run.id).status !== 'executing') return 'park';
@@ -109,7 +112,8 @@ async function mergeTask(o: Orchestrator, run: Run, task: Task): Promise<Outcome
     const merge = o.store.insertMerge({ runId: run.id, taskId: task.id, preSha });
     let result: Awaited<ReturnType<typeof squashMergeIntoIntegration>>;
     try {
-      result = await squashMergeIntoIntegration(integration, branch, message);
+      // Legion owns the integration worktree: leftovers of its own setup/verify commands are discarded.
+      result = await squashMergeIntoIntegration(integration, branch, message, { cleanFirst: keep });
     } catch (error) {
       o.store.finishMerge(merge.id, 'conflict', { error: (error as Error).message });
       throw error;
@@ -135,6 +139,8 @@ async function mergeTask(o: Orchestrator, run: Run, task: Task): Promise<Outcome
         cwd: integration,
       });
       failed = outcome.ok ? [] : outcome.results.filter((r) => r.exitCode !== 0);
+      // Whatever the verify commands wrote must not wedge the next merge.
+      if (failed.length === 0) await cleanWorktree(integration, keep);
     }
     o.assertOpen();
     const current = o.store.requireTask(task.id);
@@ -153,7 +159,7 @@ async function mergeTask(o: Orchestrator, run: Run, task: Task): Promise<Outcome
       postSha: result.mergedSha,
       error: `post-merge verification failed: ${failed.map((f) => f.command).join(', ')}`,
     });
-    await resetIntegration(integration, preSha);
+    await resetIntegration(integration, preSha, keep);
     o.store.revertMerge(merge.id, 'post-merge verification failed; integration reset to the pre-merge sha');
     const decision = decideAfterMerge(current, 'verify_failed', meta.resolverAttempts, o.limits());
     if (decision.action === 'fix') {
@@ -225,7 +231,7 @@ async function resolveConflicts(
     const path = task.worktreePath ?? o.taskPath(run, taskId);
     if (task.branch) await ensureWorktree(run.repoPath, path, task.branch, null);
     if (await isMergeInProgress(path)) await abortMerge(path);
-    const merged = await mergeIntoTaskBranch(path, integrationRef);
+    const merged = await mergeIntoTaskBranch(path, integrationRef, meta.provisioned);
     if (merged.status !== 'conflict') return 'resolved';
     const locks = await resolveLockfileConflicts(path, merged.files, 'theirs');
     let commitMessage = `Merge ${integrationRef} into ${node.id}`;
@@ -287,7 +293,7 @@ async function resolveConflicts(
       }
     }
     try {
-      await finishMerge(path, commitMessage);
+      await finishMerge(path, commitMessage, meta.provisioned);
     } catch (error) {
       await abortMerge(path);
       const message = (error as Error).message;

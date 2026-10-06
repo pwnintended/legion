@@ -11,6 +11,7 @@ import { ReviewOutputSchema, reviewOutputJsonSchema, TaskReportSchema, taskRepor
 import {
   abortMerge,
   changedFiles,
+  cleanWorktree,
   commitAll,
   createWorktree,
   git,
@@ -21,6 +22,7 @@ import {
   removeWorktree,
   taskBranchName,
   touchedPaths,
+  untrackedFiles,
 } from '../git';
 import {
   type AgentPrompt,
@@ -205,6 +207,8 @@ async function provision(o: Orchestrator, run: Run, task: Task): Promise<Step> {
       });
       if (!outcome.ok) throw new Error(`setup failed: ${outcome.results.at(-1)?.command ?? ''}`);
     }
+    // Copies and setup output are Legion's, not the agent's work: never committed, kept when cleaning.
+    patchTaskMeta(o.store, task.id, { provisioned: await untrackedFiles(path) });
     o.store.transitionTask(task.id, 'provisioning', 'running');
     return 'next';
   } catch (error) {
@@ -285,7 +289,7 @@ async function code(o: Orchestrator, run: Run, task: Task, mode: 'coder' | 'fixe
     let mergedRef: string | null = null;
     if (fix.mergedIntegrationRef) {
       // Post-merge failure: bring the other tasks' merged work into this branch first.
-      const merged = await mergeIntoTaskBranch(worktree, fix.mergedIntegrationRef).catch(() => null);
+      const merged = await mergeIntoTaskBranch(worktree, fix.mergedIntegrationRef, meta.provisioned).catch(() => null);
       if (merged?.status === 'conflict') await abortMerge(worktree);
       else if (merged) mergedRef = fix.mergedIntegrationRef;
       patchTaskMeta(o.store, task.id, { fix: { ...fix, mergedIntegrationRef: null } });
@@ -382,7 +386,9 @@ async function code(o: Orchestrator, run: Run, task: Task, mode: 'coder' | 'fixe
     });
     o.store.updateTask(task.id, { report: { summary: report.summary, commitMessage: report.commitMessage } });
   }
-  if (report?.status === 'done') await commitAll(worktree, report.commitMessage.trim() || `${node.id}: ${node.title}`);
+  if (report?.status === 'done') {
+    await commitAll(worktree, report.commitMessage.trim() || `${node.id}: ${node.title}`, meta.provisioned);
+  }
   o.assertOpen();
   const current = o.store.requireTask(task.id);
   const changed = current.startSha ? await changedFiles(worktree, current.startSha, 'HEAD') : [];
@@ -412,6 +418,9 @@ async function verify(o: Orchestrator, run: Run, task: Task): Promise<Step> {
     commands: verifyCommands(node, config),
     cwd: worktree,
   });
+  // The agent's work is committed; anything else in the tree now is verify output (stamps, coverage,
+  // formatter rewrites). Discard it so a later commit never sweeps it into the task.
+  await cleanWorktree(worktree, taskMeta(o.store, task.id).provisioned);
   const changed = task.startSha ? touchedPaths(await changedFiles(worktree, task.startSha, 'HEAD')) : [];
   const alwaysAllowed = config?.installCommand ? LOCKFILES.map((l) => `**/${l.file}`) : [];
   const scope = checkScope(node, changed, alwaysAllowed);

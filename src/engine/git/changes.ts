@@ -33,10 +33,22 @@ export interface CommitResult {
   sha: string;
 }
 
-/** `git add -A && git commit` in `worktree` (serialized per repo). No-op when there is nothing to commit. */
-export async function commitAll(worktree: string, message: string): Promise<CommitResult> {
+/** Pathspecs for `git add -A -- <these>`: everything except the given repo-relative paths. */
+export function excludePathspecs(exclude: readonly string[]): string[] {
+  return ['.', ...exclude.map((path) => `:(exclude,top,literal)${path}`)];
+}
+
+/**
+ * `git add -A && git commit` in `worktree` (serialized per repo), leaving `exclude` (files Legion
+ * provisioned, not the agent's work) unstaged. No-op when there is nothing to commit.
+ */
+export async function commitAll(
+  worktree: string,
+  message: string,
+  exclude: readonly string[] = [],
+): Promise<CommitResult> {
   return withRepoLock(worktree, async () => {
-    await git(worktree, ['add', '-A']);
+    await git(worktree, ['add', '-A', '--', ...excludePathspecs(exclude)]);
     const staged = await git(worktree, ['diff', '--cached', '--quiet'], { okExitCodes: [0, 1] });
     if (staged.exitCode === 0) return { committed: false, sha: await headSha(worktree) };
     const id = await identityArgs(worktree);

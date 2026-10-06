@@ -125,6 +125,23 @@ describe('squashMergeIntoIntegration', () => {
     await expect(squashMergeIntoIntegration(integ, t2.branch, 'T2')).rejects.toBeInstanceOf(IntegrationError);
   });
 
+  it('cleanFirst discards Legion leftovers but keeps provisioned and ignored files', async () => {
+    writeFiles(integ, { '.gitignore': 'node_modules/\n' });
+    await commitAll(integ, 'Add a gitignore');
+    writeFiles(integ, {
+      'verify-stamp.txt': 'x',
+      'shared.txt': 'reformatted\n',
+      '.env.local': 'S=1',
+      'node_modules/dep/index.js': '',
+    });
+    const t = await taskWorktree('T1', { 'q.txt': 'q' });
+    const r = await squashMergeIntoIntegration(integ, t.branch, 'T1', { cleanFirst: ['.env.local'] });
+    expect(r).toMatchObject({ ok: true, empty: false });
+    expect(await gitText(integ, ['show', '--name-only', '--format=', 'HEAD'])).toBe('q.txt');
+    expect(await gitText(integ, ['status', '--porcelain', '--untracked-files=all'])).toBe('?? .env.local');
+    expect(readFileSync(join(integ, 'node_modules/dep/index.js'), 'utf8')).toBe('');
+  });
+
   it('resetIntegration rolls back to the recorded sha and removes untracked files', async () => {
     const t = await taskWorktree('T1', { 'src/b.ts': 'b\n' });
     const r = await squashMergeIntoIntegration(integ, t.branch, 'T1');

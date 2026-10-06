@@ -15,6 +15,8 @@ export interface RunMeta {
   answers: { question: string; answer: string }[];
   /** Integration worktree has had its copy/symlink/setup provisioning. */
   integrationReady: boolean;
+  /** Untracked files that provisioning (copy/symlink/setup) left in the integration worktree; cleaning keeps them. */
+  integrationKeep: string[];
   /** Per-run budget raised through a `budget` inbox answer (overrides settings). */
   budgetLimitUsd: number | null;
   budgetWarned: boolean;
@@ -38,6 +40,8 @@ export interface TaskMeta {
   coderSessionId: string | null;
   /** Latest coder report (summary feeds reviewers, dependents and the PR). */
   report: { status: 'done' | 'blocked' | 'partial'; summary: string; commitMessage: string } | null;
+  /** Untracked files provisioning left in the task worktree: never committed, kept when cleaning. */
+  provisioned: string[];
   /** Files the task changed (for dependents' upstream summaries). */
   files: string[];
   fix: FixContext | null;
@@ -60,6 +64,7 @@ const RUN_DEFAULTS: RunMeta = {
   plannerSessionId: null,
   answers: [],
   integrationReady: false,
+  integrationKeep: [],
   budgetLimitUsd: null,
   budgetWarned: false,
   gcAuto: null,
@@ -69,6 +74,7 @@ const RUN_DEFAULTS: RunMeta = {
 const TASK_DEFAULTS: TaskMeta = {
   coderSessionId: null,
   report: null,
+  provisioned: [],
   files: [],
   fix: null,
   previousFailure: null,

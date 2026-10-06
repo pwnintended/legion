@@ -5,6 +5,7 @@ import type { Run, Task, TaskNode, VerificationPhase } from '@shared/domain';
 import {
   branchExists,
   type CommandResult,
+  cleanWorktree,
   createWorktree,
   git,
   integrationBranchName,
@@ -14,6 +15,7 @@ import {
   removeWorktree,
   resolveSha,
   runShellCommands,
+  untrackedFiles,
   withRepoLock,
 } from '../git';
 import type { VerifyResultInput } from './core';
@@ -132,7 +134,15 @@ export async function provisionIntegration(o: Orchestrator, run: Run, config: Le
     });
     if (!outcome.ok) o.log.warn(`run ${run.id}: integration setup failed`);
   }
-  patchRunMeta(o.store, run.id, { integrationReady: true });
+  // What provisioning left untracked (copies, setup output) stays; anything else setup changed is reset.
+  const keep = await untrackedFiles(path);
+  await cleanWorktree(path, keep);
+  patchRunMeta(o.store, run.id, { integrationReady: true, integrationKeep: keep });
+}
+
+/** Untracked files Legion provisioned into the run's integration worktree (kept when it is cleaned). */
+export function integrationKeep(o: Orchestrator, run: Pick<Run, 'id'>): string[] {
+  return runMeta(o.store, run.id).integrationKeep;
 }
 
 /** Task verify commands plus the repo-wide ones, deduplicated. */

@@ -30,7 +30,7 @@ import { SLOT_STATUSES, taskStatusPath } from './core';
 import { taskMeta } from './meta';
 import type { Orchestrator } from './orchestrator';
 import { type PlanRevision, startPlanner } from './planner';
-import { ensureIntegrationWorktree, ensureWorktree } from './worktrees';
+import { ensureIntegrationWorktree, ensureWorktree, integrationKeep } from './worktrees';
 
 const WORKTREE_STATUSES: ReadonlySet<TaskStatus> = new Set([...SLOT_STATUSES, 'approved', 'awaiting_human', 'merging']);
 
@@ -115,7 +115,7 @@ async function rollBackMerges(o: Orchestrator, run: Run): Promise<void> {
   if (pending.length === 0) return;
   const integration = await ensureIntegrationWorktree(o, run);
   for (const merge of pending.reverse()) {
-    await resetIntegration(integration, merge.preSha);
+    await resetIntegration(integration, merge.preSha, integrationKeep(o, run));
     o.store.finishMerge(merge.id, 'reverted', { error: 'the engine stopped during this merge; rolled back' });
   }
 }
