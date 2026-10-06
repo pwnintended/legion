@@ -6,7 +6,10 @@ import '@xterm/xterm/css/xterm.css';
 import { useEffect, useRef, useState } from 'react';
 import { useEngine } from '../../app/engine';
 import { prefsStore } from '../../app/prefs';
+import { actions } from '../../app/store';
+import { setTileParams } from '../../layout/tree';
 import type { TileProps } from '../../layout/types';
+import { openOrAttach } from './attach';
 import { TERMINAL_FONT_FAMILY, terminalTheme, terminalThemeLatte } from './theme';
 import { webglPool } from './webgl-pool';
 
@@ -33,8 +36,12 @@ interface Live {
  * A raw terminal on an engine pty (shell in a directory, or a resumed agent session). Output arrives on
  * a dedicated MessagePort; the engine sends the scrollback as the first message when a view attaches.
  * Keys go to the program ("locked"); only ⌘-chords pass through to the app's keybindings.
+ *
+ * The engine terminal id is kept in the tile's params: the tile unmounts whenever its column scrolls far
+ * away or the layout mode / run changes, and on remount it re-attaches to the same process (scrollback
+ * included) instead of starting a new shell and orphaning the old one, dev server and all.
  */
-export default function TerminalTile({ tileId, params, focused, visible }: TileProps<'terminal'>) {
+export default function TerminalTile({ tileId, runId, params, focused, visible }: TileProps<'terminal'>) {
   const engine = useEngine();
   const hostRef = useRef<HTMLDivElement>(null);
   const liveRef = useRef<Live | null>(null);
@@ -42,6 +49,8 @@ export default function TerminalTile({ tileId, params, focused, visible }: TileP
   const [detail, setDetail] = useState<string | null>(null);
   const visibleRef = useRef(visible);
   visibleRef.current = visible;
+  const paramsRef = useRef(params);
+  paramsRef.current = params;
   const target = params.attemptId
     ? ({ kind: 'attempt', attemptId: params.attemptId } as const)
     : params.cwd
@@ -143,21 +152,36 @@ export default function TerminalTile({ tileId, params, focused, visible }: TileP
     const open = async (cols: number, rows: number): Promise<void> => {
       if (live.opening || live.terminalId || !target) return;
       live.opening = true;
-      const channel = new MessageChannel();
+      const known = paramsRef.current.terminalId;
       try {
-        const opened = await engine.call('terminals.open', { target, cols, rows }, { transfer: [channel.port2] });
+        const opened = await openOrAttach((input, options) => engine.call('terminals.open', input, options), {
+          target,
+          terminalId: known,
+          cols,
+          rows,
+        });
         if (live.disposed) {
-          // Unmounted (e.g. StrictMode) before the engine answered: nothing should keep running for us.
-          channel.port1.close();
-          void engine.call('terminals.close', { terminalId: opened.terminalId }).catch(() => {});
+          // Unmounted (e.g. StrictMode) before the engine answered: detach, and don't leave a process we just
+          // started running for nobody. A terminal we re-attached to stays (it belongs to the tile).
+          opened.port.close();
+          if (!opened.reattached)
+            void engine.call('terminals.close', { terminalId: opened.terminalId }).catch(() => {});
           return;
         }
         live.terminalId = opened.terminalId;
-        attachPort(channel.port1);
+        attachPort(opened.port);
+        if (opened.reattached) {
+          // The process may still have the size of the view it had before.
+          void engine.call('terminals.resize', { terminalId: opened.terminalId, cols, rows }).catch(() => {});
+        } else if (opened.terminalId !== known) {
+          // Remember the terminal so the next mount re-attaches to it.
+          actions.updateLayout(runId, (layout) =>
+            setTileParams(layout, tileId, { ...paramsRef.current, terminalId: opened.terminalId }),
+          );
+        }
         setStatus('live');
         if (visibleRef.current) term.focus();
       } catch (error) {
-        channel.port1.close();
         if (live.disposed) return;
         setStatus('error');
         setDetail(error instanceof Error ? error.message : String(error));

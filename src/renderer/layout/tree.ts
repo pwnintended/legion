@@ -229,6 +229,17 @@ export function removeColumn(ws: Workspace, columnId: string): Workspace {
   return normalize({ ...withColumns(ws, columns), focus }, Math.max(0, index - 1));
 }
 
+/** Replace a tile's params (e.g. a terminal tile recording the engine terminal it opened). Same ref if unchanged. */
+export function setTileParams(ws: Workspace, tileId: string, params: LayoutTile['params']): Workspace {
+  const column = columnOfTile(ws, tileId);
+  if (!column) return ws;
+  return mapColumn(ws, column.id, (c) => {
+    const tile = c.tiles.find((t) => t.id === tileId);
+    if (!tile || JSON.stringify(tile.params) === JSON.stringify(params)) return c;
+    return { ...c, tiles: c.tiles.map((t) => (t.id === tileId ? ({ ...t, params } as LayoutTile) : t)) };
+  });
+}
+
 export function focusTile(ws: Workspace, tileId: string): Workspace {
   const column = columnOfTile(ws, tileId);
   if (!column) return ws;
