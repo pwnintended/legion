@@ -464,6 +464,40 @@ describe('ClaudeSession (lifecycle)', () => {
     });
   });
 
+  it('answers a read-only role itself: probes chained with reads pass, anything else is denied, no inbox item', async () => {
+    const child = new FakeChild();
+    const s = new ClaudeSession({
+      child,
+      sessionId: 'sid',
+      opts: options('planner'),
+      log: silentLogger,
+      timing: FAST,
+    });
+    s.begin('plan');
+    const ask = (id: string, command: string) =>
+      child.send({
+        type: 'control_request',
+        request_id: id,
+        request: { subtype: 'can_use_tool', tool_name: 'Bash', input: { command }, tool_use_id: `tu-${id}` },
+      });
+    ask('ok', 'git ls-files | head -5; node -v; npm -v');
+    const allowed = await child.waitFor((m) => m.type === 'control_response');
+    expect(allowed.msg).toMatchObject({
+      response: { request_id: 'ok', response: { behavior: 'allow', toolUseID: 'tu-ok' } },
+    });
+    ask('no', 'npm install');
+    const denied = await child.waitFor(
+      (m) =>
+        m.type === 'control_response' && (m as { response?: { request_id?: string } }).response?.request_id === 'no',
+    );
+    expect(denied.msg).toMatchObject({
+      response: { request_id: 'no', response: { behavior: 'deny', message: expect.stringContaining('npm install') } },
+    });
+    child.send(success);
+    const events = await until(s, isTurnComplete);
+    expect(events.some((e) => e.type === 'approval_request')).toBe(false);
+  });
+
   it('drops approvals the CLI withdraws', async () => {
     const { child, session: s } = session();
     s.begin('work');

@@ -109,7 +109,7 @@ export function bashRules(command: string): string[] {
 }
 
 export interface PermissionArgs {
-  mode: 'dontAsk' | 'acceptEdits';
+  mode: 'dontAsk' | 'acceptEdits' | 'default';
   allowedTools: string[];
   disallowedTools: string[];
   /** Route prompts to the host over the control protocol (`can_use_tool`) instead of denying them. */
@@ -124,6 +124,11 @@ export interface PermissionArgs {
  * listed: a bare `Read` rule would also allow reading outside the worktree. Edits are covered by
  * `acceptEdits` (working directories only). Anything else asks the host (`can_use_tool`) or, without
  * `askHuman`, is denied (`--permission-prompts none` / `dontAsk`).
+ *
+ * `read_only` runs in `default` with the prompt tool, not `dontAsk`: `dontAsk` never calls the host and
+ * denies every shell command off the CLI's fixed (not configurable) read-only set, so a chain with one
+ * unlisted part (`...; npm -v`) fails whole. The session answers those requests itself (`read-only-policy.ts`,
+ * never a human); the edit tools are removed outright. `coordinate` has no shell and stays in `dontAsk`.
  */
 export const WEB_TOOLS: readonly string[] = ['WebSearch', 'WebFetch'];
 
@@ -135,12 +140,13 @@ export function permissionArgs(
   const mcpRules = [...(mcp ? [`mcp__${LEGION_MCP_SERVER}`] : []), ...extraServers.map((name) => `mcp__${name}`)];
   const webRules = profile.web ? [...WEB_TOOLS] : [];
   if (profile.mode === 'read_only' || profile.mode === 'coordinate') {
-    const denied = profile.mode === 'coordinate' ? COORDINATE_DENIED : READ_ONLY_DENIED;
+    const talkOnly = profile.mode === 'coordinate';
+    const denied = talkOnly ? COORDINATE_DENIED : READ_ONLY_DENIED;
     return {
-      mode: 'dontAsk',
+      mode: talkOnly ? 'dontAsk' : 'default',
       allowedTools: [...mcpRules, ...webRules],
       disallowedTools: [...ALWAYS_DENIED, ...denied.filter((tool) => !profile.web || !WEB_TOOLS.includes(tool))],
-      askHost: false,
+      askHost: !talkOnly,
     };
   }
   return {

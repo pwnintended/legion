@@ -165,6 +165,24 @@ describe.skipIf(!LIVE)('Claude adapter (live)', () => {
     await closeAndDrain(session);
   });
 
+  it('lets a planner chain version probes with reads and denies writes, without any approval_request', async () => {
+    // `dontAsk` denied the whole chain on `npm -v` (not on the CLI's read-only set); the host policy answers instead.
+    const session = await engine('planner-shell').start(
+      options(
+        'planner',
+        `Run these with the Bash tool, one call each, in this order, never retrying a denied one:\n1) ls -a; node -v; npm -v; which node\n2) touch made-by-planner.txt\nThen reply with exactly: DONE`,
+      ),
+    );
+    const events = await until(session, isTurnComplete);
+    const bash = of(events, 'tool_call').filter((e) => e.name === 'Bash');
+    const results = bash.map((call) => of(events, 'tool_result').find((r) => r.id === call.id)?.ok);
+    expect(results).toEqual([true, false]);
+    expect(of(events, 'approval_request')).toEqual([]);
+    expect(existsSync(join(dir.path, 'made-by-planner.txt'))).toBe(false);
+    expect(lastTurn(events)).toMatchObject({ isError: false });
+    await closeAndDrain(session);
+  });
+
   it('interrupts a turn and keeps the session usable', async () => {
     const session = await engine('interrupt').start(
       options('reviewer', 'Count from 1 to 300, one number per line, no other text.'),

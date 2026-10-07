@@ -11,6 +11,7 @@ the control-protocol shapes follow the published `@anthropic-ai/claude-agent-sdk
 | `args.ts` | pure flag builder: model/effort/system prompt/`--json-schema`, permission profile → flags, config isolation, child env scrubbing |
 | `parser.ts` | pure stream-json → `AgentEvent` normalizer (+ control frames as `ParserOutput`) |
 | `protocol.ts` | stdin messages: user turns, interrupt, `can_use_tool` answers |
+| `read-only-policy.ts` | host-side answers for read-only roles' `can_use_tool` requests: version/help probes and plain reads pass (chains parsed strictly), the rest is denied with a message; no human involved |
 | `session.ts` | one process = one `AgentSession`: stdin open for the session's lifetime, delta coalescing, interrupt/close escalation |
 | `engine.ts` | `ClaudeEngine`: binary resolution, `probe()` (`--version` + `auth status --json`), `start`/`resume` |
 | `testing.ts` | test-only: `FakeChild`, fixture replay, recording spawn |
@@ -28,6 +29,9 @@ the control-protocol shapes follow the published `@anthropic-ai/claude-agent-sdk
 - **Usage is cumulative**: `usage` events carry running session totals (tokens incl. cache reads/creation, and
   `costUsd`), including the spend of earlier processes of a resumed session. Take the latest; never sum.
   Interrupted turns may report zeros; those are not emitted. Cost is the CLI's estimate.
+- **Read-only roles** (planner, reviewer, finalizer, researcher) run in `default` mode with the prompt tool and never
+  emit `approval_request`: the session answers `can_use_tool` itself via `read-only-policy.ts` (`dontAsk` would deny any chain
+  holding a command outside the CLI's fixed, non-configurable read-only set, e.g. `npm -v`).
 - **Approvals** are in-band (`--permission-prompt-tool stdio`): `approval_request.requestId` is the CLI's
   control request id; answer with `respond()`. Pending approvals are dropped when the turn ends or the CLI
   withdraws them (`control_cancel_request`), after which `respond()` throws.

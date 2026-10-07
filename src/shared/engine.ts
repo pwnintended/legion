@@ -43,8 +43,9 @@ export type EngineInfo = z.infer<typeof EngineInfoSchema>;
 
 /**
  * What a session may do. Roles map to profiles via `permissionProfileFor`:
- * - read_only (planner, reviewer, finalizer): Claude `--permission-mode dontAsk` with edit tools
- *   disallowed; Codex `sandbox: read-only`, `approvalPolicy: never`.
+ * - read_only (planner, reviewer, finalizer): Claude `--permission-mode default` with edit tools disallowed;
+ *   what it would ask is answered by a host-side policy (read-only probes and reads pass, the rest is denied),
+ *   never a human; Codex `sandbox: read-only`, `approvalPolicy: never`.
  * - workspace_write (coder, resolver): Claude `acceptEdits` + curated allowed tools; everything else is
  *   asked in-band (`--permission-prompt-tool stdio` → `can_use_tool` control requests → `approval_request`);
  *   Codex `sandbox: workspace-write`, `approvalPolicy: on-request` (`item/<kind>/requestApproval`).

@@ -39,7 +39,7 @@ describe('buildClaudeArgs', () => {
     expect(args).not.toContain('--model');
   });
 
-  it('maps a read-only role onto dontAsk without host prompts', () => {
+  it('maps a read-only role onto default mode with the prompt tool (the session answers, never a human)', () => {
     const args = buildClaudeArgs({
       opts: base({ model: 'haiku', effort: 'low', systemPrompt: 'Be terse.', outputSchema: { type: 'object' } }),
       sessionId: 's',
@@ -48,9 +48,9 @@ describe('buildClaudeArgs', () => {
     expect(flag(args, '--effort')).toBe('low');
     expect(flag(args, '--append-system-prompt')).toBe('Be terse.');
     expect(flag(args, '--json-schema')).toBe('{"type":"object"}');
-    expect(flag(args, '--permission-mode')).toBe('dontAsk');
-    expect(flag(args, '--permission-prompts')).toBe('none');
-    expect(args).not.toContain('--permission-prompt-tool');
+    expect(flag(args, '--permission-mode')).toBe('default');
+    expect(flag(args, '--permission-prompt-tool')).toBe('stdio');
+    expect(args).not.toContain('--permission-prompts');
     expect(args).not.toContain('--allowedTools');
     const denied = (flag(args, '--disallowedTools') as string).split(',');
     expect(denied).toEqual(
@@ -173,7 +173,7 @@ describe('coordinate mode', () => {
 describe('web research profiles', () => {
   it('pre-approves the web tools for a read-only researcher', () => {
     const perms = permissionArgs(permissionProfileFor('researcher'), { url: 'http://127.0.0.1:9/mcp', token: 't' });
-    expect(perms.mode).toBe('dontAsk');
+    expect(perms).toMatchObject({ mode: 'default', askHost: true });
     expect(perms.allowedTools).toEqual(['mcp__legion', 'WebSearch', 'WebFetch']);
     expect(perms.disallowedTools).toEqual(expect.arrayContaining(['Edit', 'Write']));
     expect(perms.disallowedTools).not.toContain('WebFetch');

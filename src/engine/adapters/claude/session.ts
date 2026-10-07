@@ -20,6 +20,7 @@ import {
   setPermissionModeRequest,
   userMessage,
 } from './protocol';
+import { decideReadOnly } from './read-only-policy';
 
 /** The subset of `ChildProcess` the session uses (tests pass a fake). */
 export interface ChildProcessLike {
@@ -79,6 +80,8 @@ export class ClaudeSession implements AgentSession {
   private readonly timing: SessionTiming;
   private readonly log: Logger;
   private readonly onExit: (() => void) | undefined;
+  /** Read-only roles never reach a human: their `can_use_tool` requests are answered by the policy. */
+  private readonly readOnly: boolean;
 
   private readonly approvals = new Map<string, PendingPermission>();
   /** Our control requests awaiting the CLI's answer: resolved with whether it succeeded. */
@@ -109,6 +112,7 @@ export class ClaudeSession implements AgentSession {
     this.sessionId = init.sessionId;
     this.log = init.log;
     this.onExit = init.onExit;
+    this.readOnly = init.opts.permission.mode === 'read_only';
     this.timing = { ...DEFAULT_TIMING, ...init.timing };
     this.parser = new ClaudeStreamParser({ cwd: init.opts.cwd, structuredOutput: Boolean(init.opts.outputSchema) });
 
@@ -258,6 +262,14 @@ export class ClaudeSession implements AgentSession {
         this.handleEvent(output.event);
         return;
       case 'permission':
+        if (this.readOnly) {
+          // No human in the loop: the policy answers (see `read-only-policy.ts`).
+          const { toolName, input } = output.request;
+          const decision = decideReadOnly(toolName, input);
+          if (decision.behavior === 'deny') this.log.info(`claude: read-only denied ${toolName}: ${decision.message}`);
+          this.write(permissionResponse(output.request, decision));
+          return;
+        }
         this.approvals.set(output.request.requestId, output.request);
         this.emit({
           type: 'approval_request',
