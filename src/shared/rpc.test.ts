@@ -10,6 +10,8 @@ const REQUIRED = [
   'settings.set',
   'repos.inspect',
   'repos.recent',
+  'repos.discover',
+  'repos.branches',
   'runs.list',
   'runs.get',
   'runs.create',

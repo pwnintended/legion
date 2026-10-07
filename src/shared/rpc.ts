@@ -65,6 +65,8 @@ export const AppInfoSchema = z.object({
   startedAt: TimestampSchema,
   /** Head of the event log at the time of the call. */
   headSeq: z.number().int().nonnegative(),
+  /** The user's home directory (the UI abbreviates paths to `~/…` and expands typed `~/` paths). */
+  homeDir: z.string().nullish(),
 });
 export type AppInfo = z.infer<typeof AppInfoSchema>;
 
@@ -88,6 +90,8 @@ export const RepoInspectionSchema = z.object({
   /** Tracked files modified (untracked files ignored). */
   dirty: z.boolean(),
   hasGh: z.boolean(),
+  /** `gh` has a github.com login (null: gh missing or not checked). */
+  ghAuthenticated: z.boolean().nullish(),
   /** Parsed `legion.json` if present and valid (§9). */
   legionConfig: z
     .object({
@@ -110,6 +114,30 @@ export const RecentRepoSchema = z.object({
   lastUsedAt: TimestampSchema,
 });
 export type RecentRepo = z.infer<typeof RecentRepoSchema>;
+
+/** A checkout found by `repos.discover`. */
+export const DiscoveredRepoSchema = z.object({
+  path: z.string(),
+  name: z.string(),
+  /** Current branch (null when detached or unknown). */
+  branch: z.string().nullable(),
+  /** Tracked files modified (false when unknown). */
+  dirty: z.boolean(),
+  /** Time of the HEAD commit, ms (null when unknown or no commits). */
+  lastCommitAt: TimestampSchema.nullable(),
+});
+export type DiscoveredRepo = z.infer<typeof DiscoveredRepoSchema>;
+
+export const RepoBranchesSchema = z.object({
+  current: z.string().nullable(),
+  /** origin/HEAD if known, else main/master if present, else the current branch. */
+  default: z.string().nullable(),
+  /** Local branches, most recently committed first. */
+  local: z.array(z.string()),
+  /** Remote-tracking branches (`origin/x`), most recently committed first. */
+  remote: z.array(z.string()),
+});
+export type RepoBranches = z.infer<typeof RepoBranchesSchema>;
 
 export const RunSummarySchema = z.object({
   run: RunSchema,
@@ -253,6 +281,16 @@ export const rpcContract = {
   /** Read-only inspection; a valid repo is also recorded in recent repos. */
   'repos.inspect': { input: z.object({ path: z.string().min(1) }), output: RepoInspectionSchema },
   'repos.recent': { input: Empty, output: z.array(RecentRepoSchema) },
+  /**
+   * Checkouts found by a shallow, time-boxed scan of common dev folders (~/Projects, ~/Developer, ...) and the
+   * parents of recent repos; newest commit first. Cached for a couple of minutes unless `refresh`.
+   */
+  'repos.discover': {
+    input: z.object({ refresh: z.boolean().nullish() }),
+    output: z.array(DiscoveredRepoSchema),
+  },
+  /** Branches of a repo for the base-branch picker (empty lists for a non-repo). */
+  'repos.branches': { input: z.object({ path: z.string().min(1) }), output: RepoBranchesSchema },
 
   // runs ----------------------------------------------------------------------------------------
   /** Newest first; archived runs only with `includeArchived: true`. */

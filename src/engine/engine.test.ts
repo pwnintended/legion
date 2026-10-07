@@ -146,6 +146,41 @@ describe('engine over RPC (plain Node)', () => {
     expect((await client.call('repos.recent', {})).map((r) => r.name)).toEqual(['repo']);
   });
 
+  it('repos.discover finds checkouts under the configured roots; repos.branches lists their branches', async () => {
+    await engine.close();
+    client.close();
+    channel.port2.close();
+    const projects = join(dir.path, 'Projects');
+    const repo = join(projects, 'acme', 'widgets');
+    execFileSync('mkdir', ['-p', repo, join(projects, 'notes')]);
+    git(repo, 'init', '-q', '-b', 'main');
+    git(repo, '-c', 'user.email=t@legion.test', '-c', 'user.name=T', 'commit', '-q', '--allow-empty', '-m', 'init');
+    git(repo, 'branch', 'feature/login');
+    engine = await startEngine({
+      dataDir: join(dir.path, 'data'),
+      env: { ...process.env, LEGION_DISCOVER_ROOTS: projects },
+      version: '9.9.9',
+      log: silentLogger,
+      fakeEngines: true,
+      probeOnStart: false,
+    });
+    channel = new MessageChannel();
+    engine.connect(channel.port1);
+    client = createRpcClient(channel.port2, { timeoutMs: 10_000 });
+
+    const found = await client.call('repos.discover', {});
+    expect(found).toEqual([
+      { path: repo, name: 'widgets', branch: 'main', dirty: false, lastCommitAt: expect.any(Number) },
+    ]);
+    expect(await client.call('repos.branches', { path: repo })).toEqual({
+      current: 'main',
+      default: 'main',
+      local: expect.arrayContaining(['main', 'feature/login']),
+      remote: [],
+    });
+    expect((await client.call('app.info', {})).homeDir).toBeTruthy();
+  });
+
   it('repos.inspect reports non-repos and bad paths', async () => {
     await expect(client.call('repos.inspect', { path: dir.path })).resolves.toMatchObject({
       exists: true,

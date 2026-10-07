@@ -1,5 +1,7 @@
+import { homedir } from 'node:os';
 import { basename } from 'node:path';
 import type { EngineContext } from '../context';
+import { DiscoveryCache, discoveryRoots, listBranches } from './repo-discover';
 import { inspectRepo } from './repo-inspect';
 import type { EngineRpcServer } from './server';
 
@@ -8,6 +10,9 @@ import type { EngineRpcServer } from './server';
  * register theirs the same way: `server.implement(name, handler)` from a `register*Handlers` function.
  */
 export function registerCoreHandlers(server: EngineRpcServer, ctx: EngineContext): void {
+  const home = ctx.env.HOME || homedir();
+  const discovery = new DiscoveryCache();
+
   server.implement('app.info', () => ({
     name: 'Legion',
     version: ctx.version,
@@ -24,6 +29,7 @@ export function registerCoreHandlers(server: EngineRpcServer, ctx: EngineContext
     schemaVersion: ctx.schemaVersion,
     startedAt: ctx.startedAt,
     headSeq: ctx.store.headSeq(),
+    homeDir: home,
   }));
 
   server.implement('settings.get', () => ctx.store.getSettings());
@@ -41,4 +47,9 @@ export function registerCoreHandlers(server: EngineRpcServer, ctx: EngineContext
     }
     return inspection;
   });
+  server.implement('repos.discover', ({ refresh }) => {
+    const recent = ctx.store.listRecentRepos().map((r) => r.path);
+    return discovery.get({ roots: discoveryRoots(home, recent, ctx.env), env: ctx.env }, refresh ?? false);
+  });
+  server.implement('repos.branches', ({ path }) => listBranches(path, ctx.env));
 }

@@ -38,6 +38,18 @@ async function hasExecutable(name: string, env: Readonly<Record<string, string>>
   return result.exitCode === 0;
 }
 
+/** `gh auth token` only reads gh's local credential store (no network); exit 0 = logged in to github.com. */
+async function ghLoggedIn(env: Readonly<Record<string, string>>): Promise<boolean> {
+  const result = await execa('gh', ['auth', 'token', '--hostname', 'github.com'], {
+    env,
+    extendEnv: false,
+    reject: false,
+    timeout: 5000,
+    stdout: 'ignore',
+  });
+  return result.exitCode === 0;
+}
+
 async function readLegionConfig(root: string): Promise<RepoInspection['legionConfig']> {
   const raw = await readFile(join(root, 'legion.json'), 'utf8').catch(() => null);
   if (raw === null) return null;
@@ -70,6 +82,7 @@ export async function inspectRepo(path: string, env: Readonly<Record<string, str
     github: null,
     dirty: false,
     hasGh: false,
+    ghAuthenticated: null,
     legionConfig: null,
     error: null,
   };
@@ -80,13 +93,14 @@ export async function inspectRepo(path: string, env: Readonly<Record<string, str
   const [root, hasGh] = await Promise.all([git(path, env, ['rev-parse', '--show-toplevel']), hasExecutable('gh', env)]);
   if (root === null) return { ...base, exists: true, hasGh, error: 'not a git repository' };
 
-  const [currentBranch, headSha, remotesRaw, originHead, status, legionConfig] = await Promise.all([
+  const [currentBranch, headSha, remotesRaw, originHead, status, legionConfig, ghAuthenticated] = await Promise.all([
     git(root, env, ['symbolic-ref', '--short', '-q', 'HEAD']),
     git(root, env, ['rev-parse', '-q', '--verify', 'HEAD']),
     git(root, env, ['remote', '-v']),
     git(root, env, ['symbolic-ref', '--short', '-q', 'refs/remotes/origin/HEAD']),
     git(root, env, ['status', '--porcelain', '--untracked-files=no']),
     readLegionConfig(root),
+    hasGh ? ghLoggedIn(env) : Promise.resolve(null),
   ]);
   const remotes = parseRemotes(remotesRaw ?? '');
 
@@ -114,6 +128,7 @@ export async function inspectRepo(path: string, env: Readonly<Record<string, str
     github: githubRemote ? parseGithubRemote(githubRemote.url) : null,
     dirty: (status ?? '').length > 0,
     hasGh,
+    ghAuthenticated,
     legionConfig,
   };
 }

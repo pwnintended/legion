@@ -15,7 +15,15 @@ import {
   type Task,
 } from '@shared/domain';
 import type { AgentEvent, ServerEvent, ServerEventBody } from '@shared/events';
-import type { ProcedureName, RepoInspection, RpcInput, RpcOutput, TranscriptEntry } from '@shared/rpc';
+import type {
+  DiscoveredRepo,
+  ProcedureName,
+  RepoBranches,
+  RepoInspection,
+  RpcInput,
+  RpcOutput,
+  TranscriptEntry,
+} from '@shared/rpc';
 import { RpcError } from '@shared/rpc-transport';
 import { isArchived } from '../compat';
 import type { ConnectionState } from '../engine-connection';
@@ -134,6 +142,7 @@ export class DemoClient implements EngineClient {
           schemaVersion: 1,
           startedAt: Date.now(),
           headSeq: this.headSeq,
+          homeDir: DEMO_HOME,
         };
       case 'engines.list':
         return structuredClone(w.engines);
@@ -242,6 +251,10 @@ export class DemoClient implements EngineClient {
         ];
       case 'repos.inspect':
         return inspectDemoRepo(input.path as string);
+      case 'repos.discover':
+        return discoverDemoRepos();
+      case 'repos.branches':
+        return demoBranches(input.path as string);
       case 'runs.create':
         return this.createRun(input as unknown as RpcInput<'runs.create'>);
       case 'runs.answerClarify':
@@ -521,6 +534,39 @@ export class DemoClient implements EngineClient {
   }
 }
 
+const DEMO_HOME = '/Users/dev';
+
+/** What a scan of ~/Projects, ~/src, ... finds on the demo Mac (the recent repos are in it too). */
+function discoverDemoRepos(): DiscoveredRepo[] {
+  const now = Date.now();
+  const repo = (path: string, branch: string | null, dirty: boolean, ageMin: number): DiscoveredRepo => ({
+    path,
+    name: path.split('/').at(-1) ?? path,
+    branch,
+    dirty,
+    lastCommitAt: now - ageMin * 60_000,
+  });
+  return [
+    repo('/Users/dev/src/erudiet/app', 'main', true, 12),
+    repo('/Users/dev/Projects/legion', 'build/v1', false, 40),
+    repo('/Users/dev/src/erudiet/web', 'feat/checkout', false, 95),
+    repo('/Users/dev/Projects/design-tokens', 'main', false, 60 * 20),
+    repo('/Users/dev/src/erudiet/api', 'main', false, 60 * 26),
+    repo('/Users/dev/Developer/playground/rust-raytracer', 'main', true, 60 * 24 * 9),
+    repo('/Users/dev/code/dotfiles', 'master', false, 60 * 24 * 40),
+  ];
+}
+
+function demoBranches(path: string): RepoBranches {
+  if (path.includes('not-a-repo')) return { current: null, default: null, local: [], remote: [] };
+  return {
+    current: 'main',
+    default: 'main',
+    local: ['main', 'feat/passkeys', 'fix/session-timeout'],
+    remote: ['origin/main', 'origin/release/2026.10', 'origin/feat/passkeys'],
+  };
+}
+
 /** A plausible `repos.inspect` answer; paths containing "not-a-repo" are rejected. */
 function inspectDemoRepo(path: string): RepoInspection {
   const name = path.split('/').filter(Boolean).at(-1) ?? path;
@@ -537,7 +583,8 @@ function inspectDemoRepo(path: string): RepoInspection {
     github: ok ? { owner: 'erudiet', name } : null,
     dirty: false,
     hasGh: true,
+    ghAuthenticated: true,
     legionConfig: null,
-    error: ok ? null : 'Not a git repository',
+    error: ok ? null : 'not a git repository',
   };
 }
