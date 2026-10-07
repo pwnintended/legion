@@ -19,7 +19,7 @@ import type {
   TaskNode,
   TaskStatus,
 } from '@shared/domain';
-import { isTerminal, RUN_TRANSITIONS } from '@shared/domain';
+import { isTerminal, RUN_TRANSITIONS, TASK_TRANSITIONS } from '@shared/domain';
 import { type AgentEngine, type JsonSchema, permissionProfileFor, type SessionOptions } from '@shared/engine';
 import type { AgentEvent } from '@shared/events';
 import type { EngineToMainMessage } from '@shared/host-protocol';
@@ -41,6 +41,7 @@ import {
   planDispatch,
   type RateLimit,
   type RepoInput,
+  type ResumeStep,
   SLOT_STATUSES,
   type TaskDecision,
   type ToolNames,
@@ -162,6 +163,8 @@ export class Orchestrator {
   /** Slot-holding tasks whose driver stopped until the run resumes / a rate limit resets. */
   readonly parked = new Map<string, ParkReason>();
   readonly mergeLoops = new Set<string>();
+  /** Runs whose merge queue stopped until the run resumes / a rate limit resets (a resolver must wait). */
+  readonly mergeParked = new Map<string, ParkReason>();
   /** Runs with a planner or finalize job in flight. */
   readonly runJobs = new Set<string>();
   /** Takeover terminals by attempt id. */
@@ -405,6 +408,8 @@ export class Orchestrator {
       model: params.model,
       effort: params.effort,
       permission: permissionProfileFor(params.role, params.allowedCommands ?? []),
+      // Reviewers and the finalizer read worktrees that coders wrote: never trust their config.
+      untrustedWorkdir: params.role === 'reviewer' || params.role === 'finalizer',
       outputSchema: params.outputSchema,
       mcp: token && this.mcp ? { url: this.mcp.url, token } : null,
       env: this.sessionEnv(),
@@ -422,6 +427,7 @@ export class Orchestrator {
       onEvent: (run, event) => this.onAgentEvent(run, event),
       onEnd: (run) => this.onAgentEnd(run),
       onTakeover: (run, taken) => this.onTakeover(run, taken),
+      canHandBack: (run) => this.canHandBack(run),
     };
     const run = new AgentRun(
       { id: attempt.id, runId: attempt.runId, taskId: attempt.taskId, role: attempt.role },
@@ -573,6 +579,14 @@ export class Orchestrator {
       }
     }
     if (this.closed) return;
+    if (run.handBackRefused) {
+      const attempt = this.store.getAttempt(run.attempt.id);
+      if (attempt?.status === 'interrupted') {
+        this.store.transitionAttempt(attempt.id, 'interrupted', 'cancelled', {
+          error: 'the run or task ended during the takeover',
+        });
+      }
+    }
     this.dismissOpen(
       run.attempt.runId,
       (item) =>
@@ -580,6 +594,17 @@ export class Orchestrator {
         (item.kind === 'approval' || (item.kind === 'question' && item.payload.source === 'agent')),
       'the agent session ended',
     );
+  }
+
+  /** A taken-over attempt may resume only while it, its run and its task are still live. */
+  private canHandBack(run: AgentRun): boolean {
+    if (this.closed) return false;
+    const attempt = this.store.getAttempt(run.attempt.id);
+    if (attempt?.status !== 'interrupted') return false;
+    const current = this.store.getRun(run.attempt.runId);
+    if (!current || current.archived || isTerminal(RUN_TRANSITIONS, current.status)) return false;
+    const task = run.attempt.taskId ? this.store.getTask(run.attempt.taskId) : null;
+    return !task || !isTerminal(TASK_TRANSITIONS, task.status);
   }
 
   private onTakeover(run: AgentRun, taken: boolean): void {
@@ -633,6 +658,7 @@ export class Orchestrator {
     reason: Extract<InboxItem, { kind: 'escalation' }>['payload']['reason'],
     summary: string,
     actions: Extract<InboxItem, { kind: 'escalation' }>['payload']['actions'],
+    resume: ResumeStep | null = null,
   ): void {
     this.dismissOpen(
       runId,
@@ -644,7 +670,7 @@ export class Orchestrator {
       taskId,
       attemptId: null,
       kind: 'escalation',
-      payload: { reason, summary, actions },
+      payload: { reason, summary, actions, ...(resume ? { resume } : {}) },
     });
   }
 
@@ -752,8 +778,10 @@ export class Orchestrator {
           decision.escalation,
           `${task.nodeId}: ${options.summary ?? decision.reason}`,
           task.status === 'failed' ? ['retry', 'skip', 'edit', 'abort'] : ['retry', 'skip', 'abort'],
+          task.status === 'awaiting_human' ? (decision.resume ?? null) : null,
         );
       }
+      if (task.status === 'awaiting_human') patchTaskMeta(this.store, task.id, { resumeStep: decision.resume ?? null });
       if (decision.action === 'retry' || decision.action === 'requeue') {
         patchTaskMeta(this.store, task.id, freshAttemptMeta(options.summary ?? decision.reason));
         if (task.report) task = this.store.updateTask(task.id, { report: null });
@@ -826,6 +854,22 @@ export class Orchestrator {
         this.scheduleTick();
       }),
     );
+  }
+
+  /** The run's merge queue is parked and its gate is still closed (arms the wake timer for a rate limit). */
+  private mergeQueueWaits(run: Run): boolean {
+    const parked = this.mergeParked.get(run.id);
+    if (!parked) return false;
+    if (parked.kind === 'paused' && run.paused) return true;
+    if (parked.kind === 'rate') {
+      const until = this.limitedUntil(parked.engine);
+      if (until !== null) {
+        this.armWake(until);
+        return true;
+      }
+    }
+    this.mergeParked.delete(run.id);
+    return false;
   }
 
   startMergeQueue(runId: string): void {
@@ -952,7 +996,9 @@ export class Orchestrator {
       this.startDriver(task.id);
     }
     const tasks = this.store.listTasks(run.id);
-    if (tasks.some((t) => t.status === 'approved' || t.status === 'merging')) this.startMergeQueue(run.id);
+    if (tasks.some((t) => t.status === 'approved' || t.status === 'merging') && !this.mergeQueueWaits(run)) {
+      this.startMergeQueue(run.id);
+    }
     if (plan.run.state === 'complete' && !this.mergeLoops.has(run.id)) this.startFinalize(run.id);
     if (plan.nextWakeAt !== null) this.armWake(plan.nextWakeAt);
   }

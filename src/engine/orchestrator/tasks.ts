@@ -11,8 +11,10 @@ import { ReviewOutputSchema, reviewOutputJsonSchema, TaskReportSchema, taskRepor
 import {
   abortMerge,
   changedFiles,
+  cleanWorktree,
   commitAll,
   createWorktree,
+  git,
   gitText,
   LOCKFILES,
   mergeIntoTaskBranch,
@@ -20,6 +22,7 @@ import {
   removeWorktree,
   taskBranchName,
   touchedPaths,
+  untrackedFiles,
 } from '../git';
 import {
   type AgentPrompt,
@@ -35,7 +38,9 @@ import {
   decideAfterVerify,
   type Failure,
   markdownSection,
+  packageScriptsChanged,
   reviewerEngineFor,
+  sensitivePaths,
   type TaskDecision,
   taskStatusPath,
   type UpstreamSummary,
@@ -43,7 +48,7 @@ import {
 import type { AgentRun } from './live-session';
 import { type FixContext, patchTaskMeta, taskMeta } from './meta';
 import { AgentFailure, Closed, type Orchestrator } from './orchestrator';
-import { confirmedIntegrationSha, runVerification, verifyCommands } from './worktrees';
+import { confirmedIntegrationSha, runVerification, taskDiffBase, verifyCommands } from './worktrees';
 
 type Step = 'next' | 'park';
 
@@ -202,6 +207,8 @@ async function provision(o: Orchestrator, run: Run, task: Task): Promise<Step> {
       });
       if (!outcome.ok) throw new Error(`setup failed: ${outcome.results.at(-1)?.command ?? ''}`);
     }
+    // Copies and setup output are Legion's, not the agent's work: never committed, kept when cleaning.
+    patchTaskMeta(o.store, task.id, { provisioned: await untrackedFiles(path) });
     o.store.transitionTask(task.id, 'provisioning', 'running');
     return 'next';
   } catch (error) {
@@ -282,7 +289,7 @@ async function code(o: Orchestrator, run: Run, task: Task, mode: 'coder' | 'fixe
     let mergedRef: string | null = null;
     if (fix.mergedIntegrationRef) {
       // Post-merge failure: bring the other tasks' merged work into this branch first.
-      const merged = await mergeIntoTaskBranch(worktree, fix.mergedIntegrationRef).catch(() => null);
+      const merged = await mergeIntoTaskBranch(worktree, fix.mergedIntegrationRef, meta.provisioned).catch(() => null);
       if (merged?.status === 'conflict') await abortMerge(worktree);
       else if (merged) mergedRef = fix.mergedIntegrationRef;
       patchTaskMeta(o.store, task.id, { fix: { ...fix, mergedIntegrationRef: null } });
@@ -379,10 +386,13 @@ async function code(o: Orchestrator, run: Run, task: Task, mode: 'coder' | 'fixe
     });
     o.store.updateTask(task.id, { report: { summary: report.summary, commitMessage: report.commitMessage } });
   }
-  if (report?.status === 'done') await commitAll(worktree, report.commitMessage.trim() || `${node.id}: ${node.title}`);
+  if (report?.status === 'done') {
+    await commitAll(worktree, report.commitMessage.trim() || `${node.id}: ${node.title}`, meta.provisioned);
+  }
   o.assertOpen();
   const current = o.store.requireTask(task.id);
-  const changed = current.startSha ? await changedFiles(worktree, current.startSha, 'HEAD') : [];
+  const base = await taskDiffBase(run, current, worktree);
+  const changed = base ? await changedFiles(worktree, base, 'HEAD') : [];
   patchTaskMeta(o.store, task.id, { files: touchedPaths(changed) });
   const decision = decideAfterCoderTurn(
     current,
@@ -409,14 +419,19 @@ async function verify(o: Orchestrator, run: Run, task: Task): Promise<Step> {
     commands: verifyCommands(node, config),
     cwd: worktree,
   });
-  const changed = task.startSha ? touchedPaths(await changedFiles(worktree, task.startSha, 'HEAD')) : [];
+  // The agent's work is committed; anything else in the tree now is verify output (stamps, coverage,
+  // formatter rewrites). Discard it so a later commit never sweeps it into the task.
+  await cleanWorktree(worktree, taskMeta(o.store, task.id).provisioned);
+  const base = await taskDiffBase(run, task, worktree);
+  const changed = base ? touchedPaths(await changedFiles(worktree, base, 'HEAD')) : [];
   const alwaysAllowed = config?.installCommand ? LOCKFILES.map((l) => `**/${l.file}`) : [];
   const scope = checkScope(node, changed, alwaysAllowed);
-  patchTaskMeta(o.store, task.id, { lastVerify: outcome.results, scope });
+  const sensitive = base ? await sensitiveChanges(worktree, base, changed) : [];
+  patchTaskMeta(o.store, task.id, { lastVerify: outcome.results, scope, sensitive });
   const current = o.store.requireTask(task.id);
   const decision = decideAfterVerify(current, outcome.ok, o.limits());
   const failed = outcome.results.filter((r) => r.exitCode !== 0);
-  if (decision.action === 'fix') {
+  if (decision.action === 'fix' || decision.resume === 'fix') {
     patchTaskMeta(o.store, task.id, {
       fix: { findings: [], unmetCriteria: [], failedVerify: failed, humanNote: null, mergedIntegrationRef: null },
     });
@@ -429,6 +444,20 @@ async function verify(o: Orchestrator, run: Run, task: Task): Promise<Step> {
   return 'next';
 }
 
+/** Sensitive paths among `changed`, plus every `package.json` whose `scripts` changed since `base`. */
+async function sensitiveChanges(worktree: string, base: string, changed: readonly string[]): Promise<string[]> {
+  const out = sensitivePaths(changed);
+  const show = (rev: string, path: string) =>
+    git(worktree, ['show', `${rev}:${path}`], { okExitCodes: [0, 128] }).then((r) =>
+      r.exitCode === 0 ? r.stdout : null,
+    );
+  for (const path of changed) {
+    if (path !== 'package.json' && !path.endsWith('/package.json')) continue;
+    if (packageScriptsChanged(await show(base, path), await show('HEAD', path))) out.push(`${path} (scripts)`);
+  }
+  return out;
+}
+
 // -- review ----------------------------------------------------------------------------------------
 
 async function review(o: Orchestrator, run: Run, task: Task): Promise<Step> {
@@ -439,7 +468,7 @@ async function review(o: Orchestrator, run: Run, task: Task): Promise<Step> {
   const gate = o.gate(run.id, engine);
   if (gate) return park(o, task, gate);
   const worktree = task.worktreePath as string;
-  const startSha = task.startSha as string;
+  const startSha = (await taskDiffBase(run, task, worktree)) as string;
   const meta = taskMeta(o.store, task.id);
   const reviews = new Map(o.store.listReviews(run.id).map((r) => [r.id, r]));
   const previous = meta.reviewIds.length > 0 ? reviews.get(meta.reviewIds.at(-1) as string) : undefined;
@@ -493,6 +522,7 @@ async function review(o: Orchestrator, run: Run, task: Task): Promise<Step> {
       patch: {},
       escalation: 'other',
       reason: `the ${engine} reviewer failed ${failures} time(s): ${failure.message}`,
+      resume: 'review',
     };
     o.applyDecision(task.id, escalation);
     return 'next';
@@ -512,10 +542,10 @@ async function review(o: Orchestrator, run: Run, task: Task): Promise<Step> {
   const decision = decideAfterReview(
     current,
     output,
-    { node, highRiskGlobs: config?.highRiskGlobs ?? [], previousFindings },
+    { node, highRiskGlobs: config?.highRiskGlobs ?? [], previousFindings, sensitiveChanges: meta.sensitive },
     o.limits(),
   );
-  if (decision.action === 'fix') {
+  if (decision.action === 'fix' || decision.resume === 'fix') {
     patchTaskMeta(o.store, task.id, {
       fix: {
         findings: blockingFindings(output),
@@ -530,12 +560,17 @@ async function review(o: Orchestrator, run: Run, task: Task): Promise<Step> {
     ...(decision.escalation ? { summary: `${decision.reason}. Reviewer: ${output.summary}` } : {}),
   });
   if (decision.action === 'approve' && decision.path.includes('awaiting_human')) {
+    const why =
+      meta.sensitive.length > 0
+        ? `changes agent/CI/hook configuration or package scripts (${meta.sensitive.join(', ')})`
+        : 'is high risk';
     o.escalate(
       run.id,
       task.id,
       'other',
-      `${node.id} (${node.title}) is high risk and passed review. Approve the merge (tasks.approveMerge) or request changes (tasks.requestChanges).`,
+      `${node.id} (${node.title}) ${why} and passed review. Approve the merge (tasks.approveMerge) or request changes (tasks.requestChanges).`,
       ['skip', 'abort'],
+      'merge',
     );
   }
   return 'next';

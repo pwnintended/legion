@@ -63,7 +63,8 @@ export async function runCommand(
     reject: false,
     stripFinalNewline: false,
     timeout: opts.timeoutMs ?? 120_000,
-    ...(opts.input !== undefined ? { input: opts.input } : {}),
+    // A Buffer: execa reads the strings 'ignore', 'pipe', 'inherit'... as stdio modes, not as text.
+    ...(opts.input !== undefined ? { input: Buffer.from(opts.input) } : {}),
     ...(opts.signal ? { cancelSignal: opts.signal } : {}),
     maxBuffer: 256 * 1024 * 1024,
   });

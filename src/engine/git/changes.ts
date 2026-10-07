@@ -20,6 +20,12 @@ export async function identityArgs(repo: string): Promise<string[]> {
 /** Args that disable hooks for Legion-authored commits/merges (husky etc. must not fire in worktrees). */
 export const NO_HOOKS = ['-c', 'core.hooksPath=/dev/null'] as const;
 
+/**
+ * Rerere for Legion's own merges only (recorded resolutions live in the shared common dir, reusable across
+ * worktrees), passed per command so the user's repository config is never changed.
+ */
+export const RERERE = ['-c', 'rerere.enabled=true'] as const;
+
 export interface CommitResult {
   /** False when the tree was clean and nothing was committed. */
   committed: boolean;
@@ -27,10 +33,34 @@ export interface CommitResult {
   sha: string;
 }
 
-/** `git add -A && git commit` in `worktree` (serialized per repo). No-op when there is nothing to commit. */
-export async function commitAll(worktree: string, message: string): Promise<CommitResult> {
+/** Pathspecs for `git add -A -- <these>`: everything except the given repo-relative paths. */
+export function excludePathspecs(exclude: readonly string[]): string[] {
+  return ['.', ...exclude.map((path) => `:(exclude,top,literal)${path}`)];
+}
+
+/**
+ * `git add -A && git commit` in `worktree` (serialized per repo), leaving `exclude` (files Legion
+ * provisioned, not the agent's work) unstaged. No-op when there is nothing to commit.
+ */
+export async function commitAll(
+  worktree: string,
+  message: string,
+  exclude: readonly string[] = [],
+): Promise<CommitResult> {
   return withRepoLock(worktree, async () => {
-    await git(worktree, ['add', '-A']);
+    await git(worktree, ['add', '-A', '--', ...excludePathspecs(exclude)]);
+    const staged = await git(worktree, ['diff', '--cached', '--quiet'], { okExitCodes: [0, 1] });
+    if (staged.exitCode === 0) return { committed: false, sha: await headSha(worktree) };
+    const id = await identityArgs(worktree);
+    await git(worktree, [...id, ...NO_HOOKS, 'commit', '--no-verify', '--no-gpg-sign', '-F', '-'], { input: message });
+    return { committed: true, sha: await headSha(worktree) };
+  });
+}
+
+/** Stage exactly `paths` and commit them. No-op when they have no changes. */
+export async function commitPaths(worktree: string, paths: readonly string[], message: string): Promise<CommitResult> {
+  return withRepoLock(worktree, async () => {
+    if (paths.length > 0) await git(worktree, ['add', '-A', '--', ...paths]);
     const staged = await git(worktree, ['diff', '--cached', '--quiet'], { okExitCodes: [0, 1] });
     if (staged.exitCode === 0) return { committed: false, sha: await headSha(worktree) };
     const id = await identityArgs(worktree);

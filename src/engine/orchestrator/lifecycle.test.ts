@@ -3,7 +3,7 @@
  * create → clarify → plan → approve → coders → verify → cross-engine review → merge queue → finalize →
  * PR. Also: conflicts resolved by the resolver, and an engine restart mid-run.
  */
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { InboxItem, Run, Task } from '@shared/domain';
 import type { ServerEventOf } from '@shared/events';
@@ -367,6 +367,113 @@ describe('run lifecycle (fake engines, real git)', () => {
     // The scope check flagged the undeclared write for the reviewer.
     const reviewerPrompt = harness.codex.sessions.find((s) => s.opts.role === 'reviewer')?.opts.prompt ?? '';
     expect(reviewerPrompt).toContain('Out of scope: `shared.txt`');
+  });
+
+  it('parks the merge queue while the resolver engine is rate limited and wakes at the reset', async () => {
+    let resolverStarts = 0;
+    const script: Script = (ctx) => {
+      if (ctx.opts.role === 'planner') return [planOutput([node('T1'), node('T2')])];
+      if (ctx.opts.role === 'reviewer' || ctx.opts.role === 'finalizer') return [approve(ctx)];
+      if (ctx.opts.role === 'resolver') {
+        resolverStarts++;
+        return [{ kind: 'write_file', path: 'shared.txt', content: 'both\n' }, report('Resolve')];
+      }
+      const id = taskIdIn(ctx.message);
+      return [
+        { kind: 'write_file', path: `src/${id.toLowerCase()}.txt`, content: `${id}\n` },
+        { kind: 'write_file', path: 'shared.txt', content: `from ${id}\n` },
+        report(`Implement ${id}`),
+      ];
+    };
+    h = await startHarness({ script, files: { 'shared.txt': 'base\n' } });
+    const harness = h;
+    const o = harness.engine.orchestrator;
+    const flows = o.flows;
+    if (!flows) throw new Error('no flows');
+    let queueStarts = 0;
+    o.flows = {
+      ...flows,
+      mergeQueue: (id: string) => {
+        queueStarts++;
+        return flows.mergeQueue(id);
+      },
+    };
+    const run = await createRun(harness, true);
+    await approveLatestPlan(harness, run.id);
+    await harness.waitFor(() => tasksOf(harness, run.id).some((t) => t.status === 'merged'), 'first merge', 30_000);
+    const limitMs = 1_500;
+    o.registerRateLimit('claude', Date.now() + limitMs);
+    const waiting = tasksOf(harness, run.id).find((t) => t.status !== 'merged') as Task;
+    await harness.waitFor(() => o.mergeParked.has(run.id), 'merge queue parked', 30_000);
+    const parkedAt = queueStarts;
+    const head = await harness.repo.git('rev-parse', waiting.branch as string);
+    await new Promise((resolve) => setTimeout(resolve, 600));
+    // No restarts, no git merge into the task branch, no resolver while parked.
+    expect(queueStarts).toBe(parkedAt);
+    expect(await harness.repo.git('rev-parse', waiting.branch as string)).toBe(head);
+    expect(existsSync(join(waiting.worktreePath as string, '.git'))).toBe(true);
+    expect(resolverStarts).toBe(0);
+    // The wake timer restarts the queue once the limit resets.
+    await harness.waitFor(() => runOf(harness, run.id).status === 'pr_ready', 'pr_ready after the reset', 30_000);
+    expect(resolverStarts).toBe(1);
+  });
+
+  describe('lockfile conflicts', () => {
+    // A fake package manager: the lockfile is the sorted list of declared deps (deps/*.txt).
+    const files = (lockfileCommand: string) => ({
+      'deps/base.txt': 'base\n',
+      'pnpm-lock.yaml': 'base\n',
+      'bin/fakepm': 'set -e\n[ "$1" = lock ] || exit 64\ncat deps/*.txt | sort > pnpm-lock.yaml\n',
+      'legion.json': JSON.stringify({ installCommand: 'true', lockfileCommand }),
+    });
+    const script: Script = (ctx) => {
+      if (ctx.opts.role === 'planner') {
+        // Lockfiles are not declared (always in scope with an install command), so the tasks run in parallel.
+        const writes = (id: string) => [`src/${id}.txt`, `deps/${id}.txt`];
+        return [planOutput([node('T1', { writes: writes('t1') }), node('T2', { writes: writes('t2') })])];
+      }
+      if (ctx.opts.role === 'reviewer' || ctx.opts.role === 'finalizer') return [approve(ctx)];
+      const id = taskIdIn(ctx.message).toLowerCase();
+      return [
+        { kind: 'write_file', path: `src/${id}.txt`, content: `${id}\n` },
+        { kind: 'write_file', path: `deps/${id}.txt`, content: `${id}\n` },
+        // Each task "installs" its dependency: the lockfiles conflict.
+        { kind: 'write_file', path: 'pnpm-lock.yaml', content: `base\n${id}\n` },
+        report(`Implement ${id}`),
+      ];
+    };
+
+    it('regenerates the lockfile with the non-frozen command and commits it', async () => {
+      h = await startHarness({ script, files: files('sh bin/fakepm lock') });
+      const harness = h;
+      const run = await createRun(harness, true);
+      await approveLatestPlan(harness, run.id);
+      await harness.waitFor(() => runOf(harness, run.id).status === 'pr_ready', 'pr_ready', 30_000);
+      const snapshot = await harness.client.call('runs.get', { runId: run.id });
+      expect(snapshot.attempts.filter((a) => a.role === 'resolver')).toHaveLength(0);
+      const integration = runOf(harness, run.id).integrationBranch as string;
+      expect(await harness.repo.git('show', `${integration}:pnpm-lock.yaml`)).toBe('base\nt1\nt2');
+      const setup = harness.engine.store.listVerifications(run.id).filter((v) => v.command === 'sh bin/fakepm lock');
+      expect(setup.map((v) => v.exitCode)).toEqual([0]);
+    });
+
+    it('escalates when the lockfile cannot be regenerated', async () => {
+      h = await startHarness({ script, files: files('sh bin/fakepm broken') });
+      const harness = h;
+      const run = await createRun(harness, true);
+      await approveLatestPlan(harness, run.id);
+      const item = await harness.waitFor(
+        () => openInbox(harness, run.id).find((i) => i.kind === 'escalation'),
+        'lockfile escalation',
+        30_000,
+      );
+      expect(item.kind === 'escalation' && item.payload.summary).toMatch(/regenerating the lockfile .* exited with 64/);
+      expect(
+        tasksOf(harness, run.id)
+          .map((t) => t.status)
+          .sort(),
+      ).toEqual(['awaiting_human', 'merged']);
+    });
   });
 
   it('recovers after an engine restart mid-run and completes', async () => {

@@ -5,20 +5,24 @@
  * take integration's side of lockfiles (then re-run the install command), resolver session for the rest,
  * `finishMerge`; after `maxResolverAttempts` failures → `conflict` inbox item.
  */
+import { join } from 'node:path';
 import type { Run, Task, TaskNode } from '@shared/domain';
 import { taskReportJsonSchema } from '@shared/schemas';
 import {
   abortMerge,
   changedFiles,
-  commitAll,
+  cleanWorktree,
+  commitPaths,
   finishMerge,
   forecastMerge,
+  gitText,
   headSha,
   installCommand,
   integrationBranchName,
   isLockfilePath,
   isMergeInProgress,
   type LegionConfig,
+  lockfileCommand,
   mergeIntoTaskBranch,
   resetIntegration,
   resolveLockfileConflicts,
@@ -35,11 +39,12 @@ import {
 } from './core';
 import type { AgentRun } from './live-session';
 import { patchTaskMeta, taskMeta } from './meta';
-import { AgentFailure, Closed, type Orchestrator } from './orchestrator';
+import { AgentFailure, Closed, type Orchestrator, type ParkReason } from './orchestrator';
 import { coderTurn } from './tasks';
 import {
   ensureIntegrationWorktree,
   ensureWorktree,
+  integrationKeep,
   provisionIntegration,
   runVerification,
   verifyCommands,
@@ -79,6 +84,7 @@ export async function mergeQueue(o: Orchestrator, runId: string): Promise<void> 
         patch: {},
         escalation: 'other',
         reason: `merging failed: ${(error as Error).message}`,
+        resume: 'merge',
       });
       outcome = 'done';
     }
@@ -94,6 +100,9 @@ async function mergeTask(o: Orchestrator, run: Run, task: Task): Promise<Outcome
   const branch = task.branch;
   if (!branch) throw new Error(`task ${task.nodeId} has no branch`);
   const message = `${node.id}: ${node.title}`;
+  const keep = integrationKeep(o, run);
+  // A merge left pending by an earlier failure must be settled before anything is merged on top of it.
+  await settlePendingMerges(o, run, integration);
   for (;;) {
     o.assertOpen();
     if (o.store.requireRun(run.id).status !== 'executing') return 'park';
@@ -107,7 +116,8 @@ async function mergeTask(o: Orchestrator, run: Run, task: Task): Promise<Outcome
     const merge = o.store.insertMerge({ runId: run.id, taskId: task.id, preSha });
     let result: Awaited<ReturnType<typeof squashMergeIntoIntegration>>;
     try {
-      result = await squashMergeIntoIntegration(integration, branch, message);
+      // Legion owns the integration worktree: leftovers of its own setup/verify commands are discarded.
+      result = await squashMergeIntoIntegration(integration, branch, message, { cleanFirst: keep });
     } catch (error) {
       o.store.finishMerge(merge.id, 'conflict', { error: (error as Error).message });
       throw error;
@@ -119,22 +129,41 @@ async function mergeTask(o: Orchestrator, run: Run, task: Task): Promise<Outcome
       return outcome;
     }
 
+    if (!result.empty) o.store.recordMergeCommit(merge.id, result.mergedSha);
+    // An empty re-merge after an unfinished earlier merge of this task means its content may already be in
+    // integration without ever having passed verification: verify it anyway.
+    const earlier = o.store
+      .listMerges(run.id)
+      .some((m) => m.taskId === task.id && m.id !== merge.id && m.status !== 'conflict');
     let failed: Awaited<ReturnType<typeof runVerification>>['results'] = [];
-    if (!result.empty) {
-      const changed = touchedPaths(await changedFiles(integration, preSha, result.mergedSha));
-      const install = changed.some(isLockfilePath) ? await installCommand(integration, config) : null;
-      const commands = [...(install ? [install] : []), ...verifyCommands(node, config)];
-      const outcome = await runVerification(o, {
-        run,
-        task,
-        attemptId: null,
-        phase: 'post_merge',
-        commands,
-        cwd: integration,
+    try {
+      if (!result.empty || earlier) {
+        const changed = touchedPaths(await changedFiles(integration, preSha, result.mergedSha));
+        const install = changed.some(isLockfilePath) ? await installCommand(integration, config) : null;
+        const commands = [...(install ? [install] : []), ...verifyCommands(node, config)];
+        const outcome = await runVerification(o, {
+          run,
+          task,
+          attemptId: null,
+          phase: 'post_merge',
+          commands,
+          cwd: integration,
+        });
+        failed = outcome.ok ? [] : outcome.results.filter((r) => r.exitCode !== 0);
+        // Whatever the verify commands wrote must not wedge the next merge.
+        if (failed.length === 0) await cleanWorktree(integration, keep);
+      }
+      o.assertOpen();
+    } catch (error) {
+      // Shutdown: the row stays pending and recovery rolls it back. Anything else: undo the squash now and
+      // close the row, so nothing unverified stays on integration while the run goes on.
+      if (o.closed || error instanceof Closed) throw error;
+      await resetIntegration(integration, preSha, keep);
+      o.store.finishMerge(merge.id, 'reverted', {
+        error: `merge aborted (${(error as Error).message}); integration reset to the pre-merge sha`,
       });
-      failed = outcome.ok ? [] : outcome.results.filter((r) => r.exitCode !== 0);
+      throw error;
     }
-    o.assertOpen();
     const current = o.store.requireTask(task.id);
     const meta = taskMeta(o.store, task.id);
     if (failed.length === 0) {
@@ -147,14 +176,17 @@ async function mergeTask(o: Orchestrator, run: Run, task: Task): Promise<Outcome
       });
       return 'done';
     }
-    o.store.finishMerge(merge.id, 'verify_failed', {
-      postSha: result.mergedSha,
-      error: `post-merge verification failed: ${failed.map((f) => f.command).join(', ')}`,
+    // The row stays pending until integration is back at preSha: a crash in between is rolled back by recovery.
+    await resetIntegration(integration, preSha, keep);
+    o.store.transaction(() => {
+      o.store.finishMerge(merge.id, 'verify_failed', {
+        postSha: result.mergedSha,
+        error: `post-merge verification failed: ${failed.map((f) => f.command).join(', ')}`,
+      });
+      o.store.revertMerge(merge.id, 'post-merge verification failed; integration reset to the pre-merge sha');
     });
-    await resetIntegration(integration, preSha);
-    o.store.revertMerge(merge.id, 'post-merge verification failed; integration reset to the pre-merge sha');
     const decision = decideAfterMerge(current, 'verify_failed', meta.resolverAttempts, o.limits());
-    if (decision.action === 'fix') {
+    if (decision.action === 'fix' || decision.resume === 'fix') {
       patchTaskMeta(o.store, task.id, {
         fix: {
           findings: [],
@@ -170,6 +202,38 @@ async function mergeTask(o: Orchestrator, run: Run, task: Task): Promise<Outcome
     });
     return 'done';
   }
+}
+
+/**
+ * Close the run's `pending` merge rows (a crash, or a failed rollback, cut them off). Only the newest one can
+ * still be integration's HEAD: it is rolled back to its pre-merge sha when HEAD is its squash commit (the
+ * recorded `postSha`, or a commit whose parent is `preSha`) and no later merge was completed on top of it.
+ * Everything else is closed without touching git, so a later merge is never reset away.
+ */
+export async function settlePendingMerges(o: Orchestrator, run: Run, integration: string): Promise<void> {
+  const merges = o.store.listMerges(run.id);
+  const pending = merges.filter((m) => m.status === 'pending');
+  const newest = pending.at(-1);
+  if (!newest) return;
+  for (const merge of pending.slice(0, -1)) {
+    o.store.finishMerge(merge.id, 'reverted', { error: 'superseded by a later merge; not rolled back' });
+  }
+  const later = merges.slice(merges.indexOf(newest) + 1).some((m) => m.status === 'merged');
+  const head = await headSha(integration);
+  let ours = false;
+  if (!later && head !== newest.preSha) {
+    ours = newest.postSha
+      ? head === newest.postSha
+      : (await gitText(integration, ['rev-parse', '--verify', '-q', `${head}^1`]).catch(() => '')) === newest.preSha;
+  }
+  if (ours) await resetIntegration(integration, newest.preSha, integrationKeep(o, run));
+  o.store.finishMerge(newest.id, 'reverted', {
+    error: ours
+      ? 'the merge did not finish; integration rolled back to the pre-merge sha'
+      : head === newest.preSha
+        ? 'the merge did not finish; nothing was committed'
+        : 'the merge did not finish; integration moved on, not rolled back',
+  });
 }
 
 /** Already merged nodes whose writes can touch the conflicted files (context for the resolver). */
@@ -220,19 +284,26 @@ async function resolveConflicts(
       });
       return 'done';
     }
+    // A resolver session will be needed (the forecast has non-lockfile conflicts) but cannot start now:
+    // park before touching git, and let the tick wake the queue when the gate opens.
+    const engine = coderEngineFor(node, task);
+    const forecastFiles = await conflictFilesOf(run, task);
+    if (forecastFiles.some((f) => !isLockfilePath(f))) {
+      const gate = o.gate(run.id, engine);
+      if (gate) return parkQueue(o, run.id, gate);
+    }
     const path = task.worktreePath ?? o.taskPath(run, taskId);
     if (task.branch) await ensureWorktree(run.repoPath, path, task.branch, null);
     if (await isMergeInProgress(path)) await abortMerge(path);
-    const merged = await mergeIntoTaskBranch(path, integrationRef);
+    const merged = await mergeIntoTaskBranch(path, integrationRef, meta.provisioned);
     if (merged.status !== 'conflict') return 'resolved';
     const locks = await resolveLockfileConflicts(path, merged.files, 'theirs');
     let commitMessage = `Merge ${integrationRef} into ${node.id}`;
     if (locks.remaining.length > 0) {
-      const engine = coderEngineFor(node, task);
       const gate = o.gate(run.id, engine);
       if (gate) {
         await abortMerge(path);
-        return 'park';
+        return parkQueue(o, run.id, gate);
       }
       const attempt = meta.resolverAttempts + 1;
       patchTaskMeta(o.store, taskId, { resolverAttempts: attempt });
@@ -278,14 +349,14 @@ async function resolveConflicts(
         if (failure.kind === 'rate_limited') {
           patchTaskMeta(o.store, taskId, { resolverAttempts: meta.resolverAttempts });
           if (o.limitedUntil(engine) === null) o.registerRateLimit(engine, null);
-          return 'park';
+          return parkQueue(o, run.id, { kind: 'rate', engine });
         }
         patchTaskMeta(o.store, taskId, { resolverFailure: failure.message });
         continue;
       }
     }
     try {
-      await finishMerge(path, commitMessage);
+      await finishMerge(path, commitMessage, meta.provisioned);
     } catch (error) {
       await abortMerge(path);
       const message = (error as Error).message;
@@ -297,14 +368,56 @@ async function resolveConflicts(
       continue;
     }
     if (locks.resolved.length > 0) {
-      const install = await installCommand(path, config);
-      if (install) {
-        await runVerification(o, { run, task, attemptId: null, phase: 'setup', commands: [install], cwd: path });
-        await commitAll(path, `Regenerate lockfile after merging ${integrationRef}`);
+      const failure = await regenerateLockfiles(o, run, task, path, locks.resolved, config, integrationRef);
+      if (failure) {
+        o.applyDecision(taskId, {
+          action: 'escalate',
+          path: taskStatusPath(task.status, 'awaiting_human') ?? [],
+          patch: {},
+          escalation: 'other',
+          resume: 'merge',
+          reason: `${node.id}: regenerating the lockfile after merging ${integrationRef} failed (${failure})`,
+        });
+        return 'done';
       }
     }
     return 'resolved';
   }
+}
+
+/**
+ * After lockfile conflicts were resolved by taking integration's side: regenerate each lockfile from the
+ * merged manifest with a non-frozen command (`lockfileCommand`, per lockfile directory) and commit it.
+ * Returns why it failed (non-zero exit), or null.
+ */
+async function regenerateLockfiles(
+  o: Orchestrator,
+  run: Run,
+  task: Task,
+  worktree: string,
+  lockfiles: readonly string[],
+  config: LegionConfig | null,
+  integrationRef: string,
+): Promise<string | null> {
+  const dirs = [...new Set(lockfiles.map((f) => (f.includes('/') ? f.slice(0, f.lastIndexOf('/')) : '')))];
+  for (const dir of dirs) {
+    const cwd = dir ? join(worktree, dir) : worktree;
+    const command = await lockfileCommand(cwd, config);
+    if (!command) continue;
+    const outcome = await runVerification(o, { run, task, attemptId: null, phase: 'setup', commands: [command], cwd });
+    if (!outcome.ok) {
+      const result = outcome.results.at(-1);
+      return `\`${command}\` exited with ${result?.exitCode ?? 'no exit code'}`;
+    }
+  }
+  await commitPaths(worktree, lockfiles, `Regenerate lockfile after merging ${integrationRef}`);
+  return null;
+}
+
+/** Stop the queue until the gate opens; `tickRun` restarts it (and arms a wake timer for a rate limit). */
+function parkQueue(o: Orchestrator, runId: string, reason: ParkReason): 'park' {
+  o.mergeParked.set(runId, reason);
+  return 'park';
 }
 
 async function conflictFilesOf(run: Run, task: Task): Promise<string[]> {

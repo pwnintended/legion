@@ -10,6 +10,7 @@
 import {
   canTransition,
   type InboxPayload,
+  type ResumeStep,
   type ReviewFinding,
   type Settings,
   TASK_TRANSITIONS,
@@ -39,6 +40,8 @@ export type DecisionAction =
   | 'skip'
   | 'cancel';
 
+export type { ResumeStep };
+
 export interface TaskDecision {
   readonly action: DecisionAction;
   readonly path: readonly TaskStatus[];
@@ -46,14 +49,23 @@ export interface TaskDecision {
   /** Set when the decision should raise an `escalation` inbox item. */
   readonly escalation: EscalationReason | null;
   readonly reason: string;
+  /** For decisions that park the task in `awaiting_human`: the step a human retry resumes. */
+  readonly resume?: ResumeStep;
 }
 
 const decision = (
   action: DecisionAction,
   path: readonly TaskStatus[],
   reason: string,
-  extra: Partial<Pick<TaskDecision, 'patch' | 'escalation'>> = {},
-): TaskDecision => ({ action, path, reason, patch: extra.patch ?? {}, escalation: extra.escalation ?? null });
+  extra: Partial<Pick<TaskDecision, 'patch' | 'escalation' | 'resume'>> = {},
+): TaskDecision => ({
+  action,
+  path,
+  reason,
+  patch: extra.patch ?? {},
+  escalation: extra.escalation ?? null,
+  ...(extra.resume ? { resume: extra.resume } : {}),
+});
 
 /** Shortest legal status path (BFS over TASK_TRANSITIONS, preferring `via` as the first hop). */
 export function taskStatusPath(from: TaskStatus, to: TaskStatus, via: readonly TaskStatus[] = []): TaskStatus[] | null {
@@ -132,7 +144,7 @@ function enterFixRound(task: TaskState, limits: Limits, reason: string, exhauste
     'escalate',
     pathOrThrow(task.status, 'awaiting_human'),
     `${reason}; ${limits.maxFixRounds} fix round(s) used`,
-    { escalation: exhausted },
+    { escalation: exhausted, resume: 'fix' },
   );
 }
 
@@ -148,6 +160,7 @@ export function decideAfterCoderTurn(task: TaskState, outcome: CoderTurnOutcome,
   if (outcome.report?.status === 'blocked') {
     return decision('escalate', pathOrThrow(task.status, 'awaiting_human'), 'the agent reported it is blocked', {
       escalation: 'other',
+      resume: 'fix',
     });
   }
   if (outcome.report?.status === 'done' && (outcome.changedFiles > 0 || task.status === 'fixing')) {
@@ -173,6 +186,8 @@ export interface ReviewContext {
   readonly highRiskGlobs?: readonly string[];
   /** Blocking findings of the previous review round, to detect oscillation. */
   readonly previousFindings?: readonly ReviewFinding[];
+  /** Changed agent/CI/hook config or package scripts (`core/sensitive.ts`): always a human gate. */
+  readonly sensitiveChanges?: readonly string[];
 }
 
 /** After the reviewer's structured output was validated. */
@@ -185,14 +200,21 @@ export function decideAfterReview(
   if (review.verdict === 'reject_replan') {
     return decision('escalate', pathOrThrow(task.status, 'awaiting_human'), 'the reviewer asks for a re-plan', {
       escalation: 'review_rejected',
+      resume: 'fix',
     });
   }
   if (reviewApproves(review)) {
-    const gate = requiresHumanGate(context.node, context.highRiskGlobs);
+    const sensitive = context.sensitiveChanges ?? [];
+    const gate = requiresHumanGate(context.node, context.highRiskGlobs) || sensitive.length > 0;
     return decision(
       'approve',
       gate ? ['approved', 'awaiting_human'] : ['approved'],
-      gate ? 'approved; high-risk task waits for a human before merging' : 'approved',
+      sensitive.length > 0
+        ? `approved; changes ${sensitive.join(', ')} (agent/CI/hook config or scripts), so a human approves the merge`
+        : gate
+          ? 'approved; high-risk task waits for a human before merging'
+          : 'approved',
+      gate ? { resume: 'merge' } : {},
     );
   }
   const blocking = blockingFindings(review);
@@ -202,9 +224,7 @@ export function decideAfterReview(
       'escalate',
       pathOrThrow(task.status, 'awaiting_human'),
       'the same findings came back after a fix round',
-      {
-        escalation: 'fix_rounds_exhausted',
-      },
+      { escalation: 'fix_rounds_exhausted', resume: 'fix' },
     );
   }
   const unmet = review.criteria.filter((c) => c.status !== 'met').length;
@@ -239,6 +259,7 @@ export function decideAfterMerge(
     }
     return decision('escalate', pathOrThrow(task.status, 'awaiting_human'), 'merge conflict could not be resolved', {
       escalation: 'other',
+      resume: 'merge',
     });
   }
   return enterFixRound(task, limits, 'post-merge verification failed', 'verify_failed');
@@ -277,6 +298,12 @@ export function decideAfterFailure(
       `engine auth: ${failure.message}`,
       {
         escalation: 'other',
+        // Keep the work in the worktree: a retry runs the coder (or fixer) again where it stopped.
+        ...(task.status === 'running'
+          ? { resume: 'code' as const }
+          : task.status === 'fixing'
+            ? { resume: 'fix' as const }
+            : {}),
       },
     );
   }
@@ -298,7 +325,7 @@ export function decideAfterFailure(
   );
 }
 
-export type EscalationAction = InboxPayload<'escalation'>['actions'][number];
+export type EscalationAction = InboxPayload<'escalation'>['actions'][number] | 'restart';
 
 /**
  * Apply a human's escalation answer to a failed / awaiting_human task. Retry and edit (after the caller
@@ -309,6 +336,7 @@ export function decideEscalation(task: TaskState, action: EscalationAction): Tas
   switch (action) {
     case 'retry':
     case 'edit':
+    case 'restart':
       return decision('retry', pathOrThrow(task.status, 'queued', ['failed']), `human chose ${action}`, {
         patch: { attemptCount: 0, fixRounds: 0 },
       });

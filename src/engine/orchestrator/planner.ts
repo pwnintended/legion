@@ -26,7 +26,7 @@ import {
   planOutputJsonSchema,
 } from '@shared/schemas';
 import type { z } from 'zod';
-import { disableAutoGc, integrationBranchName, resolveSha, toplevel } from '../git';
+import { integrationBranchName, resolveSha, toplevel } from '../git';
 import { inspectRepo } from '../rpc/repo-inspect';
 import {
   type AgentPrompt,
@@ -43,6 +43,7 @@ import {
 import type { AgentRun } from './live-session';
 import { patchRunMeta, runMeta } from './meta';
 import { AgentFailure, Closed, type Orchestrator } from './orchestrator';
+import { acquireRepo } from './repo-gc';
 import { ensureIntegrationWorktree, provisionIntegration } from './worktrees';
 
 /** Validation retries inside the planner session before the plan is stored as is (with its errors). */
@@ -407,7 +408,7 @@ export async function approvePlan(o: Orchestrator, runId: string, planId: string
   } catch (error) {
     throw new RpcError('failed_precondition', `could not create the integration worktree: ${(error as Error).message}`);
   }
-  const gcAuto = await disableAutoGc(run.repoPath).catch(() => null);
+  await acquireRepo(o, run);
   const next = o.store.transaction(() => {
     latestPlanOrConflict(o, o.store.requireRun(runId), planId);
     o.store.approvePlan(plan.id);
@@ -418,7 +419,6 @@ export async function approvePlan(o: Orchestrator, runId: string, planId: string
         o.store.resolveInboxItem(item.id, { kind: 'plan_signoff', approved: true, feedback: null });
       }
     }
-    patchRunMeta(o.store, runId, { gcAuto });
     return o.store.transitionRun(runId, 'awaiting_approval', 'executing');
   });
   o.background(`provision integration ${runId}`, async () =>

@@ -17,6 +17,8 @@ export const LegionConfigSchema = z.object({
   symlink: z.array(z.string().min(1)).optional(),
   highRiskGlobs: z.array(z.string().min(1)).optional(),
   installCommand: z.string().min(1).optional(),
+  /** Regenerates the lockfile after a lockfile conflict (default: per package manager, non-frozen). */
+  lockfileCommand: z.string().min(1).optional(),
 });
 export type LegionConfig = z.infer<typeof LegionConfigSchema>;
 
@@ -67,6 +69,24 @@ const INSTALL_COMMANDS: Record<PackageManager, string> = {
   yarn: 'yarn install --frozen-lockfile',
   bun: 'bun install --frozen-lockfile',
 };
+
+/**
+ * Rewrite the lockfile from the manifest without the frozen check (the install commands above refuse
+ * exactly the out-of-sync lockfile a conflict resolution leaves behind).
+ */
+const LOCKFILE_COMMANDS: Record<PackageManager, string> = {
+  pnpm: 'pnpm install --lockfile-only',
+  npm: 'npm install --package-lock-only',
+  yarn: 'yarn install',
+  bun: 'bun install --lockfile-only',
+};
+
+/** `legion.json` `lockfileCommand` if set, else the regenerate command for the detected lockfile, else null. */
+export async function lockfileCommand(dir: string, config?: LegionConfig | null): Promise<string | null> {
+  if (config?.lockfileCommand) return config.lockfileCommand;
+  const lock = await detectLockfile(dir);
+  return lock ? LOCKFILE_COMMANDS[lock.manager] : null;
+}
 
 export function isLockfilePath(path: string): boolean {
   const base = path.split('/').at(-1) ?? path;
