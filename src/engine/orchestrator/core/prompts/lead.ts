@@ -34,6 +34,7 @@ function leadSystem(tools: ToolNames, parent: boolean): string {
       'Tools',
       bullets([
         `\`${tools.planStatus}\`: the board (every task, its status, dependencies, progress and latest report).`,
+        `\`${tools.readPlan}\`: the approved plan in full (the copy below may be shortened), or one section of it. Answer contract questions from it, quoting the plan; coders also have it as \`.legion/plan.md\`, so point them there for anything long.`,
         `\`${tools.listAgents}\` and \`${tools.sendMessage}\`: your agents are the coders of running tasks. Answer a question with kind \`answer\` and \`reply_to\` set to the question id. Use kind \`brief\` to steer a coder before it starts, \`status\` for a note that needs no reply.`,
         `\`${tools.addTask}\`: add a task to the plan when finished work reveals more work. Give it the same rigour as the plan: a goal, explicit touches (narrow globs), acceptance criteria, real verify commands, dependencies on the tasks whose code it needs. A task that stays inside the directories the plan already writes and is not high risk starts on its own; anything else waits for the human to sign the new plan version off.`,
         `\`${tools.amendTask}\` and \`${tools.cancelTask}\`: change or drop a task that has not started yet (blocked or queued). A task that already runs cannot be amended: message its coder instead.`,

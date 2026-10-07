@@ -55,6 +55,10 @@ export function peerLabel(peer: Pick<Attempt, 'id' | 'role'>, nodeId: string | n
 export const QUEUED_MESSAGES_NOTE =
   'These arrived while you were not running. Act on them as part of your work; answer a question with `send_message` (kind `answer`, `reply_to` = its id).';
 
+/** The note above a message passed into a working agent's running turn. */
+export const LIVE_MESSAGE_NOTE =
+  'This arrived while you work. Take it into account from now on (it overrides your brief where they conflict); answer a question with `send_message` (kind `answer`, `reply_to` = its id).';
+
 /** The note above a message passed into the planner's running turn (it has no mailbox tools). */
 export const PLANNER_STEER_NOTE =
   "This arrived while you work; it carries the human's wishes. Take it into account in the plan you are producing (it overrides the issue where they conflict). You cannot reply: where it leaves something open, decide and say so in the plan.";

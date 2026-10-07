@@ -26,6 +26,8 @@ import type {
 import { isTerminal, RUN_TRANSITIONS, TASK_TRANSITIONS } from '@shared/domain';
 import {
   type AgentEngine,
+  type Approvals,
+  COORDINATOR_ROLES,
   type JsonSchema,
   permissionProfileFor,
   type SessionAttachment,
@@ -63,12 +65,14 @@ import {
   type Failure,
   fallbackReviewModel,
   type IssueInput,
+  LIVE_MESSAGE_NOTE,
   type Limits,
   messageLine,
   messageRefusal,
   PLANNER_STEER_NOTE,
   peerLabel,
   planDispatch,
+  planDocument,
   type RateLimit,
   type RepoInput,
   type ResumeStep,
@@ -204,6 +208,7 @@ export const CLAUDE_PROMPT_TOOLS: ToolNames = {
   listAgents: CLAUDE_TOOL_NAMES.listAgents,
   sendMessage: CLAUDE_TOOL_NAMES.sendMessage,
   planStatus: CLAUDE_TOOL_NAMES.planStatus,
+  readPlan: CLAUDE_TOOL_NAMES.readPlan,
   addTask: CLAUDE_TOOL_NAMES.addTask,
   amendTask: CLAUDE_TOOL_NAMES.amendTask,
   cancelTask: CLAUDE_TOOL_NAMES.cancelTask,
@@ -279,6 +284,7 @@ export class Orchestrator {
     this.offEvents = this.store.onEvents((events) => {
       let inboxChanged = false;
       for (const event of events) {
+        if (event.type === 'settings.updated') this.applyApprovals(event.settings.permissions.approvals);
         // The assistant hears about status changes and new inbox items (§8.6).
         if (event.type === 'run.updated' && event.from !== null) this.wakeAssistant(event.run.id);
         if (event.type !== 'inbox.updated') continue;
@@ -518,7 +524,11 @@ export class Orchestrator {
       systemPrompt: params.prompt.systemPrompt,
       model: params.model,
       effort: params.effort,
-      permission: permissionProfileFor(params.role, params.allowedCommands ?? []),
+      permission: permissionProfileFor(
+        params.role,
+        params.allowedCommands ?? [],
+        this.settings().permissions.approvals,
+      ),
       // Reviewers, the finalizer and research agents read worktrees that coders wrote: never trust their config.
       untrustedWorkdir: UNTRUSTED_WORKDIR_ROLES.has(params.role),
       outputSchema: params.outputSchema,
@@ -600,44 +610,45 @@ export class Orchestrator {
   }
 
   /**
-   * Hand `message` to a blocked wait of its recipient, if any; a drafting planner reads it mid-turn (like a
-   * human's steer); otherwise it stays queued (a lead or assistant is woken).
+   * Hand `message` over: to a blocked wait of its recipient that it answers; else a lead or assistant is
+   * woken (they read their mailbox between turns); else a working agent gets it in its running turn, like a
+   * human steer. Otherwise it stays queued for the recipient's next prompt (`openSession`).
    */
   private deliverMessage(message: AgentMessage): void {
     const waiting = this.messageWaiters.get(message.toAttemptId);
-    if (!waiting) {
-      if (this.store.getAttempt(message.toAttemptId)?.role === 'planner') {
-        this.steerPlanner(message);
-        return;
-      }
-      const meta = runMeta(this.store, message.runId);
-      if (meta.leadAttemptId === message.toAttemptId) this.wakeLead(message.runId);
-      if (meta.assistantAttemptId === message.toAttemptId) this.wakeAssistant(message.runId);
+    const index = waiting?.findIndex((w) => w.replyTo === null || w.replyTo === message.replyTo) ?? -1;
+    if (waiting && index >= 0) {
+      const [waiter] = waiting.splice(index, 1);
+      if (waiting.length === 0) this.messageWaiters.delete(message.toAttemptId);
+      const [delivered] = this.store.markDelivered([message.id]);
+      waiter?.resolve(delivered ?? message);
       return;
     }
-    const index = waiting.findIndex((w) => w.replyTo === null || w.replyTo === message.replyTo);
-    if (index < 0) return;
-    const [waiter] = waiting.splice(index, 1);
-    if (waiting.length === 0) this.messageWaiters.delete(message.toAttemptId);
-    const [delivered] = this.store.markDelivered([message.id]);
-    waiter?.resolve(delivered ?? message);
+    const meta = runMeta(this.store, message.runId);
+    if (meta.leadAttemptId === message.toAttemptId) this.wakeLead(message.runId);
+    else if (meta.assistantAttemptId === message.toAttemptId) this.wakeAssistant(message.runId);
+    else {
+      const to = this.store.getAttempt(message.toAttemptId);
+      if (to && !COORDINATOR_ROLES.has(to.role)) this.steerLive(message, to);
+    }
   }
 
   /**
-   * The planner has no mailbox tools: a message for it goes into its live session as a queued user message
-   * (folded into the running turn after its current tool). With no planner running, it waits for the next
-   * planner step's prompt (`openSession`).
+   * Pass `message` into the recipient's running turn as a queued user message (the engine folds it in, or runs
+   * it right after and reports both as one turn). A planner is reached through whichever planner attempt is
+   * live, since the sender may know an earlier step's. Idle or gone: it stays queued.
    */
-  private steerPlanner(message: AgentMessage): void {
-    const live = [...this.live.values()].find(
-      (r) => r.attempt.runId === message.runId && r.attempt.role === 'planner' && !r.ended && !r.takenOver,
-    );
-    if (!live) return;
-    const text =
-      renderMessages([messageLine(message, this.agentName(message.fromAttemptId))], PLANNER_STEER_NOTE) ?? message.body;
+  private steerLive(message: AgentMessage, to: Attempt): void {
+    const live =
+      to.role === 'planner'
+        ? [...this.live.values()].find((r) => r.attempt.runId === message.runId && r.attempt.role === 'planner')
+        : this.live.get(to.id);
+    if (!live || live.ended || live.takenOver || !live.inTurn) return;
+    const note = to.role === 'planner' ? PLANNER_STEER_NOTE : LIVE_MESSAGE_NOTE;
+    const text = renderMessages([messageLine(message, this.agentName(message.fromAttemptId))], note) ?? message.body;
     this.store.markDelivered([message.id]);
-    live.session.send(text, 'next').catch((error: unknown) => {
-      this.log.warn(`run ${message.runId}: could not pass a message to the planner: ${(error as Error).message}`);
+    live.steer(text, 'next').catch((error: unknown) => {
+      this.log.warn(`run ${message.runId}: could not pass a message to ${to.role}: ${(error as Error).message}`);
     });
   }
 
@@ -882,6 +893,22 @@ export class Orchestrator {
       kind: 'escalation',
       payload: { reason, summary, actions, ...(resume ? { resume } : {}) },
     });
+  }
+
+  /** `settings.permissions.approvals` changed: switch the live sessions that would ask (coders, resolvers). */
+  private applyApprovals(approvals: Approvals): void {
+    for (const run of this.live.values()) {
+      const permission = run.opts.permission;
+      if (run.ended || permission.mode !== 'workspace_write' || permission.approvals === approvals) continue;
+      // Resumes (takeover hand-back) reuse the options: keep them in step.
+      run.opts.permission = { ...permission, approvals };
+      run.session.setApprovals?.(approvals).then(
+        (ok) => {
+          if (!ok) this.log.warn(`attempt ${run.attempt.id}: the engine kept its approvals (${approvals} refused)`);
+        },
+        () => undefined,
+      );
+    }
   }
 
   private notifyItem(item: InboxItem): void {
@@ -1434,6 +1461,11 @@ export class Orchestrator {
       });
     },
     planStatus: (binding) => this.leadTools().planStatus(binding),
+    readPlan: (binding, section) => {
+      const plan = this.approvedPlan(binding.runId);
+      if (!plan) throw new Error('the run has no approved plan yet');
+      return planDocument({ version: plan.version, markdown: plan.markdown, nodes: plan.dag.nodes }, section);
+    },
     addTask: (binding, node) => this.leadTools().addTask(binding, node),
     amendTask: (binding, nodeId, patch) => this.leadTools().amendTask(binding, nodeId, patch),
     cancelTask: (binding, nodeId, reason) => this.leadTools().cancelTask(binding, nodeId, reason),

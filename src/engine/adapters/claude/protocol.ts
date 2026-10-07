@@ -74,6 +74,11 @@ export function interruptRequest(requestId: string): StdinMessage {
   return controlRequest(requestId, { subtype: 'interrupt' });
 }
 
+/** Switch a live session's permission mode (`auto` is refused for models without auto mode). */
+export function setPermissionModeRequest(requestId: string, mode: 'auto' | 'acceptEdits'): StdinMessage {
+  return controlRequest(requestId, { subtype: 'set_permission_mode', mode });
+}
+
 export function controlSuccess(requestId: string, response: Record<string, unknown>): StdinMessage {
   return { type: 'control_response', response: { subtype: 'success', request_id: requestId, response } };
 }

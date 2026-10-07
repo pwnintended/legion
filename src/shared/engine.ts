@@ -58,7 +58,14 @@ export interface PermissionProfile {
   askHuman: boolean;
   /** Web search and fetch tools are allowed (research roles). Claude: `WebSearch`/`WebFetch`; Codex: `web_search`. */
   web: boolean;
+  /**
+   * Who answers what `workspace_write` would ask (`settings.permissions.approvals`): the human (`ask`), or the
+   * engine's own automatic review (`auto`: Claude's auto mode, Codex's auto-review approvals).
+   */
+  approvals: Approvals;
 }
+
+export type Approvals = 'ask' | 'auto';
 
 export const ROLE_PERMISSION_MODE: { readonly [R in Role]: PermissionProfile['mode'] } = {
   planner: 'read_only',
@@ -75,13 +82,18 @@ export const ROLE_PERMISSION_MODE: { readonly [R in Role]: PermissionProfile['mo
 /** Roles whose profile includes the web tools. */
 export const WEB_ROLES: ReadonlySet<Role> = new Set<Role>(['researcher', 'research_lead']);
 
-export function permissionProfileFor(role: Role, allowedCommands: readonly string[] = []): PermissionProfile {
+export function permissionProfileFor(
+  role: Role,
+  allowedCommands: readonly string[] = [],
+  approvals: Approvals = 'ask',
+): PermissionProfile {
   const mode = ROLE_PERMISSION_MODE[role];
   return {
     mode,
     allowedCommands: mode === 'workspace_write' ? allowedCommands : [],
     askHuman: mode === 'workspace_write',
     web: WEB_ROLES.has(role),
+    approvals: mode === 'workspace_write' ? approvals : 'ask',
   };
 }
 
@@ -161,6 +173,11 @@ export interface AgentSession {
   close(): Promise<void>;
   /** Answer an `approval_request` by its requestId. */
   respond(requestId: string, decision: ApprovalDecision): Promise<void>;
+  /**
+   * Switch a live `workspace_write` session's approvals. Resolves false when the engine refused (e.g. Claude's
+   * auto mode is not available for the model: the session keeps asking). Absent: only new sessions change.
+   */
+  setApprovals?(approvals: Approvals): Promise<boolean>;
 }
 
 export interface AgentEngine {

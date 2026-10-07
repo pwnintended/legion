@@ -28,6 +28,7 @@ export interface ToolNames {
   readonly listAgents: string;
   readonly sendMessage: string;
   readonly planStatus: string;
+  readonly readPlan: string;
   readonly addTask: string;
   readonly amendTask: string;
   readonly cancelTask: string;
@@ -45,6 +46,7 @@ export const DEFAULT_TOOL_NAMES: ToolNames = {
   listAgents: 'list_agents',
   sendMessage: 'send_message',
   planStatus: 'plan_status',
+  readPlan: 'read_plan',
   addTask: 'add_task',
   amendTask: 'amend_task',
   cancelTask: 'cancel_task',
@@ -132,6 +134,8 @@ export interface CoderPromptInput {
   readonly node: TaskNode;
   /** Plan summary (the plan markdown or its first section). */
   readonly planSummary: string;
+  /** Worktree path of the whole plan (`PLAN_FILE`), when Legion wrote it. */
+  readonly planFile?: string | null;
   readonly upstream: readonly UpstreamSummary[];
   /** 1-based attempt number; >1 means a retry from a reset worktree. */
   readonly attempt: number;

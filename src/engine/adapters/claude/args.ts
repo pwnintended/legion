@@ -19,6 +19,8 @@ export const BASE_ARGS: readonly string[] = [
   'stream-json',
   '--verbose',
   '--include-partial-messages',
+  // Echoes each stdin user message when the CLI takes it in: how the session knows a steer is still queued.
+  '--replay-user-messages',
 ];
 
 /**

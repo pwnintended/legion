@@ -2,9 +2,13 @@
  * The implementation lead through the lifecycle service: opened at approval, coders parented to it, wakes on
  * questions and board changes, plan amendments (applied or signed off), crash resumption, and the off switch.
  */
+import { execFileSync } from 'node:child_process';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import type { Attempt, Run } from '@shared/domain';
 import { afterEach, describe, expect, it } from 'vitest';
 import type { FakeStep } from '../adapters/fake';
+import { integrationBranchName } from '../git';
 import type { McpBinding } from '../mcp';
 import { runMeta } from './meta';
 import { approve, type Harness, node, planOutput, report, type Script, startHarness, taskIdIn } from './test-harness';
@@ -130,6 +134,114 @@ describe('implementation lead', () => {
     expect(await harness.client.call('messages.list', { runId: run.id })).toHaveLength(2);
   }, 60_000);
 
+  it("passes the lead's brief into a coder's running turn", async () => {
+    h = await startHarness({ script: script([node('T1')], 800), lead: () => [{ kind: 'text', text: 'ok' }] });
+    const harness = h;
+    const { orchestrator, store } = harness.engine;
+    const run = await approvedRun(harness);
+    const lead = await leadAttempt(harness, run.id);
+    const coder = await liveCoder(harness, run.id, 'T1');
+    const brief = await orchestrator.mcpHost.sendMessage(binding(store.requireAttempt(lead.id)), {
+      to: coder.id,
+      kind: 'brief',
+      body: 'The setting is a boreal forest now.',
+      replyTo: null,
+    });
+    expect(store.getMessage(brief.id)?.deliveredAt).not.toBeNull();
+    const session = harness.claude.sessions.find((s) => s.opts.role === 'coder');
+    expect(session?.session.sent.map((m) => m.text).join('\n')).toContain('The setting is a boreal forest now.');
+    expect(session?.session.sent.at(-1)?.text).toContain('This arrived while you work');
+  }, 60_000);
+
+  it('gives every coder its own run’s whole plan as an uncommitted file, refreshed by amendments', async () => {
+    const plans: Record<string, string> = { Alpha: 'Contract: `alphaFn(x)`.', Beta: 'Contract: `betaFn(y)`.' };
+    h = await startHarness({
+      script: (ctx) => {
+        if (ctx.opts.role === 'planner') {
+          const which = ctx.message.includes('Alpha work') ? 'Alpha' : 'Beta';
+          const value = {
+            markdown: `# Plan\n\n## Summary\n\n${which}.\n\n## Approach\n\n${plans[which]}\n`,
+            dag: { nodes: [node(which === 'Alpha' ? 'T1' : 'T2')] },
+          };
+          return [{ kind: 'output', value }];
+        }
+        return script([], 1_200)(ctx, 'claude');
+      },
+    });
+    const harness = h;
+    const { orchestrator, store } = harness.engine;
+    const start = async (issueText: string) => {
+      const run = await harness.client.call('runs.create', {
+        repoPath: harness.repo.path,
+        baseRef: 'main',
+        title: issueText,
+        issueText,
+        issueUrl: null,
+        plannerEngine: 'claude',
+        plannerModel: null,
+        skipClarify: true,
+      });
+      await harness.waitFor(() => store.requireRun(run.id).status === 'awaiting_approval', 'plan');
+      await harness.client.call('runs.approvePlan', { runId: run.id, planId: store.latestPlan(run.id)?.id as string });
+      return run;
+    };
+    // Two runs at once on the same repository: each coder sees its own run's plan.
+    const [alpha, beta] = await Promise.all([start('Alpha work'), start('Beta work')]);
+    await liveCoder(harness, alpha.id, 'T1');
+    await liveCoder(harness, beta.id, 'T2');
+    const planFile = (runId: string) => {
+      const task = store.listTasks(runId)[0];
+      return readFileSync(join(task?.worktreePath as string, '.legion/plan.md'), 'utf8');
+    };
+    expect(planFile(alpha.id)).toContain('`alphaFn(x)`');
+    expect(planFile(alpha.id)).toContain('### T1: Task T1');
+    expect(planFile(alpha.id)).not.toContain('betaFn');
+    expect(planFile(beta.id)).toContain('`betaFn(y)`');
+    const coderPrompt = harness.claude.sessions.find((s) => s.opts.role === 'coder')?.opts.prompt;
+    expect(coderPrompt).toContain('`.legion/plan.md`');
+    expect(
+      await orchestrator.mcpHost.readPlan(
+        binding(store.requireAttempt(runMeta(store, alpha.id).leadAttemptId as string)),
+        'Approach',
+      ),
+    ).toBe('Contract: `alphaFn(x)`.');
+
+    // An amendment reaches the file of the coder already at work.
+    const lead = await leadAttempt(harness, alpha.id);
+    await orchestrator.mcpHost.addTask(binding(store.requireAttempt(lead.id)), node('T9', { writes: ['src/t9.txt'] }));
+    await harness.waitFor(() => planFile(alpha.id).includes('### T9: Task T9'), 'refreshed plan file');
+
+    // Never committed: the merged task branch has no .legion/.
+    await harness.waitFor(() => store.listTasks(alpha.id).find((t) => t.nodeId === 'T1')?.status === 'merged', 'T1');
+    // The reviewer sits under the lead, beside the coder it reviewed.
+    const reviewer = store.listAttempts(alpha.id).find((a) => a.role === 'reviewer');
+    expect(reviewer?.parentAttemptId).toBe(lead.id);
+    const tree = execFileSync(
+      'git',
+      ['-C', harness.repo.path, 'ls-tree', '-r', '--name-only', integrationBranchName(alpha.id)],
+      {
+        encoding: 'utf8',
+      },
+    );
+    expect(tree).toContain('src/t1.txt');
+    expect(tree).not.toContain('.legion/');
+  }, 90_000);
+
+  it('opens coders with the approvals setting and switches live ones when it changes', async () => {
+    h = await startHarness({ script: script([node('T1')], 1_000) });
+    const harness = h;
+    const { store } = harness.engine;
+    expect(store.getSettings().permissions.approvals).toBe('auto');
+    const run = await approvedRun(harness);
+    await liveCoder(harness, run.id, 'T1');
+    const coder = harness.claude.sessions.find((s) => s.opts.role === 'coder');
+    expect(coder?.opts.permission.approvals).toBe('auto');
+    await harness.client.call('settings.set', { permissions: { approvals: 'ask' } });
+    await harness.waitFor(() => coder?.session.approvalSwitches.includes('ask'), 'live switch');
+    const planner = harness.claude.sessions.find((s) => s.opts.role === 'planner');
+    expect(planner?.opts.permission.approvals).toBe('ask'); // roles that never ask are unaffected
+  }, 60_000);
+
   it('applies in-scope amendments at once and parks the others for the human', async () => {
     h = await startHarness({ script: script([node('T1', { writes: ['src/t1.txt'] })], 1_500) });
     const harness = h;
@@ -155,7 +267,7 @@ describe('implementation lead', () => {
     expect(status.pendingAmendment).toEqual({ version: 3, reason: pending.reason });
     await expect(host.addTask(asLead, node('T4'))).rejects.toThrow(/still waiting/);
     const item = store.listInbox({ runId: run.id, includeResolved: false }).find((i) => i.kind === 'plan_signoff');
-    expect(item).toBeTruthy();
+    expect(item?.payload).toMatchObject({ version: 3, amendment: { reason: pending.reason } });
 
     await harness.client.call('inbox.resolve', {
       itemId: item?.id as string,

@@ -136,6 +136,34 @@ function inlineList(values: readonly string[] | undefined): string {
 }
 
 /** The full task spec, as every role sees it. */
+/** Where coders find the whole approved plan in their worktree (provisioned, never committed). */
+export const PLAN_FILE = '.legion/plan.md';
+
+/**
+ * The whole approved plan as one document (the coders' `.legion/plan.md`, the lead's `read_plan`): its
+ * markdown with every contract, then every task's spec. With `section`, only the part under that heading.
+ */
+export function planDocument(
+  plan: { version: number; markdown: string; nodes: readonly TaskNode[] },
+  section: string | null = null,
+): string {
+  const doc = [
+    `# Approved plan (v${plan.version})`,
+    plan.markdown.trim(),
+    '## Tasks',
+    ...plan.nodes.map((node) => formatNodeSpec(node)),
+  ].join('\n\n');
+  if (!section?.trim()) return `${doc}\n`;
+  return markdownSection(doc, section) ?? `No section "${section}" in the plan. Its headings:\n\n${headings(doc)}`;
+}
+
+function headings(markdown: string): string {
+  return markdown
+    .split('\n')
+    .filter((line) => /^#{1,3}\s/.test(line))
+    .join('\n');
+}
+
 export function formatNodeSpec(node: TaskNode): string {
   const touches = node.touches.map((t) => `\`${t.glob}\` (${t.mode})`);
   return join(

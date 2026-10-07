@@ -158,7 +158,7 @@ export async function runAssistant(o: Orchestrator, runId: string, loop: LeadLoo
         const messages = renderMessages(queued.map((m) => messageLine(m, o.agentName(m.fromAttemptId))));
         const prompt = buildAssistantWakePrompt({ messages, changes, tools }, basename(run.repoPath));
         try {
-          await session.session.send(prompt.prompt, 'next');
+          await session.steer(prompt.prompt, 'next');
         } catch (error) {
           o.log.warn(`run ${runId}: could not wake the assistant: ${(error as Error).message}`);
           await o.finishAttempt(session, 'failed', (error as Error).message);

@@ -2,12 +2,14 @@
  * A task that ran out of road (attempts or fix rounds exhausted, verify failing, a conflict the resolver could
  * not settle) escalates to the inbox. Its session tile shows the decision inline: retry (resumes the failed
  * step, keeping the work), start over (from scratch, after a confirm), retry with a note for the next
- * attempt, skip the task, or abort the run. Same resolution as the inbox (`inbox.resolve`).
+ * attempt, skip the task, or abort the run. Same resolution as the inbox (`inbox.resolve`). A task that passed
+ * review but waits at the merge gate (sensitive files, high risk: status `awaiting_human`) also offers approve
+ * the merge (`tasks.approveMerge`) and request changes (`tasks.requestChanges`, back to its coder).
  */
 import type { InboxItemOf, ResumeStep } from '@shared/domain';
 import { useState } from 'react';
 import { confirmAction } from '../../app/confirm';
-import { rpc } from '../../app/hooks';
+import { rpc, useData } from '../../app/hooks';
 import { Kbd } from '../../chrome/ui';
 import { trackResolution, usePendingResolution } from './actions';
 import { Glyph } from './glyphs';
@@ -70,6 +72,22 @@ export function resolveEscalation(item: EscalationItem, action: Action, note: st
   );
 }
 
+/** The escalation holds a reviewed task at the merge gate: it can be approved, or sent back with feedback. */
+export function useMergeGate(item: EscalationItem): boolean {
+  const status = useData((s) => (item.taskId ? s.tasks[item.taskId]?.status : undefined));
+  return item.kind === 'escalation' && status === 'awaiting_human';
+}
+
+export function approveGatedMerge(item: EscalationItem): Promise<void> {
+  return trackResolution(item.id, 'approve', () => rpc('tasks.approveMerge', { taskId: item.taskId as string }));
+}
+
+export function requestGateChanges(item: EscalationItem, feedback: string): Promise<void> {
+  return trackResolution(item.id, 'changes', () =>
+    rpc('tasks.requestChanges', { taskId: item.taskId as string, feedback }),
+  );
+}
+
 /** Start the escalated task over from scratch, after an explicit confirm (its current work is discarded). */
 export async function startOver(item: EscalationItem, label: string): Promise<boolean> {
   const ok = await confirmAction({
@@ -89,13 +107,19 @@ export async function startOver(item: EscalationItem, label: string): Promise<bo
 export function EscalationCard({ item, focused, label }: { item: EscalationItem; focused: boolean; label: string }) {
   const [editing, setEditing] = useState(false);
   const [note, setNote] = useState('');
+  const gate = useMergeGate(item);
   const tracked = usePendingResolution(item.id);
-  const pending = tracked?.state === 'pending' ? (tracked.choice as Action) : null;
+  const pending = tracked?.state === 'pending' ? (tracked.choice as Action | 'approve' | 'changes') : null;
   const error = tracked?.state === 'error' ? tracked.message : null;
   const actions: readonly Action[] =
     item.kind === 'escalation' ? item.payload.actions : (['retry', 'skip', 'abort'] as const);
 
   const act = (action: Action, withNote: string | null = null) => resolveEscalation(item, action, withNote);
+  // The note form either retries with a note, or (at the merge gate) sends the changes back to the coder.
+  const submitNote = () => {
+    if (!note.trim()) return;
+    void (gate ? requestGateChanges(item, note.trim()) : act('edit', note.trim()));
+  };
   const retry = retryChoice(item);
 
   const title = item.kind === 'escalation' ? REASON[item.payload.reason] : 'Merge conflict';
@@ -121,7 +145,7 @@ export function EscalationCard({ item, focused, label }: { item: EscalationItem;
           className="esc-edit"
           onSubmit={(e) => {
             e.preventDefault();
-            if (note.trim()) void act('edit', note.trim());
+            submitNote();
           }}
         >
           <textarea
@@ -129,14 +153,16 @@ export function EscalationCard({ item, focused, label }: { item: EscalationItem;
             rows={3}
             // biome-ignore lint/a11y/noAutofocus: opened on purpose by "Retry with a note"
             autoFocus
-            placeholder={`What should ${label}'s next attempt do differently?`}
-            aria-label="Note for the next attempt"
+            placeholder={
+              gate ? `What should ${label}'s coder change?` : `What should ${label}'s next attempt do differently?`
+            }
+            aria-label={gate ? 'Changes for the coder' : 'Note for the next attempt'}
             value={note}
             onChange={(e) => setNote(e.target.value)}
             onKeyDown={(e) => {
               if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
                 e.preventDefault();
-                if (note.trim()) void act('edit', note.trim());
+                submitNote();
               } else if (e.key === 'Escape') {
                 e.stopPropagation();
                 setEditing(false);
@@ -145,7 +171,13 @@ export function EscalationCard({ item, focused, label }: { item: EscalationItem;
           />
           <div className="ap-actions">
             <button type="submit" className="btn btn-warn btn-sm" disabled={!note.trim() || pending !== null}>
-              {pending === 'edit' ? 'Retrying…' : 'Retry with note'}
+              {gate
+                ? pending === 'changes'
+                  ? 'Sending…'
+                  : 'Send to the coder'
+                : pending === 'edit'
+                  ? 'Retrying…'
+                  : 'Retry with note'}
               <Kbd>⌘⏎</Kbd>
             </button>
             <button type="button" className="btn btn-ghost btn-sm" onClick={() => setEditing(false)}>
@@ -155,6 +187,29 @@ export function EscalationCard({ item, focused, label }: { item: EscalationItem;
         </form>
       ) : (
         <div className="ap-actions">
+          {gate ? (
+            <>
+              <button
+                type="button"
+                className="btn btn-primary btn-sm"
+                disabled={pending !== null}
+                onClick={() => void approveGatedMerge(item)}
+                title="It passed review: merge it into the integration branch"
+                data-testid="escalation-approve-merge"
+              >
+                {pending === 'approve' ? 'Approving…' : 'Approve merge'}
+              </button>
+              <button
+                type="button"
+                className="btn btn-sm"
+                disabled={pending !== null}
+                onClick={() => setEditing(true)}
+                title="Send feedback to the task's coder for another round"
+              >
+                Request changes…
+              </button>
+            </>
+          ) : null}
           {actions.includes('retry') ? (
             <button
               type="button"

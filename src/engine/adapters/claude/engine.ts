@@ -186,6 +186,13 @@ export class ClaudeEngine implements AgentEngine {
       onExit: cleanup,
       ...(this.options.timing ? { timing: this.options.timing } : {}),
     });
+    // Before the prompt, so the first turn already runs in auto mode (see `ClaudeSession.setApprovals`).
+    if (opts.permission.mode === 'workspace_write' && opts.permission.approvals === 'auto') {
+      void session.setApprovals('auto').then((ok) => {
+        if (!ok)
+          this.log.warn(`claude: auto mode unavailable for ${opts.model ?? 'the default model'}; asking instead`);
+      });
+    }
     session.begin(opts.prompt, opts.attachments);
     return session;
   }

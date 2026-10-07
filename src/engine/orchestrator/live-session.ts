@@ -61,6 +61,8 @@ export class AgentRun {
   handBackRefused = false;
   /** Set while a human interrupt / steer is in progress: the interrupted turn is not a result. */
   humanInterrupt = false;
+  /** A turn is running (from the prompt or a send until its `turn_complete`). */
+  inTurn = false;
   private readonly results: TurnResult[] = [];
   private waiter: ((result: TurnResult) => void) | null = null;
   private exitCode: number | null = null;
@@ -86,6 +88,7 @@ export class AgentRun {
   }
 
   start(): void {
+    this.inTurn = true;
     void this.pump(this.session);
   }
 
@@ -102,7 +105,22 @@ export class AgentRun {
   /** Follow-up message in the same process (schema/validation retries). */
   async send(text: string): Promise<void> {
     this.markDone = null;
+    this.inTurn = true;
     await this.session.send(text, 'next');
+  }
+
+  /**
+   * A message from the human or another agent into this session. `next` joins the running turn (or starts
+   * one when idle); `now` interrupts it first, and the interrupted turn is not reported as a result.
+   */
+  async steer(
+    text: string,
+    priority: 'now' | 'next',
+    attachments: Parameters<AgentSession['send']>[2] = null,
+  ): Promise<void> {
+    if (priority === 'now' && this.inTurn) this.humanInterrupt = true;
+    this.inTurn = true;
+    await this.session.send(text, priority, attachments);
   }
 
   async close(): Promise<void> {
@@ -145,6 +163,7 @@ export class AgentRun {
         this.exitCode = event.code;
         return;
       case 'turn_complete':
+        this.inTurn = false;
         if (this.takeover) return;
         if (event.reason === 'interrupted' && this.humanInterrupt) {
           this.humanInterrupt = false;
@@ -190,6 +209,7 @@ export class AgentRun {
             await resumed.close().catch(() => undefined);
           } else {
             this.session = resumed;
+            this.inTurn = true;
             this.hooks.onTakeover(this, false);
             void this.pump(this.session);
             return;

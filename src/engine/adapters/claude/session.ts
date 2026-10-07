@@ -5,7 +5,7 @@
  * messages; interrupts and permission answers go over the control protocol on the same pipe.
  */
 import type { Readable, Writable } from 'node:stream';
-import type { AgentSession, ApprovalDecision, SessionAttachment, SessionOptions } from '@shared/engine';
+import type { AgentSession, ApprovalDecision, Approvals, SessionAttachment, SessionOptions } from '@shared/engine';
 import type { AgentEvent } from '@shared/events';
 import type { Logger } from '../../context';
 import { AsyncQueue, deferred } from '../../util/async-queue';
@@ -17,6 +17,7 @@ import {
   type PendingPermission,
   permissionResponse,
   type StdinMessage,
+  setPermissionModeRequest,
   userMessage,
 } from './protocol';
 
@@ -61,6 +62,12 @@ export interface ClaudeSessionInit {
 
 const STDERR_TAIL = 4_000;
 
+/**
+ * A result held because a message we sent is still queued is released after this long without the CLI taking
+ * that message in (a safety net: the CLI starts the queued message's turn within milliseconds).
+ */
+export const HELD_RESULT_MS = 15_000;
+
 export class ClaudeSession implements AgentSession {
   readonly engine = 'claude' as const;
   readonly events = new AsyncQueue<AgentEvent>();
@@ -74,7 +81,8 @@ export class ClaudeSession implements AgentSession {
   private readonly onExit: (() => void) | undefined;
 
   private readonly approvals = new Map<string, PendingPermission>();
-  private readonly controls = new Map<string, ReturnType<typeof deferred<void>>>();
+  /** Our control requests awaiting the CLI's answer: resolved with whether it succeeded. */
+  private readonly controls = new Map<string, ReturnType<typeof deferred<boolean>>>();
   private readonly turnWaiters: (() => void)[] = [];
   private readonly loggedUnknown = new Set<string>();
   private readonly exitedSignal = deferred<void>();
@@ -89,6 +97,12 @@ export class ClaudeSession implements AgentSession {
   private textBuffer = '';
   private textTimer: ReturnType<typeof setTimeout> | null = null;
   private controlCounter = 0;
+  /** User messages written to stdin that the CLI has not echoed back yet (`--replay-user-messages`). */
+  private unacked = 0;
+  /** The CLI echoes user messages (older ones without `--replay-user-messages` support do not). */
+  private replays = false;
+  /** A successful result superseded by a queued message's turn (see `handleEvent`). */
+  private held: { event: AgentEvent; timer: ReturnType<typeof setTimeout> } | null = null;
 
   constructor(init: ClaudeSessionInit) {
     this.child = init.child;
@@ -140,6 +154,7 @@ export class ClaudeSession implements AgentSession {
   /** Writes the first prompt. Called by the engine right after spawning. */
   begin(prompt: string, attachments?: readonly SessionAttachment[] | null): void {
     this.busy = true;
+    this.unacked += 1;
     this.write(userMessage(prompt, undefined, attachments));
   }
 
@@ -152,6 +167,7 @@ export class ClaudeSession implements AgentSession {
     const message = userMessage(text, priority, attachments);
     if (priority === 'now' && this.busy) this.parser.noteInterrupt();
     this.busy = true;
+    this.unacked += 1;
     this.write(message);
   }
 
@@ -160,7 +176,7 @@ export class ClaudeSession implements AgentSession {
     const turnEnded = this.waitTurn();
     this.parser.noteInterrupt();
     const requestId = this.nextControlId('interrupt');
-    const ack = deferred<void>();
+    const ack = deferred<boolean>();
     this.controls.set(requestId, ack);
     this.write(interruptRequest(requestId));
     if (await within(turnEnded, this.timing.interruptTimeoutMs)) return;
@@ -171,6 +187,22 @@ export class ClaudeSession implements AgentSession {
     this.log.warn('claude: SIGINT did not end the turn, killing the process');
     this.closing = true;
     await this.terminate();
+  }
+
+  /**
+   * `auto` = Claude's auto mode (its classifier answers what would be asked); `ask` = `acceptEdits` with prompts
+   * to the host. Sessions always start in `acceptEdits` and switch here: a model without auto mode refuses the
+   * switch (and keeps asking) instead of silently falling back to asking for everything.
+   */
+  async setApprovals(approvals: Approvals): Promise<boolean> {
+    if (this.exited || this.closing) return false;
+    const requestId = this.nextControlId('permission-mode');
+    const ack = deferred<boolean>();
+    this.controls.set(requestId, ack);
+    this.write(setPermissionModeRequest(requestId, approvals === 'auto' ? 'auto' : 'acceptEdits'));
+    const answered = await Promise.race([ack.promise, sleep(this.timing.interruptTimeoutMs).then(() => null)]);
+    if (answered === null) this.controls.delete(requestId);
+    return answered === true;
   }
 
   async close(): Promise<void> {
@@ -247,11 +279,20 @@ export class ClaudeSession implements AgentSession {
         const pending = this.controls.get(output.requestId);
         this.controls.delete(output.requestId);
         if (!output.ok) this.log.warn(`claude: control request ${output.requestId} failed: ${output.error}`);
-        pending?.resolve();
+        pending?.resolve(output.ok);
         return;
       }
       case 'control_cancel':
         this.approvals.delete(output.requestId);
+        return;
+      case 'replay':
+        this.replays = true;
+        this.unacked = Math.max(0, this.unacked - 1);
+        // The queued message's turn started: it continues the held one, whose result is superseded.
+        if (this.held) {
+          clearTimeout(this.held.timer);
+          this.held = null;
+        }
         return;
       case 'unknown':
         this.logOnce(`type:${output.type}`, `claude: ignoring unknown stream-json message type "${output.type}"`);
@@ -269,6 +310,16 @@ export class ClaudeSession implements AgentSession {
         this.bufferText(event.text);
         return;
       case 'turn_complete':
+        // A message sent during a turn that never reached a tool result (e.g. a long think, then the
+        // structured output) is not folded in: the CLI runs it as a turn of its own right after this one.
+        // Report the two as one turn, so the driver gets the answer that took the message into account.
+        if (!event.isError && this.replays && this.unacked > 0) {
+          this.flushText();
+          const timer = setTimeout(() => this.releaseHeld(), HELD_RESULT_MS);
+          timer.unref?.();
+          this.held = { event, timer };
+          return;
+        }
         this.emit(event);
         this.endTurn();
         return;
@@ -280,6 +331,17 @@ export class ClaudeSession implements AgentSession {
         this.busy = true;
     }
     this.emit(event);
+  }
+
+  /** The queued message never started a turn: report the held result after all. */
+  private releaseHeld(): void {
+    const held = this.held;
+    if (!held) return;
+    clearTimeout(held.timer);
+    this.held = null;
+    this.unacked = 0;
+    this.emit(held.event);
+    this.endTurn();
   }
 
   private endTurn(): void {
@@ -314,6 +376,7 @@ export class ClaudeSession implements AgentSession {
 
   private maybeFinish(): void {
     if (this.exited || !this.processGone || !this.stdoutDone) return;
+    this.releaseHeld();
     const stderr = this.stderrTail.trim();
     if (this.busy) {
       if (!this.closing) {
@@ -336,7 +399,7 @@ export class ClaudeSession implements AgentSession {
     this.emit({ type: 'exited', code: this.exitCode });
     this.exited = true;
     this.events.end();
-    for (const pending of this.controls.values()) pending.resolve();
+    for (const pending of this.controls.values()) pending.resolve(false);
     this.controls.clear();
     this.approvals.clear();
     this.exitedSignal.resolve();
@@ -353,6 +416,11 @@ export class ClaudeSession implements AgentSession {
     this.log.warn(message);
   }
 }
+
+const sleep = (ms: number) =>
+  new Promise<void>((resolve) => {
+    setTimeout(resolve, ms).unref?.();
+  });
 
 /** Resolves true if `promise` settles within `ms`, false on timeout. */
 async function within(promise: Promise<unknown>, ms: number): Promise<boolean> {

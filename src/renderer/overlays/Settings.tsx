@@ -430,6 +430,18 @@ function RunsSection({ settings, commit }: { settings: Settings; commit: Commit 
           />
         </div>
       </div>
+      <div className="st-row">
+        <div className="min-w-0 flex-1">
+          <div className="st-label" id="st-approvals">
+            Permission prompts
+          </div>
+          <div className="st-note">
+            What coders would ask you (commands outside a task's verify list). Auto lets the engine decide: Claude's
+            auto mode, Codex's approve-for-me. Also switches running Claude coders.
+          </div>
+        </div>
+        <ApprovalsControl labelledBy="st-approvals" />
+      </div>
 
       <div className="st-sub">Concurrency</div>
       <p className="st-lede">Agents working at the same time, across all runs. Each holds one worktree and one CLI.</p>
@@ -715,7 +727,25 @@ function Select({
   );
 }
 
-function Segmented<T extends string>({
+/** `settings.permissions.approvals` as a two-way control (Settings, agents tile). */
+export function ApprovalsControl({ labelledBy }: { labelledBy: string }) {
+  const settings = useSettings();
+  if (!settings) return null;
+  return (
+    <Segmented<'auto' | 'ask'>
+      labelledBy={labelledBy}
+      // An engine started before this setting existed sends none (the renderer hot-reloads ahead of it).
+      value={settings.permissions?.approvals ?? 'auto'}
+      options={[
+        { value: 'auto', label: 'Auto' },
+        { value: 'ask', label: 'Ask me' },
+      ]}
+      onChange={(approvals) => void rpc('settings.set', { permissions: { approvals } }).catch(() => undefined)}
+    />
+  );
+}
+
+export function Segmented<T extends string>({
   labelledBy,
   value,
   options,

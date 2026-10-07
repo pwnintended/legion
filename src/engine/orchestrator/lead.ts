@@ -28,6 +28,7 @@ import type { AgentRun } from './live-session';
 import { patchRunMeta, runMeta } from './meta';
 import { AgentFailure, Closed, type Orchestrator, sleep } from './orchestrator';
 import { acceptedOverlaps, validateOptions } from './planner';
+import { refreshPlanFiles } from './tasks';
 import { ensureIntegrationWorktree } from './worktrees';
 
 /** Consecutive failures to open or keep the lead session before the run continues without one. */
@@ -112,7 +113,7 @@ export async function runLead(
           parent: o.assistantAttemptId(runId) !== null,
         });
         try {
-          await session.session.send(prompt.prompt, 'next');
+          await session.steer(prompt.prompt, 'next');
         } catch (error) {
           o.log.warn(`run ${runId}: could not wake the lead: ${(error as Error).message}`);
           await o.finishAttempt(session, 'failed', (error as Error).message);
@@ -294,7 +295,7 @@ async function amend(
       taskId: null,
       attemptId: meta.leadAttemptId,
       kind: 'plan_signoff',
-      payload: { planId: plan.id, version: plan.version },
+      payload: { planId: plan.id, version: plan.version, amendment: { change: description, reason } },
     });
   });
   return { outcome: 'pending', planVersion: plan.version, reason };
@@ -321,6 +322,7 @@ export function applyAmendment(o: Orchestrator, runId: string, plan: Plan): Plan
   });
   o.scheduleTick();
   o.wakeLead(runId);
+  o.background(`plan files ${runId}`, () => refreshPlanFiles(o, runId));
   return approved;
 }
 

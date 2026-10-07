@@ -53,12 +53,25 @@ describe('permissions', () => {
         approvalsReviewer: 'user',
       });
     }
+    expect(policyFor(opts({ role: 'coder', permission: permissionProfileFor('coder', [], 'auto') }))).toEqual({
+      sandbox: 'workspace-write',
+      approvalPolicy: 'on-request',
+      approvalsReviewer: 'auto_review',
+    });
+    // Roles that never ask keep the user reviewer whatever the setting.
+    expect(
+      policyFor(opts({ role: 'reviewer', permission: permissionProfileFor('reviewer', [], 'auto') })),
+    ).toMatchObject({
+      approvalsReviewer: 'user',
+    });
     const unattended = opts({
-      permission: { mode: 'workspace_write', allowedCommands: [], askHuman: false, web: false },
+      permission: { mode: 'workspace_write', allowedCommands: [], askHuman: false, web: false, approvals: 'ask' },
     });
     expect(policyFor(unattended).approvalPolicy).toBe('never');
     // coordinate is best effort on Codex: the read-only sandbox, never asking.
-    const coordinate = opts({ permission: { mode: 'coordinate', allowedCommands: [], askHuman: false, web: false } });
+    const coordinate = opts({
+      permission: { mode: 'coordinate', allowedCommands: [], askHuman: false, web: false, approvals: 'ask' },
+    });
     expect(policyFor(coordinate)).toEqual({ sandbox: 'read-only', approvalPolicy: 'never', approvalsReviewer: 'user' });
   });
 

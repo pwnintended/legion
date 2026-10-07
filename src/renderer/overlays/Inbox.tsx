@@ -12,7 +12,14 @@ import { Chip, Kbd } from '../chrome/ui';
 import { displayEngine, formatCost, formatDuration, type Tone } from '../layout/describe';
 import { type ApprovalChoice, resolveApproval, trackResolution, usePendingResolution } from '../tiles/session/actions';
 import { ApprovalButtons, ApprovalSubjectView, describeApproval } from '../tiles/session/approval';
-import { canStartOver, resolveEscalation, retryChoice, startOver } from '../tiles/session/escalation';
+import {
+  approveGatedMerge,
+  canStartOver,
+  resolveEscalation,
+  retryChoice,
+  startOver,
+  useMergeGate,
+} from '../tiles/session/escalation';
 import {
   type InboxSelection,
   moveSelection,
@@ -194,42 +201,7 @@ function ItemBody({ item, selected, taskLabel }: { item: InboxItem; selected: bo
     case 'plan_signoff':
       return <PlanBody item={item} selected={selected} />;
     case 'escalation':
-      return (
-        <>
-          <div className="ib-text">{item.payload.summary}</div>
-          <div className="ib-actions">
-            {item.payload.actions
-              .filter((a) => a !== 'edit')
-              .map((action) => (
-                <button
-                  key={action}
-                  type="button"
-                  className={`btn btn-sm${action === 'retry' ? ' btn-warn' : action === 'abort' ? ' btn-ghost' : ''}`}
-                  title={action === 'retry' ? retryChoice(item).title : undefined}
-                  onClick={() => void resolveEscalation(item, action, null)}
-                >
-                  {action === 'retry' ? retryChoice(item).label : action === 'skip' ? 'Skip task' : 'Abort run'}
-                </button>
-              ))}
-            {canStartOver(item) ? (
-              <button
-                type="button"
-                className="btn btn-sm"
-                title="Discard the work and start the task over from scratch"
-                onClick={() => void startOver(item, taskLabel ?? 'this task')}
-                data-testid="inbox-restart"
-              >
-                Start over…
-              </button>
-            ) : null}
-            {/* "edit" = retry with a note for the next attempt: written in the task's tile. */}
-            <JumpButton
-              item={item}
-              label={item.payload.actions.includes('edit') ? 'Retry with a note' : 'Jump to tile'}
-            />
-          </div>
-        </>
-      );
+      return <EscalationBody item={item} taskLabel={taskLabel} />;
     case 'conflict':
       return (
         <>
@@ -357,6 +329,59 @@ function QuestionBody({ item, selected }: { item: InboxItemOf<'question'>; selec
   );
 }
 
+function EscalationBody({ item, taskLabel }: { item: InboxItemOf<'escalation'>; taskLabel: string | null }) {
+  const gate = useMergeGate(item);
+  return (
+    <>
+      <div className="ib-text">{item.payload.summary}</div>
+      <div className="ib-actions">
+        {gate ? (
+          <button
+            type="button"
+            className="btn btn-sm btn-primary"
+            title="It passed review: merge it into the integration branch"
+            onClick={() => void approveGatedMerge(item)}
+            data-testid="inbox-approve-merge"
+          >
+            Approve merge
+          </button>
+        ) : null}
+        {item.payload.actions
+          .filter((a) => a !== 'edit')
+          .map((action) => (
+            <button
+              key={action}
+              type="button"
+              className={`btn btn-sm${action === 'retry' ? ' btn-warn' : action === 'abort' ? ' btn-ghost' : ''}`}
+              title={action === 'retry' ? retryChoice(item).title : undefined}
+              onClick={() => void resolveEscalation(item, action, null)}
+            >
+              {action === 'retry' ? retryChoice(item).label : action === 'skip' ? 'Skip task' : 'Abort run'}
+            </button>
+          ))}
+        {canStartOver(item) ? (
+          <button
+            type="button"
+            className="btn btn-sm"
+            title="Discard the work and start the task over from scratch"
+            onClick={() => void startOver(item, taskLabel ?? 'this task')}
+            data-testid="inbox-restart"
+          >
+            Start over…
+          </button>
+        ) : null}
+        {/* "edit" (retry with a note) and the gate's "request changes" are written in the task's tile. */}
+        <JumpButton
+          item={item}
+          label={
+            gate ? 'Request changes' : item.payload.actions.includes('edit') ? 'Retry with a note' : 'Jump to tile'
+          }
+        />
+      </div>
+    </>
+  );
+}
+
 function PlanBody({ item, selected }: { item: InboxItemOf<'plan_signoff'>; selected: boolean }) {
   const plan = useData((s) => latestPlan(s, item.runId));
   const nodes = plan?.dag.nodes.length ?? 0;
@@ -369,8 +394,19 @@ function PlanBody({ item, selected }: { item: InboxItemOf<'plan_signoff'>; selec
   ].filter(Boolean);
   return (
     <>
-      <div className="ib-text">Plan v{item.payload.version} ready for sign-off</div>
-      <div className="faint ib-sub">{facts.join(' · ')}</div>
+      {item.payload.amendment ? (
+        <>
+          <div className="ib-text">
+            The lead wants to change the approved plan (v{item.payload.version}): {item.payload.amendment.change}
+          </div>
+          <div className="faint ib-sub">Needs you: {item.payload.amendment.reason}</div>
+        </>
+      ) : (
+        <>
+          <div className="ib-text">Plan v{item.payload.version} ready for sign-off</div>
+          <div className="faint ib-sub">{facts.join(' · ')}</div>
+        </>
+      )}
       <div className="ib-actions">
         <button
           type="button"

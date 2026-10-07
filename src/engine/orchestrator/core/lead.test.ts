@@ -41,6 +41,29 @@ describe('amendmentNeedsSignoff', () => {
     expect(amendmentNeedsSignoff(approved, risky)).toBe('T3 is high risk');
   });
 
+  it('lets a high-risk task be reworded, but not widened or raised to high risk', () => {
+    const plan = [
+      ...approved,
+      makeNode('T9', [], { risk: 'high', touches: [{ glob: 'package.json', mode: 'modify' }] }),
+    ];
+    const reworded = makeNode('T9', [], {
+      risk: 'high',
+      touches: [{ glob: 'package.json', mode: 'modify' }],
+      acceptanceCriteria: [{ id: 'AC1', text: 'Scripts run under pnpm 11' }],
+    });
+    expect(amendmentNeedsSignoff(plan, reworded)).toBeNull();
+    const widened = makeNode('T9', [], {
+      risk: 'high',
+      touches: [
+        { glob: 'package.json', mode: 'modify' },
+        { glob: 'infra/deploy.sh', mode: 'create' },
+      ],
+    });
+    expect(amendmentNeedsSignoff(plan, widened)).toContain('`infra/deploy.sh`');
+    const raised = makeNode('T2', ['T1'], { risk: 'high', touches: [{ glob: 'src/api/**', mode: 'modify' }] });
+    expect(amendmentNeedsSignoff(plan, raised)).toBe('T2 becomes high risk');
+  });
+
   it('ignores the amended node itself when computing the approved area', () => {
     const changed = makeNode('T2', ['T1'], { touches: [{ glob: 'src/other/**', mode: 'modify' }] });
     expect(amendmentNeedsSignoff(approved, changed)).toContain('outside');

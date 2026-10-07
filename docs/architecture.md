@@ -215,7 +215,7 @@ streams without visible text, e.g. the structured plan: at its start and every 2
 |---|---|---|
 | planner, reviewer, finalizer | `--permission-mode dontAsk --permission-prompts none`, `--allowedTools mcp__legion`, `--disallowedTools` edit tools + AskUserQuestion/Enter/ExitPlanMode. Reads inside cwd/`--add-dir` and commands the CLI classifies as read-only (`ls`, `git diff`, …) need no rule. | `sandbox: read-only`, `approvalPolicy: never` |
 | researcher | as above plus `--allowedTools WebSearch,WebFetch` (`PermissionProfile.web`) | as above plus `web_search = "live"` |
-| coder, resolver | `--permission-mode acceptEdits` (edits inside the working dirs), `--allowedTools` = `Bash(<cmd>)`/`Bash(<cmd> *)` per verify command + `mcp__legion`; everything else → `--permission-prompt-tool stdio` → `approval_request` (or `--permission-prompts none` when `askHuman` is false) | `sandbox: workspace-write` (cwd = worktree), `approvalPolicy: on-request` → requestApproval → inbox |
+| coder, resolver | `--permission-mode acceptEdits` (edits inside the working dirs), `--allowedTools` = `Bash(<cmd>)`/`Bash(<cmd> *)` per verify command + `mcp__legion`; everything else → `--permission-prompt-tool stdio` → `approval_request` (or `--permission-prompts none` when `askHuman` is false). `settings.permissions.approvals = auto` (default): switched to auto mode over the control protocol (kept in `acceptEdits` when the model has none) | `sandbox: workspace-write` (cwd = worktree), `approvalPolicy: on-request` → requestApproval → inbox; `auto`: `approvalsReviewer: auto_review` |
 | lead, assistant (`coordinate`); research_lead = the same plus `WebSearch`, `WebFetch` allowed | `dontAsk --permission-prompts none`, `--allowedTools mcp__legion`, `--disallowedTools` = the read-only list + `Read, Glob, Grep, LS, Bash, BashOutput, KillShell, WebFetch, WebSearch, Task, Agent, NotebookRead, TodoWrite, Skill, ToolSearch`: the session can only talk | `sandbox: read-only`, `approvalPolicy: never` (best effort: Codex's tool list cannot be trimmed) |
 
 Every Claude profile also denies `Bash(git commit *)`, `Bash(git push *)`, Enter/ExitWorktree and the
@@ -468,11 +468,16 @@ approval.
   resumes its engine session as a new attempt and re-parents the children of the old one; `ask_lead` sends to the
   caller's *current* parent (`to: "lead"`). After `MAX_LEAD_FAILURES` (3) consecutive failures without a completed
   turn the lead is given up (`RunMeta.leadDisabled`) and the run goes on without one.
-- **Lead tools** (role `lead`): `plan_status` (the board), `add_task(node)`, `amend_task(node_id, patch)` and
+- **The whole plan**: coders get it as `.legion/plan.md` in their worktree (the approved markdown with every
+  contract, then every task's spec; the folder ignores itself, so it is never committed), written before each
+  coder session and refreshed after each applied amendment; the lead reads it with `read_plan({section?})`.
+- **Lead tools** (role `lead`): `plan_status` (the board), `read_plan`, `add_task(node)`, `amend_task(node_id, patch)` and
   `cancel_task(node_id, reason)` (the last two for tasks still blocked or queued). Each change is a new plan version
   (source `agent`, markdown gets an "Amendment" section) validated with `validatePlan`. **Policy** (`core/lead.ts`):
-  a node applies at once when its risk is not `high` and every write touch stays inside a directory the approved plan
-  already writes to; otherwise the version waits as a `plan_signoff` inbox item (`RunMeta.amendment`), and
+  a new node applies at once when its risk is not `high` and every write touch stays inside a directory the approved
+  plan already writes to; a changed node only when it does not become high risk or gain such a write (rewording a
+  high-risk task applies at once); otherwise the version waits as a `plan_signoff` inbox item (`RunMeta.amendment`,
+  its payload's `amendment` says what changed and why it needs the human), and
   `runs.approvePlan` / `runs.requestPlanRevision` on that version apply or reject it (the lead hears the answer on
   its next wake). Only one amendment may wait at a time. Applying inserts tasks for the new nodes; the scheduler
   picks them up on the next tick.
@@ -510,10 +515,11 @@ through `sessions.send` on the assistant attempt: its process stays alive and id
   inbox, then the lead, whose parent is the assistant); `run_status` (status, plan, every task, what waits for the
   human, PR); plus the coordinator tools (`list_agents`, `send_message`, `wait_for_reply`, `spawn_research`,
   research cap 3). A conversation that never starts work stays `chatting` until archived or cancelled.
-- **Steering the planner**: planner attempts of a run with an assistant are its children. The planner has no
-  mailbox tools; a message to it (`send_message` with `to: "planner"` or a planner attempt id) is passed into
-  the running planner session as a queued user message (folded into its turn after the current tool, like a
-  human steer), or, with no planner running, prepended to the next planner step's prompt.
+- **Steering the planner**: planner attempts of a run with an assistant are its children (reviewers likewise sit
+  under the lead). Neither has mailbox tools. A message to a working agent that is not waiting for it (a planner via
+  `to: "planner"`, a coder, a reviewer) is passed into its running turn as a queued user message, like a human
+  steer; the Claude adapter reports a message the turn could not take in together with the turn it starts. With
+  no turn running, it is prepended to the agent's next prompt.
 - **Wakes**: like the lead loop, one message per batch of news: queued messages (the lead's questions and reports,
   research reports) and conversation changes (run status transitions, new inbox items waiting for the human, and
   what the human decided on resolved ones: clarify answers, plan approval or requested changes). The

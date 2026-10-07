@@ -159,7 +159,8 @@ export function policyFor(opts: SessionOptions): PolicyParams {
   return {
     sandbox: 'workspace-write',
     approvalPolicy: opts.permission.askHuman ? 'on-request' : 'never',
-    approvalsReviewer: 'user',
+    // `auto`: Codex's own reviewer answers the approval requests (what `--approve-for-me` does).
+    approvalsReviewer: opts.permission.approvals === 'auto' ? 'auto_review' : 'user',
   };
 }
 

@@ -4,6 +4,9 @@
  * status until it reaches a status that waits for something else (merge queue, human, retry slot), so it
  * is re-entrant: recovery and resume simply start it again.
  */
+import { existsSync } from 'node:fs';
+import { mkdir, writeFile } from 'node:fs/promises';
+import { dirname, join } from 'node:path';
 import type { Run, Task, TaskNode } from '@shared/domain';
 import { RpcError } from '@shared/rpc-transport';
 import type { ReviewOutput, TaskReport } from '@shared/schemas';
@@ -38,7 +41,9 @@ import {
   decideAfterVerify,
   type Failure,
   markdownSection,
+  PLAN_FILE,
   packageScriptsChanged,
+  planDocument,
   reviewerEngineFor,
   sensitivePaths,
   type TaskDecision,
@@ -131,6 +136,31 @@ export function planSummary(o: Orchestrator, runId: string): string {
   const plan = o.approvedPlan(runId);
   if (!plan) return '';
   return markdownSection(plan.markdown, 'Summary') ?? plan.markdown;
+}
+
+/**
+ * Write the whole approved plan into the task's worktree (`PLAN_FILE`). Its folder ignores itself
+ * (`.legion/.gitignore` = `*`), so git never lists, stages or cleans it and it is never committed. Refreshed
+ * before every coder session and after every plan change.
+ */
+export async function writePlanFile(o: Orchestrator, task: Task, worktree: string): Promise<string | null> {
+  const plan = o.approvedPlan(task.runId);
+  if (!plan) return null;
+  const path = join(worktree, PLAN_FILE);
+  await mkdir(dirname(path), { recursive: true });
+  await writeFile(join(dirname(path), '.gitignore'), '*\n');
+  await writeFile(path, planDocument({ version: plan.version, markdown: plan.markdown, nodes: plan.dag.nodes }));
+  return PLAN_FILE;
+}
+
+/** After a plan change: refresh the plan file of every task whose worktree has one (coders mid-work included). */
+export async function refreshPlanFiles(o: Orchestrator, runId: string): Promise<void> {
+  for (const task of o.store.listTasks(runId)) {
+    if (!task.worktreePath || !existsSync(join(task.worktreePath, PLAN_FILE))) continue;
+    await writePlanFile(o, task, task.worktreePath).catch((error: unknown) => {
+      o.log.warn(`task ${task.id}: could not refresh the plan file: ${(error as Error).message}`);
+    });
+  }
 }
 
 export function upstreamOf(o: Orchestrator, task: Task, node: TaskNode): UpstreamSummary[] {
@@ -263,6 +293,10 @@ async function code(o: Orchestrator, run: Run, task: Task, mode: 'coder' | 'fixe
   const settings = o.settings();
   const limits = settings.limits;
   const config = await o.config(run);
+  const planFile = await writePlanFile(o, task, worktree).catch((error: unknown) => {
+    o.log.warn(`task ${task.id}: could not write the plan file: ${(error as Error).message}`);
+    return null;
+  });
   const meta = taskMeta(o.store, task.id);
   const tools = o.toolNames(engine);
   const leadAttemptId = o.leadAttemptId(run.id);
@@ -314,6 +348,7 @@ async function code(o: Orchestrator, run: Run, task: Task, mode: 'coder' | 'fixe
       repo: o.repoInput(run, config),
       node,
       planSummary: planSummary(o, run.id),
+      planFile,
       upstream: upstreamOf(o, task, node),
       attempt: attemptNumber(o, task),
       previousFailure: meta.previousFailure,
@@ -509,6 +544,8 @@ async function review(o: Orchestrator, run: Run, task: Task): Promise<Step> {
       outputSchema: reviewOutputJsonSchema,
       cwd: worktree,
       attachments: o.runAttachments(run),
+      // Under the lead (when the run has one), beside the coder it reviews: the lead sees it and can brief it.
+      parentAttemptId: o.leadAttemptId(run.id),
     });
     output = await o.structuredTurn(session, ReviewOutputSchema);
     await o.finishAttempt(session, 'succeeded');
@@ -575,7 +612,7 @@ async function review(o: Orchestrator, run: Run, task: Task): Promise<Step> {
       run.id,
       task.id,
       'other',
-      `${node.id} (${node.title}) ${why} and passed review. Approve the merge (tasks.approveMerge) or request changes (tasks.requestChanges).`,
+      `${node.id} (${node.title}) ${why} and passed review. Approve the merge, or request changes for its coder.`,
       ['skip', 'abort'],
       'merge',
     );

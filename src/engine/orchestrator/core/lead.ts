@@ -24,12 +24,17 @@ const within = (dir: string, parent: string): boolean =>
 export const writes = (node: TaskNode): string[] => node.touches.filter((t) => t.mode !== 'read').map((t) => t.glob);
 
 /**
- * Why an amendment needs a human's sign-off, or null when it may apply at once: an added or changed node is
- * in scope when its risk is not high and every write stays inside a directory the approved plan already
- * writes to.
+ * Why an amendment needs a human's sign-off, or null when it may apply at once. A new node is in scope when its
+ * risk is not high and every write stays inside a directory the approved plan already writes to. A changed
+ * node only asks when the change raises it to high risk or adds such a write: rewording a high-risk task (its
+ * goal, acceptance criteria, verify commands) was already signed off with that task.
  */
 export function amendmentNeedsSignoff(approved: readonly TaskNode[], node: TaskNode): string | null {
-  if (node.risk === 'high') return `${node.id} is high risk`;
+  const previous = approved.find((n) => n.id === node.id) ?? null;
+  if (node.risk === 'high' && previous?.risk !== 'high') {
+    return previous ? `${node.id} becomes high risk` : `${node.id} is high risk`;
+  }
+  const approvedWrites = new Set(previous ? writes(previous) : []);
   const areas = new Set(
     approved
       .filter((n) => n.id !== node.id)
@@ -37,6 +42,7 @@ export function amendmentNeedsSignoff(approved: readonly TaskNode[], node: TaskN
       .map(touchDirectory),
   );
   for (const glob of writes(node)) {
+    if (approvedWrites.has(glob)) continue;
     const dir = touchDirectory(glob);
     if (![...areas].some((area) => within(dir, area))) {
       return `${node.id} writes outside the approved plan's area (\`${glob}\`)`;

@@ -9,6 +9,7 @@ import type {
   AgentEngine,
   AgentSession,
   ApprovalDecision,
+  Approvals,
   EngineInfo,
   SessionAttachment,
   SessionOptions,
@@ -165,6 +166,8 @@ export class FakeSession implements AgentSession {
   readonly decisions = new Map<string, ApprovalDecision>();
   /** Messages received through `send`. */
   readonly sent: { text: string; priority: 'now' | 'next'; attachments: readonly SessionAttachment[] }[] = [];
+  /** Every `setApprovals` call, in order. */
+  readonly approvalSwitches: Approvals[] = [];
 
   private sessionId = '';
   private turn = 0;
@@ -387,6 +390,11 @@ export class FakeSession implements AgentSession {
     this.turnAbort?.abort();
     await this.turnDone.catch(() => undefined);
     await this.finish(0);
+  }
+
+  async setApprovals(approvals: Approvals): Promise<boolean> {
+    this.approvalSwitches.push(approvals);
+    return !this.closed;
   }
 
   async respond(requestId: string, decision: ApprovalDecision): Promise<void> {

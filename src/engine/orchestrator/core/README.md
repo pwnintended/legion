@@ -121,8 +121,10 @@ turns queued messages into the block the lifecycle service prepends to a resumed
 ## The lead's rules — `lead.ts`
 
 `amendmentNeedsSignoff(approvedNodes, node)` → the reason a plan amendment must wait for the human, or null when it
-may apply at once: `high` risk, or a write touch whose directory (`touchDirectory`: the literal prefix's directory,
-`src/api/**` → `src/api`, `README.md` → `.`) is not inside a directory the approved plan already writes to.
+may apply at once: a new `high`-risk node, or a write touch whose directory (`touchDirectory`: the literal prefix's
+directory, `src/api/**` → `src/api`, `README.md` → `.`) is not inside a directory the approved plan already writes
+to. A changed node asks only when it becomes high risk or gains such a write; its own approved writes stay
+approved, so rewording a high-risk task applies at once.
 `boardChanges(snapshot, board)` → one line per task whose status changed since the snapshot (the wake digest);
 `AMENDABLE_STATUSES` = blocked, queued. Prompts: `prompts/lead.ts` (`buildLeadPrompt`, `buildLeadWakePrompt`).
 

@@ -29,8 +29,7 @@ export async function sendToSession(
   const session = liveSession(o, attemptId);
   const refs = o.attachments.refs(attachmentIds);
   if (refs.length) o.attachments.claim(refs, session.attempt.runId);
-  if (priority === 'now') session.humanInterrupt = true;
-  await session.session.send(text, priority, refs.length ? o.attachments.forSession(refs) : null);
+  await session.steer(text, priority, refs.length ? o.attachments.forSession(refs) : null);
 }
 
 /** Stop the current turn; the session then waits for a human message (`sessions.send`). */

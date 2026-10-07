@@ -25,7 +25,8 @@ await codex.resume(threadId, opts);        // thread/resume (same codexHome!) + 
 - Handshake: `initialize {clientInfo:{name:'legion',title,version}, capabilities:{experimentalApi:true,
   requestAttestation:false}}` → `{userAgent:'legion/0.160.0 (...)', codexHome, ...}`, then notification
   `initialized`. No `jsonrpc` member on the wire. Server-request ids are numbers starting at **0**.
-- `thread/start {cwd, model, sandbox, approvalPolicy, approvalsReviewer:'user', config, developerInstructions}`
+- `thread/start {cwd, model, sandbox, approvalPolicy, approvalsReviewer, config, developerInstructions}`;
+  `approvalsReviewer` is `auto_review` when `permission.approvals` is `auto` (= `--approve-for-me`), else `user`
   → `{thread:{id}, model, ...}`. `thread/started` arrives *after* the response and `thread/resume` sends
   none, so `session_started` is emitted from the response. `thread/resume {threadId, ..., excludeTurns:true}`
   (without `excludeTurns` codex emits a deprecation notice). Unknown id → error `-32600 no rollout found`.

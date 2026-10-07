@@ -77,6 +77,7 @@ function fakeHost() {
       return new Promise<AgentMessage | null>((resolve) => pendingWaits.push(resolve));
     },
     planStatus: () => ({ runStatus: 'executing', paused: false, tasks: [], pendingAmendment: null }),
+    readPlan: (_b, section) => (section ? `part ${section}` : '# whole plan'),
     addTask: (_b, node) => {
       calls.amend.push(['add', node.id]);
       return { outcome: 'applied', planVersion: 2, reason: null };
@@ -197,9 +198,17 @@ describe('legion mcp server', () => {
       expect(await names(ledCoder)).toEqual(
         ['approve', 'ask_lead', 'mark_task_done', 'report_progress', 'request_human_input', ...messagingTools].sort(),
       );
-      expect(await names({ ...reviewer, parentAttemptId: 'lead1' })).toEqual(
+      expect(await names({ ...reviewer, role: 'researcher', parentAttemptId: 'lead1' })).toEqual(
         ['approve', 'ask_lead', 'report_progress', 'request_human_input', ...messagingTools].sort(),
       );
+      // Planners and reviewers sit under a coordinator only to be steered.
+      for (const role of ['planner', 'reviewer'] as const) {
+        expect(await names({ ...reviewer, role, parentAttemptId: 'lead1' })).toEqual([
+          'approve',
+          'report_progress',
+          'request_human_input',
+        ]);
+      }
       expect(await names(coder())).not.toContain('send_message');
     });
 
@@ -277,6 +286,7 @@ describe('legion mcp server', () => {
           'cancel_task',
           'list_agents',
           'plan_status',
+          'read_plan',
           'report_progress',
           'request_human_input',
           'send_message',
@@ -291,6 +301,10 @@ describe('legion mcp server', () => {
     it('validate the node shape and reach the host', async () => {
       const c = await connect(srv.issueToken(lead));
       expect(JSON.parse((await call(c, 'plan_status', {})).text)).toMatchObject({ runStatus: 'executing' });
+      expect(JSON.parse((await call(c, 'read_plan', {})).text)).toEqual({ markdown: '# whole plan' });
+      expect(JSON.parse((await call(c, 'read_plan', { section: 'Approach' })).text)).toEqual({
+        markdown: 'part Approach',
+      });
       expect(JSON.parse((await call(c, 'add_task', { node: nodeInput })).text)).toEqual({
         outcome: 'applied',
         planVersion: 2,

@@ -3,10 +3,10 @@ import { join } from 'node:path';
 import { type AgentSession, permissionProfileFor, type Role, type SessionOptions } from '@shared/engine';
 import type { AgentEvent, AgentEventOf } from '@shared/events';
 import { AGENT_OUTPUT_JSON_SCHEMAS, ClarifyOutputSchema } from '@shared/schemas';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { silentLogger } from '../../context';
 import { ClaudeEngine } from './engine';
-import { ClaudeSession, type SessionTiming } from './session';
+import { ClaudeSession, HELD_RESULT_MS, type SessionTiming } from './session';
 import { FakeChild, type FixtureLine, fixtureSessionId, loadFixture, replayFixture } from './testing';
 
 const FIXTURES = join(import.meta.dirname, 'fixtures');
@@ -181,6 +181,94 @@ describe('ClaudeSession (fixture replay)', () => {
     expect(of(turn, 'message').at(-1)?.text).toBe('ZEBRA-17');
     await session.close();
     await replay;
+  });
+
+  it('reports a steer the turn could not take in together with the turn it starts (one turn)', async () => {
+    // Recorded behaviour (claude 2.1.292): a message sent while the model thinks/writes its structured output
+    // is echoed only after that turn's result, at the start of a turn of its own.
+    const { engine, spawned } = fakeEngine();
+    const session = await engine.start(options('planner', { outputSchema: { type: 'object' } }));
+    const { child, args } = spawned[0] as (typeof spawned)[number];
+    expect(args).toContain('--replay-user-messages');
+    const replay = (text: string) =>
+      child.send({ type: 'user', isReplay: true, message: { role: 'user', content: [{ type: 'text', text }] } });
+    const result = (story: string) =>
+      child.send({ type: 'result', subtype: 'success', is_error: false, structured_output: { story } });
+    await child.waitFor((m) => m.type === 'user');
+    replay('Write a story.');
+    await session.send('Make the keeper a fox.', 'next');
+    result('a keeper');
+    replay('Make the keeper a fox.');
+    result('a fox');
+    const turns = (await until(session, (e) => isTurnComplete(e) && e.structuredOutput !== null)).filter(
+      isTurnComplete,
+    );
+    expect(turns).toEqual([
+      { type: 'turn_complete', structuredOutput: { story: 'a fox' }, isError: false, reason: null },
+    ]);
+
+    // Taken in during the turn (echoed before the result): the result is final.
+    await session.send('Shorter, please.', 'next');
+    replay('Shorter, please.');
+    result('short');
+    expect((await until(session, isTurnComplete)).filter(isTurnComplete)).toEqual([
+      { type: 'turn_complete', structuredOutput: { story: 'short' }, isError: false, reason: null },
+    ]);
+    await session.close();
+  });
+
+  it('releases a held result when the queued message never starts a turn', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    try {
+      const { engine, spawned } = fakeEngine();
+      const session = await engine.start(options('planner', { outputSchema: { type: 'object' } }));
+      const { child } = spawned[0] as (typeof spawned)[number];
+      child.send({ type: 'user', isReplay: true, message: { role: 'user', content: 'go' } });
+      await session.send('More.', 'next');
+      child.send({ type: 'result', subtype: 'success', is_error: false, structured_output: { ok: 1 } });
+      const pending = until(session, isTurnComplete);
+      await vi.advanceTimersByTimeAsync(HELD_RESULT_MS + 10);
+      expect((await pending).filter(isTurnComplete)).toEqual([
+        { type: 'turn_complete', structuredOutput: { ok: 1 }, isError: false, reason: null },
+      ]);
+      child.exit(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('asks for auto mode before the first prompt and reports whether the CLI accepted it', async () => {
+    const { engine, spawned } = fakeEngine();
+    const session = await engine.start(options('coder', { permission: permissionProfileFor('coder', [], 'auto') }));
+    const { child, args } = spawned[0] as (typeof spawned)[number];
+    expect(args.slice(args.indexOf('--permission-mode'), args.indexOf('--permission-mode') + 2)).toEqual([
+      '--permission-mode',
+      'acceptEdits',
+    ]);
+    const { msg: first, index } = await child.waitFor(() => true);
+    expect(first).toMatchObject({ type: 'control_request', request: { subtype: 'set_permission_mode', mode: 'auto' } });
+    expect(child.written[index + 1]?.type ?? (await child.waitFor((m) => m.type === 'user')).msg.type).toBe('user');
+
+    // A refused switch (no auto mode for the model) resolves false; an accepted one true.
+    const back = (session as ClaudeSession).setApprovals('ask');
+    const { msg: request } = await child.waitFor(
+      (m) => m.type === 'control_request' && (m.request as { mode?: string }).mode === 'acceptEdits',
+    );
+    child.send({ type: 'control_response', response: { subtype: 'success', request_id: request.request_id } });
+    expect(await back).toBe(true);
+    const again = (session as ClaudeSession).setApprovals('auto');
+    const { msg: second } = await child.waitFor(
+      (m) =>
+        m.type === 'control_request' &&
+        m.request_id !== first.request_id &&
+        (m.request as { mode?: string }).mode === 'auto',
+    );
+    child.send({
+      type: 'control_response',
+      response: { subtype: 'error', request_id: second.request_id, error: 'auto mode unavailable for this model' },
+    });
+    expect(await again).toBe(false);
+    await session.close();
   });
 
   it('writes the MCP config to a private temp file and removes it on exit', async () => {

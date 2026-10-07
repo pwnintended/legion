@@ -130,6 +130,8 @@ export interface McpHost {
   ): Promise<AgentMessage | null>;
   /** Lead tools (role `lead`): the board and plan amendments. */
   planStatus(binding: McpBinding): PlanStatus | Promise<PlanStatus>;
+  /** The whole approved plan (markdown and every task), or the part under `section`. */
+  readPlan(binding: McpBinding, section: string | null): string | Promise<string>;
   addTask(binding: McpBinding, node: TaskNode): AmendmentResult | Promise<AmendmentResult>;
   amendTask(binding: McpBinding, nodeId: string, patch: TaskNodePatch): AmendmentResult | Promise<AmendmentResult>;
   cancelTask(binding: McpBinding, nodeId: string, reason: string): AmendmentResult | Promise<AmendmentResult>;
@@ -273,8 +275,11 @@ function buildServer(binding: McpBinding, host: McpHost, log: Log): McpServer {
     ),
   );
 
-  // The planner sits under the assistant only to be steered: messages reach it in its prompt, it has no mailbox.
-  if ((binding.parentAttemptId !== null && binding.role !== 'planner') || COORDINATOR_ROLES.has(binding.role))
+  // Planners and reviewers have a parent only to be steered: messages reach them in their turn, no mailbox.
+  if (
+    (binding.parentAttemptId !== null && !STEERED_ONLY_ROLES.has(binding.role)) ||
+    COORDINATOR_ROLES.has(binding.role)
+  )
     registerMessaging(server, binding, host, guard);
   if (binding.role === 'lead') registerLeadTools(server, binding, host, guard);
   if (COORDINATOR_ROLES.has(binding.role)) registerResearch(server, binding, host, guard);
@@ -303,6 +308,9 @@ function buildServer(binding: McpBinding, host: McpHost, log: Log): McpServer {
 }
 
 const MAX_WAIT_SECONDS = 60 * 60 * 24;
+
+/** Roles placed under a coordinator only to be seen and steered: they get no messaging tools. */
+const STEERED_ONLY_ROLES: ReadonlySet<Role> = new Set<Role>(['planner', 'reviewer']);
 
 const brief = (m: AgentMessage) => ({
   id: m.id,
@@ -478,6 +486,19 @@ function registerLeadTools(server: McpServer, binding: McpBinding, host: McpHost
       inputSchema: {},
     },
     guard('plan_status', async () => host.planStatus(binding)),
+  );
+  server.registerTool(
+    'read_plan',
+    {
+      description:
+        'The approved plan in full: its approach and every contract (names, types, signatures, schemas, file ' +
+        'layout), then every task. With section (a heading, e.g. "Approach" or "T3: Combat"), only that part. ' +
+        'Answer coders from it verbatim. Coders have the same document as .legion/plan.md in their worktree.',
+      inputSchema: { section: z.string().optional().describe('A heading of the plan; omit for the whole plan.') },
+    },
+    guard('read_plan', async ({ section }: { section?: string }) => ({
+      markdown: await host.readPlan(binding, section ?? null),
+    })),
   );
   server.registerTool(
     'add_task',

@@ -569,7 +569,12 @@ export const InboxPayloadSchemas = {
     source: z.enum(['clarify', 'agent']),
     questions: z.array(ClarifyQuestionSchema),
   }),
-  plan_signoff: z.object({ planId: IdSchema, version: z.number().int() }),
+  plan_signoff: z.object({
+    planId: IdSchema,
+    version: z.number().int(),
+    /** Set when the lead changes an approved plan mid-run: what changed and why it needs the human. */
+    amendment: z.object({ change: z.string(), reason: z.string() }).nullish(),
+  }),
   escalation: z.object({
     reason: z.enum([
       'attempts_exhausted',
@@ -709,6 +714,14 @@ export const SettingsSchema = z.object({
     /** The composer talks to an assistant (`runs.chat`) instead of starting the planner directly. */
     enabled: z.boolean(),
   }),
+  permissions: z.object({
+    /**
+     * What coders and resolvers would ask the human (commands outside the task's verify list, ...): `auto` lets
+     * the engine's own automatic review decide (Claude auto mode, Codex approve-for-me), `ask` sends each one
+     * to the inbox. Changing it also switches running Claude sessions.
+     */
+    approvals: z.enum(['ask', 'auto']),
+  }),
   budget: z.object({
     /** Per-run spend limit in USD (estimates); null = unlimited. Crossing it raises a `budget` inbox item. */
     perRunUsd: z.number().positive().nullable(),
@@ -750,6 +763,7 @@ export const DEFAULT_SETTINGS: Settings = {
   },
   lead: { enabled: true },
   assistant: { enabled: true },
+  permissions: { approvals: 'auto' },
   budget: { perRunUsd: null, warnAtPct: 80 },
   limits: { maxRetries: 2, maxFixRounds: 2, maxResolverAttempts: 2 },
   engines: {
@@ -790,6 +804,7 @@ export const SettingsPatchSchema = z
       .partial(),
     lead: SettingsSchema.shape.lead.partial(),
     assistant: SettingsSchema.shape.assistant.partial(),
+    permissions: SettingsSchema.shape.permissions.partial(),
     budget: SettingsSchema.shape.budget.partial(),
     limits: SettingsSchema.shape.limits.partial(),
     engines: z

@@ -20,6 +20,8 @@ export type ParserOutput =
   | { kind: 'control_response'; requestId: string; ok: boolean; response: unknown; error: string | null }
   /** The CLI withdrew one of its own requests (e.g. a permission prompt after an interrupt). */
   | { kind: 'control_cancel'; requestId: string }
+  /** `--replay-user-messages`: the CLI took one of our stdin user messages into the conversation. */
+  | { kind: 'replay' }
   /** A top-level message type this parser does not know. */
   | { kind: 'unknown'; type: string };
 
@@ -285,6 +287,7 @@ export class ClaudeStreamParser {
   }
 
   private user(msg: Obj): ParserOutput[] {
+    if (msg.isReplay === true) return [{ kind: 'replay' }];
     const message = isObj(msg.message) ? msg.message : {};
     const results = arr(message.content).filter((block): block is Obj => isObj(block) && block.type === 'tool_result');
     const out: ParserOutput[] = [];

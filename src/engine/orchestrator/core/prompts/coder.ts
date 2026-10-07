@@ -75,7 +75,15 @@ export function buildCoderPrompt(input: CoderPromptInput): AgentPrompt {
   const systemPrompt = join(CODER_SYSTEM, section('Rules', workspaceRules(tools, input.lead ? [leadRule(tools)] : [])));
   const prompt = join(
     `Implement task ${node.id}: ${node.title}.`,
-    section('Plan summary', demoteHeadings(clipMiddle(input.planSummary.trim(), PROMPT_LIMITS.planChars))),
+    section(
+      'Plan summary',
+      join(
+        demoteHeadings(clipMiddle(input.planSummary.trim(), PROMPT_LIMITS.planChars)),
+        input.planFile
+          ? `The whole approved plan is in \`${input.planFile}\` in your worktree: its approach and every contract (names, types, signatures, schemas, file layout) and the other tasks. Read the parts your task defines or builds on before you write code, and use its names exactly. It is Legion's file: never edit or commit it.`
+          : null,
+      ),
+    ),
     section('Your task', formatNodeSpec(node)),
     section('Upstream tasks (already merged into your starting point)', formatUpstream(input.upstream)),
     section('Original issue', formatIssue(input.issue)),

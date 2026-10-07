@@ -109,10 +109,15 @@ describe('buildClaudeArgs', () => {
   });
 
   it('denies instead of asking when a write profile has askHuman=false', () => {
-    const perms = permissionArgs({ mode: 'workspace_write', allowedCommands: [], askHuman: false, web: false }, null);
+    const perms = permissionArgs(
+      { mode: 'workspace_write', allowedCommands: [], askHuman: false, web: false, approvals: 'ask' },
+      null,
+    );
     expect(perms).toMatchObject({ mode: 'acceptEdits', askHost: false, allowedTools: [] });
     const args = buildClaudeArgs({
-      opts: base({ permission: { mode: 'workspace_write', allowedCommands: [], askHuman: false, web: false } }),
+      opts: base({
+        permission: { mode: 'workspace_write', allowedCommands: [], askHuman: false, web: false, approvals: 'ask' },
+      }),
     });
     expect(flag(args, '--permission-prompts')).toBe('none');
   });
@@ -141,7 +146,7 @@ describe('childEnv', () => {
 describe('coordinate mode', () => {
   it('may only talk: dontAsk, Legion MCP allowed, every read/shell/web/sub-agent tool denied', () => {
     const perms = permissionArgs(
-      { mode: 'coordinate', allowedCommands: ['pnpm test'], askHuman: false, web: false },
+      { mode: 'coordinate', allowedCommands: ['pnpm test'], askHuman: false, web: false, approvals: 'ask' },
       { url: 'http://127.0.0.1:9/mcp', token: 't' },
     );
     expect(perms).toMatchObject({ mode: 'dontAsk', askHost: false, allowedTools: ['mcp__legion'] });
