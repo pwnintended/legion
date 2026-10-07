@@ -179,7 +179,11 @@ export class AgentRun {
         this.lastError = { message: 'the run or task ended during the takeover', retryable: false };
       } else if (!this.closing) {
         try {
-          const resumed = await this.engine.resume(session.id, { ...this.opts, prompt: HANDBACK_PROMPT });
+          const resumed = await this.engine.resume(session.id, {
+            ...this.opts,
+            prompt: HANDBACK_PROMPT,
+            attachments: null,
+          });
           if (this.closing || !this.hooks.canHandBack(this)) {
             // Cancelled / archived while the resume was in flight: never let the hand-back turn run.
             this.handBackRefused = !this.closing;

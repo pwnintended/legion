@@ -341,6 +341,8 @@ async function code(o: Orchestrator, run: Run, task: Task, mode: 'coder' | 'fixe
       allowedCommands: verifyCommands(node, config),
       resumeSessionId,
       reuseAttemptId,
+      // A fresh coder session sees the run's attachments with its first message (resumes already have them).
+      attachments: resumeSessionId ? null : o.runAttachments(run),
     });
 
   let session: AgentRun | null = null;
@@ -502,6 +504,7 @@ async function review(o: Orchestrator, run: Run, task: Task): Promise<Step> {
       prompt,
       outputSchema: reviewOutputJsonSchema,
       cwd: worktree,
+      attachments: o.runAttachments(run),
     });
     output = await o.structuredTurn(session, ReviewOutputSchema);
     await o.finishAttempt(session, 'succeeded');

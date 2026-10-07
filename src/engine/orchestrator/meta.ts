@@ -2,6 +2,7 @@
  * Orchestrator bookkeeping that is not part of the domain rows but must survive an engine restart:
  * stored as JSON in the `settings` key/value table (`run:<id>`, `task:<id>`).
  */
+import type { AttachmentRef } from '@shared/attachments';
 import type { ReviewCriterion, ReviewFinding } from '@shared/domain';
 import type { Store } from '../db';
 import type { ResumeStep, ScopeReport, VerifyResultInput } from './core';
@@ -13,6 +14,8 @@ export interface RunMeta {
   plannerSessionId: string | null;
   /** Clarify answers, with their questions. */
   answers: { question: string; answer: string }[];
+  /** Files attached to the clarify answers (sent with the plan prompt; coders and reviewers get them too). */
+  answerAttachments: AttachmentRef[];
   /** Integration worktree has had its copy/symlink/setup provisioning. */
   integrationReady: boolean;
   /** Untracked files that provisioning (copy/symlink/setup) left in the integration worktree; cleaning keeps them. */
@@ -65,6 +68,7 @@ const RUN_DEFAULTS: RunMeta = {
   baseSha: null,
   plannerSessionId: null,
   answers: [],
+  answerAttachments: [],
   integrationReady: false,
   integrationKeep: [],
   budgetLimitUsd: null,
