@@ -7,7 +7,7 @@ import { canArchive, isArchived, runPr } from '../app/compat';
 import { openInboxCount, runningAttempts, selectArchivedRuns, taskCounts } from '../app/data';
 import { useActiveRunId, useConnection, useData, useEngines, useRuns } from '../app/hooks';
 import { setPref, usePrefs } from '../app/prefs';
-import { archiveRun, reloadRuns } from '../app/run-actions';
+import { archiveRunInteractively, reloadRuns } from '../app/run-actions';
 import { actions } from '../app/store';
 import { ENGINE_NAME, type Tone } from '../layout/describe';
 import { toast } from '../overlays/nav';
@@ -81,8 +81,7 @@ function RailItem({ run, index, active }: { run: Run; index: number | null; acti
   const archive = async () => {
     setArchiving(true);
     try {
-      await archiveRun(run.id);
-      toast(`Archived “${run.title}”. Its worktrees are cleaned up.`);
+      if (!(await archiveRunInteractively(run))) setArchiving(false);
     } catch (error) {
       toast(`Couldn't archive: ${errorText(error)}`, 'error');
       setArchiving(false);

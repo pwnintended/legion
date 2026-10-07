@@ -9,7 +9,7 @@ import { commandTooltip } from '../../app/commands';
 import { canArchive, isArchived, type PrState, type PullRequestInfo, runPr } from '../../app/compat';
 import { attemptsOfRun, reviewsOfRun, tasksOfRun } from '../../app/data';
 import { rpc, useData, useNow, useRun } from '../../app/hooks';
-import { archiveRun, refreshPr } from '../../app/run-actions';
+import { archiveRunInteractively, refreshPr } from '../../app/run-actions';
 import { dataStore } from '../../app/store';
 import { Icon } from '../../chrome/icons';
 import { Chip, EngineChip } from '../../chrome/ui';
@@ -317,7 +317,7 @@ function Opened({ run, pr }: { run: Run; pr: PullRequestInfo }) {
   const number = pr.number ? `#${pr.number}` : '';
   const [copied, setCopied] = useState(false);
   const [refresh, refreshing] = useAction(() => refreshPr(run.id));
-  const [archive, archiving] = useAction(() => archiveRun(run.id));
+  const [archive, archiving] = useAction(() => archiveRunInteractively(run));
   const archivable = canArchive(run);
   const elapsed = useMemo(() => formatDuration(run.updatedAt - run.createdAt), [run.updatedAt, run.createdAt]);
   const headline = pr.state === 'open' && pr.isDraft ? `Draft PR ${number} is open` : PR_HEADLINE[pr.state](number);

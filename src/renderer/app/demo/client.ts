@@ -198,10 +198,28 @@ export class DemoClient implements EngineClient {
       case 'runs.archive' as ProcedureName: {
         const run = w.runs.find((r) => r.id === input.runId);
         if (!run) throw new RpcError('not_found', 'run not found');
-        if (!['done', 'failed', 'cancelled'].includes(run.status))
+        const force = input.force === true;
+        const active = !['done', 'failed', 'cancelled'].includes(run.status);
+        if (active && !force)
           throw new RpcError('failed_precondition', `run is ${run.status}; archive it once it is finished`);
+        // Like the engine: work found nowhere else is kept (unless forced); the integration branch stays
+        // while its pull request isn't merged.
+        const kept: { kind: 'branch' | 'worktree'; name: string; reason: string }[] = [];
+        if (!force)
+          for (const task of w.tasks.filter((t) => t.runId === run.id && t.branch)) {
+            if (['failed', 'awaiting_human'].includes(task.status))
+              kept.push({
+                kind: 'branch',
+                name: task.branch as string,
+                reason: 'has commits in neither integration nor base',
+              });
+          }
+        const pr = (run as { pr?: { state?: string } }).pr;
+        if (run.integrationBranch && pr?.state !== 'merged')
+          kept.push({ kind: 'branch', name: run.integrationBranch, reason: 'its pull request is not merged' });
         extra(run, { archived: true });
-        return this.updateRun(run.id, {});
+        const row = this.updateRun(run.id, active ? { status: 'cancelled' } : {});
+        return { ...row, archiveReport: { kept, problems: [] } };
       }
       case 'runs.refreshPr' as ProcedureName: {
         const run = w.runs.find((r) => r.id === input.runId);

@@ -40,7 +40,7 @@ import { isConfirmOpen } from './confirm';
 import { type DataState, selectRunList, TERMINAL_RUN_STATUSES } from './data';
 import { rpc } from './hooks';
 import { formatChord, isTerminal, isTextInput, matchesChord, parseChord } from './keys';
-import { archiveRun, refreshPr } from './run-actions';
+import { archiveRunInteractively, refreshPr } from './run-actions';
 import { actions, dataStore, jumpToNextUrgent, type KeyMode, type UiState, uiStore } from './store';
 
 export interface CommandContext {
@@ -616,8 +616,7 @@ export function builtinCommands(): Command[] {
         const run = activeRun(ctx);
         if (!run) return;
         try {
-          await archiveRun(run.id);
-          toast(`Archived “${run.title}”. Its worktrees are cleaned up.`);
+          await archiveRunInteractively(run);
         } catch (error) {
           toast(`Couldn't archive: ${error instanceof Error ? error.message : String(error)}`, 'error');
         }
