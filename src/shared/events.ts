@@ -10,6 +10,7 @@
  */
 import { z } from 'zod';
 import {
+  AgentMessageSchema,
   AttemptSchema,
   AttemptStatusSchema,
   EngineKindSchema,
@@ -127,6 +128,8 @@ export const ServerEventBodySchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('inbox.updated'), item: InboxItemSchema }),
   z.object({ type: z.literal('verification.created'), verification: VerificationSchema }),
   z.object({ type: z.literal('merge.updated'), merge: MergeSchema }),
+  /** A message between two attempts was queued or delivered (`deliveredAt` set). */
+  z.object({ type: z.literal('message.updated'), message: AgentMessageSchema }),
   z.object({
     type: z.literal('agent.event'),
     runId: IdSchema,
@@ -177,6 +180,8 @@ export function eventRefs(body: ServerEventBody): {
       };
     case 'merge.updated':
       return { runId: body.merge.runId, taskId: body.merge.taskId, attemptId: null };
+    case 'message.updated':
+      return { runId: body.message.runId, taskId: null, attemptId: null };
     case 'agent.event':
       return { runId: body.runId, taskId: body.taskId, attemptId: body.attemptId };
     case 'settings.updated':

@@ -7,7 +7,7 @@ applies it with CAS transitions through `Store`, runs git through `engine/git`, 
 
 | File | |
 |---|---|
-| `orchestrator.ts` | `Orchestrator`: shared state, `openSession` (attempt row, MCP token, env), usage/budget, rate limits, inbox helpers, `applyDecision`, the dispatch `tick`, the `McpHost` |
+| `orchestrator.ts` | `Orchestrator`: shared state, `openSession` (attempt row, parent edge, MCP token, env, queued-message delivery on resume), usage/budget, rate limits, inbox helpers, message waiters, `applyDecision`, the dispatch `tick`, the `McpHost` |
 | `live-session.ts` | `AgentRun`: one agent process bound to one attempt; turn results, takeover / hand-back |
 | `planner.ts` | `runs.create`, clarify, plan (validation retries), plan versions, revision, approval |
 | `tasks.ts` | the per-task driver (re-entrant by task status) |
@@ -26,6 +26,6 @@ applies it with CAS transitions through `Store`, runs git through `engine/git`, 
 | `test-harness.ts` | test-only: temp repo + bare origin, fake engines standing in for Claude/Codex, RPC client |
 
 Wiring is in `engine/index.ts` (`createOrchestrator`, MCP server, terminals, `recover`). Tests: `lifecycle.test.ts`
-(end to end on a real repo), `service.test.ts`, `accounting.test.ts`, `finish.test.ts` (plan annotations, PR status,
+(end to end on a real repo), `service.test.ts`, `messaging.test.ts` (agent hierarchy and mailbox), `accounting.test.ts`, `finish.test.ts` (plan annotations, PR status,
 archive, task reports, same-engine review, live engine settings), `demo.test.ts` (fake mode end to end); `run.live.test.ts` runs a tiny real run with
 `pnpm test:live` (Claude haiku coders, Codex low-effort reviewer, stops at `pr_ready`).

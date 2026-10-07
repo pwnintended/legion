@@ -12,6 +12,7 @@
 import type { SQLInputValue } from 'node:sqlite';
 import type { AttachmentRef } from '@shared/attachments';
 import {
+  type AgentMessage,
   ATTEMPT_TRANSITIONS,
   type Attempt,
   type AttemptStatus,
@@ -161,6 +162,7 @@ const attempts = new Table<Attempt>('attempts', {
   model: ['model'],
   effort: ['effort'],
   sessionId: ['session_id'],
+  parentAttemptId: ['parent_attempt_id'],
   status: ['status'],
   startedAt: ['started_at'],
   endedAt: ['ended_at'],
@@ -204,6 +206,18 @@ const merges = new Table<Merge>('merges', {
   error: ['error'],
   createdAt: ['created_at'],
   endedAt: ['ended_at'],
+});
+
+const messages = new Table<AgentMessage>('messages', {
+  id: ['id'],
+  runId: ['run_id'],
+  fromAttemptId: ['from_attempt_id'],
+  toAttemptId: ['to_attempt_id'],
+  kind: ['kind'],
+  body: ['body'],
+  replyTo: ['reply_to'],
+  createdAt: ['created_at'],
+  deliveredAt: ['delivered_at'],
 });
 
 const verifications = new Table<Verification>('verifications', {
@@ -251,7 +265,8 @@ const attachmentFromRow = (row: Row): AttachmentRow => ({
 export type NewPlan = Pick<Plan, 'runId' | 'markdown' | 'dag' | 'source' | 'feedback'> & Partial<Pick<Plan, 'id'>>;
 export type NewTask = Pick<Task, 'runId' | 'nodeId'> & Partial<Pick<Task, 'id' | 'status'>>;
 export type NewAttempt = Pick<Attempt, 'runId' | 'taskId' | 'role' | 'engine' | 'model' | 'effort'> &
-  Partial<Pick<Attempt, 'id' | 'status' | 'sessionId'>>;
+  Partial<Pick<Attempt, 'id' | 'status' | 'sessionId' | 'parentAttemptId'>>;
+export type NewMessage = Pick<AgentMessage, 'runId' | 'fromAttemptId' | 'toAttemptId' | 'kind' | 'body' | 'replyTo'>;
 export type NewReview = Omit<Review, 'id' | 'createdAt'> & Partial<Pick<Review, 'id'>>;
 export type NewInboxItem<K extends InboxKind = InboxKind> = {
   runId: string;
@@ -895,6 +910,7 @@ export class Store {
         model: input.model,
         effort: input.effort,
         sessionId: input.sessionId ?? null,
+        parentAttemptId: input.parentAttemptId ?? null,
         status: input.status ?? 'pending',
         startedAt: this.now(),
         endedAt: null,
@@ -950,6 +966,55 @@ export class Store {
       const attempt = this.requireAttempt(id);
       this.append({ type: 'attempt.updated', attempt, from: null });
       return attempt;
+    });
+  }
+
+  /** Direct children of an attempt in the agent hierarchy, oldest first. */
+  listChildAttempts(parentAttemptId: string): Attempt[] {
+    return this.selectWhere(attempts, 'parent_attempt_id = ?', 'started_at, id', parentAttemptId);
+  }
+
+  // -- messages ---------------------------------------------------------------------------------
+
+  insertMessage(input: NewMessage): AgentMessage {
+    return this.transaction(() => {
+      const message: AgentMessage = { ...input, id: newId('message'), createdAt: this.now(), deliveredAt: null };
+      this.insert(messages, message);
+      this.append({ type: 'message.updated', message });
+      return message;
+    });
+  }
+
+  getMessage(id: string): AgentMessage | null {
+    return this.select(messages, id);
+  }
+
+  listMessages(runId: string): AgentMessage[] {
+    return this.selectWhere(messages, 'run_id = ?', 'created_at, id', runId);
+  }
+
+  /** Messages addressed to `attemptId` that have not reached its context yet, oldest first. */
+  queuedMessagesFor(attemptId: string): AgentMessage[] {
+    return this.selectWhere(messages, 'to_attempt_id = ? AND delivered_at IS NULL', 'created_at, id', attemptId);
+  }
+
+  /** Mark messages as delivered (idempotent: already delivered rows are left alone). */
+  markDelivered(ids: readonly string[]): AgentMessage[] {
+    return this.transaction(() => {
+      const delivered: AgentMessage[] = [];
+      for (const id of ids) {
+        const changed = this.run(
+          'UPDATE messages SET delivered_at = ? WHERE id = ? AND delivered_at IS NULL',
+          this.now(),
+          id,
+        );
+        if (changed === 0) continue;
+        const message = this.select(messages, id);
+        if (!message) continue;
+        this.append({ type: 'message.updated', message });
+        delivered.push(message);
+      }
+      return delivered;
     });
   }
 

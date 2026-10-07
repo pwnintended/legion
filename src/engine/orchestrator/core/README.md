@@ -109,3 +109,11 @@ truncated}` (body ≤ 65,536 chars, shrinks minor findings, logs and the summary
 - Diffs, logs, plans and issues are clipped to `PROMPT_LIMITS`; embedded markdown headings are demoted.
 - `markdownSection(planMarkdown, 'Summary')` extracts the plan's summary for the PR body.
 - Outputs are snapshot-tested (`prompts/__snapshots__`); review the snapshot diff when changing wording.
+
+## Agent messaging — `messaging.ts`
+
+Attempts form a tree through `parentAttemptId`. `messageEdge(from, to)` → `'parent' | 'child' | null` (same run,
+adjacent only); `canMessage` and `messageRefusal` (worded for the agent that tried) wrap it. `renderMessages(lines)`
+turns queued messages into the block the lifecycle service prepends to a resumed prompt (one `### <Kind> from
+<peer> · id <msg>` section each, so the recipient can answer by id); `messageLine` and `peerLabel` (`coder of T3
+(att_…)`) build those lines.

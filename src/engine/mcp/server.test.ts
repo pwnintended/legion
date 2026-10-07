@@ -1,19 +1,24 @@
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import type { AgentMessage } from '../../shared/domain';
 import { claudeMcpConfig, codexMcpConfigOverrides } from './config';
-import { type McpBinding, type McpHost, type McpServerHandle, startMcpServer } from './server';
+import { type McpBinding, type McpHost, type McpServerHandle, type SendMessageRequest, startMcpServer } from './server';
 
 interface Calls {
   progress: Array<[McpBinding, string]>;
   ask: Array<[McpBinding, string, string[] | undefined]>;
   approve: Array<[McpBinding, string, Record<string, unknown>, string | undefined]>;
   done: Array<[McpBinding, string, string]>;
+  sent: Array<[McpBinding, SendMessageRequest]>;
+  waits: Array<[McpBinding, string | null, number | null]>;
 }
 
 function fakeHost() {
-  const calls: Calls = { progress: [], ask: [], approve: [], done: [] };
+  const calls: Calls = { progress: [], ask: [], approve: [], done: [], sent: [], waits: [] };
   const pendingAsks: Array<(a: string) => void> = [];
+  const pendingWaits: Array<(m: AgentMessage | null) => void> = [];
+  let messageSeq = 0;
   const host: McpHost = {
     onProgress: (b, s) => {
       calls.progress.push([b, s]);
@@ -32,12 +37,57 @@ function fakeHost() {
     markDone: (b, d) => {
       calls.done.push([b, d.summary, d.commitMessage]);
     },
+    listAgents: (b) => ({
+      parent: b.parentAttemptId
+        ? { attemptId: b.parentAttemptId, role: 'planner', nodeId: null, status: 'running' }
+        : null,
+      children: [],
+    }),
+    sendMessage: (b, r) => {
+      calls.sent.push([b, r]);
+      if (r.to === 'nobody') throw new Error('nobody is not your lead');
+      messageSeq += 1;
+      return {
+        id: `m${messageSeq}`,
+        runId: b.runId,
+        fromAttemptId: b.attemptId,
+        toAttemptId: r.to,
+        kind: r.kind,
+        body: r.body,
+        replyTo: r.replyTo,
+        createdAt: 1,
+        deliveredAt: null,
+      };
+    },
+    awaitMessage: (b, f) => {
+      calls.waits.push([b, f.replyTo, f.timeoutMs]);
+      return new Promise<AgentMessage | null>((resolve) => pendingWaits.push(resolve));
+    },
   };
-  return { host, calls, pendingAsks };
+  return { host, calls, pendingAsks, pendingWaits };
 }
 
-const coder = (taskId = 't1', attemptId = 'a1'): McpBinding => ({ runId: 'r1', taskId, attemptId, role: 'coder' });
-const reviewer: McpBinding = { runId: 'r1', taskId: 't1', attemptId: 'a2', role: 'reviewer' };
+const coder = (taskId = 't1', attemptId = 'a1'): McpBinding => ({
+  runId: 'r1',
+  taskId,
+  attemptId,
+  role: 'coder',
+  parentAttemptId: null,
+});
+const reviewer: McpBinding = { runId: 'r1', taskId: 't1', attemptId: 'a2', role: 'reviewer', parentAttemptId: null };
+/** A coder opened under a lead: gets the messaging tools. */
+const ledCoder: McpBinding = { ...coder('t1', 'a3'), parentAttemptId: 'lead1' };
+const reply = (id: string, to: string, replyTo: string | null, body: string): AgentMessage => ({
+  id,
+  runId: 'r1',
+  fromAttemptId: 'lead1',
+  toAttemptId: to,
+  kind: replyTo ? 'answer' : 'brief',
+  body,
+  replyTo,
+  createdAt: 2,
+  deliveredAt: 2,
+});
 
 describe('legion mcp server', () => {
   let srv: McpServerHandle;
@@ -91,6 +141,68 @@ describe('legion mcp server', () => {
     for (const role of ['planner', 'reviewer', 'finalizer'] as const) {
       expect(await names({ ...reviewer, role })).toEqual(['approve', 'report_progress', 'request_human_input']);
     }
+  });
+
+  describe('messaging tools', () => {
+    const messagingTools = ['list_agents', 'send_message', 'wait_for_reply'];
+
+    it('appear only for attempts with a parent (plus ask_lead)', async () => {
+      const names = async (b: McpBinding) =>
+        (await (await connect(srv.issueToken(b))).listTools()).tools.map((t) => t.name).sort();
+      expect(await names(ledCoder)).toEqual(
+        ['approve', 'ask_lead', 'mark_task_done', 'report_progress', 'request_human_input', ...messagingTools].sort(),
+      );
+      expect(await names({ ...reviewer, parentAttemptId: 'lead1' })).toEqual(
+        ['approve', 'ask_lead', 'report_progress', 'request_human_input', ...messagingTools].sort(),
+      );
+      expect(await names(coder())).not.toContain('send_message');
+    });
+
+    it('list_agents and send_message reach the host; answers need reply_to', async () => {
+      const c = await connect(srv.issueToken(ledCoder));
+      expect(JSON.parse((await call(c, 'list_agents', {})).text)).toEqual({
+        parent: { attemptId: 'lead1', role: 'planner', nodeId: null, status: 'running' },
+        children: [],
+      });
+      const sent = await call(c, 'send_message', { to: 'lead1', kind: 'status', body: 'halfway' });
+      expect(JSON.parse(sent.text)).toEqual({ id: 'm1' });
+      expect(f.calls.sent).toEqual([[ledCoder, { to: 'lead1', kind: 'status', body: 'halfway', replyTo: null }]]);
+      const bad = await call(c, 'send_message', { to: 'lead1', kind: 'answer', body: 'yes' });
+      expect(bad.isError).toBe(true);
+      expect(bad.text).toContain('reply_to');
+      const refused = await call(c, 'send_message', { to: 'nobody', kind: 'status', body: 'hi' });
+      expect(refused).toEqual({ isError: true, text: 'Error: nobody is not your lead' });
+    });
+
+    it('wait_for_reply blocks until the host hands over a message, or returns null', async () => {
+      const c = await connect(srv.issueToken(ledCoder));
+      const pending = call(c, 'wait_for_reply', { message_id: 'm7', timeout_seconds: 30 });
+      await vi_waitFor(() => f.calls.waits.length === 1);
+      expect(f.calls.waits[0]?.slice(1)).toEqual(['m7', 30_000]);
+      f.pendingWaits[0]?.(reply('m8', 'a3', 'm7', 'use sqlite'));
+      expect(JSON.parse((await pending).text)).toEqual({
+        id: 'm8',
+        from: 'lead1',
+        kind: 'answer',
+        replyTo: 'm7',
+        body: 'use sqlite',
+      });
+      const timedOut = call(c, 'wait_for_reply', {});
+      await vi_waitFor(() => f.calls.waits.length === 2);
+      expect(f.calls.waits[1]?.slice(1)).toEqual([null, null]);
+      f.pendingWaits[1]?.(null);
+      expect((await timedOut).text).toBe('null');
+    });
+
+    it('ask_lead sends a question to the parent and waits for its answer', async () => {
+      const c = await connect(srv.issueToken(ledCoder));
+      const pending = call(c, 'ask_lead', { question: 'Which db?' });
+      await vi_waitFor(() => f.calls.waits.length === 1);
+      expect(f.calls.sent).toEqual([[ledCoder, { to: 'lead1', kind: 'question', body: 'Which db?', replyTo: null }]]);
+      expect(f.calls.waits[0]?.slice(1)).toEqual(['m1', null]);
+      f.pendingWaits[0]?.(reply('m2', 'a3', 'm1', 'sqlite'));
+      expect(JSON.parse((await pending).text)).toEqual({ answer: 'sqlite', message_id: 'm2' });
+    });
   });
 
   it('exposes input schemas', async () => {

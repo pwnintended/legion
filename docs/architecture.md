@@ -144,8 +144,11 @@ Task       runtime row per node: runId, nodeId, status, branch, worktreePath, st
            status: blocked → queued → provisioning → running → verifying → reviewing → fixing
                    → approved → awaiting_human → merging → merged | failed | skipped | cancelled
 Attempt    id, taskId?, runId, role (planner|coder|reviewer|resolver|finalizer), engine, model,
-           sessionId (claude session / codex thread), status, startedAt, endedAt, costUsd?, tokens?, error?
+           sessionId (claude session / codex thread), parentAttemptId? (the attempt it reports to), status,
+           startedAt, endedAt, costUsd?, tokens?, error?
            status: pending → running → succeeded | failed | interrupted | cancelled  (interrupted → running on resume)
+AgentMessage id, runId, fromAttemptId, toAttemptId, kind (brief|question|answer|report|status), body (markdown),
+           replyTo?, createdAt, deliveredAt?  — the mailbox between an attempt and its parent / children (§7)
 Review     id, taskId (null = final review), attemptId, verdict (approve|request_changes|reject_replan),
            criteria[{id,status: met|unmet|unclear,evidence}], findings[{severity: blocker|major|minor|nit,
            file?, line?, title, body, suggestedFix?}], summary
@@ -157,9 +160,9 @@ Verification id, runId, taskId?, attemptId?, phase (setup|task|post_merge|final)
 Event      seq (global, monotonic), runId?, taskId?, attemptId?, ts, type, payload  — append-only
 ```
 
-`?` fields are `null` when absent (never `undefined`), timestamps are epoch ms. `Run.pr`, `Run.archived` and
-`Task.report` (migration 002) are optional in the TS types only so older event-log payloads and fixtures stay
-valid; the engine always sets them. The allowed status changes are
+`?` fields are `null` when absent (never `undefined`), timestamps are epoch ms. `Run.pr`, `Run.archived`,
+`Task.report` (migration 002) and `Attempt.parentAttemptId` (migration 005) are optional in the TS types only so
+older event-log payloads and fixtures stay valid; the engine always sets them. The allowed status changes are
 data (`RUN_TRANSITIONS`, `TASK_TRANSITIONS`, `ATTEMPT_TRANSITIONS` in `shared/domain.ts`).
 
 Status changes go through one function per entity that does compare-and-set (`UPDATE … WHERE status = ?`)
@@ -209,6 +212,7 @@ Normalized `AgentEvent` kinds: `session_started{sessionId, model, version}`, `te
 |---|---|---|
 | planner, reviewer, finalizer | `--permission-mode dontAsk --permission-prompts none`, `--allowedTools mcp__legion`, `--disallowedTools` edit tools + AskUserQuestion/Enter/ExitPlanMode. Reads inside cwd/`--add-dir` and commands the CLI classifies as read-only (`ls`, `git diff`, …) need no rule. | `sandbox: read-only`, `approvalPolicy: never` |
 | coder, resolver | `--permission-mode acceptEdits` (edits inside the working dirs), `--allowedTools` = `Bash(<cmd>)`/`Bash(<cmd> *)` per verify command + `mcp__legion`; everything else → `--permission-prompt-tool stdio` → `approval_request` (or `--permission-prompts none` when `askHuman` is false) | `sandbox: workspace-write` (cwd = worktree), `approvalPolicy: on-request` → requestApproval → inbox |
+| `coordinate` (no role yet: the future lead / assistant) | `dontAsk --permission-prompts none`, `--allowedTools mcp__legion`, `--disallowedTools` = the read-only list + `Read, Glob, Grep, LS, Bash, BashOutput, KillShell, WebFetch, WebSearch, Task, Agent, NotebookRead, TodoWrite, Skill, ToolSearch`: the session can only talk | `sandbox: read-only`, `approvalPolicy: never` (best effort: Codex's tool list cannot be trimmed) |
 
 Every Claude profile also denies `Bash(git commit *)`, `Bash(git push *)`, Enter/ExitWorktree and the
 scheduling tools (Cron*, ScheduleWakeup, RemoteTrigger, PushNotification). Approval decisions: allow →
@@ -256,12 +260,30 @@ values, interrupt/close escalation) are listed in `src/engine/adapters/claude/RE
 
 ## 7. Legion MCP server
 
-Streamable HTTP on `127.0.0.1:<random port>`, bearer token per session (token → {runId, taskId?, attemptId, role}).
-Tools (all return small JSON):
+Streamable HTTP on `127.0.0.1:<random port>`, bearer token per session (token → {runId, taskId?, attemptId, role,
+parentAttemptId?}). Tools (all return small JSON):
 
 - `report_progress({summary})` — one-line status shown on the task card
 - `request_human_input({question, options?})` — blocks until answered via the inbox
 - `mark_task_done({summary, commitMessage})` — coder signals completion
+
+Agent hierarchy and mailbox (`orchestrator/core/messaging.ts`). Attempts form a tree through
+`parentAttemptId` (`openSession({parentAttemptId})`; a resumed engine session inherits it). An attempt may message
+only its parent and its children; the MCP host refuses anything else with a message naming the lead. The tools
+below exist only for attempts that have a parent or whose role is in `COORDINATOR_ROLES` (empty until the lead
+and assistant roles land), so today's roles are unchanged:
+
+- `list_agents()` — the caller's parent and children (attempt id, role, task node, status)
+- `send_message({to, kind, body, reply_to?})` — queue an `AgentMessage` (kinds §5); never blocks
+- `wait_for_reply({message_id?, timeout_seconds?})` — the next message for the caller (a reply to `message_id`
+  when given); `null` on timeout
+- `ask_lead({question})` (parent only) — `send_message(question)` + `wait_for_reply` in one blocking call
+
+Delivery: a message resolves a blocked `wait_for_reply` / `ask_lead` of its recipient at once; otherwise it stays
+queued (`deliveredAt: null`) and is prepended to the prompt the next time the orchestrator resumes that recipient's
+engine session (fix rounds, hand-backs, recovery), marked delivered then. Nothing is injected into a running turn:
+the task driver would receive a turn it did not ask for. Messages and transcripts are separate: an agent sees
+messages, never another agent's transcript. `messages.list({runId})` and the `message.updated` event expose them.
 
 DAG and review output come back as structured output, not via MCP tools. Tool approvals do not go through
 MCP either: both adapters receive them in-band (§6). The Claude adapter pre-approves every Legion tool

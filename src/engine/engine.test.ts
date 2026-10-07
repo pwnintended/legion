@@ -53,7 +53,7 @@ describe('engine over RPC (plain Node)', () => {
       version: '9.9.9',
       dataDir: dir.path,
       dbPath: join(dir.path, 'legion.db'),
-      schemaVersion: 4,
+      schemaVersion: 5,
       pid: process.pid,
       runtime: { node: process.versions.node, electron: null },
     });

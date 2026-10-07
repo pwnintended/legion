@@ -147,9 +147,12 @@ export function threadConfig(opts: SessionOptions): Record<string, JsonValue> {
 
 type PolicyParams = Pick<ThreadStartParams, 'sandbox' | 'approvalPolicy' | 'approvalsReviewer'>;
 
-/** Architecture §6: read_only → read-only + never; workspace_write → workspace-write + on-request. */
+/**
+ * Architecture §6: read_only → read-only + never; workspace_write → workspace-write + on-request. `coordinate` is
+ * best effort on Codex (its tool list cannot be trimmed): read-only sandbox, never ask.
+ */
 export function policyFor(opts: SessionOptions): PolicyParams {
-  if (opts.permission.mode === 'read_only') {
+  if (opts.permission.mode === 'read_only' || opts.permission.mode === 'coordinate') {
     return { sandbox: 'read-only', approvalPolicy: 'never', approvalsReviewer: 'user' };
   }
   return {

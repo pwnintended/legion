@@ -49,6 +49,29 @@ export const ALWAYS_DENIED: readonly string[] = [
 export const READ_ONLY_DENIED: readonly string[] = [...EDIT_TOOLS, 'AskUserQuestion', 'EnterPlanMode', 'ExitPlanMode'];
 
 /**
+ * A coordinating session may only talk (Legion MCP tools): no reads (they need no permission, so they must be
+ * denied by name), no shell, no web, no sub-agents or scratch state.
+ */
+export const COORDINATE_DENIED: readonly string[] = [
+  ...READ_ONLY_DENIED,
+  'Read',
+  'Glob',
+  'Grep',
+  'LS',
+  'Bash',
+  'BashOutput',
+  'KillShell',
+  'WebFetch',
+  'WebSearch',
+  'Task',
+  'Agent',
+  'NotebookRead',
+  'TodoWrite',
+  'Skill',
+  'ToolSearch',
+];
+
+/**
  * `Bash(cmd)` + `Bash(cmd *)`: the exact command and the command with arguments (the CLI's matcher is
  * operator-aware, so `Bash(cmd *)` never covers `cmd && other`). A command that itself contains shell
  * syntax only gets its exact rule, the same strictness as the Codex pre-approval (`util/shell.ts`).
@@ -78,11 +101,11 @@ export interface PermissionArgs {
  */
 export function permissionArgs(profile: PermissionProfile, mcp: McpConnection | null): PermissionArgs {
   const mcpRules = mcp ? [`mcp__${LEGION_MCP_SERVER}`] : [];
-  if (profile.mode === 'read_only') {
+  if (profile.mode === 'read_only' || profile.mode === 'coordinate') {
     return {
       mode: 'dontAsk',
       allowedTools: mcpRules,
-      disallowedTools: [...ALWAYS_DENIED, ...READ_ONLY_DENIED],
+      disallowedTools: [...ALWAYS_DENIED, ...(profile.mode === 'coordinate' ? COORDINATE_DENIED : READ_ONLY_DENIED)],
       askHost: false,
     };
   }

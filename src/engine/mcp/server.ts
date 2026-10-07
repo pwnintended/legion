@@ -10,7 +10,8 @@ import type { AddressInfo } from 'node:net';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { z } from 'zod';
-import type { Role } from '../../shared/domain';
+import { type AgentMessage, MESSAGE_KINDS, type MessageKind, type Role } from '../../shared/domain';
+import { COORDINATOR_ROLES } from '../../shared/engine';
 
 export interface McpBinding {
   runId: string;
@@ -18,6 +19,24 @@ export interface McpBinding {
   taskId: string | null;
   attemptId: string;
   role: Role;
+  /** The attempt this one reports to (null = top level): unlocks `ask_lead` and the messaging tools. */
+  parentAttemptId: string | null;
+}
+
+/** An agent as `list_agents` describes it. */
+export interface AgentPeer {
+  attemptId: string;
+  role: Role;
+  /** Plan node the agent works on (coders, reviewers), null for run-level agents. */
+  nodeId: string | null;
+  status: string;
+}
+
+export interface SendMessageRequest {
+  to: string;
+  kind: MessageKind;
+  body: string;
+  replyTo: string | null;
 }
 
 export type ApproveResult =
@@ -34,6 +53,23 @@ export interface McpHost {
     req: { toolName: string; input: Record<string, unknown>; toolUseId?: string },
   ): Promise<ApproveResult>;
   markDone(binding: McpBinding, done: { summary: string; commitMessage: string }): void | Promise<void>;
+  /** The caller's parent and children in the agent hierarchy. */
+  listAgents(binding: McpBinding):
+    | { parent: AgentPeer | null; children: AgentPeer[] }
+    | Promise<{
+        parent: AgentPeer | null;
+        children: AgentPeer[];
+      }>;
+  /** Queue a message to the caller's parent or child; throws when `to` is neither. */
+  sendMessage(binding: McpBinding, request: SendMessageRequest): AgentMessage | Promise<AgentMessage>;
+  /**
+   * The next message addressed to the caller (a reply to `replyTo` when given), waiting up to `timeoutMs`
+   * (null = no limit). Resolves null on timeout.
+   */
+  awaitMessage(
+    binding: McpBinding,
+    filter: { replyTo: string | null; timeoutMs: number | null },
+  ): Promise<AgentMessage | null>;
 }
 
 export interface McpServerOptions {
@@ -73,10 +109,9 @@ const text = (value: unknown, isError = false) => ({
 
 type Log = NonNullable<McpServerOptions['log']>;
 
-function buildServer(binding: McpBinding, host: McpHost, log: Log): McpServer {
-  const server = new McpServer({ name: 'legion', version: '1.0.0' });
-  const guard =
-    <A>(name: string, fn: (args: A) => Promise<unknown>) =>
+/** Wraps a tool handler: its result becomes a text content block, a thrown error an `isError` reply. */
+function makeGuard(binding: McpBinding, log: Log) {
+  return <A>(name: string, fn: (args: A) => Promise<unknown>) =>
     async (args: A) => {
       try {
         return text(await fn(args));
@@ -86,6 +121,12 @@ function buildServer(binding: McpBinding, host: McpHost, log: Log): McpServer {
         return text(`Error: ${message}`, true);
       }
     };
+}
+type Guard = ReturnType<typeof makeGuard>;
+
+function buildServer(binding: McpBinding, host: McpHost, log: Log): McpServer {
+  const server = new McpServer({ name: 'legion', version: '1.0.0' });
+  const guard = makeGuard(binding, log);
 
   server.registerTool(
     'report_progress',
@@ -158,6 +199,9 @@ function buildServer(binding: McpBinding, host: McpHost, log: Log): McpServer {
     ),
   );
 
+  if (binding.parentAttemptId !== null || COORDINATOR_ROLES.has(binding.role))
+    registerMessaging(server, binding, host, guard);
+
   if (WRITE_ROLES.has(binding.role)) {
     server.registerTool(
       'mark_task_done',
@@ -178,6 +222,105 @@ function buildServer(binding: McpBinding, host: McpHost, log: Log): McpServer {
     );
   }
   return server;
+}
+
+const MAX_WAIT_SECONDS = 60 * 60 * 24;
+
+const brief = (m: AgentMessage) => ({
+  id: m.id,
+  from: m.fromAttemptId,
+  kind: m.kind,
+  replyTo: m.replyTo,
+  body: m.body,
+});
+
+/** Tools of an attempt that has a lead and/or agents of its own (`core/messaging.ts` for the rules). */
+function registerMessaging(server: McpServer, binding: McpBinding, host: McpHost, guard: Guard): void {
+  const hasLead = binding.parentAttemptId !== null;
+  server.registerTool(
+    'list_agents',
+    {
+      description:
+        'The agents you can message: your lead (the agent you report to) and the agents working for you, with ' +
+        'their attempt ids, roles, task node ids and status. You cannot reach anyone else directly.',
+      inputSchema: {},
+    },
+    guard('list_agents', async () => host.listAgents(binding)),
+  );
+  server.registerTool(
+    'send_message',
+    {
+      description:
+        'Send a message to your lead or to one of your agents (ids from list_agents). Kinds: brief = work you ' +
+        'hand down (objective, output format, boundaries); question = something you need answered; answer = a ' +
+        'reply (set reply_to to the question id); report = your final, condensed result for your lead; status = ' +
+        'a short non-blocking note. Keep bodies short: the recipient gets the message, never your transcript. ' +
+        'Does not block; use wait_for_reply to wait for an answer. Returns {"id": message id}.',
+      inputSchema: {
+        to: z.string().min(1).describe('Attempt id of the recipient (from list_agents).'),
+        kind: z.enum(MESSAGE_KINDS).describe('brief | question | answer | report | status'),
+        body: z.string().min(1).describe('Markdown body.'),
+        reply_to: z.string().optional().describe('Id of the message this answers (required for kind answer).'),
+      },
+    },
+    guard(
+      'send_message',
+      async ({ to, kind, body, reply_to }: { to: string; kind: MessageKind; body: string; reply_to?: string }) => {
+        if (kind === 'answer' && !reply_to) throw new Error('an answer needs reply_to (the question id)');
+        const message = await host.sendMessage(binding, { to, kind, body, replyTo: reply_to ?? null });
+        return { id: message.id };
+      },
+    ),
+  );
+  server.registerTool(
+    'wait_for_reply',
+    {
+      description:
+        'Block until a message addressed to you arrives: with message_id, a reply to that message of yours; ' +
+        'without it, the next message from any agent you can talk to. Returns the message ' +
+        '({id, from, kind, replyTo, body}) or null when timeout_seconds passed without one.',
+      inputSchema: {
+        message_id: z.string().optional().describe('Wait for a reply to this message (one you sent).'),
+        timeout_seconds: z
+          .number()
+          .int()
+          .min(1)
+          .max(MAX_WAIT_SECONDS)
+          .optional()
+          .describe('Give up after this long (default: wait indefinitely).'),
+      },
+    },
+    guard(
+      'wait_for_reply',
+      async ({ message_id, timeout_seconds }: { message_id?: string; timeout_seconds?: number }) => {
+        const message = await host.awaitMessage(binding, {
+          replyTo: message_id ?? null,
+          timeoutMs: timeout_seconds === undefined ? null : timeout_seconds * 1000,
+        });
+        return message ? brief(message) : null;
+      },
+    ),
+  );
+  if (!hasLead) return;
+  server.registerTool(
+    'ask_lead',
+    {
+      description:
+        'Ask the agent you report to a question and wait for the answer. Use it when the task brief leaves ' +
+        'something open that your lead decided or can decide (scope, interface choices, priorities); decide ' +
+        'small things yourself and note them in your summary. Blocks until the answer arrives. ' +
+        'Returns {"answer": string, "message_id": string}.',
+      inputSchema: { question: z.string().min(1).describe('A specific, self-contained question.') },
+    },
+    guard('ask_lead', async ({ question }: { question: string }) => {
+      const parent = binding.parentAttemptId;
+      if (parent === null) throw new Error('you have no lead');
+      const sent = await host.sendMessage(binding, { to: parent, kind: 'question', body: question, replyTo: null });
+      const reply = await host.awaitMessage(binding, { replyTo: sent.id, timeoutMs: null });
+      if (!reply) throw new Error('no answer arrived');
+      return { answer: reply.body, message_id: reply.id };
+    }),
+  );
 }
 
 export async function startMcpServer(opts: McpServerOptions): Promise<McpServerHandle> {

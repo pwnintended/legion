@@ -69,6 +69,7 @@ describe('database', () => {
       'recent_repos',
       'merges',
       'verifications',
+      'messages',
     ]) {
       expect(tables).toContain(table);
     }
@@ -289,5 +290,67 @@ describe('store', () => {
     store.insertTask({ runId: run.id, nodeId: 'T1' });
     opened.db.prepare('DELETE FROM runs WHERE id = ?').run(run.id);
     expect(store.listTasks(run.id)).toEqual([]);
+  });
+});
+
+describe('agent hierarchy and messages', () => {
+  const attempt = (runId: string, parentAttemptId: string | null = null) =>
+    store.insertAttempt({
+      runId,
+      taskId: null,
+      role: 'coder',
+      engine: 'fake',
+      model: null,
+      effort: null,
+      parentAttemptId,
+    });
+
+  it('stores the parent edge and lists children', () => {
+    const run = newRun();
+    const lead = attempt(run.id);
+    expect(lead.parentAttemptId).toBeNull();
+    const a = attempt(run.id, lead.id);
+    const b = attempt(run.id, lead.id);
+    expect(store.getAttempt(a.id)?.parentAttemptId).toBe(lead.id);
+    expect(store.listChildAttempts(lead.id).map((x) => x.id)).toEqual([a.id, b.id]);
+    expect(store.listChildAttempts(a.id)).toEqual([]);
+  });
+
+  it('queues, lists and delivers messages exactly once, with events', () => {
+    const run = newRun();
+    const lead = attempt(run.id);
+    const child = attempt(run.id, lead.id);
+    const events: ServerEvent[] = [];
+    store.onEvents((batch) => events.push(...batch));
+    const question = store.insertMessage({
+      runId: run.id,
+      fromAttemptId: child.id,
+      toAttemptId: lead.id,
+      kind: 'question',
+      body: 'Which db?',
+      replyTo: null,
+    });
+    expect(question).toMatchObject({ kind: 'question', deliveredAt: null, replyTo: null });
+    expect(question.id).toMatch(/^msg_/);
+    const answer = store.insertMessage({
+      runId: run.id,
+      fromAttemptId: lead.id,
+      toAttemptId: child.id,
+      kind: 'answer',
+      body: 'sqlite',
+      replyTo: question.id,
+    });
+    expect(store.listMessages(run.id).map((m) => m.id)).toEqual([question.id, answer.id]);
+    expect(store.queuedMessagesFor(lead.id).map((m) => m.id)).toEqual([question.id]);
+    expect(store.queuedMessagesFor(child.id).map((m) => m.id)).toEqual([answer.id]);
+
+    const delivered = store.markDelivered([question.id, question.id, 'msg_missing']);
+    expect(delivered.map((m) => m.id)).toEqual([question.id]);
+    expect(delivered[0]?.deliveredAt).toBeGreaterThan(question.createdAt);
+    expect(store.queuedMessagesFor(lead.id)).toEqual([]);
+    expect(store.getMessage(question.id)?.deliveredAt).toBe(delivered[0]?.deliveredAt);
+    expect(store.markDelivered([question.id])).toEqual([]);
+    expect(events.filter((e) => e.type === 'message.updated')).toHaveLength(3);
+    expect(events.at(-1)).toMatchObject({ type: 'message.updated', message: { id: question.id } });
   });
 });

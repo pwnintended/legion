@@ -11,6 +11,10 @@ export const CLAUDE_TOOL_NAMES = {
   requestHumanInput: 'mcp__legion__request_human_input',
   approve: 'mcp__legion__approve',
   markTaskDone: 'mcp__legion__mark_task_done',
+  listAgents: 'mcp__legion__list_agents',
+  sendMessage: 'mcp__legion__send_message',
+  waitForReply: 'mcp__legion__wait_for_reply',
+  askLead: 'mcp__legion__ask_lead',
 } as const;
 
 /**

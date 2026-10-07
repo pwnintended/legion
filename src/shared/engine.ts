@@ -46,9 +46,12 @@ export type EngineInfo = z.infer<typeof EngineInfoSchema>;
  * - workspace_write (coder, resolver): Claude `acceptEdits` + curated allowed tools; everything else is
  *   asked in-band (`--permission-prompt-tool stdio` → `can_use_tool` control requests → `approval_request`);
  *   Codex `sandbox: workspace-write`, `approvalPolicy: on-request` (`item/<kind>/requestApproval`).
+ * - coordinate (future lead / assistant roles): the session may only talk, through the Legion MCP tools. Claude
+ *   `dontAsk` with every file, shell, web and sub-agent tool disallowed; Codex `sandbox: read-only` (best effort:
+ *   its tool list is not configurable).
  */
 export interface PermissionProfile {
-  mode: 'read_only' | 'workspace_write';
+  mode: 'read_only' | 'workspace_write' | 'coordinate';
   /** Shell commands pre-approved for this session (the task's verify commands). Exact-match prefixes. */
   allowedCommands: readonly string[];
   /** Whether anything outside the profile is routed to the human (true) or simply denied (false). */
@@ -71,6 +74,13 @@ export function permissionProfileFor(role: Role, allowedCommands: readonly strin
     askHuman: mode === 'workspace_write',
   };
 }
+
+/**
+ * Roles that coordinate other agents: they get the messaging MCP tools (`list_agents`, `send_message`,
+ * `wait_for_reply`) even without a parent. Empty until the lead and assistant roles land; a non-coordinator gets
+ * the tools only when it was opened with a parent attempt.
+ */
+export const COORDINATOR_ROLES: ReadonlySet<Role> = new Set<Role>();
 
 export interface McpConnection {
   /** Legion MCP server URL, e.g. http://127.0.0.1:43123/mcp */

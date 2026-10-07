@@ -13,6 +13,7 @@
 import { z } from 'zod';
 import { AttachmentRefSchema } from './attachments';
 import {
+  AgentMessageSchema,
   AttemptSchema,
   EffortSchema,
   EngineKindSchema,
@@ -671,6 +672,10 @@ export const rpcContract = {
     input: z.object({ attemptId: IdSchema, ...TerminalSize }),
     output: z.object({ terminalId: IdSchema }),
   },
+
+  // agent messages ------------------------------------------------------------------------------
+  /** Every message between the run's attempts, oldest first (`core/messaging.ts`). */
+  'messages.list': { input: ByRun, output: z.array(AgentMessageSchema) },
 
   // transcripts & diffs -------------------------------------------------------------------------
   'attempts.get': { input: ByAttempt, output: AttemptSchema },

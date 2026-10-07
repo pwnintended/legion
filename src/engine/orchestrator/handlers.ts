@@ -65,6 +65,11 @@ export function registerOrchestratorHandlers(server: EngineRpcServer, o: Orchest
   });
   server.implement('sessions.takeover', ({ attemptId, cols, rows }) => takeover(o, attemptId, cols, rows));
 
+  server.implement('messages.list', ({ runId }) => {
+    store.requireRun(runId);
+    return store.listMessages(runId);
+  });
+
   server.implement('attempts.get', ({ attemptId }) => store.requireAttempt(attemptId));
   server.implement('attempts.transcript', ({ attemptId, sinceSeq, limit }) => {
     store.requireAttempt(attemptId);

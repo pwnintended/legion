@@ -18,6 +18,7 @@ export const ID_PREFIXES = {
   verification: 'ver',
   attachment: 'file',
   project: 'prj',
+  message: 'msg',
 } as const;
 
 export type IdKind = keyof typeof ID_PREFIXES;

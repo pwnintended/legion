@@ -7,6 +7,7 @@ export * from './engines';
 export * from './estimate';
 export * from './glob';
 export * from './graph';
+export * from './messaging';
 export * from './policy';
 export * from './priority';
 export * from './prompts';

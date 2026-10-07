@@ -137,3 +137,30 @@ describe('childEnv', () => {
     ).toEqual({ PATH: '/bin', ANTHROPIC_API_KEY: 'k', CLAUDE_CODE_USE_BEDROCK: '1' });
   });
 });
+
+describe('coordinate mode', () => {
+  it('may only talk: dontAsk, Legion MCP allowed, every read/shell/web/sub-agent tool denied', () => {
+    const perms = permissionArgs(
+      { mode: 'coordinate', allowedCommands: ['pnpm test'], askHuman: false },
+      { url: 'http://127.0.0.1:9/mcp', token: 't' },
+    );
+    expect(perms).toMatchObject({ mode: 'dontAsk', askHost: false, allowedTools: ['mcp__legion'] });
+    expect(perms.disallowedTools).toEqual(
+      expect.arrayContaining([
+        'Read',
+        'Glob',
+        'Grep',
+        'Bash',
+        'WebFetch',
+        'WebSearch',
+        'Task',
+        'Agent',
+        'Edit',
+        'Write',
+        'AskUserQuestion',
+        'Bash(git push *)',
+      ]),
+    );
+    expect(perms.disallowedTools).not.toContain('Bash(pnpm test)');
+  });
+});

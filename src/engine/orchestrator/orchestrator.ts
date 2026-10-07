@@ -9,6 +9,8 @@
  */
 import type { AttachmentRef } from '@shared/attachments';
 import type {
+  AgentMessage,
+  Attempt,
   Effort,
   EngineKind,
   InboxItem,
@@ -35,10 +37,18 @@ import { AttachmentService } from '../attachments';
 import type { EngineContext, Logger } from '../context';
 import type { Store } from '../db';
 import { integrationWorktreePath, type LegionConfig, loadLegionConfig, repoHash, taskWorktreePath } from '../git';
-import { type ApproveResult, CLAUDE_TOOL_NAMES, type McpBinding, type McpHost, type McpServerHandle } from '../mcp';
+import {
+  type AgentPeer,
+  type ApproveResult,
+  CLAUDE_TOOL_NAMES,
+  type McpBinding,
+  type McpHost,
+  type McpServerHandle,
+} from '../mcp';
 import type { TerminalService } from '../pty';
 import {
   type AgentPrompt,
+  canMessage,
   DEFAULT_TOOL_NAMES,
   type EnabledEngines,
   enabledEngines,
@@ -46,10 +56,14 @@ import {
   fallbackReviewModel,
   type IssueInput,
   type Limits,
+  messageLine,
+  messageRefusal,
+  peerLabel,
   planDispatch,
   type RateLimit,
   type RepoInput,
   type ResumeStep,
+  renderMessages,
   SLOT_STATUSES,
   type TaskDecision,
   type ToolNames,
@@ -111,11 +125,23 @@ export interface OpenSessionParams {
   reuseAttemptId?: string | null;
   /** Files sent with the prompt (`runAttachments` for a session's first message). */
   attachments?: readonly SessionAttachment[] | null;
+  /**
+   * The attempt this session reports to (`core/messaging.ts`). Absent: inherited from the attempt whose engine
+   * session is resumed, else top level.
+   */
+  parentAttemptId?: string | null;
 }
 
 type Waiter = {
   attemptId: string | null;
   resolve: (resolution: InboxResolution) => void;
+  reject: (error: Error) => void;
+};
+
+/** A blocked `wait_for_reply` / `ask_lead` of one attempt. */
+type MessageWaiter = {
+  replyTo: string | null;
+  resolve: (message: AgentMessage) => void;
   reject: (error: Error) => void;
 };
 
@@ -188,6 +214,8 @@ export class Orchestrator {
 
   private readonly tokens = new Map<string, string>();
   private readonly waiters = new Map<string, Waiter>();
+  /** Blocked message waits by recipient attempt id. */
+  private readonly messageWaiters = new Map<string, MessageWaiter[]>();
   private readonly usageBaselines = new WeakMap<
     AgentRun,
     { cost: number; input: number; output: number; decided: boolean }
@@ -413,6 +441,9 @@ export class Orchestrator {
     const usable = this.registry.usable(params.engine);
     if (!usable.ok) throw new AgentFailure({ kind: 'auth', message: usable.reason });
     const engine: AgentEngine = this.registry.get(params.engine);
+    const continued = params.resumeSessionId ? this.attemptsOfSession(params.run.id, params.resumeSessionId) : [];
+    const parentAttemptId =
+      params.parentAttemptId !== undefined ? params.parentAttemptId : (continued.at(-1)?.parentAttemptId ?? null);
     const attempt = params.reuseAttemptId
       ? this.store.transitionAttempt(params.reuseAttemptId, 'interrupted', 'running', { error: null })
       : this.store.insertAttempt({
@@ -424,14 +455,22 @@ export class Orchestrator {
           effort: params.effort,
           status: 'running',
           sessionId: params.resumeSessionId ?? null,
+          parentAttemptId,
         });
     const token =
-      this.mcp?.issueToken({ runId: params.run.id, taskId: params.taskId, attemptId: attempt.id, role: params.role }) ??
-      null;
+      this.mcp?.issueToken({
+        runId: params.run.id,
+        taskId: params.taskId,
+        attemptId: attempt.id,
+        role: params.role,
+        parentAttemptId: attempt.parentAttemptId ?? null,
+      }) ?? null;
+    // Messages that arrived while this engine session was not running reach it with the resumed prompt.
+    const inherited = this.drainQueuedMessages([attempt, ...continued]);
     const opts: SessionOptions = {
       role: params.role,
       cwd: params.cwd,
-      prompt: params.prompt.prompt,
+      prompt: inherited ? `${inherited}\n\n---\n\n${params.prompt.prompt}` : params.prompt.prompt,
       systemPrompt: params.prompt.systemPrompt,
       model: params.model,
       effort: params.effort,
@@ -472,6 +511,60 @@ export class Orchestrator {
     if (session.id && session.id !== attempt.sessionId) this.store.updateAttempt(attempt.id, { sessionId: session.id });
     run.start();
     return run;
+  }
+
+  /** Attempts of `runId` that ran (or run) the engine session `sessionId`, oldest first. */
+  private attemptsOfSession(runId: string, sessionId: string): Attempt[] {
+    return this.store.listAttempts(runId).filter((a) => a.sessionId === sessionId);
+  }
+
+  /** Queued messages addressed to any of `attempts`, marked delivered and rendered for a prompt (null = none). */
+  private drainQueuedMessages(attempts: readonly Attempt[]): string | null {
+    const seen = new Set<string>();
+    const queued: AgentMessage[] = [];
+    for (const attempt of attempts) {
+      if (seen.has(attempt.id)) continue;
+      seen.add(attempt.id);
+      queued.push(...this.store.queuedMessagesFor(attempt.id));
+    }
+    if (queued.length === 0) return null;
+    queued.sort((a, b) => a.createdAt - b.createdAt || a.id.localeCompare(b.id));
+    this.store.markDelivered(queued.map((m) => m.id));
+    return renderMessages(queued.map((m) => messageLine(m, this.agentName(m.fromAttemptId))));
+  }
+
+  /** How other agents refer to an attempt: `coder of T3 (att_…)`. */
+  private agentName(attemptId: string): string {
+    const attempt = this.store.getAttempt(attemptId);
+    if (!attempt) return attemptId;
+    return peerLabel(attempt, this.nodeIdOf(attempt));
+  }
+
+  private nodeIdOf(attempt: Attempt): string | null {
+    return attempt.taskId ? (this.store.getTask(attempt.taskId)?.nodeId ?? null) : null;
+  }
+
+  private peer(attempt: Attempt): AgentPeer {
+    return { attemptId: attempt.id, role: attempt.role, nodeId: this.nodeIdOf(attempt), status: attempt.status };
+  }
+
+  /** Hand `message` to a blocked wait of its recipient, if any; otherwise it stays queued. */
+  private deliverMessage(message: AgentMessage): void {
+    const waiting = this.messageWaiters.get(message.toAttemptId);
+    if (!waiting) return;
+    const index = waiting.findIndex((w) => w.replyTo === null || w.replyTo === message.replyTo);
+    if (index < 0) return;
+    const [waiter] = waiting.splice(index, 1);
+    if (waiting.length === 0) this.messageWaiters.delete(message.toAttemptId);
+    const [delivered] = this.store.markDelivered([message.id]);
+    waiter?.resolve(delivered ?? message);
+  }
+
+  private rejectMessageWaiters(attemptId: string, note: string): void {
+    const waiting = this.messageWaiters.get(attemptId);
+    if (!waiting) return;
+    this.messageWaiters.delete(attemptId);
+    for (const waiter of waiting) waiter.reject(new Error(note));
   }
 
   /** Close the process and settle the attempt row. */
@@ -607,6 +700,7 @@ export class Orchestrator {
         waiter.reject(new Error('the session ended'));
       }
     }
+    this.rejectMessageWaiters(run.attempt.id, 'the session ended');
     if (this.closed) return;
     if (run.handBackRefused) {
       const attempt = this.store.getAttempt(run.attempt.id);
@@ -1082,6 +1176,70 @@ export class Orchestrator {
       const run = this.live.get(binding.attemptId);
       if (run) run.markDone = done;
     },
+    listAgents: (binding) => {
+      const me = this.store.requireAttempt(binding.attemptId);
+      const parent = me.parentAttemptId ? this.store.getAttempt(me.parentAttemptId) : null;
+      return {
+        parent: parent ? this.peer(parent) : null,
+        children: this.store.listChildAttempts(me.id).map((child) => this.peer(child)),
+      };
+    },
+    sendMessage: (binding, request) => {
+      this.assertOpen();
+      const from = this.store.requireAttempt(binding.attemptId);
+      const to = this.store.getAttempt(request.to);
+      if (!to || !canMessage(from, to)) throw new Error(messageRefusal(from, to));
+      if (request.replyTo !== null) {
+        const original = this.store.getMessage(request.replyTo);
+        if (!original || original.runId !== from.runId) throw new Error(`unknown reply_to message ${request.replyTo}`);
+      }
+      const message = this.store.insertMessage({
+        runId: from.runId,
+        fromAttemptId: from.id,
+        toAttemptId: to.id,
+        kind: request.kind,
+        body: request.body,
+        replyTo: request.replyTo,
+      });
+      this.deliverMessage(message);
+      return message;
+    },
+    awaitMessage: (binding, filter) => {
+      this.assertOpen();
+      const matches = (m: AgentMessage) => filter.replyTo === null || m.replyTo === filter.replyTo;
+      const queued = this.store.queuedMessagesFor(binding.attemptId).find(matches);
+      if (queued) {
+        const [delivered] = this.store.markDelivered([queued.id]);
+        return Promise.resolve(delivered ?? queued);
+      }
+      return new Promise<AgentMessage | null>((resolve, reject) => {
+        let timer: ReturnType<typeof setTimeout> | null = null;
+        const waiter: MessageWaiter = {
+          replyTo: filter.replyTo,
+          resolve: (message) => {
+            if (timer) clearTimeout(timer);
+            resolve(message);
+          },
+          reject: (error) => {
+            if (timer) clearTimeout(timer);
+            reject(error);
+          },
+        };
+        const waiting = this.messageWaiters.get(binding.attemptId) ?? [];
+        waiting.push(waiter);
+        this.messageWaiters.set(binding.attemptId, waiting);
+        if (filter.timeoutMs !== null) {
+          timer = setTimeout(() => {
+            const list = this.messageWaiters.get(binding.attemptId);
+            const index = list?.indexOf(waiter) ?? -1;
+            if (list && index >= 0) list.splice(index, 1);
+            if (list && list.length === 0) this.messageWaiters.delete(binding.attemptId);
+            resolve(null);
+          }, filter.timeoutMs);
+          timer.unref?.();
+        }
+      });
+    },
   };
 
   // -- shutdown ----------------------------------------------------------------------------------
@@ -1098,6 +1256,8 @@ export class Orchestrator {
     if (this.wakeTimer) clearTimeout(this.wakeTimer);
     for (const waiter of this.waiters.values()) waiter.reject(new Closed('engine shutting down'));
     this.waiters.clear();
+    for (const attemptId of [...this.messageWaiters.keys()])
+      this.rejectMessageWaiters(attemptId, 'engine shutting down');
     await Promise.allSettled([...this.live.values()].map((run) => run.close()));
     await Promise.race([Promise.allSettled([...this.jobs]), sleep(5_000)]);
     await this.tickChain.catch(() => undefined);

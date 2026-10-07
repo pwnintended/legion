@@ -339,6 +339,12 @@ export const AttemptSchema = z.object({
   effort: EffortSchema.nullable(),
   /** Engine-native id (Claude session id / Codex thread id), known after `session_started`. */
   sessionId: z.string().nullable(),
+  /**
+   * The attempt this one reports to in the agent hierarchy (null = top level). Agents may only message
+   * their parent and their children (`core/messaging.ts`). Always present on engine rows; optional in the type
+   * for older event payloads.
+   */
+  parentAttemptId: IdSchema.nullable().optional(),
   status: AttemptStatusSchema,
   startedAt: TimestampSchema,
   endedAt: TimestampSchema.nullable(),
@@ -348,6 +354,34 @@ export const AttemptSchema = z.object({
   error: z.string().nullable(),
 });
 export type Attempt = z.infer<typeof AttemptSchema>;
+
+// ---------------------------------------------------------------------------------------------
+// Agent messages (the mailbox between an attempt and its parent / children)
+// ---------------------------------------------------------------------------------------------
+
+/**
+ * brief: work handed down (objective, output format, boundaries). question / answer: a blocking ask and its
+ * reply (`replyTo` = the question). report: a child's final, condensed result. status: a non-blocking note.
+ */
+export const MESSAGE_KINDS = ['brief', 'question', 'answer', 'report', 'status'] as const;
+export const MessageKindSchema = z.enum(MESSAGE_KINDS);
+export type MessageKind = z.infer<typeof MessageKindSchema>;
+
+export const AgentMessageSchema = z.object({
+  id: IdSchema,
+  runId: IdSchema,
+  fromAttemptId: IdSchema,
+  toAttemptId: IdSchema,
+  kind: MessageKindSchema,
+  /** Markdown. Kept short: transcripts never cross agents, only messages do. */
+  body: z.string(),
+  /** The message this one answers (answers always set it). */
+  replyTo: IdSchema.nullable(),
+  createdAt: TimestampSchema,
+  /** When it reached the recipient's context (a blocked wait returned it, or a resumed prompt carried it). */
+  deliveredAt: TimestampSchema.nullable(),
+});
+export type AgentMessage = z.infer<typeof AgentMessageSchema>;
 
 export const CriterionStatusSchema = z.enum(['met', 'unmet', 'unclear']);
 export const FindingSeveritySchema = z.enum(['blocker', 'major', 'minor', 'nit']);

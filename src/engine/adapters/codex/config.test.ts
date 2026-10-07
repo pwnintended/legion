@@ -55,6 +55,9 @@ describe('permissions', () => {
     }
     const unattended = opts({ permission: { mode: 'workspace_write', allowedCommands: [], askHuman: false } });
     expect(policyFor(unattended).approvalPolicy).toBe('never');
+    // coordinate is best effort on Codex: the read-only sandbox, never asking.
+    const coordinate = opts({ permission: { mode: 'coordinate', allowedCommands: [], askHuman: false } });
+    expect(policyFor(coordinate)).toEqual({ sandbox: 'read-only', approvalPolicy: 'never', approvalsReviewer: 'user' });
   });
 
   it('pre-approves exact commands and their plain-argument extensions only', () => {
