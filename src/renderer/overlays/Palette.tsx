@@ -8,9 +8,11 @@ import type { Attempt, EngineKind, Task } from '@shared/domain';
 import { Command, defaultFilter } from 'cmdk';
 import { type ReactNode, useMemo, useState } from 'react';
 import { type CommandView, executeCommand, useCommands } from '../app/commands';
-import { attemptsOfRun, latestPlan, selectRunList, tasksOfRun } from '../app/data';
+import { attemptsOfRun, latestPlan, tasksOfRun } from '../app/data';
 import { rpc, useActiveRunId, useData, useLayout } from '../app/hooks';
 import { formatChord } from '../app/keys';
+import { openProject } from '../app/project-actions';
+import { selectProjects, selectWorkspaceRuns } from '../app/projects';
 import { actions } from '../app/store';
 import { Icon, type IconName } from '../chrome/icons';
 import { displayEngine, ENGINE_NAME } from '../layout/describe';
@@ -168,8 +170,24 @@ function useEntries(): { contextual: Entry[]; data: Entry[] } {
   return useMemo(() => {
     const contextual: Entry[] = [];
     const data: Entry[] = [];
+    // Projects
+    for (const project of selectProjects(state)) {
+      data.push({
+        id: `project:${project.id}`,
+        group: 'Projects',
+        title: (
+          <>
+            Open project <span className="pal-strong">{project.name}</span>
+          </>
+        ),
+        value: `switch open project home ${project.name} ${project.path}`,
+        icon: 'repo',
+        hint: project.path.split('/').slice(-2, -1)[0],
+        run: closeThen(() => openProject(project.id)),
+      });
+    }
     // Runs
-    selectRunList(state).forEach((run, i) => {
+    selectWorkspaceRuns(state).forEach((run, i) => {
       data.push({
         id: `run:${run.id}`,
         group: 'Runs',
@@ -277,12 +295,21 @@ const COMMAND_ICON: Record<string, IconName> = {
   'settings.open': 'settings',
   'run.archive': 'archive',
   'run.refreshPr': 'refresh',
+  'project.add': 'folderPlus',
+  'project.browse': 'folder',
+  'project.home': 'home',
+  'file.goto': 'file',
+  'project.search': 'search',
+  'project.pin': 'pin',
+  'project.unpin': 'pin',
+  'project.remove': 'close',
 };
 const CATEGORY_ICON: Record<string, IconName> = {
   Focus: 'arrowRight',
   Column: 'strip',
   Mode: 'maximize',
   Workspace: 'layers',
+  Project: 'repo',
   Layout: 'strip',
   Run: 'play',
   Tile: 'session',
@@ -321,7 +348,14 @@ export function PaletteOverlay() {
         .sort((a, b) => Number(a.disabled ?? false) - Number(b.disabled ?? false)),
     [commands],
   );
-  const LEAD = ['cmd:focus.nextUrgent', 'cmd:composer.open', 'cmd:inbox.open'];
+  const LEAD = [
+    'cmd:focus.nextUrgent',
+    'cmd:composer.open',
+    'cmd:file.goto',
+    'cmd:project.search',
+    'cmd:inbox.open',
+    'cmd:project.add',
+  ];
   const lead = LEAD.map((id) => commandEntries.find((e) => e.id === id)).filter((e): e is Entry => !!e);
   const rest = commandEntries.filter((e) => !lead.includes(e));
 
@@ -331,6 +365,7 @@ export function PaletteOverlay() {
         ['Suggested', lead.filter((e) => !e.disabled)],
         ...groupBy(contextual),
         ['Commands', rest.filter((e) => !e.disabled)],
+        ['Projects', data.filter((e) => e.group === 'Projects')],
         ['Runs', data.filter((e) => e.group === 'Runs')],
         ['Tasks', data.filter((e) => e.group === 'Tasks')],
       ];

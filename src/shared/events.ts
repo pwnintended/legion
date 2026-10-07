@@ -16,6 +16,7 @@ import {
   InboxItemSchema,
   MergeSchema,
   PlanSchema,
+  ProjectSchema,
   ReviewSchema,
   RunSchema,
   RunStatusSchema,
@@ -134,6 +135,8 @@ export const ServerEventBodySchema = z.discriminatedUnion('type', [
     event: AgentEventSchema,
   }),
   z.object({ type: z.literal('settings.updated'), settings: SettingsSchema }),
+  /** A project was added, opened, renamed or pinned; `removed` = it left the list (the checkout is untouched). */
+  z.object({ type: z.literal('project.updated'), project: ProjectSchema, removed: z.boolean() }),
 ]);
 export type ServerEventBody = z.infer<typeof ServerEventBodySchema>;
 export type ServerEventType = ServerEventBody['type'];
@@ -177,6 +180,7 @@ export function eventRefs(body: ServerEventBody): {
     case 'agent.event':
       return { runId: body.runId, taskId: body.taskId, attemptId: body.attemptId };
     case 'settings.updated':
+    case 'project.updated':
       return { runId: null, taskId: null, attemptId: null };
   }
 }

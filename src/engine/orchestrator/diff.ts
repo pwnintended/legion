@@ -39,7 +39,11 @@ async function diffWorktree(worktree: string, from: string, contextLines: number
   }
 }
 
-export async function getDiff(o: Orchestrator, target: DiffTarget, contextLines: number): Promise<DiffResult> {
+export async function getDiff(
+  o: Orchestrator,
+  target: Exclude<DiffTarget, { kind: 'commit' }>,
+  contextLines: number,
+): Promise<DiffResult> {
   if (target.kind === 'task') {
     const task = o.store.requireTask(target.taskId);
     const run = o.store.requireRun(task.runId);

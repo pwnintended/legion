@@ -10,6 +10,7 @@ import {
   applySettingsPatch,
   type EngineKind,
   type InboxItem,
+  type Project,
   type QuestionAnswer,
   type Run,
   type SettingsPatch,
@@ -32,6 +33,19 @@ import type { EngineClient } from '../sync';
 import { createDemoWorld, type DemoWorld, LIVE_SCRIPT, snapshotOf } from './fixtures';
 import { extra, withLifecycleDemo } from './lifecycle';
 import { type DemoRpcContext, extendDemoWorld, handlePlanReviewRpc, isHandled } from './plan-review';
+import {
+  createDemoProjects,
+  type DemoProjects,
+  demoFind,
+  demoInfo,
+  demoListDir,
+  demoLog,
+  demoPrs,
+  demoReadFile,
+  demoSearch,
+  demoShow,
+  demoStatus,
+} from './projects';
 import { withSessionLive } from './sessions';
 
 const SCRIPT = withSessionLive(LIVE_SCRIPT);
@@ -40,6 +54,8 @@ const SNAPSHOT_SEQ = 1000;
 
 export class DemoClient implements EngineClient {
   private readonly world: DemoWorld;
+  private readonly projects: DemoProjects;
+  private readonly now: number;
   private readonly history: Record<string, TranscriptEntry[]> = {};
   private headSeq = SNAPSHOT_SEQ;
   private lastDelivered = 0;
@@ -57,6 +73,8 @@ export class DemoClient implements EngineClient {
     const world = createDemoWorld(now);
     extendDemoWorld(world, now);
     this.world = withLifecycleDemo(world, now);
+    this.now = now;
+    this.projects = createDemoProjects(this.world.runs, now);
     // Transcript history gets seqs below the snapshot seq (it happened before the snapshot was read).
     let seq = 100;
     for (const [attemptId, events] of Object.entries(this.world.transcripts)) {
@@ -246,6 +264,59 @@ export class DemoClient implements EngineClient {
         return this.updateRun(input.runId as string, { paused: method === 'runs.pause' });
       case 'runs.approvePlan':
         return this.approvePlan(input.runId as string);
+      case 'projects.list':
+        return structuredClone(
+          [...this.projects.list].sort((a, b) => Number(b.pinned) - Number(a.pinned) || a.addedAt - b.addedAt),
+        );
+      case 'projects.add':
+        return this.addProject(input.path as string);
+      case 'projects.touch':
+      case 'projects.pin': {
+        const project = this.project(input.projectId as string);
+        if (method === 'projects.pin') project.pinned = input.pinned === true;
+        else project.lastOpenedAt = Date.now();
+        this.emit([{ type: 'project.updated', project: structuredClone(project), removed: false }]);
+        return structuredClone(project);
+      }
+      case 'projects.remove': {
+        const project = this.project(input.projectId as string);
+        this.projects.list.splice(this.projects.list.indexOf(project), 1);
+        this.projects.byId.delete(project.id);
+        this.emit([{ type: 'project.updated', project: structuredClone(project), removed: true }]);
+        return { ok: true };
+      }
+      case 'projects.status':
+        return (input.projectId ? [this.project(input.projectId as string)] : this.projects.list).map(demoStatus);
+      case 'projects.info':
+        return demoInfo(this.project(input.projectId as string), this.now);
+      case 'files.list':
+        return demoListDir(this.project(input.projectId as string), input.dir as string);
+      case 'files.read':
+        return demoReadFile(this.project(input.projectId as string), input.path as string);
+      case 'files.find':
+        return demoFind(this.project(input.projectId as string), input.query as string, input.limit as number);
+      case 'files.search':
+        return demoSearch(
+          this.project(input.projectId as string),
+          input.query as string,
+          input.regex === true,
+          input.caseSensitive === true,
+          input.limit as number,
+        );
+      case 'git.log':
+        return demoLog(this.project(input.projectId as string), this.now, input.limit as number);
+      case 'git.show':
+        return demoShow(this.project(input.projectId as string), this.now, input.sha as string);
+      case 'prs.list':
+        return demoPrs(this.project(input.projectId as string), this.now);
+      case 'diff.get': {
+        const target = input.target as { kind: string; projectId?: string; sha?: string };
+        if (target.kind === 'commit')
+          return demoShow(this.project(target.projectId as string), this.now, target.sha as string);
+        const handled = handlePlanReviewRpc(this.extraContext, method, input);
+        if (isHandled(handled)) return handled;
+        throw new RpcError('not_implemented', `${method} is not available in demo mode`);
+      }
       case 'repos.recent':
         return [
           { path: '/Users/dev/src/erudiet/app', name: 'app', lastUsedAt: Date.now() - 60_000 },
@@ -349,6 +420,33 @@ export class DemoClient implements EngineClient {
     this.emit([
       { type: 'agent.event', runId: attempt.runId, taskId: attempt.taskId, attemptId: attempt.id, event: step.event },
     ]);
+  }
+
+  private project(projectId: string): Project {
+    const project = this.projects.byId.get(projectId);
+    if (!project) throw new RpcError('not_found', `project ${projectId} not found`);
+    return project;
+  }
+
+  private addProject(path: string): Project {
+    const inspection = inspectDemoRepo(path);
+    if (!inspection.isGitRepo || !inspection.root) throw new RpcError('bad_request', 'not a git repository');
+    const root = inspection.root;
+    const existing = this.projects.list.find((p) => p.path === root);
+    const project: Project = existing ?? {
+      id: `prj_demoadd${String(this.projects.list.length).padStart(5, '0')}`,
+      path: root,
+      name: root.split('/').filter(Boolean).at(-1) ?? root,
+      addedAt: Date.now(),
+      lastOpenedAt: Date.now(),
+      pinned: false,
+    };
+    if (!existing) {
+      this.projects.list.push(project);
+      this.projects.byId.set(project.id, project);
+    } else project.lastOpenedAt = Date.now();
+    this.emit([{ type: 'project.updated', project: structuredClone(project), removed: false }]);
+    return structuredClone(project);
   }
 
   private updateRun(runId: string, patch: Partial<Run>): Run {
@@ -550,6 +648,8 @@ export class DemoClient implements EngineClient {
       createdAt: now,
       updatedAt: now,
     };
+    const project = this.projects.list.find((p) => p.path === input.repoPath) ?? this.addProject(input.repoPath);
+    run.projectId = project.id;
     this.world.runs.push(run);
     this.emit([{ type: 'run.updated', run: structuredClone(run), from: null }]);
     return structuredClone(run);

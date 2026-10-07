@@ -56,6 +56,7 @@ src/
       fake/          scripted fake engine used by tests and the dev "demo" mode
     mcp/             Legion MCP server (streamable HTTP on 127.0.0.1, per-session bearer tokens)
     git/             git CLI wrapper, worktrees, merge-tree forecast, integration merge queue, gh PR
+    projects/        projects + read-only repository browsing (files, grep, log/show, gh PR list), confinement
     orchestrator/    run lifecycle, review loop; core/ = pure logic (dag validation, graph, estimates,
                      scheduler, task status policy, prompts/)
     pty/             node-pty sessions for terminal takeover (Electron runtime only)
@@ -126,7 +127,8 @@ Do not add dependencies outside your task. If you need one, say so in your repor
 ## 5. Domain model
 
 ```
-Run        id, repoPath, baseRef, title, issueText, issueUrl?, status, paused, plannerEngine, plannerModel?,
+Project    id, path (real path of the checkout's top level, unique), name, addedAt, lastOpenedAt?, pinned
+Run        id, projectId?, repoPath, baseRef, title, issueText, issueUrl?, status, paused, plannerEngine, plannerModel?,
            integrationBranch?, prUrl?, pr? {url, number, state: open|closed|merged, isDraft}, archived,
            attachments? (AttachmentRef[]: id, name, mime, size, kind image|text|file, sha256), error?, createdAt,
            updatedAt
@@ -454,6 +456,29 @@ The service applies `core/` decisions with CAS transitions; every flow is re-ent
 - App data: `~/Library/Application Support/Legion/legion.db` and `attachments/` (override with `LEGION_HOME` for
   tests).
 
+### 5.1 Projects (`engine/projects/`, migration 004)
+
+A project is a checkout the user works in: the rail's top level. `projects.add({path})` accepts any folder inside a
+git checkout and stores the real top-level path (idempotent, stamps `lastOpenedAt`); `runs.create` adds the run's
+project when needed and sets `run.projectId` (migration 004 backfilled one project per distinct `repo_path` of
+existing runs). `projects.remove` only forgets the row (runs keep `projectId: null`; nothing on disk changes).
+Changes are `project.updated {project, removed}` events. `projects.status` (branch, dirty, ahead/behind) feeds the
+rail; `projects.info` the project home (remotes, gh, README, languages by bytes, size, last commit, commit count).
+
+Browsing is **read-only and confined to the project root**. Visible files = `git ls-files --cached --others
+--exclude-standard` minus deleted ones (cached ~5 s per root; the tree, `files.find` and the stats share it), so
+ignored files (`.env`, `node_modules`, ...) never show. Every path is repo-relative and checked lexically (no absolute
+paths, `..`, backslashes, NUL, or a `.git` segment) and again after `realpath` (must stay inside the root's real path
+and outside `.git`): symlinks are listed as `symlink` and never followed out. `files.read` only serves files of the
+index (text with BOM / UTF-8 / Latin-1 detection, cut at a line end after `maxBytes` (default 1 MiB) with
+`truncated`; NUL in the first 8000 bytes = `binary`; png/jpg/gif/webp/svg/ico/avif/bmp ≤ 8 MiB as base64, larger
+`too_large`). `files.search` = `git grep -n -I --column -z --untracked --full-name [-i] -F|-E -e <q> --` (argv only,
+bad patterns → `bad_request`, long lines clipped around the match). `git.log` / `git.show` (`--end-of-options`,
+revisions without `-`, whitespace or `..`) return `Commit`s with decorations and a commit's diff against its first
+parent (root commits against the empty tree) in the `diff.get` shape; `diff.get` also takes `{kind: 'commit',
+projectId, sha}`. `prs.list` = `gh pr list --json …` with `available: false` + a reason when gh is missing, signed
+out or there is no GitHub remote.
+
 ## 10. RPC & events
 
 `shared/rpc.ts` holds a single contract object: procedure names → zod input/output, and an event channel.
@@ -468,9 +493,22 @@ re-attaches the transferred port to a live terminal (a detached shell, or the te
 
 ## 11. UI
 
-- Concept: workspace = run; strip of columns = tasks (plus plan/DAG/PR tiles); tile = a view; layout modes
-  Strip / Focus / Overview / Pipeline; urgency borders; overlays: composer (⌘N), inbox (⌘I), palette (⌘K);
-  waybar-style status bar; rail of runs. See `docs/research/tiling-ux.md` and the mockup.
+- Concept: projects are the top level; workspace = run; strip of columns = tasks (plus plan/DAG/PR tiles); tile = a
+  view; layout modes Strip / Focus / Overview / Pipeline; urgency borders; overlays: composer (⌘N), inbox (⌘I),
+  palette (⌘K), add a project (⌘⇧N), go to file (⌘P); waybar-style status bar. See `docs/research/tiling-ux.md`.
+- Rail: projects (name, branch, uncommitted-changes dot, active runs / needs-you), each expandable to its runs.
+  Workspace numbers (⌘1–9) follow the rail: runs grouped by project (pinned first, then in the order added).
+  Runs whose project was removed are grouped by repository. Archived runs stay hidden unless asked for.
+- Project home: with an active project and no active run (`uiStore.activeProjectId`, `activeRunId: null`), the
+  project's own workspace is on screen: a layout tree stored under `project:<id>` (always Strip). Default columns:
+  Overview (README rendered with repo-relative links/images, facts, languages, New run / Go to file / Search /
+  Terminal / Finder), Activity (runs, open PRs, git history), Files (lazy tree, filter, keyboard). Files, commits and
+  search hits open in a *preview* column right of their source (`layout/project.ts`, reused per kind; ⌘⏎/⌘-click =
+  a new column): the code viewer (Shiki in the diff worker, virtualized, image and Markdown previews, binary/size
+  guards), the diff tile for commits, the search tile (⌘⇧F). Selecting lines in the code viewer → "Start a run about
+  this…" (⌘⏎) opens the composer with the project and a `path:lines` reference. Adding a project opens its home,
+  never the composer; ⌘N preselects the project on screen (`app/composer-seed.ts`); ⌘⇧H returns to the home. The
+  empty state leads with adding a project (and lists checkouts found on this Mac).
 - Layout engine is a pure TS tree (Workspace → Strip → Column(split|stacked|tabbed) → Tile) with ops
   (insertAfter, remove, focusDir, moveDir, setWidthPreset, collapse, toggleStacked) and full unit tests.
   The run's DAG drives insertion; the user's manual changes persist per run.

@@ -406,8 +406,29 @@ export function describeTile(state: DataState, runId: string, tile: LayoutTile, 
       const cwd = params.cwd?.split('/').filter(Boolean).at(-1) ?? null;
       return { ...base, title: params.attemptId ? 'Takeover' : 'Terminal', note: cwd ?? 'shell', label: null };
     }
-    case 'diff':
+    case 'diff': {
+      const target = (tile.params as { target: { kind: string; sha?: string } }).target;
+      if (target.kind === 'commit' && target.sha)
+        return { ...base, title: `Commit ${target.sha.slice(0, 7)}`, note: 'commit diff' };
       return { ...base, note: 'changes' };
+    }
+    case 'project':
+    case 'activity':
+    case 'files':
+      return { ...base, note: state.projects[(tile.params as { projectId: string }).projectId]?.name ?? '' };
+    case 'code': {
+      const params = tile.params as { path: string; line: number | null; endLine: number | null };
+      const slash = params.path.lastIndexOf('/');
+      return {
+        ...base,
+        title: params.path.slice(slash + 1) || params.path,
+        note: slash === -1 ? '' : params.path.slice(0, slash),
+      };
+    }
+    case 'search': {
+      const query = (tile.params as { query: string }).query;
+      return { ...base, note: query ? `“${query}”` : 'search the project' };
+    }
   }
 }
 
@@ -421,4 +442,9 @@ export const TITLES: Record<TileKind, string> = {
   pr: 'Pull request',
   integration: 'Integration',
   clarify: 'Clarify',
+  project: 'Overview',
+  activity: 'Activity',
+  files: 'Files',
+  code: 'File',
+  search: 'Search',
 };

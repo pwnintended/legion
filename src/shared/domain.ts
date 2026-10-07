@@ -252,9 +252,28 @@ export type PullRequest = z.infer<typeof PullRequestSchema>;
 export const TaskReportInfoSchema = z.object({ summary: z.string(), commitMessage: z.string() });
 export type TaskReportInfo = z.infer<typeof TaskReportInfoSchema>;
 
+/**
+ * A repository the user works in (the rail's top level). `path` is the real path of the checkout's top level,
+ * unique. Runs reference their project (`Run.projectId`); `runs.create` adds the project when needed.
+ */
+export const ProjectSchema = z.object({
+  id: IdSchema,
+  path: z.string(),
+  name: z.string(),
+  addedAt: TimestampSchema,
+  lastOpenedAt: TimestampSchema.nullable(),
+  pinned: z.boolean(),
+});
+export type Project = z.infer<typeof ProjectSchema>;
+
 export const RunSchema = z.object({
   id: IdSchema,
   repoPath: z.string(),
+  /**
+   * The run's project (migration 004; backfilled from `repoPath`). Null when the project was removed. Always
+   * present on engine rows; optional in the type for older payloads and fixtures (see `pr`).
+   */
+  projectId: IdSchema.nullable().optional(),
   baseRef: z.string(),
   title: z.string(),
   issueText: z.string(),

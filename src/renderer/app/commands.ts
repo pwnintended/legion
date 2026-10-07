@@ -37,11 +37,29 @@ import {
 import { toast } from '../overlays/nav';
 import { canArchive, runPr } from './compat';
 import { isConfirmOpen } from './confirm';
-import { type DataState, selectRunList, TERMINAL_RUN_STATUSES } from './data';
+import { type DataState, TERMINAL_RUN_STATUSES } from './data';
 import { rpc } from './hooks';
 import { formatChord, isTerminal, isTextInput, matchesChord, ownsPlainKeys, parseChord } from './keys';
+import {
+  addProjectFromDialog,
+  newRunInProject,
+  openProject,
+  openSearch,
+  removeProject,
+  setPinned,
+} from './project-actions';
+import { selectWorkspaceRuns } from './projects';
 import { archiveRunInteractively, refreshPr } from './run-actions';
-import { actions, dataStore, jumpToNextUrgent, type KeyMode, type UiState, uiStore } from './store';
+import {
+  actions,
+  activeProjectOf,
+  activeWorkspaceKey,
+  dataStore,
+  jumpToNextUrgent,
+  type KeyMode,
+  type UiState,
+  uiStore,
+} from './store';
 
 export interface CommandContext {
   ui: UiState;
@@ -50,7 +68,17 @@ export interface CommandContext {
   layout: Workspace | null;
 }
 
-export type CommandCategory = 'Run' | 'Layout' | 'Focus' | 'Column' | 'Tile' | 'Overlay' | 'Workspace' | 'Mode' | 'App';
+export type CommandCategory =
+  | 'Run'
+  | 'Project'
+  | 'Layout'
+  | 'Focus'
+  | 'Column'
+  | 'Tile'
+  | 'Overlay'
+  | 'Workspace'
+  | 'Mode'
+  | 'App';
 
 export interface Command {
   /** Stable id, e.g. `layout.overview`. The app menu and palette refer to commands by id. */
@@ -128,12 +156,12 @@ export function listCommands(): Command[] {
 
 function context(): CommandContext {
   const ui = uiStore.getState();
-  const activeRunId = ui.activeRunId;
+  const key = activeWorkspaceKey(ui);
   return {
     ui,
     data: dataStore.getState(),
-    activeRunId,
-    layout: activeRunId ? (ui.layouts[activeRunId] ?? null) : null,
+    activeRunId: ui.activeRunId,
+    layout: key ? (ui.layouts[key] ?? null) : null,
   };
 }
 
@@ -336,16 +364,22 @@ const DIRS: { dir: Dir; name: string; keys: string[] }[] = [
   { dir: 'l', name: 'right', keys: ['L', 'Right'] },
 ];
 
+const projectInView = (ctx: CommandContext) => activeProjectOf(ctx.ui, ctx.data);
+/** The project home is on screen (no run focused). */
+const onProjectHome = (ctx: CommandContext) => ctx.activeRunId === null && projectInView(ctx) !== null;
+
 function openTerminal(ctx: CommandContext): void {
   const run = activeRun(ctx);
-  if (!run) return;
+  const project = run ? null : projectInView(ctx);
+  const root = run?.repoPath ?? project?.path;
+  if (!root) return;
   actions.layout((layout) => {
     const tile = focusedTile(layout);
     const taskId =
       tile && (tile.kind === 'session' || tile.kind === 'review')
         ? (tile.params as { taskId: string | null }).taskId
         : null;
-    const cwd = (taskId && ctx.data.tasks[taskId]?.worktreePath) || run.repoPath;
+    const cwd = (taskId && ctx.data.tasks[taskId]?.worktreePath) || root;
     const [id, next] = allocateId(layout, 'terminal');
     const column = makeColumn({
       id: `col:${id}`,
@@ -366,7 +400,88 @@ export function builtinCommands(): Command[] {
       title: 'New run…',
       category: 'Run',
       keybinding: 'Mod+N',
-      run: () => actions.openOverlay('composer'),
+      // Opened from a project (its home or one of its runs): that project is preselected.
+      run: () => newRunInProject(),
+    },
+
+    // Projects -----------------------------------------------------------------------------------------
+    {
+      id: 'project.add',
+      inOverlay: true,
+      title: 'Add a project…',
+      category: 'Project',
+      keybinding: 'Mod+Shift+N',
+      run: () => actions.openOverlay('addProject'),
+    },
+    {
+      id: 'project.browse',
+      title: 'Add a project from a folder…',
+      category: 'Project',
+      run: () => addProjectFromDialog(),
+    },
+    {
+      id: 'project.home',
+      title: 'Go to project home',
+      category: 'Project',
+      keybinding: 'Mod+Shift+H',
+      when: (ctx) => projectInView(ctx) !== null && !onProjectHome(ctx),
+      run: (ctx) => {
+        const project = projectInView(ctx);
+        if (project) openProject(project.id);
+      },
+    },
+    {
+      id: 'file.goto',
+      inOverlay: true,
+      title: 'Go to file…',
+      category: 'Project',
+      keybinding: 'Mod+P',
+      when: (ctx) => projectInView(ctx) !== null,
+      run: (ctx) => (ctx.ui.overlay === 'goto' ? actions.closeOverlay() : actions.openOverlay('goto')),
+    },
+    {
+      id: 'project.search',
+      inOverlay: true,
+      title: 'Search in project…',
+      category: 'Project',
+      keybinding: 'Mod+Shift+F',
+      when: (ctx) => projectInView(ctx) !== null,
+      run: (ctx) => {
+        const project = projectInView(ctx);
+        if (!project) return;
+        actions.closeOverlay();
+        openSearch(project.id);
+      },
+    },
+    {
+      id: 'project.pin',
+      title: 'Pin project to the top of the rail',
+      category: 'Project',
+      when: (ctx) => projectInView(ctx)?.pinned === false,
+      run: (ctx) => {
+        const project = projectInView(ctx);
+        if (project) return setPinned(project, true);
+      },
+    },
+    {
+      id: 'project.unpin',
+      title: 'Unpin project',
+      category: 'Project',
+      when: (ctx) => projectInView(ctx)?.pinned === true,
+      run: (ctx) => {
+        const project = projectInView(ctx);
+        if (project) return setPinned(project, false);
+      },
+    },
+    {
+      id: 'project.remove',
+      title: 'Remove project from Legion (keeps the folder)',
+      category: 'Project',
+      when: onProjectHome,
+      run: (ctx) => {
+        const project = projectInView(ctx);
+        if (project) return removeProject(project);
+      },
     },
     {
       id: 'inbox.open',
@@ -573,7 +688,7 @@ export function builtinCommands(): Command[] {
       id: 'tile.newTerminal',
       title: 'Open a terminal in the focused worktree',
       category: 'Tile',
-      when: (ctx) => activeRun(ctx) !== null,
+      when: (ctx) => activeRun(ctx) !== null || projectInView(ctx) !== null,
       run: openTerminal,
     },
     {
@@ -639,7 +754,7 @@ export function builtinCommands(): Command[] {
     },
   ];
 
-  // Workspaces ⌘1–9.
+  // Workspaces ⌘1–9: runs in rail order (grouped by project).
   for (let n = 1; n <= 9; n++) {
     commands.push({
       id: `workspace.${n}`,
@@ -647,9 +762,9 @@ export function builtinCommands(): Command[] {
       category: 'Workspace',
       keybinding: `Mod+${n}`,
       hidden: n > 1,
-      when: (ctx) => selectRunList(ctx.data).length >= n,
+      when: (ctx) => selectWorkspaceRuns(ctx.data).length >= n,
       run: (ctx) => {
-        const run = selectRunList(ctx.data)[n - 1];
+        const run = selectWorkspaceRuns(ctx.data)[n - 1];
         if (run) actions.setActiveRun(run.id);
       },
     });

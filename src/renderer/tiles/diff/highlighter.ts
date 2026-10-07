@@ -6,10 +6,14 @@
 import { createHighlighterCore, type HighlighterCore } from 'shiki/core';
 import { createJavaScriptRegexEngine } from 'shiki/engine/javascript';
 import css from 'shiki/langs/css.mjs';
+import diff from 'shiki/langs/diff.mjs';
 import go from 'shiki/langs/go.mjs';
+import html from 'shiki/langs/html.mjs';
+import java from 'shiki/langs/java.mjs';
 import javascript from 'shiki/langs/javascript.mjs';
 import json from 'shiki/langs/json.mjs';
 import jsx from 'shiki/langs/jsx.mjs';
+import markdown from 'shiki/langs/markdown.mjs';
 import python from 'shiki/langs/python.mjs';
 import rust from 'shiki/langs/rust.mjs';
 import shellscript from 'shiki/langs/shellscript.mjs';
@@ -17,6 +21,7 @@ import sql from 'shiki/langs/sql.mjs';
 import toml from 'shiki/langs/toml.mjs';
 import tsx from 'shiki/langs/tsx.mjs';
 import typescript from 'shiki/langs/typescript.mjs';
+import xml from 'shiki/langs/xml.mjs';
 import yaml from 'shiki/langs/yaml.mjs';
 import mocha from 'shiki/themes/catppuccin-mocha.mjs';
 import { themedColor } from '../../theme/palette';
@@ -45,7 +50,26 @@ let highlighter: Promise<HighlighterCore> | null = null;
 function get(): Promise<HighlighterCore> {
   highlighter ??= createHighlighterCore({
     themes: [mocha],
-    langs: [typescript, tsx, javascript, jsx, json, sql, css, yaml, shellscript, python, go, rust, toml],
+    langs: [
+      typescript,
+      tsx,
+      javascript,
+      jsx,
+      json,
+      sql,
+      css,
+      yaml,
+      shellscript,
+      python,
+      go,
+      rust,
+      toml,
+      markdown,
+      html,
+      java,
+      xml,
+      diff,
+    ],
     engine: createJavaScriptRegexEngine({ forgiving: true }),
   });
   return highlighter;

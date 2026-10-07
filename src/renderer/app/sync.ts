@@ -11,6 +11,7 @@ import { RpcError } from '@shared/rpc-transport';
 import {
   applyEvents,
   applyOpenInbox,
+  applyProjectList,
   applyRunList,
   applySnapshot,
   applyTranscriptPage,
@@ -140,14 +141,18 @@ export class StoreSync {
     try {
       const atSeq = this.client.seq;
       this.refreshSeq = atSeq;
-      const [list, inbox] = await Promise.all([
+      const [list, inbox, projects] = await Promise.all([
         // `includeArchived` is new on the engine side; older engines ignore the extra key.
         this.client.call(
           'runs.list',
           (prefsStore.getState().showArchived ? { includeArchived: true } : {}) as RpcInput<'runs.list'>,
         ),
         this.client.call('inbox.list', { runId: null, includeResolved: false }).catch(() => null),
+        // Older engines have no projects: the rail then groups runs by repository.
+        this.client.call('projects.list', {}).catch(() => null),
       ]);
+      // Projects first: the run list marks the store loaded, and the active project must be known by then.
+      if (projects) this.update((s) => applyProjectList(s, projects, atSeq));
       this.update((s) => applyRunList(s, list, atSeq));
       if (inbox) this.update((s) => applyOpenInbox(s, inbox, atSeq));
 

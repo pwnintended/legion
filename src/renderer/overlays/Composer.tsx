@@ -8,6 +8,7 @@ import type { EngineKind } from '@shared/domain';
 import type { EngineInfo } from '@shared/engine';
 import type { DiscoveredRepo, RecentRepo, RepoBranches, RepoInspection } from '@shared/rpc';
 import { useEffect, useId, useMemo, useRef, useState } from 'react';
+import { seededBase, seededText, takeComposerSeed } from '../app/composer-seed';
 import { rpc, useActiveRun, useEngines, useSettings } from '../app/hooks';
 import { adoptRun } from '../app/run-actions';
 import { actions } from '../app/store';
@@ -114,9 +115,13 @@ export function ComposerOverlay() {
   const activeRun = useActiveRun();
   const engines = useEngines();
   const settings = useSettings();
-  const [text, setText] = useState(saved.text);
-  const [repoPath, setRepoPath] = useState<string | null>(saved.repoPath ?? activeRun?.repoPath ?? null);
-  const [base, setBase] = useState(saved.base);
+  // Opened from a project (or "Start a run about this…"): that project, plus any reference text.
+  const [seed] = useState(takeComposerSeed);
+  const [text, setText] = useState(() => seededText(saved.text, seed));
+  const [repoPath, setRepoPath] = useState<string | null>(
+    seed?.repoPath ?? saved.repoPath ?? activeRun?.repoPath ?? null,
+  );
+  const [base, setBase] = useState(() => seededBase(saved.base, saved.repoPath, seed));
   const [engine, setEngine] = useState<EngineKind>(saved.engine ?? settings?.roles.planner.engine ?? 'claude');
   const [clarify, setClarify] = useState(saved.clarify);
   const [recent, setRecent] = useState<RecentRepo[]>([]);

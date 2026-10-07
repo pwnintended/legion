@@ -250,8 +250,8 @@ test('settings, a failed task escalated to you, a finished run archived', async 
     await expect(settings).toBeVisible();
     await window.keyboard.press('Escape');
 
-    // ⌘5: T2 failed all its attempts; the run lands on it with the escalation inline.
-    await window.keyboard.press('Meta+5');
+    // ⌘6 (rail order: grouped by project): T2 failed all its attempts; the run lands on it with the escalation inline.
+    await window.keyboard.press('Meta+6');
     await expect(window.getByTestId('titlebar')).toContainText('Move cron jobs onto the queue');
     await expect.poll(() => focusedTile(window)).toBe('session:T2');
     const t2 = window.locator('[data-tile-id="session:T2"]');
@@ -276,8 +276,8 @@ test('settings, a failed task escalated to you, a finished run archived', async 
     await expect(t2.getByTestId('escalation-card')).toHaveCount(0);
     await expect(t2).toHaveAttribute('data-urgent', 'false');
 
-    // ⌘6: a finished run whose PR merged, archived from its PR tile.
-    await window.keyboard.press('Meta+6');
+    // ⌘4: a finished run whose PR merged, archived from its PR tile.
+    await window.keyboard.press('Meta+4');
     await expect(window.getByTestId('titlebar')).toContainText('Dark mode tokens');
     await expect.poll(() => focusedTile(window)).toBe('pr');
     const opened = window.getByTestId('pr-opened');

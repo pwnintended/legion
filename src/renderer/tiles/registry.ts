@@ -15,6 +15,11 @@ export const tileRegistry: { readonly [K in TileKind]: TileDefinition<K> } = {
   pr: { kind: 'pr', title: 'Pull request', component: lazy(() => import('./pr')) },
   integration: { kind: 'integration', title: 'Integration', component: lazy(() => import('./integration')) },
   clarify: { kind: 'clarify', title: 'Clarify', component: lazy(() => import('./clarify')) },
+  project: { kind: 'project', title: 'Overview', component: lazy(() => import('./project')) },
+  activity: { kind: 'activity', title: 'Activity', component: lazy(() => import('./activity')) },
+  files: { kind: 'files', title: 'Files', component: lazy(() => import('./files')) },
+  code: { kind: 'code', title: 'File', component: lazy(() => import('./code')) },
+  search: { kind: 'search', title: 'Search', component: lazy(() => import('./search')) },
 };
 
 export function tileDefinition<K extends TileKind>(kind: K): TileDefinition<K> {

@@ -1,23 +1,29 @@
 /**
  * The renderer's two Zustand stores:
  * - `dataStore`: the client mirror of engine state (see data.ts), written only by sync.ts / demo mode.
- * - `uiStore`: what the user is looking at — active run, overlays, layout mode, key mode, per-run layouts.
+ * - `uiStore`: what the user is looking at — active project and run, overlays, layout mode, key mode, and the
+ *   layouts of run workspaces (keyed by run id) and project homes (keyed `project:<id>`, see projects.ts).
+ *   With an active project and no active run, the project's home is on screen.
  *
  * Layout trees are kept in sync with run data here (outside React), so the strip is correct before render.
  */
 import { createStore } from 'zustand/vanilla';
 import { describeTile, itemTargetsTile, tileTaskId } from '../layout/describe';
 import { clearLayout, loadLayout, saveLayout } from '../layout/persist';
+import { defaultProjectLayout, isUsableProjectLayout } from '../layout/project';
 import { type RunLayoutInput, syncWithRun } from '../layout/sync';
 import { allTiles, focusTile, type LayoutMode, type Workspace } from '../layout/tree';
 import { type DataState, initialData, latestPlan, openInbox, selectRunList, tasksOfRun } from './data';
+import { projectOfRun, projectWorkspaceKey, selectProjects } from './projects';
 
-export type Overlay = 'composer' | 'inbox' | 'palette' | 'settings';
+export type Overlay = 'composer' | 'inbox' | 'palette' | 'settings' | 'addProject' | 'goto';
 export type SettingsSection = 'engines' | 'agents' | 'runs' | 'appearance';
 export type KeyMode = 'normal' | 'resize' | 'move';
 
 export interface UiState {
   activeRunId: string | null;
+  /** The project in view: its home when `activeRunId` is null, else the active run's project. */
+  activeProjectId: string | null;
   overlay: Overlay | null;
   layoutMode: LayoutMode;
   /** Mode to return to when toggling Overview/Pipeline/Focus off. */
@@ -38,10 +44,12 @@ export interface UiState {
 
 const UI_PREFS_KEY = 'legion.ui';
 
-function loadPrefs(): Partial<Pick<UiState, 'activeRunId' | 'layoutMode'>> {
+type UiPrefs = Partial<Pick<UiState, 'activeRunId' | 'activeProjectId' | 'layoutMode'>>;
+
+function loadPrefs(): UiPrefs {
   try {
     const raw = localStorage.getItem(UI_PREFS_KEY);
-    return raw ? (JSON.parse(raw) as Partial<Pick<UiState, 'activeRunId' | 'layoutMode'>>) : {};
+    return raw ? (JSON.parse(raw) as UiPrefs) : {};
   } catch {
     return {};
   }
@@ -51,7 +59,11 @@ function savePrefs(state: UiState): void {
   try {
     localStorage.setItem(
       UI_PREFS_KEY,
-      JSON.stringify({ activeRunId: state.activeRunId, layoutMode: state.layoutMode }),
+      JSON.stringify({
+        activeRunId: state.activeRunId,
+        activeProjectId: state.activeProjectId,
+        layoutMode: state.layoutMode,
+      }),
     );
   } catch {
     // ignore
@@ -66,6 +78,7 @@ export function initialUi(): UiState {
       : 'strip';
   return {
     activeRunId: typeof prefs.activeRunId === 'string' ? prefs.activeRunId : null,
+    activeProjectId: typeof prefs.activeProjectId === 'string' ? prefs.activeProjectId : null,
     overlay: null,
     layoutMode: mode,
     previousMode: 'strip',
@@ -81,6 +94,17 @@ export function initialUi(): UiState {
 
 export const dataStore = createStore<DataState>(() => initialData());
 export const uiStore = createStore<UiState>(() => initialUi());
+
+/** The workspace on screen: the active run's, else the active project's home (`project:<id>`), else none. */
+export function activeWorkspaceKey(ui: Pick<UiState, 'activeRunId' | 'activeProjectId'>): string | null {
+  return ui.activeRunId ?? (ui.activeProjectId ? projectWorkspaceKey(ui.activeProjectId) : null);
+}
+
+/** The project of whatever is on screen (a project home, or the active run's project). */
+export function activeProjectOf(ui: Pick<UiState, 'activeRunId' | 'activeProjectId'>, data: DataState) {
+  if (ui.activeRunId) return projectOfRun(data, data.runs[ui.activeRunId]) ?? null;
+  return ui.activeProjectId ? (data.projects[ui.activeProjectId] ?? null) : null;
+}
 
 // ---------------------------------------------------------------------------------------------
 // Layout ↔ run data
@@ -135,8 +159,11 @@ function scheduleSave(runId: string): void {
  * must never throw: a layout the ops can't handle is discarded and re-derived from the run.
  */
 export function syncActiveLayout(): void {
-  const { activeRunId, layouts } = uiStore.getState();
-  if (!activeRunId) return;
+  const { activeRunId, activeProjectId, layouts } = uiStore.getState();
+  if (!activeRunId) {
+    if (activeProjectId) syncProjectLayout(activeProjectId);
+    return;
+  }
   try {
     const input = runLayoutInput(dataStore.getState(), activeRunId);
     if (!input) return;
@@ -157,22 +184,64 @@ export function syncActiveLayout(): void {
   }
 }
 
-/** Pick a run when none (or a vanished one) is active. */
+/** A project home's layout: the stored one when it still fits the project, else the default home. */
+function syncProjectLayout(projectId: string): void {
+  const key = projectWorkspaceKey(projectId);
+  const { layouts } = uiStore.getState();
+  if (layouts[key]) return;
+  const stored = loadLayout(key);
+  const layout = isUsableProjectLayout(stored, projectId) ? stored : defaultProjectLayout(key, projectId);
+  uiStore.setState({ layouts: { ...uiStore.getState().layouts, [key]: layout } });
+}
+
+/**
+ * Keep something sensible on screen: a vanished run falls back to its project's home (or the first run); a
+ * vanished project to the first run, or the first project's home; nothing selected yet (first launch, or prefs
+ * from before projects existed) picks the first run, else the first project.
+ */
 function ensureActiveRun(): void {
   const data = dataStore.getState();
   if (!data.connection.loaded) return;
-  const { activeRunId } = uiStore.getState();
-  if (activeRunId && data.runs[activeRunId]) return;
+  const { activeRunId, activeProjectId } = uiStore.getState();
+  if (activeRunId && data.runs[activeRunId]) {
+    const project = projectOfRun(data, data.runs[activeRunId]);
+    if (project && project.id !== activeProjectId) uiStore.setState({ activeProjectId: project.id });
+    return;
+  }
+  const projectAlive = activeProjectId !== null && data.projects[activeProjectId] !== undefined;
+  if (activeRunId && projectAlive) {
+    actions.openProjectHome(activeProjectId);
+    return;
+  }
+  if (!activeRunId && projectAlive) return;
   const first = selectRunList(data)[0];
-  const next = first?.id ?? null;
-  if (next !== activeRunId) actions.setActiveRun(next);
+  if (first) {
+    actions.setActiveRun(first.id);
+    return;
+  }
+  const project = selectProjects(data)[0];
+  if (project) actions.openProjectHome(project.id);
+  else if (activeRunId !== null || activeProjectId !== null) {
+    uiStore.setState({ activeRunId: null, activeProjectId: null });
+    savePrefs(uiStore.getState());
+  }
 }
 
 let lastInputs: unknown[] = [];
 dataStore.subscribe((data) => {
   ensureActiveRun();
   // Only resync when something the layout depends on changed (not on every agent event).
-  const inputs = [data.runs, data.plans, data.tasks, data.inbox, data.loadedRuns, uiStore.getState().activeRunId];
+  const ui = uiStore.getState();
+  const inputs = [
+    data.runs,
+    data.plans,
+    data.tasks,
+    data.inbox,
+    data.loadedRuns,
+    data.projects,
+    ui.activeRunId,
+    ui.activeProjectId,
+  ];
   if (inputs.every((v, i) => v === lastInputs[i])) return;
   lastInputs = inputs;
   syncActiveLayout();
@@ -184,8 +253,21 @@ dataStore.subscribe((data) => {
 
 export const actions = {
   setActiveRun(runId: string | null): void {
-    if (uiStore.getState().activeRunId === runId) return;
-    uiStore.setState({ activeRunId: runId, keyMode: 'normal' });
+    const state = uiStore.getState();
+    const data = dataStore.getState();
+    const project = runId ? projectOfRun(data, data.runs[runId]) : null;
+    const activeProjectId = project?.id ?? state.activeProjectId;
+    if (state.activeRunId === runId && state.activeProjectId === activeProjectId) return;
+    uiStore.setState({ activeRunId: runId, activeProjectId, keyMode: 'normal' });
+    savePrefs(uiStore.getState());
+    syncActiveLayout();
+  },
+
+  /** Show a project's home (no run focused). */
+  openProjectHome(projectId: string): void {
+    const state = uiStore.getState();
+    if (state.activeRunId === null && state.activeProjectId === projectId) return;
+    uiStore.setState({ activeRunId: null, activeProjectId: projectId, keyMode: 'normal' });
     savePrefs(uiStore.getState());
     syncActiveLayout();
   },
@@ -239,10 +321,10 @@ export const actions = {
     scheduleSave(runId);
   },
 
-  /** Apply a layout op to the active run's workspace. */
+  /** Apply a layout op to the workspace on screen (the active run's, or the project home). */
   layout(op: (layout: Workspace) => Workspace, keyboard = true): void {
-    const runId = uiStore.getState().activeRunId;
-    if (runId) actions.updateLayout(runId, op, keyboard);
+    const key = activeWorkspaceKey(uiStore.getState());
+    if (key) actions.updateLayout(key, op, keyboard);
   },
 
   /** Focus a tile in a run (switching run and to Strip mode when needed). */

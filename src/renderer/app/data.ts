@@ -15,6 +15,7 @@ import type {
   InboxItem,
   Merge,
   Plan,
+  Project,
   Review,
   Run,
   Settings,
@@ -24,10 +25,19 @@ import type {
 } from '@shared/domain';
 import type { EngineInfo } from '@shared/engine';
 import type { AgentEvent, ServerEvent } from '@shared/events';
-import type { RunSnapshot, RunSummary, TranscriptEntry } from '@shared/rpc';
+import type { ProjectStatus, RunSnapshot, RunSummary, TranscriptEntry } from '@shared/rpc';
 import { isArchived } from './compat';
 
-export type EntityKind = 'run' | 'plan' | 'task' | 'attempt' | 'review' | 'inbox' | 'verification' | 'merge';
+export type EntityKind =
+  | 'run'
+  | 'plan'
+  | 'task'
+  | 'attempt'
+  | 'review'
+  | 'inbox'
+  | 'verification'
+  | 'merge'
+  | 'project';
 
 export interface Transcript {
   status: 'loading' | 'ready' | 'error';
@@ -92,6 +102,10 @@ export interface ConnectionInfo {
 export interface DataState {
   /** Highest event seq applied. */
   seq: number;
+  /** The rail's projects (`projects.list` + `project.updated`). */
+  projects: Record<string, Project>;
+  /** Live branch/dirty state per project (`projects.status`; not versioned, simply replaced). */
+  projectStatus: Record<string, ProjectStatus>;
   runs: Record<string, Run>;
   /** Aggregates from `runs.list`, used for runs whose snapshot isn't loaded. */
   summaries: Record<string, Omit<RunSummary, 'run'>>;
@@ -124,6 +138,8 @@ export const ACTIVITY_LINES = 4;
 export function initialData(): DataState {
   return {
     seq: 0,
+    projects: {},
+    projectStatus: {},
     runs: {},
     summaries: {},
     loadedRuns: {},
@@ -151,7 +167,7 @@ export function initialData(): DataState {
 
 type Collections = Pick<
   DataState,
-  'runs' | 'plans' | 'tasks' | 'attempts' | 'reviews' | 'inbox' | 'verifications' | 'merges'
+  'runs' | 'plans' | 'tasks' | 'attempts' | 'reviews' | 'inbox' | 'verifications' | 'merges' | 'projects'
 >;
 const COLLECTION: { [K in EntityKind]: keyof Collections } = {
   run: 'runs',
@@ -162,6 +178,7 @@ const COLLECTION: { [K in EntityKind]: keyof Collections } = {
   inbox: 'inbox',
   verification: 'verifications',
   merge: 'merges',
+  project: 'projects',
 };
 
 type MutableKeys =
@@ -465,6 +482,11 @@ export function applyEvents(state: DataState, events: readonly ServerEvent[]): D
       case 'settings.updated':
         draft.next.settings = event.settings;
         break;
+      case 'project.updated':
+        if (event.removed) {
+          if (event.seq > draft.version('project', event.project.id)) draft.drop('project', event.project.id);
+        } else draft.put('project', event.project, event.seq);
+        break;
     }
     if (event.seq > draft.next.seq) draft.next.seq = event.seq;
   }
@@ -529,6 +551,46 @@ export function applyRunList(state: DataState, list: readonly RunSummary[], atSe
   pruneDerived(draft, gone);
   draft.next.connection = { ...draft.next.connection, loaded: true };
   return draft.next;
+}
+
+/** `projects.list` read at (or after) client seq `atSeq`. */
+export function applyProjectList(state: DataState, list: readonly Project[], atSeq: number): DataState {
+  const draft = new Draft(state);
+  const ids = new Set(list.map((p) => p.id));
+  for (const project of list) draft.put('project', project, atSeq, true);
+  for (const id of Object.keys(state.projects)) {
+    if (!ids.has(id) && draft.version('project', id) <= atSeq) draft.drop('project', id);
+  }
+  return draft.next;
+}
+
+/** A project row returned by a procedure (`projects.add`, `projects.touch`, ...): see `applyRunRow`. */
+export function applyProjectRow(state: DataState, project: Project, atSeq: number): DataState {
+  const draft = new Draft(state);
+  return draft.put('project', project, Math.max(atSeq, draft.version('project', project.id)), true)
+    ? draft.next
+    : state;
+}
+
+export function applyProjectStatus(state: DataState, list: readonly ProjectStatus[]): DataState {
+  if (list.length === 0) return state;
+  const next = { ...state.projectStatus };
+  let changed = false;
+  for (const status of list) {
+    const current = next[status.projectId];
+    if (
+      current &&
+      current.branch === status.branch &&
+      current.dirty === status.dirty &&
+      current.exists === status.exists &&
+      current.ahead === status.ahead &&
+      current.behind === status.behind
+    )
+      continue;
+    next[status.projectId] = status;
+    changed = true;
+  }
+  return changed ? { ...state, projectStatus: next } : state;
 }
 
 /** `inbox.list({runId: null, includeResolved: false})` read at client seq `atSeq`. */

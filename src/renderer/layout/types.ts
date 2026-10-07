@@ -12,6 +12,12 @@ export const TILE_KINDS = [
   'pr',
   'integration',
   'clarify',
+  // Project home (a project's workspace when no run is focused).
+  'project',
+  'activity',
+  'files',
+  'code',
+  'search',
 ] as const;
 export type TileKind = (typeof TILE_KINDS)[number];
 
@@ -33,6 +39,16 @@ export interface TileParamsByKind {
   integration: None;
   /** Clarify questions; an inbox item of kind `question`. */
   clarify: { inboxItemId: string | null };
+  /** Project overview: README, repository facts, quick actions. */
+  project: { projectId: string };
+  /** The project's runs, git history and open pull requests. */
+  activity: { projectId: string };
+  /** The project's file tree. */
+  files: { projectId: string };
+  /** A file of the project; `line`..`endLine` (1-based) is revealed and marked. */
+  code: { projectId: string; path: string; line: number | null; endLine: number | null };
+  /** Content search in the project. */
+  search: { projectId: string; query: string };
 }
 
 /** A tile as stored in the layout tree. */
