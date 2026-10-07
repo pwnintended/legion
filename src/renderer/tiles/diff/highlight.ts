@@ -7,7 +7,26 @@ import type { HighlightRequest, HighlightResponse, Tok } from './highlighter';
 
 export type { Tok };
 
+/** Highlighted hunks kept (least recently used go first; a hunk shown again is simply re-highlighted). */
+export const MAX_HIGHLIGHTED_HUNKS = 1500;
+/** Insertion order is recency. */
 const cache = new Map<string, (Tok[][] | null)[]>();
+
+function touch(key: string): void {
+  const value = cache.get(key);
+  if (value === undefined) return;
+  cache.delete(key);
+  cache.set(key, value);
+}
+
+function store(key: string, blocks: (Tok[][] | null)[]): void {
+  cache.delete(key);
+  cache.set(key, blocks);
+  for (const oldest of cache.keys()) {
+    if (cache.size <= MAX_HIGHLIGHTED_HUNKS) break;
+    cache.delete(oldest);
+  }
+}
 const inflight = new Map<number, { key: string; request: HighlightRequest }>();
 const pendingKeys = new Set<string>();
 const listeners = new Set<() => void>();
@@ -32,7 +51,7 @@ function receive(response: HighlightResponse): void {
   if (!entry) return;
   inflight.delete(response.id);
   pendingKeys.delete(entry.key);
-  cache.set(entry.key, response.blocks);
+  store(entry.key, response.blocks);
   changed();
 }
 
@@ -67,7 +86,11 @@ function startWorker(): Worker | null {
 
 /** Ask for a hunk's tokens (old side, new side). No-op when cached or already requested. */
 export function requestHighlight(key: string, lang: string, blocks: string[]): void {
-  if (cache.has(key) || pendingKeys.has(key)) return;
+  if (cache.has(key)) {
+    touch(key);
+    return;
+  }
+  if (pendingKeys.has(key)) return;
   pendingKeys.add(key);
   const request: HighlightRequest = { id: nextId++, lang, blocks };
   inflight.set(request.id, { key, request });
@@ -89,6 +112,11 @@ export function useHighlightVersion(): number {
     },
     () => version,
   );
+}
+
+/** Number of highlighted hunks held (tests, diagnostics). */
+export function highlightCacheSize(): number {
+  return cache.size;
 }
 
 export function highlightBackend(): 'worker' | 'main' | 'idle' {
