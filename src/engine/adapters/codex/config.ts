@@ -8,8 +8,15 @@ import { homedir } from 'node:os';
 import { delimiter, isAbsolute, join, resolve } from 'node:path';
 import type { SessionOptions } from '@shared/engine';
 import { CODEX_TOOL_TIMEOUT_SEC } from '../../mcp/config';
+import { isAllowedCommand } from '../../util/shell';
 import type { JsonValue } from './protocol/serde_json/JsonValue';
-import type { ThreadResumeParams, ThreadStartParams, TurnStartParams, UserInput } from './protocol/v2';
+import type {
+  CommandExecutionRequestApprovalParams,
+  ThreadResumeParams,
+  ThreadStartParams,
+  TurnStartParams,
+  UserInput,
+} from './protocol/v2';
 
 /** Env var (set in the child env only) that carries the Legion MCP bearer token. */
 export const MCP_TOKEN_ENV = 'LEGION_MCP_TOKEN';
@@ -128,6 +135,9 @@ export function threadConfig(opts: SessionOptions): Record<string, JsonValue> {
       },
     };
   }
+  // Agent-written worktree (reviewer, finalizer): ignore its AGENTS.md. Project `.codex/config.toml` is only
+  // read for trusted projects, and the Legion CODEX_HOME trusts none; hooks are off for every session.
+  if (opts.untrustedWorkdir) config.project_doc_max_bytes = 0;
   if (opts.permission.mode === 'workspace_write' && opts.addDirs && opts.addDirs.length > 0) {
     config.sandbox_workspace_write = { writable_roots: opts.addDirs.map((dir) => resolve(opts.cwd, dir)) };
   }
@@ -182,11 +192,24 @@ export function turnStartParams(threadId: string, text: string, opts: SessionOpt
   return params;
 }
 
-/** True when every command the request covers starts with one of the pre-approved commands. */
-export function isPreapproved(commands: readonly string[], allowed: readonly string[]): boolean {
-  if (commands.length === 0 || allowed.length === 0) return false;
-  return commands.every((command) => {
-    const trimmed = command.trim();
-    return allowed.some((prefix) => trimmed === prefix || trimmed.startsWith(`${prefix} `));
-  });
+/** The fields of an `item/commandExecution/requestApproval` that decide whether Legion may answer it alone. */
+export type PreapprovalRequest = Pick<
+  CommandExecutionRequestApprovalParams,
+  'kind' | 'command' | 'additionalPermissions' | 'networkApprovalContext' | 'proposedNetworkPolicyAmendments'
+>;
+
+/**
+ * True when Legion may accept a command approval without asking the human: a plain command request (no
+ * extra filesystem/network permissions, no stdin write) whose actual `command` (not the display-only
+ * `commandActions`) is one of the allowed verify/setup commands, optionally followed by plain arguments
+ * (`util/shell.ts`). Accepting runs the command outside the sandbox, so anything else goes to the inbox.
+ */
+export function isPreapproved(request: PreapprovalRequest, allowed: readonly string[]): boolean {
+  if (allowed.length === 0) return false;
+  if ((request.kind ?? 'command') !== 'command') return false;
+  if (request.additionalPermissions != null || request.networkApprovalContext != null) return false;
+  if ((request.proposedNetworkPolicyAmendments ?? []).length > 0) return false;
+  const command = request.command?.trim();
+  if (!command) return false;
+  return isAllowedCommand(command, allowed);
 }

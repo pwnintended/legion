@@ -82,7 +82,8 @@ describe('worktree lifecycle', () => {
     expect(existsSync(join(path, 'a.txt'))).toBe(true);
     expect(existsSync(join(path, 'b.txt'))).toBe(false); // started from the older sha
     expect(await gitText(path, ['rev-parse', 'HEAD'])).toBe(start);
-    expect(await gitText(repo.path, ['config', 'rerere.enabled'])).toBe('true');
+    // No repository config is written (rerere is enabled per merge command).
+    expect((await git(repo.path, ['config', '--local', 'rerere.enabled'], { okExitCodes: [1] })).exitCode).toBe(1);
 
     const list = await listWorktrees(repo.path);
     expect(list).toHaveLength(2);
@@ -105,6 +106,21 @@ describe('worktree lifecycle', () => {
     await removeWorktree({ repo: repo.path, path, branch: 'b1' });
     await removeWorktree({ repo: repo.path, path, branch: 'b1' });
     expect(existsSync(path)).toBe(false);
+  });
+
+  it('removes only its own entry: a user worktree whose directory is missing is not pruned', async () => {
+    const sha = await repo.head();
+    const user = join(repo.scratch, 'external-volume', 'user-wt');
+    await git(repo.path, ['worktree', 'add', '-q', '-b', 'user-branch', user, sha]);
+    rmSync(user, { recursive: true, force: true }); // e.g. an unmounted volume
+    const ours = join(repo.scratch, 'home', 'ours');
+    await createWorktree({ repo: repo.path, path: ours, branch: 'legion/x/T9', startSha: sha });
+    rmSync(ours, { recursive: true, force: true });
+
+    await removeWorktree({ repo: repo.path, path: ours, branch: 'legion/x/T9' });
+    const paths = (await listWorktrees(repo.path)).map((w) => w.branch);
+    expect(paths).toEqual(['main', 'user-branch']);
+    expect(await branchExists(repo.path, 'legion/x/T9')).toBe(false);
   });
 
   it('createWorktree fails cleanly if the branch exists, unless resetBranch', async () => {

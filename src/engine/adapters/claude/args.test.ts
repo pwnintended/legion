@@ -1,6 +1,6 @@
 import { permissionProfileFor, type SessionOptions } from '@shared/engine';
 import { describe, expect, it } from 'vitest';
-import { buildClaudeArgs, childEnv, permissionArgs } from './args';
+import { bashRules, buildClaudeArgs, childEnv, permissionArgs } from './args';
 
 const base = (overrides: Partial<SessionOptions> = {}): SessionOptions => ({
   role: 'reviewer',
@@ -85,6 +85,19 @@ describe('buildClaudeArgs', () => {
     expect(flag(args, '--mcp-config')).toBe('/tmp/x/mcp.json');
     expect(args.filter((a) => a === '--add-dir')).toHaveLength(2);
     expect(args.slice(-4)).toEqual(['--add-dir', '/a', '--add-dir', '/b']);
+  });
+
+  it('loads no setting source at all for an untrusted working directory (reviewer, finalizer)', () => {
+    const args = buildClaudeArgs({ opts: base({ untrustedWorkdir: true }) });
+    expect(args).toContain('--setting-sources=');
+    expect(args).not.toContain('project');
+    expect(args).not.toContain('--setting-sources');
+  });
+
+  it('gives a verify command with shell syntax only its exact rule', () => {
+    expect(bashRules('pnpm test')).toEqual(['Bash(pnpm test)', 'Bash(pnpm test *)']);
+    expect(bashRules('pnpm build && pnpm test')).toEqual(['Bash(pnpm build && pnpm test)']);
+    expect(bashRules('  ')).toEqual([]);
   });
 
   it('inlines the MCP config when no file is given', () => {

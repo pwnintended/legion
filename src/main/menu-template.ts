@@ -27,6 +27,7 @@ export const MENU_ACCELERATORS: Partial<Record<CommandId, string>> = {
   'focus.nextUrgent': 'CmdOrCtrl+U',
   'column.cycleMode': 'CmdOrCtrl+W',
   'mode.resize': 'CmdOrCtrl+R',
+  'settings.open': 'CmdOrCtrl+,',
 };
 
 export function buildMenuTemplate({ appName, isMac, isDev, send }: MenuTemplateOptions): MenuItemConstructorOptions[] {
@@ -39,6 +40,8 @@ export function buildMenuTemplate({ appName, isMac, isDev, send }: MenuTemplateO
     label: appName,
     submenu: [
       { role: 'about' },
+      { type: 'separator' },
+      item('Settings…', 'settings.open'),
       { type: 'separator' },
       { role: 'services' },
       { type: 'separator' },
@@ -57,7 +60,14 @@ export function buildMenuTemplate({ appName, isMac, isDev, send }: MenuTemplateO
       { type: 'separator' },
       item('Open Inbox', 'inbox.open'),
       item('Command Palette…', 'palette.open'),
-      ...(isMac ? [] : ([{ type: 'separator' }, { role: 'quit' }] as MenuItemConstructorOptions[])),
+      ...(isMac
+        ? []
+        : ([
+            { type: 'separator' },
+            item('Settings…', 'settings.open'),
+            { type: 'separator' },
+            { role: 'quit' },
+          ] as MenuItemConstructorOptions[])),
     ],
   };
 

@@ -3,7 +3,8 @@
  * (`runs.archive`), the coder's report on the task row, same-engine review with another model, and engine
  * settings that apply without a restart.
  */
-import { existsSync } from 'node:fs';
+import { existsSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { MessageChannel } from 'node:worker_threads';
 import { DEFAULT_SETTINGS, type Run, type Settings, type Task } from '@shared/domain';
 import type { ServerEvent } from '@shared/events';
@@ -174,7 +175,7 @@ describe('PR status, task reports and cleanup', () => {
     expect(harness.events.filter((e) => e.type === 'run.updated' && e.run.archived).length).toBe(1);
   });
 
-  it('keeps the integration branch while the PR is open; the poll archives a closed PR', async () => {
+  it('keeps the integration branch while the PR is open; the poll finishes a closed PR but keeps its work', async () => {
     h = await startHarness({ script: basicScript([node('T1')]) });
     const harness = h;
     const run = await toPrReady(harness);
@@ -182,36 +183,162 @@ describe('PR status, task reports and cleanup', () => {
     await harness.client.call('runs.createPr', { runId: run.id, title: null, body: null });
     const archived = await harness.client.call('runs.archive', { runId: run.id });
     expect(archived).toMatchObject({ archived: true, pr: { state: 'open' } });
+    expect(archived.archiveReport?.kept).toEqual([
+      { kind: 'branch', name: integration, reason: 'the pull request is open' },
+    ]);
+    // The task branch went: its squashed content is in integration.
     expect(await legionBranches(harness)).toEqual([integration]);
     expect(existsSync(harness.engine.orchestrator.integrationPath(run))).toBe(false);
 
-    // An archived run is not polled; a closed PR of a live run is.
+    // An archived run is not polled; a closed PR of a live run is: the run is done, nothing is deleted.
     const second = await toPrReady(harness);
     await harness.client.call('runs.createPr', { runId: second.id, title: null, body: null });
+    const secondBranches = (await legionBranches(harness)).filter((b) => b !== integration);
     harness.prHost.setState(second.integrationBranch as string, { state: 'closed' });
     harness.prHost.setState(integration, { state: 'merged' });
     const stop = startPrPolling(harness.engine.orchestrator, 20);
     try {
-      await harness.waitFor(() => runOf(harness, second.id).archived, 'poll archives the closed PR');
+      await harness.waitFor(() => runOf(harness, second.id).pr?.state === 'closed', 'poll sees the closed PR');
+      await new Promise((resolve) => setTimeout(resolve, 100));
     } finally {
       stop();
     }
-    expect(runOf(harness, second.id).pr?.state).toBe('closed');
+    expect(runOf(harness, second.id)).toMatchObject({ status: 'done', archived: false });
+    expect(existsSync(harness.engine.orchestrator.integrationPath(second))).toBe(true);
     expect(runOf(harness, run.id).pr?.state).toBe('open');
+    expect(await legionBranches(harness)).toEqual([integration, ...secondBranches].sort());
+
+    // Archived by hand later: the closed PR's branch is fully pushed, so it can go.
+    const done = await harness.client.call('runs.archive', { runId: second.id });
+    expect(done.archiveReport?.kept).toEqual([]);
     expect(await legionBranches(harness)).toEqual([integration]);
+
+    // A closed PR whose branch has local commits that were never pushed: kept.
+    const third = await toPrReady(harness);
+    await harness.client.call('runs.createPr', { runId: third.id, title: null, body: null });
+    harness.prHost.setState(third.integrationBranch as string, { state: 'closed' });
+    await harness.client.call('runs.refreshPr', { runId: third.id });
+    const thirdPath = harness.engine.orchestrator.integrationPath(third);
+    writeFileSync(join(thirdPath, 'later.txt'), 'local only\n');
+    await git(thirdPath, ['add', 'later.txt']);
+    await git(thirdPath, ['-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-q', '-m', 'local']);
+    const kept = await harness.client.call('runs.archive', { runId: third.id });
+    expect(kept.archiveReport?.kept).toEqual([
+      {
+        kind: 'branch',
+        name: third.integrationBranch,
+        reason: 'the pull request was closed and the branch is not fully pushed',
+      },
+    ]);
   });
 
-  it('archiving an active run cancels it and removes its planner worktree and branch', async () => {
+  it('refuses to archive an active run unless forced; forced, it cancels and drops the empty planner branch', async () => {
     h = await startHarness({ script: basicScript([node('T1')]) });
     const harness = h;
     const run = await createRun(harness);
     await harness.waitFor(() => runOf(harness, run.id).status === 'awaiting_approval', 'plan');
     expect(existsSync(harness.engine.orchestrator.integrationPath(run))).toBe(true);
-    const archived = await harness.client.call('runs.archive', { runId: run.id });
-    expect(archived).toMatchObject({ status: 'cancelled', archived: true });
+    await expect(harness.client.call('runs.archive', { runId: run.id })).rejects.toMatchObject({
+      code: 'failed_precondition',
+    });
+    expect(runOf(harness, run.id)).toMatchObject({ status: 'awaiting_approval', archived: false });
+    const archived = await harness.client.call('runs.archive', { runId: run.id, force: true });
+    expect(archived).toMatchObject({ status: 'cancelled', archived: true, archiveReport: { kept: [] } });
     expect(harness.engine.store.listInbox({ runId: run.id, includeResolved: false })).toEqual([]);
     expect(existsSync(harness.engine.orchestrator.integrationPath(run))).toBe(false);
     expect(await legionBranches(harness)).toEqual([]);
+  });
+
+  it('a forced archive of a run with unmerged work keeps that work and says so (review finding: data loss)', async () => {
+    h = await startHarness({ script: basicScript([node('T1'), node('T2', { dependsOn: ['T1'], risk: 'high' })]) });
+    const harness = h;
+    const run = await createRun(harness);
+    await harness.waitFor(() => runOf(harness, run.id).status === 'awaiting_approval', 'plan');
+    const plan = harness.engine.store.latestPlan(run.id);
+    await harness.client.call('runs.approvePlan', { runId: run.id, planId: plan?.id as string });
+    const t2 = await harness.waitFor(
+      () => tasksOf(harness, run.id).find((t) => t.nodeId === 'T2' && t.status === 'awaiting_human'),
+      'T2 at the human gate',
+      30_000,
+    );
+    const t1 = tasksOf(harness, run.id).find((t) => t.nodeId === 'T1') as Task;
+    const integration = runOf(harness, run.id).integrationBranch as string;
+    // A human edited T2's worktree (e.g. during a takeover) without committing.
+    writeFileSync(join(t2.worktreePath as string, 'wip.txt'), 'human work\n');
+
+    await expect(harness.client.call('runs.archive', { runId: run.id })).rejects.toMatchObject({
+      code: 'failed_precondition',
+    });
+    const archived = await harness.client.call('runs.archive', { runId: run.id, force: true });
+    expect(archived).toMatchObject({ status: 'cancelled', archived: true });
+    expect(archived.archiveReport?.kept).toEqual(
+      expect.arrayContaining([
+        { kind: 'branch', name: integration, reason: 'its work is not merged anywhere (no pull request)' },
+      ]),
+    );
+    // Forced: the task branch and worktree go even with unmerged/uncommitted work; integration never does.
+    expect(await legionBranches(harness)).toEqual([integration]);
+    expect(existsSync(t2.worktreePath as string)).toBe(false);
+    expect(t1.status).toBe('merged');
+  });
+
+  it('archiving a cancelled run keeps unmerged task work and dirty worktrees', async () => {
+    h = await startHarness({ script: basicScript([node('T1'), node('T2', { dependsOn: ['T1'], risk: 'high' })]) });
+    const harness = h;
+    const run = await createRun(harness);
+    await harness.waitFor(() => runOf(harness, run.id).status === 'awaiting_approval', 'plan');
+    const plan = harness.engine.store.latestPlan(run.id);
+    await harness.client.call('runs.approvePlan', { runId: run.id, planId: plan?.id as string });
+    const t2 = await harness.waitFor(
+      () => tasksOf(harness, run.id).find((t) => t.nodeId === 'T2' && t.status === 'awaiting_human'),
+      'T2 at the human gate',
+      30_000,
+    );
+    const t1 = tasksOf(harness, run.id).find((t) => t.nodeId === 'T1') as Task;
+    const integration = runOf(harness, run.id).integrationBranch as string;
+    writeFileSync(join(t2.worktreePath as string, 'wip.txt'), 'human work\n');
+    await harness.client.call('runs.cancel', { runId: run.id });
+
+    const archived = await harness.client.call('runs.archive', { runId: run.id });
+    expect(archived.archived).toBe(true);
+    const kept = archived.archiveReport?.kept ?? [];
+    expect(kept.map((k) => `${k.kind}:${k.name}`).sort()).toEqual(
+      [`branch:${integration}`, `branch:${t2.branch}`, `worktree:${t2.worktreePath}`].sort(),
+    );
+    expect(kept.find((k) => k.kind === 'worktree')?.reason).toContain('wip.txt');
+    // T1's work is in integration: its branch and worktree are gone. T2's are untouched.
+    expect(await legionBranches(harness)).toEqual([integration, t2.branch as string].sort());
+    expect(existsSync(t1.worktreePath as string)).toBe(false);
+    expect(existsSync(join(t2.worktreePath as string, 'wip.txt'))).toBe(true);
+  });
+});
+
+describe('gc.auto bookkeeping', () => {
+  it('restores the user value after overlapping runs, whichever finishes first', async () => {
+    h = await startHarness({ script: basicScript([node('T1')]) });
+    const harness = h;
+    await git(harness.repo.path, ['config', '--local', 'gc.auto', '50']);
+    const approveOne = async () => {
+      const run = await createRun(harness);
+      await harness.waitFor(() => runOf(harness, run.id).status === 'awaiting_approval', 'plan');
+      const plan = harness.engine.store.latestPlan(run.id);
+      await harness.client.call('runs.approvePlan', { runId: run.id, planId: plan?.id as string });
+      return run;
+    };
+    const a = await approveOne();
+    const b = await approveOne(); // approved while A is active: sees gc.auto=0
+    expect(await gcAuto(harness)).toBe('0');
+    await harness.waitFor(() => [a, b].every((r) => runOf(harness, r.id).status === 'pr_ready'), 'pr_ready', 30_000);
+
+    await harness.client.call('runs.createPr', { runId: a.id, title: null, body: null });
+    expect(await gcAuto(harness)).toBe('0'); // B still holds the repo
+    // Survives an engine restart in between.
+    await harness.restart();
+    await harness.client.call('runs.createPr', { runId: b.id, title: null, body: null });
+    expect(await gcAuto(harness)).toBe('50');
+    // Releasing again (archive) changes nothing.
+    await harness.client.call('runs.archive', { runId: a.id });
+    expect(await gcAuto(harness)).toBe('50');
   });
 });
 

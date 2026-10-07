@@ -26,6 +26,7 @@ export const COMMAND_IDS = [
   'mode.resize',
   'run.pause',
   'run.resume',
+  'settings.open',
 ] as const;
 export type CommandId = (typeof COMMAND_IDS)[number];
 

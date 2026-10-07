@@ -198,10 +198,19 @@ Normalized `AgentEvent` kinds: `session_started{sessionId, model, version}`, `te
 
 Every Claude profile also denies `Bash(git commit *)`, `Bash(git push *)`, Enter/ExitWorktree and the
 scheduling tools (Cron*, ScheduleWakeup, RemoteTrigger, PushNotification). Approval decisions: allow →
-`{behavior:"allow", updatedInput}`; allow with scope `session` adds the CLI's own rule suggestions with
-`destination:"session"` (never `localSettings`); deny → `{behavior:"deny", message, interrupt?}`.
+`{behavior:"allow", updatedInput}`; allow with scope `session` adds the CLI's own scoped rule (`Tool(content)` or
+one MCP tool) and directory suggestions with `destination:"session"` (never `localSettings`). Without such a rule it
+adds an exact `Bash(<command>)` rule for a plain Bash command and otherwise no rule (= allow once): never a
+whole-tool rule. Deny → `{behavior:"deny", message, interrupt?}`.
 `AskUserQuestion`/`ExitPlanMode` from a coder arrive as ordinary `approval_request`s (answer AskUserQuestion with
 `updatedInput: {questions, answers}`); planners never see them.
+
+Auto-allow is strict on both engines (`engine/util/shell.ts`): a command is covered only when it is exactly an
+allowed verify command, or that command followed by plain arguments without shell syntax (`;&|$\`(){}<>*?!~#^[]`,
+quotes, backslashes, newlines). Codex: Legion answers `requestApproval` itself only for `kind: command` requests
+without `additionalPermissions` or network context whose real `command` (the `<shell> -lc '<script>'` wrapper is
+unwrapped; the display-only `commandActions` are ignored) matches; everything else goes to the inbox. Claude: a
+verify command containing shell syntax gets only its exact `Bash(<cmd>)` rule, no `Bash(<cmd> *)`.
 
 Config isolation: Claude runs with `--strict-mcp-config --mcp-config <legion only>` (written to a 0600 temp
 file so the bearer token stays out of `ps`), explicit `--setting-sources project` (keeps the repo's CLAUDE.md
@@ -212,6 +221,18 @@ Legion-owned `CODEX_HOME` (`<dataDir>/codex-home`) containing only a **symlink**
 (codex writes it in place, so token refreshes reach the user's file; `app-server` has no `--ignore-user-config`)
 plus `-c features.hooks=false` etc. Codex threads live in that home, so resume/takeover must use it.
 Details: `src/engine/adapters/codex/README.md`.
+
+Trust boundary. Reviewer and finalizer sessions read worktrees that coders wrote, so they load **no**
+configuration from them (`SessionOptions.untrustedWorkdir`): Claude runs with `--setting-sources=` (no project or
+local `.claude/settings*.json`, hence no planted hooks or permission rules), Codex with `project_doc_max_bytes=0`
+(no worktree `AGENTS.md`; project `.codex/config.toml` is only read for trusted projects and the Legion
+`CODEX_HOME` trusts none; hooks are disabled for every session). A task whose diff touches agent or Legion
+config (`.claude/**`, `.codex/**`, `CLAUDE.md`, `AGENTS.md`, `.mcp.json`, `legion.json`), CI configs, git hooks or
+`package.json` `scripts` (`orchestrator/core/sensitive.ts`) is high risk: after an approving review it waits at
+the human gate with the files named. **Verify and setup commands are trusted execution of repository code**:
+Legion runs them unsandboxed in the worktree (`legion.json` and plan verify commands are human-approved, but
+`pnpm test` still executes whatever `package.json` scripts and test files the coder wrote). The Codex sandbox
+and the read-only reviewer profile limit the agents, not the code Legion itself runs on their behalf.
 
 Structured output: Claude `--json-schema`, Codex `outputSchema` on `turn/start`. Both are re-validated with
 zod in the engine; a schema failure is a retryable attempt failure.
@@ -257,26 +278,31 @@ relies on this); when both exist the structured report wins.
    - Code (coder session) → Legion commits (`git add -A && git commit`, message from `mark_task_done`).
    - Verify: run node `verify.commands` + repo `legion.json` `verify`; scope check (actual changed files vs
      declared `touches`).
-   - Review (other engine, fresh session, read-only): input = node spec, issue, `git diff startSha..HEAD`,
+   - Review (other engine, fresh session, read-only): input = node spec, issue, `git diff <diff base>..HEAD` (§8.1 Diffs),
      verify results, scope report → `Review`. Approve iff all criteria met and no blocker/major.
    - Fix loop: send blocker/major findings back to the coder session (resume), re-verify, re-review.
      Max 2 fix rounds, then escalate to inbox.
-   - High-risk nodes → `awaiting_human` after approval.
+   - High-risk nodes, and tasks whose diff touches agent/CI/hook config or package scripts (§6) →
+     `awaiting_human` after approval.
    - Merge queue (serialized): `git merge-tree --write-tree` forecast; clean → squash-merge into integration
      worktree, commit `T<n>: <title>`, run post-merge verify; failure → reset integration to the pre-merge SHA,
      send the task back to fixing with integration HEAD merged into its branch. Conflicts → resolver session
-     (coder engine) in the task worktree; 2 failures → inbox. Lockfiles: never hand-merged — take ours, re-run
-     the install command.
+     (coder engine) in the task worktree; 2 failures → inbox. Lockfiles: never hand-merged — take integration's
+     side, regenerate with the non-frozen lockfile command, commit it; a failed regeneration → inbox.
    - Failure: retry up to 2 more attempts from a reset worktree with the failure summary; then `failed`,
      downstream `blocked`, inbox escalation (retry / skip / edit / abort).
 7. **Finalize**: full verify on integration; final holistic review (engine other than the majority of coders)
    over `base...integration`; blocker findings → inbox.
 8. **PR**: `git push -u origin legion/<run>/integration`, `gh pr create --draft --base <base> --title … --body-file …`.
    Body: issue link, plan summary, task table (engine, reviewer verdict), verification, minor findings, run id.
-9. **Cleanup** (`runs.archive`, also run automatically when the PR is merged or closed): cancel the run if still
-   active, close its sessions and takeover terminals, remove the task worktrees and local task branches and the
-   integration worktree (the integration branch stays while the PR is open), restore `gc.auto`, set
-   `archived: true` (hidden from `runs.list` unless `includeArchived`). Idempotent.
+9. **Cleanup** (`runs.archive({runId, force?})`, also run automatically when the PR is **merged**): an active run
+   is refused unless `force` (which cancels it first). Close its sessions and takeover terminals, then remove
+   worktrees and local branches **only where no work is lost**: a worktree with uncommitted changes is kept, a task
+   branch with commits or content in neither integration nor the base (content check via `merge-tree`, since
+   tasks are squash-merged) is kept (`force` removes both anyway); the integration branch is deleted only when
+   the PR was merged, or closed with the branch fully pushed to its upstream, or when it has nothing beyond the
+   base (`force` never deletes it). The result's `archiveReport` lists what was kept and why. Restore
+   `gc.auto`, set `archived: true` (hidden from `runs.list` unless `includeArchived`). Idempotent.
 
 ### 8.1 Lifecycle service (`engine/orchestrator/`)
 
@@ -308,14 +334,27 @@ The service applies `core/` decisions with CAS transitions; every flow is re-ent
 - **Merge queue** (`merge.ts`, serialized per run): `merging` tasks first (resume), then `approved` FIFO. Clean
   forecast → `insertMerge(preSha)` → squash → post-merge verify (install command first when a lockfile changed) →
   `merged`; a failed verify resets to `preSha` (merge `reverted`) and starts a fix round with integration merged into
-  the task branch. Conflict → merge integration into the task branch, lockfiles take integration's side and the
-  install command reruns, a `resolver` session (coder engine) handles the rest, `finishMerge`, forecast again.
-  Exhausted resolver attempts → `conflict` item (`retry` = back into the merge queue with a fresh budget).
+  the task branch. Conflict → merge integration into the task branch, lockfiles take integration's side and are
+  regenerated with the lockfile command (`legion.json` `lockfileCommand`, else `pnpm install --lockfile-only`,
+  `npm install --package-lock-only`, `yarn install`, `bun install --lockfile-only`; exit code checked, the lockfile
+  committed, a failure escalates the task), a `resolver` session (coder engine) handles the rest, `finishMerge`, forecast again.
+  Exhausted resolver attempts → `conflict` item (`retry` = back into the merge queue with a fresh budget). When a
+  resolver is needed (the forecast has non-lockfile conflicts) but the run is paused or the coder engine is rate
+  limited, the queue parks *before* touching git (`mergeParked`); the tick does not restart it until the run
+  resumes or the limit resets (a wake timer is armed at the reset).
 - **Escalations**: task items carry `taskId`; run-level items (`taskId: null`) come from the final verify
   (`verify_failed`), the final review (`final_review`) or a finalizer that cannot run (`other`), with actions `[retry,
   skip, abort]`: retry reruns the step, skip moves on (integrating → finalizing → pr_ready), abort cancels the run.
-  Task `edit` = retry with the note as context for the next attempt. Answering through `inbox.resolve` and through
-  the `tasks.*` procedures is equivalent; both resolve the item.
+  Task retry (`tasks.retry`, escalation `retry`) resumes the step that failed when the task has work to keep: the
+  escalation payload's `resume` (also `TaskMeta.resumeStep`) is `review` (reviewer failed → `reviewing`), `merge`
+  (merge failed, conflict unresolved, lockfile regeneration failed, high-risk gate → `approved`, fresh resolver
+  budget), `fix` (fix rounds or verify exhausted, reviewer asked for a re-plan, agent blocked → `fixing` in the same
+  coder session with a fresh fix budget and the note) or `code` (coder auth failure → `running` in the existing
+  worktree). Without `resume` (or for `failed` tasks) retry starts over. Starting over explicitly: `tasks.restart
+  ({taskId, note?})` or the escalation resolution `restart` (accepted wherever `retry` is offered): fresh worktree from
+  integration, fresh attempt budget, the note as context. Task `edit` = start over with the note as context for the
+  next attempt. Answering through `inbox.resolve` and through the `tasks.*` procedures is equivalent; both resolve
+  the item.
 - **Rate limits**: a `rate_limit` event with `usedPct ≥ 95`, or a retryable 429-like error, pauses new sessions on that
   engine until the reset (60 s when unknown); the failed coder attempt is re-queued without being charged.
 - **Budget**: `settings.budget.perRunUsd` (or a per-run limit raised through the `budget` item) reached → run paused +
@@ -327,13 +366,19 @@ The service applies `core/` decisions with CAS transitions; every flow is re-ent
   the session waits for the next message. **Takeover**: `sessions.takeover` interrupts and closes the adapter
   session, marks the attempt `interrupted` (`error: "taken over by a human"`) and opens a PTY running
   `claude --resume <id>` / `codex resume <id>` (with Legion's `CODEX_HOME`) in the attempt's worktree. When the PTY
-  exits, the adapter session is resumed with a hand-back prompt and the attempt is `running` again. The renderer
+  exits, the adapter session is resumed with a hand-back prompt and the attempt is `running` again, but only while
+  the attempt, its run (not terminal, not archived) and its task are still live, checked before and after the
+  resume; otherwise the resumed process is closed and the attempt is `cancelled`. The renderer
   attaches with `terminals.open({target: {kind: "attempt", attemptId}, terminalId, cols, rows})`.
-- **Diffs**: task = `startSha` → the task worktree including uncommitted and untracked files (staged into a
-  throwaway index); once the worktree is gone, `startSha..branch`. Run = `base...integration`.
+- **Diffs**: task = its diff base → the task worktree including uncommitted and untracked files (staged into a
+  throwaway index); once the worktree is gone, `base..branch`. The diff base (`taskDiffBase`) is the merge-base of
+  the task branch with integration: `startSha` until integration is merged into the task branch (post-merge fix
+  round, conflict resolution), then that integration commit, so the task's diff, scope check, sensitive-change
+  check and reviewer input never include other tasks' merged code. Run = `base...integration`.
 - **Bookkeeping** that is not a domain row (planner session id, clarify answers, fix context, coder session, latest
-  report, resolver attempts, per-run budget, saved `gc.auto`) lives in the `settings` key/value table under
-  `run:<id>` / `task:<id>`.
+  report, resolver attempts, per-run budget) lives in the `settings` key/value table under `run:<id>` /
+  `task:<id>`. `gc.auto` is reference-counted per repository under `repo:<repoPath>` (`repo-gc.ts`): the user's
+  value is saved once by the first run that disables it and restored when the last holding run ends.
 - **Host messages**: `notify` for every new inbox item (main decides about focus), `badge` = open inbox items,
   `power` = any agent process alive.
 - **Plan edits**: `runs.updatePlan` takes the DAG's `annotations` from the client; an `[overlap_accepted]` note
@@ -344,8 +389,9 @@ The service applies `core/` decisions with CAS transitions; every flow is re-ent
   `settings.engines.<kind>.fallbackReviewModel` (claude `opus`, codex `null`) unless the coder ran that model, then
   the Claude sibling (opus ↔ sonnet) or another model from the engine's probe (`core/engines.ts`).
 - **PR status** (`cleanup.ts`): `runs.createPr` stores `run.pr`; `runs.refreshPr` and a 3-minute poll of open PRs
-  read it again through the `PrHost` (`gh pr view`). A merged or closed PR moves a still-open run to `done` and
-  archives it (§8 step 9). The coder's final report is copied to `task.report` (cleared when a fresh attempt starts).
+  read it again through the `PrHost` (`gh pr view`). A merged or closed PR moves a still-open run to `done`; only a
+  merged one archives it (§8 step 9). A closed PR keeps everything (it may be reopened; the work is not in the
+  base) and is no longer polled. The coder's final report is copied to `task.report` (cleared when a fresh attempt starts).
 - **Settings**: `settings.updated` rebuilds an engine whose binary path changed (`EngineRegistry.reconfigure`, then
   a re-probe); live sessions keep their instance. Models, effort and `enabled` are read at each session start.
 - **Fake mode**: the demo script (`demo.ts`) hits every human touch point once: one clarify question, a 3-task plan
@@ -358,15 +404,33 @@ The service applies `core/` decisions with CAS transitions; every flow is re-ent
   Never touch the user's main checkout's working tree or index.
 - Branches: `legion/<runShort>/integration`, `legion/<runShort>/<taskId>-<slug>`.
 - A per-repo mutex serializes ref-changing git commands. `gc.auto=0` on repos Legion manages while runs are active.
+  No other repository config is written: rerere is enabled per merge command (`-c rerere.enabled=true`).
+  `removeWorktree` removes only its own worktree entry (also when the directory is gone) and never runs
+  `git worktree prune`, which would drop the user's worktrees on unmounted volumes.
 - Recovery on engine start (`orchestrator/recovery.ts`): attempts in `running` → `interrupted`; coder attempts of
   running/fixing tasks are resumed in the same row with a "Legion was restarted" prompt, the others fail and their
-  step reruns. Approval and agent-question items are dismissed (their sessions are gone). `pending` merges are rolled
-  back (`resetIntegration(preSha)`, merge `reverted`) and the task is merged again. `git worktree list` is reconciled
+  step reruns. Approval and agent-question items are dismissed (their sessions are gone). `pending` merges are settled
+  (`settlePendingMerges`, also run before the merge queue merges anything): only the newest pending row is rolled
+  back (`resetIntegration(preSha)`), and only when integration's HEAD is its squash commit (the `postSha` recorded
+  right after the squash, or a commit whose parent is `preSha`) and no later merge completed; every pending row ends
+  `reverted`, never resetting over later merges. The task is merged again; an empty re-merge after such a row is
+  still verified. A merge row stays `pending` until integration is back at a known state: a failed post-merge
+  verify resets integration first and then writes `verify_failed` → `reverted`; an exception after the squash
+  resets integration and closes the row before escalating. `git worktree list` is reconciled
   with the DB: missing worktrees are restored from their branch, else the task is re-queued without charging the
   attempt; unknown worktrees under Legion's directory are only logged. Conflict merges left in progress are aborted.
   Planner and finalize jobs restart; dispatch resumes. Before every integration merge record the pre-merge SHA.
+- Worktree hygiene: what provisioning leaves untracked (copy/symlink targets, setup output) is recorded
+  (`task:<id>.provisioned`, `run:<id>.integrationKeep`), never committed (`commitAll`/`finishMerge` exclude it)
+  and kept when cleaning. Everything else Legion's own commands leave behind is discarded with
+  `reset --hard HEAD` + `clean -fd` (never `-x`: ignored dependencies and caches stay for the next verify): in
+  the integration worktree after setup, after a passing post-merge verify, after the final verify and before
+  every squash merge (Legion owns that tree, so its dirt can only be Legion's); in a task worktree right after
+  verify (the agent's work is already committed, so the rest is verify output: stamps, coverage, formatter
+  rewrites). Setup output a later verify needs must therefore be untracked by setup itself or gitignored.
 - Per-repo config `legion.json` (optional): `{ setup?: string[], verify?: string[], copy?: string[],
-  symlink?: string[], highRiskGlobs?: string[], installCommand?: string }`.
+  symlink?: string[], highRiskGlobs?: string[], installCommand?: string,
+  lockfileCommand?: string }`.
 - App data: `~/Library/Application Support/Legion/legion.db` (override with `LEGION_HOME` for tests).
 
 ## 10. RPC & events

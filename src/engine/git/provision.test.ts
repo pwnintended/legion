@@ -8,6 +8,7 @@ import {
   installCommand,
   LegionConfigError,
   loadLegionConfig,
+  lockfileCommand,
   portBase,
   provisionFiles,
   runShellCommand,
@@ -55,6 +56,21 @@ describe('lockfiles', () => {
     const b = dir();
     writeFiles(b, { 'bun.lock': '' });
     expect(await installCommand(b)).toBe('bun install --frozen-lockfile');
+  });
+
+  it('regenerates lockfiles with a non-frozen command, overridable in legion.json', async () => {
+    const d = dir();
+    expect(await lockfileCommand(d)).toBeNull();
+    writeFiles(d, { 'package-lock.json': '{}' });
+    expect(await lockfileCommand(d)).toBe('npm install --package-lock-only');
+    writeFiles(d, { 'yarn.lock': '' });
+    expect(await lockfileCommand(d)).toBe('yarn install');
+    writeFiles(d, { 'pnpm-lock.yaml': '' });
+    expect(await lockfileCommand(d)).toBe('pnpm install --lockfile-only');
+    expect(await lockfileCommand(d, { lockfileCommand: 'make lock' })).toBe('make lock');
+    const b = dir();
+    writeFiles(b, { 'bun.lock': '' });
+    expect(await lockfileCommand(b)).toBe('bun install --lockfile-only');
   });
 });
 

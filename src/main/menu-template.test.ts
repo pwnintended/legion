@@ -53,7 +53,18 @@ describe('menu template', () => {
       'focus.nextUrgent': 'CmdOrCtrl+U',
       'column.cycleMode': 'CmdOrCtrl+W',
       'mode.resize': 'CmdOrCtrl+R',
+      'settings.open': 'CmdOrCtrl+,',
     });
+  });
+
+  it('puts Settings… (⌘,) in the app menu on macOS and in File elsewhere', () => {
+    const settings = (t: MenuItemConstructorOptions[], menu: string) =>
+      ((t.find((m) => m.label === menu)?.submenu ?? []) as MenuItemConstructorOptions[]).find(
+        (i) => i.label === 'Settings…',
+      );
+    expect(settings(template, 'Legion')).toMatchObject({ accelerator: 'CmdOrCtrl+,' });
+    const other = buildMenuTemplate({ appName: 'Legion', isMac: false, isDev: false, send: () => {} });
+    expect(settings(other, 'File')).toMatchObject({ accelerator: 'CmdOrCtrl+,' });
   });
 
   it('routes ⌘W and ⌘R to Legion commands, not to close/reload', () => {

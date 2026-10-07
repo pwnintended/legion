@@ -26,6 +26,17 @@ describe('commitAll', () => {
     expect(await gitText(repo.path, ['log', '-1', '--format=%B'])).toContain('T1: do things');
     expect(await gitText(repo.path, ['status', '--porcelain'])).toBe('');
   });
+
+  it('commits messages that happen to be stdio keywords, and leaves excluded paths unstaged', async () => {
+    for (const message of ['ignore', 'pipe', 'inherit']) {
+      writeFiles(repo.path, { 'a.txt': `${message}\n` });
+      expect((await commitAll(repo.path, message)).committed).toBe(true);
+      expect(await gitText(repo.path, ['log', '-1', '--format=%s'])).toBe(message);
+    }
+    writeFiles(repo.path, { 'b.txt': 'b\n', '.env.local': 'S=1\n' });
+    await commitAll(repo.path, 'T2', ['.env.local']);
+    expect(await gitText(repo.path, ['status', '--porcelain'])).toBe('?? .env.local');
+  });
 });
 
 describe('diffs between refs', () => {

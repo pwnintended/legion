@@ -117,7 +117,7 @@ export const TASK_TRANSITIONS: TransitionTable<TaskStatus> = {
   reviewing: ['approved', 'fixing', 'awaiting_human', 'failed', 'cancelled'],
   fixing: ['verifying', 'awaiting_human', 'failed', 'cancelled'],
   approved: ['merging', 'awaiting_human', 'cancelled'],
-  awaiting_human: ['queued', 'running', 'fixing', 'approved', 'merging', 'failed', 'skipped', 'cancelled'],
+  awaiting_human: ['queued', 'running', 'reviewing', 'fixing', 'approved', 'merging', 'failed', 'skipped', 'cancelled'],
   merging: ['merged', 'fixing', 'awaiting_human', 'failed', 'cancelled'],
   merged: [],
   failed: ['queued', 'skipped', 'cancelled'],
@@ -460,6 +460,20 @@ export type InboxKind = z.infer<typeof InboxKindSchema>;
 
 export const EscalationActionSchema = z.enum(['retry', 'skip', 'edit', 'abort']);
 
+/**
+ * Where a human `retry` picks an escalated task up without discarding its work: `code` = coder turn in the
+ * existing worktree, `fix` = a fix round with a fresh fix budget, `review` = re-review, `merge` = back into
+ * the merge queue with a fresh resolver budget.
+ */
+export const ResumeStepSchema = z.enum(['code', 'fix', 'review', 'merge']);
+export type ResumeStep = z.infer<typeof ResumeStepSchema>;
+
+/**
+ * Answers to an escalation: the offered `actions`, plus `restart` (start over from scratch, like
+ * `tasks.restart`) wherever `retry` is offered.
+ */
+export const EscalationResolutionActionSchema = z.enum([...EscalationActionSchema.options, 'restart']);
+
 const inboxBase = {
   id: IdSchema,
   runId: IdSchema,
@@ -493,6 +507,11 @@ export const InboxPayloadSchemas = {
     ]),
     summary: z.string(),
     actions: z.array(EscalationActionSchema),
+    /**
+     * Task escalations whose work is kept: what `retry` resumes. Absent/null = `retry` starts over. `restart`
+     * (resolution) or `tasks.restart` always starts over.
+     */
+    resume: ResumeStepSchema.nullish(),
   }),
   pr_ready: z.object({ integrationBranch: z.string(), title: z.string(), body: z.string() }),
   conflict: z.object({ files: z.array(z.string()), summary: z.string() }),
@@ -503,7 +522,7 @@ export const InboxResolutionSchemas = {
   approval: z.object({ decision: ApprovalDecisionSchema }),
   question: z.object({ answers: z.array(QuestionAnswerSchema) }),
   plan_signoff: z.object({ approved: z.boolean(), feedback: z.string().nullable() }),
-  escalation: z.object({ action: EscalationActionSchema, note: z.string().nullable() }),
+  escalation: z.object({ action: EscalationResolutionActionSchema, note: z.string().nullable() }),
   pr_ready: z.object({ approved: z.boolean(), title: z.string().nullable(), body: z.string().nullable() }),
   conflict: z.object({ action: z.enum(['retry', 'skip', 'abort']), note: z.string().nullable() }),
   budget: z.object({ action: z.enum(['raise', 'stop']), newLimitUsd: z.number().nullable() }),

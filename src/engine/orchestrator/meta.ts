@@ -4,7 +4,7 @@
  */
 import type { ReviewCriterion, ReviewFinding } from '@shared/domain';
 import type { Store } from '../db';
-import type { ScopeReport, VerifyResultInput } from './core';
+import type { ResumeStep, ScopeReport, VerifyResultInput } from './core';
 
 export interface RunMeta {
   /** Base commit the integration branch was created from. */
@@ -15,11 +15,15 @@ export interface RunMeta {
   answers: { question: string; answer: string }[];
   /** Integration worktree has had its copy/symlink/setup provisioning. */
   integrationReady: boolean;
+  /** Untracked files that provisioning (copy/symlink/setup) left in the integration worktree; cleaning keeps them. */
+  integrationKeep: string[];
   /** Per-run budget raised through a `budget` inbox answer (overrides settings). */
   budgetLimitUsd: number | null;
   budgetWarned: boolean;
-  /** The `gc.auto` value before Legion disabled it (restored when the run ends). */
+  /** Legacy (runs approved before `repo-gc.ts`): the `gc.auto` value before Legion disabled it. */
   gcAuto: string | null;
+  /** `gc.auto` is reference-counted per repository (`repo-gc.ts`) for this run. */
+  gcRepoManaged: boolean;
 }
 
 export interface FixContext {
@@ -36,6 +40,8 @@ export interface TaskMeta {
   coderSessionId: string | null;
   /** Latest coder report (summary feeds reviewers, dependents and the PR). */
   report: { status: 'done' | 'blocked' | 'partial'; summary: string; commitMessage: string } | null;
+  /** Untracked files provisioning left in the task worktree: never committed, kept when cleaning. */
+  provisioned: string[];
   /** Files the task changed (for dependents' upstream summaries). */
   files: string[];
   fix: FixContext | null;
@@ -43,12 +49,16 @@ export interface TaskMeta {
   previousFailure: string | null;
   lastVerify: VerifyResultInput[];
   scope: ScopeReport | null;
+  /** Sensitive changes found by the last verify (`core/sensitive.ts`). */
+  sensitive: string[];
   /** Reviews of the current attempt (ids), oldest first. */
   reviewIds: string[];
   /** Consecutive reviewer sessions that failed to produce a review. */
   reviewFailures: number;
   resolverAttempts: number;
   resolverFailure: string | null;
+  /** Step a human `retry` resumes while the task is `awaiting_human` (null = start over). */
+  resumeStep: ResumeStep | null;
 }
 
 const RUN_DEFAULTS: RunMeta = {
@@ -56,23 +66,28 @@ const RUN_DEFAULTS: RunMeta = {
   plannerSessionId: null,
   answers: [],
   integrationReady: false,
+  integrationKeep: [],
   budgetLimitUsd: null,
   budgetWarned: false,
   gcAuto: null,
+  gcRepoManaged: false,
 };
 
 const TASK_DEFAULTS: TaskMeta = {
   coderSessionId: null,
   report: null,
+  provisioned: [],
   files: [],
   fix: null,
   previousFailure: null,
   lastVerify: [],
   scope: null,
+  sensitive: [],
   reviewIds: [],
   reviewFailures: 0,
   resolverAttempts: 0,
   resolverFailure: null,
+  resumeStep: null,
 };
 
 export function runMeta(store: Store, runId: string): RunMeta {

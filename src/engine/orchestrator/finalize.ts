@@ -3,17 +3,10 @@
  * finalizing (holistic review on the engine other than the coders' majority; blockers → inbox) →
  * pr_ready (inbox item with the PR text) → `runs.createPr` (push + draft PR through the `PrHost`) → done.
  */
-import {
-  isTerminal,
-  type PullRequest,
-  type Review,
-  type ReviewFinding,
-  RUN_TRANSITIONS,
-  type Run,
-} from '@shared/domain';
+import type { PullRequest, Review, ReviewFinding, Run } from '@shared/domain';
 import { RpcError } from '@shared/rpc-transport';
 import { ReviewOutputSchema, reviewOutputJsonSchema } from '@shared/schemas';
-import { gitText, restoreGcAuto } from '../git';
+import { cleanWorktree, gitText } from '../git';
 import {
   buildFinalizerPrompt,
   buildPrBody,
@@ -28,8 +21,9 @@ import {
 import type { AgentRun } from './live-session';
 import { runMeta, taskMeta } from './meta';
 import { AgentFailure, Closed, type Orchestrator } from './orchestrator';
+import { releaseRepo } from './repo-gc';
 import { coderModelOf, planSummary } from './tasks';
-import { ensureIntegrationWorktree, provisionIntegration, runVerification } from './worktrees';
+import { ensureIntegrationWorktree, integrationKeep, provisionIntegration, runVerification } from './worktrees';
 
 export async function finalize(o: Orchestrator, runId: string): Promise<void> {
   let run = o.store.requireRun(runId);
@@ -54,6 +48,7 @@ export async function finalize(o: Orchestrator, runId: string): Promise<void> {
         commands,
         cwd: integration,
       });
+      await cleanWorktree(integration, integrationKeep(o, run));
       if (!outcome.ok) {
         const failed = outcome.results.filter((r) => r.exitCode !== 0).map((r) => r.command);
         o.escalate(
@@ -333,17 +328,4 @@ export async function createPr(
   } finally {
     prInFlight.delete(runId);
   }
-}
-
-/** Restore `gc.auto` once no other active run uses the repository. */
-export async function releaseRepo(o: Orchestrator, run: Run): Promise<void> {
-  const others = o.store
-    .listRuns()
-    .filter((r) => r.id !== run.id && r.repoPath === run.repoPath && !isTerminal(RUN_TRANSITIONS, r.status));
-  if (others.length > 0) return;
-  const meta = runMeta(o.store, run.id);
-  if (meta.gcAuto === null && run.integrationBranch === null) return;
-  await restoreGcAuto(run.repoPath, meta.gcAuto).catch((error: unknown) =>
-    o.log.warn(`could not restore gc.auto in ${run.repoPath}: ${(error as Error).message}`),
-  );
 }
