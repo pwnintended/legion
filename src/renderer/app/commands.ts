@@ -36,6 +36,7 @@ import {
 } from '../layout/tree';
 import { toast } from '../overlays/nav';
 import { canArchive, runPr } from './compat';
+import { isConfirmOpen } from './confirm';
 import { type DataState, selectRunList, TERMINAL_RUN_STATUSES } from './data';
 import { rpc } from './hooks';
 import { formatChord, isTerminal, isTextInput, matchesChord, parseChord } from './keys';
@@ -245,6 +246,8 @@ export function keyGuard(
 /** Global keydown handler. Returns true when a command handled the event. */
 export function handleKeyDown(event: KeyboardEvent): boolean {
   if (event.defaultPrevented || event.isComposing) return false;
+  // A confirm dialog is up: it owns every key (Esc must not close the overlay underneath).
+  if (isConfirmOpen()) return false;
   if (['Meta', 'Control', 'Alt', 'Shift'].includes(event.key)) return false;
   const inInput = isTextInput(event.target);
   const inTerminal = isTerminal(event.target);

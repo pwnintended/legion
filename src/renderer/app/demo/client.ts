@@ -240,6 +240,7 @@ export class DemoClient implements EngineClient {
           modelOverride: (input.model as string | null) ?? null,
         });
       case 'tasks.retry':
+      case 'tasks.restart':
         return this.updateTask(input.taskId as string, { status: 'queued', error: null });
       case 'tasks.skip':
         return this.updateTask(input.taskId as string, { status: 'skipped' });
@@ -340,7 +341,8 @@ export class DemoClient implements EngineClient {
       const action = (resolution as { action?: string }).action;
       const taskId = item.taskId;
       queueMicrotask(() => {
-        if (action === 'retry' || action === 'edit') this.updateTask(taskId, { status: 'queued', error: null });
+        if (action === 'retry' || action === 'edit' || action === 'restart')
+          this.updateTask(taskId, { status: 'queued', error: null });
         else if (action === 'skip') this.updateTask(taskId, { status: 'skipped' });
         else if (action === 'abort') this.updateRun(item.runId, { status: 'cancelled' });
       });

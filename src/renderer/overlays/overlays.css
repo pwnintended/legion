@@ -550,6 +550,46 @@
   box-shadow: 0 10px 28px color-mix(in srgb, var(--shadow) 45%, transparent);
   max-width: 520px;
 }
+/* Confirm dialog (destructive actions) — above every overlay. */
+.cf-layer {
+  z-index: 80;
+}
+.cf-body {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 18px 18px 6px;
+  overflow: auto;
+}
+.cf-text {
+  margin: 0;
+  font-size: 12.5px;
+  line-height: 1.55;
+  color: var(--subtext1);
+  text-wrap: pretty;
+}
+.cf-items {
+  margin: 2px 0 0;
+  padding: 8px 10px;
+  list-style: none;
+  border-radius: 8px;
+  background: var(--mantle);
+  font-size: 11.5px;
+  line-height: 1.6;
+  color: var(--subtext0);
+  max-height: 160px;
+  overflow: auto;
+}
+.cf-items li {
+  overflow-wrap: anywhere;
+}
+.cf-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 12px 18px 16px;
+}
+
 .toast-error {
   border-color: color-mix(in srgb, var(--red) 50%, transparent);
   color: var(--red);

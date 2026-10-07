@@ -12,6 +12,7 @@ import { Chip, Kbd } from '../chrome/ui';
 import { displayEngine, formatCost, formatDuration, type Tone } from '../layout/describe';
 import { type ApprovalChoice, resolveApproval, trackResolution, usePendingResolution } from '../tiles/session/actions';
 import { ApprovalButtons, ApprovalSubjectView, describeApproval } from '../tiles/session/approval';
+import { canStartOver, resolveEscalation, retryChoice, startOver } from '../tiles/session/escalation';
 import {
   type InboxSelection,
   moveSelection,
@@ -159,7 +160,7 @@ function InboxRow({
         <span className="muted ib-context">{context}</span>
         <span className="faint ib-blocks">{entry.blocksLabel ?? formatDuration(Date.now() - item.createdAt)}</span>
       </div>
-      <ItemBody item={item} selected={selected} />
+      <ItemBody item={item} selected={selected} taskLabel={task?.nodeId ?? null} />
       {pending?.state === 'error' ? <div className="ib-error">{pending.message}</div> : null}
     </div>
   );
@@ -174,7 +175,7 @@ function JumpButton({ item, label = 'Jump to tile' }: { item: InboxItem; label?:
   );
 }
 
-function ItemBody({ item, selected }: { item: InboxItem; selected: boolean }) {
+function ItemBody({ item, selected, taskLabel }: { item: InboxItem; selected: boolean; taskLabel: string | null }) {
   switch (item.kind) {
     case 'approval': {
       const subject = describeApproval(item.payload.tool, item.payload.input);
@@ -204,11 +205,23 @@ function ItemBody({ item, selected }: { item: InboxItem; selected: boolean }) {
                   key={action}
                   type="button"
                   className={`btn btn-sm${action === 'retry' ? ' btn-warn' : action === 'abort' ? ' btn-ghost' : ''}`}
-                  onClick={() => void resolve(item, { kind: 'escalation', action, note: null })}
+                  title={action === 'retry' ? retryChoice(item).title : undefined}
+                  onClick={() => void resolveEscalation(item, action, null)}
                 >
-                  {action === 'retry' ? 'Retry' : action === 'skip' ? 'Skip task' : 'Abort run'}
+                  {action === 'retry' ? retryChoice(item).label : action === 'skip' ? 'Skip task' : 'Abort run'}
                 </button>
               ))}
+            {canStartOver(item) ? (
+              <button
+                type="button"
+                className="btn btn-sm"
+                title="Discard the work and start the task over from scratch"
+                onClick={() => void startOver(item, taskLabel ?? 'this task')}
+                data-testid="inbox-restart"
+              >
+                Start over…
+              </button>
+            ) : null}
             {/* "edit" = retry with a note for the next attempt: written in the task's tile. */}
             <JumpButton
               item={item}

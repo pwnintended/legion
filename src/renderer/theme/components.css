@@ -162,6 +162,13 @@ body {
 .btn-warn:hover {
   background: var(--peach-hover);
 }
+.btn-danger {
+  background: var(--red);
+  color: var(--crust);
+}
+.btn-danger:hover {
+  background: color-mix(in srgb, var(--red) 86%, var(--text));
+}
 .btn-icon {
   width: 28px;
   height: 28px;
