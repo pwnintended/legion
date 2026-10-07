@@ -5,7 +5,14 @@
  */
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { dirname, isAbsolute, relative, resolve } from 'node:path';
-import type { AgentEngine, AgentSession, ApprovalDecision, EngineInfo, SessionOptions } from '@shared/engine';
+import type {
+  AgentEngine,
+  AgentSession,
+  ApprovalDecision,
+  EngineInfo,
+  SessionAttachment,
+  SessionOptions,
+} from '@shared/engine';
 import type { AgentEvent, ToolKind } from '@shared/events';
 import { AsyncQueue, deferred } from '../../util/async-queue';
 import { fakeOutputFor } from './fixtures';
@@ -43,6 +50,8 @@ export interface FakeTurnContext {
   turn: number;
   /** The prompt (turn 0) or the sent text. */
   message: string;
+  /** Files sent with this message (`opts.attachments` on turn 0, else `send`'s). */
+  attachments: readonly SessionAttachment[];
   resumed: boolean;
 }
 
@@ -155,7 +164,7 @@ export class FakeSession implements AgentSession {
   /** Approval decisions received, by requestId. */
   readonly decisions = new Map<string, ApprovalDecision>();
   /** Messages received through `send`. */
-  readonly sent: { text: string; priority: 'now' | 'next' }[] = [];
+  readonly sent: { text: string; priority: 'now' | 'next'; attachments: readonly SessionAttachment[] }[] = [];
 
   private sessionId = '';
   private turn = 0;
@@ -186,17 +195,17 @@ export class FakeSession implements AgentSession {
       model: this.opts.model ?? 'fake-small',
       version: 'fake-1.0.0',
     });
-    this.startTurn(this.opts.prompt);
+    this.startTurn(this.opts.prompt, this.opts.attachments ?? []);
   }
 
   private emit(event: AgentEvent): void {
     if (!this.closed) this.events.push(event);
   }
 
-  private startTurn(message: string): void {
+  private startTurn(message: string, attachments: readonly SessionAttachment[]): void {
     const abort = new AbortController();
     this.turnAbort = abort;
-    const steps = this.script({ opts: this.opts, turn: this.turn, message, resumed: this.resumed });
+    const steps = this.script({ opts: this.opts, turn: this.turn, message, attachments, resumed: this.resumed });
     this.turn += 1;
     this.turnDone = this.runTurn(steps, abort.signal).finally(() => {
       if (this.turnAbort === abort) this.turnAbort = null;
@@ -355,13 +364,17 @@ export class FakeSession implements AgentSession {
     this.events.end();
   }
 
-  async send(text: string, priority: 'now' | 'next' = 'next'): Promise<void> {
+  async send(
+    text: string,
+    priority: 'now' | 'next' = 'next',
+    attachments?: readonly SessionAttachment[] | null,
+  ): Promise<void> {
     if (this.closed) throw new Error('session is closed');
-    this.sent.push({ text, priority });
+    this.sent.push({ text, priority, attachments: attachments ?? [] });
     if (priority === 'now') this.turnAbort?.abort();
     await this.turnDone;
     if (this.closed) throw new Error('session is closed');
-    this.startTurn(text);
+    this.startTurn(text, attachments ?? []);
   }
 
   async interrupt(): Promise<void> {

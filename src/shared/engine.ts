@@ -4,6 +4,7 @@
  * (orchestrator, RPC, UI) only sees `AgentEvent`s.
  */
 import { z } from 'zod';
+import type { AttachmentKind } from './attachments';
 import {
   type ApprovalDecision,
   ApprovalDecisionSchema,
@@ -78,6 +79,20 @@ export interface McpConnection {
   token: string;
 }
 
+/**
+ * A file sent to the agent with a message (`SessionOptions.attachments`, `AgentSession.send`). Adapters
+ * read it from `path`: Claude gets images and PDFs as base64 content blocks, Codex gets images as
+ * `localImage` inputs; text files are inlined (both), anything else is referenced by path.
+ */
+export interface SessionAttachment {
+  name: string;
+  mime: string;
+  kind: AttachmentKind;
+  /** Absolute path of the stored, content-addressed file. */
+  path: string;
+  size: number;
+}
+
 export interface SessionOptions {
   role: Role;
   /** Working directory: the task worktree for coders, the integration worktree or repo for others. */
@@ -108,6 +123,8 @@ export interface SessionOptions {
    * Codex: no project docs (`AGENTS.md`). Absent/false = the repo's own project settings apply.
    */
   untrustedWorkdir?: boolean;
+  /** Files sent with `prompt` (the first message of this start/resume only). */
+  attachments?: readonly SessionAttachment[] | null;
 }
 
 export interface AgentSession {
@@ -117,7 +134,7 @@ export interface AgentSession {
   /** Normalized events. Ends after the `exited` event, when the process is gone. Single consumer. */
   readonly events: AsyncIterable<AgentEvent>;
   /** Send a follow-up / steering message. `now` interrupts the current turn first if supported. */
-  send(text: string, priority?: 'now' | 'next'): Promise<void>;
+  send(text: string, priority?: 'now' | 'next', attachments?: readonly SessionAttachment[] | null): Promise<void>;
   /** Stop the current turn but keep the session alive. */
   interrupt(): Promise<void>;
   /** Kill the process. Idempotent. */

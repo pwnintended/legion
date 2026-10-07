@@ -5,7 +5,7 @@
  * server requests become `approval_request` events and stay pending until `respond`.
  */
 import { type ChildProcess, spawn } from 'node:child_process';
-import type { AgentSession, ApprovalDecision, SessionOptions } from '@shared/engine';
+import type { AgentSession, ApprovalDecision, SessionAttachment, SessionOptions } from '@shared/engine';
 import type { AgentEvent } from '@shared/events';
 import { AsyncQueue, deferred } from '../../util/async-queue';
 import { childEnv, isPreapproved, threadResumeParams, threadStartParams, turnStartParams, userInput } from './config';
@@ -126,7 +126,7 @@ export class CodexSession implements AgentSession {
           });
     this.threadId = opened.thread.id;
     this.emit([{ type: 'session_started', sessionId: this.threadId, model: opened.model, version: this.version }]);
-    if (this.opts.prompt.trim() !== '') await this.startTurn(this.opts.prompt);
+    if (this.opts.prompt.trim() !== '') await this.startTurn(this.opts.prompt, this.opts.attachments);
   }
 
   private call<M extends ClientMethod>(
@@ -141,7 +141,11 @@ export class CodexSession implements AgentSession {
   // AgentSession
   // -------------------------------------------------------------------------------------------
 
-  async send(text: string, priority: 'now' | 'next' = 'next'): Promise<void> {
+  async send(
+    text: string,
+    priority: 'now' | 'next' = 'next',
+    attachments?: readonly SessionAttachment[] | null,
+  ): Promise<void> {
     this.assertOpen();
     await this.turnStarting;
     if (this.activeTurnId) {
@@ -151,7 +155,7 @@ export class CodexSession implements AgentSession {
         try {
           await this.call('turn/steer', {
             threadId: this.threadId,
-            input: userInput(text),
+            input: userInput(text, attachments),
             expectedTurnId: this.activeTurnId,
           });
           return;
@@ -162,7 +166,7 @@ export class CodexSession implements AgentSession {
       }
     }
     this.assertOpen();
-    await this.startTurn(text);
+    await this.startTurn(text, attachments);
   }
 
   async interrupt(): Promise<void> {
@@ -215,10 +219,10 @@ export class CodexSession implements AgentSession {
   // Turns
   // -------------------------------------------------------------------------------------------
 
-  private startTurn(text: string): Promise<void> {
+  private startTurn(text: string, attachments?: readonly SessionAttachment[] | null): Promise<void> {
     const done = deferred();
     this.turnDone = done;
-    const starting = this.call('turn/start', turnStartParams(this.threadId, text, this.opts)).then(
+    const starting = this.call('turn/start', turnStartParams(this.threadId, text, this.opts, attachments)).then(
       ({ turn }) => {
         // Lines after the response may already have completed the turn before this continuation runs.
         if (!this.completedTurns.has(turn.id)) this.activeTurnId = turn.id;

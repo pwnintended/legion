@@ -186,7 +186,7 @@ export class ClaudeEngine implements AgentEngine {
       onExit: cleanup,
       ...(this.options.timing ? { timing: this.options.timing } : {}),
     });
-    session.begin(opts.prompt);
+    session.begin(opts.prompt, opts.attachments);
     return session;
   }
 }
