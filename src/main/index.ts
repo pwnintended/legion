@@ -1,5 +1,5 @@
 import { homedir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { delimiter, join, resolve } from 'node:path';
 import { IPC } from '@shared/bridge';
 import type { EngineToMainMessage } from '@shared/host-protocol';
 import { app, BrowserWindow, dialog, ipcMain, Notification, powerSaveBlocker, shell } from 'electron';
@@ -93,6 +93,27 @@ async function main(): Promise<void> {
       : await dialog.showOpenDialog(dialogOptions);
     return result.canceled ? null : (result.filePaths[0] ?? null);
   });
+  ipcMain.handle(
+    IPC.pickFiles,
+    async (event, options: { title?: string; extensions?: readonly string[] } = {}): Promise<string[]> => {
+      // Test hook: answer with these paths (path-delimiter separated) instead of the native dialog.
+      const e2ePick = process.env.LEGION_E2E_PICK_FILES;
+      if (e2ePick) return e2ePick.split(delimiter).filter(Boolean);
+      const window = BrowserWindow.fromWebContents(event.sender);
+      const extensions = Array.isArray(options.extensions)
+        ? options.extensions.filter((e) => typeof e === 'string')
+        : [];
+      const dialogOptions: Electron.OpenDialogOptions = {
+        title: options.title ?? 'Attach files',
+        properties: ['openFile', 'multiSelections'],
+        ...(extensions.length ? { filters: [{ name: 'Images, text and PDFs', extensions }] } : {}),
+      };
+      const result = window
+        ? await dialog.showOpenDialog(window, dialogOptions)
+        : await dialog.showOpenDialog(dialogOptions);
+      return result.canceled ? [] : result.filePaths;
+    },
+  );
   ipcMain.handle(IPC.openExternal, async (_event, url: string) => {
     if (typeof url === 'string' && /^https?:\/\//.test(url)) await shell.openExternal(url);
   });
