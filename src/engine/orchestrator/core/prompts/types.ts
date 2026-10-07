@@ -32,10 +32,19 @@ export const DEFAULT_TOOL_NAMES: ToolNames = {
   reportProgress: 'report_progress',
 };
 
+/** A file the human attached to the run (sent with the agent's first message by the adapter). */
+export interface AttachmentNote {
+  readonly name: string;
+  readonly kind: 'image' | 'text' | 'file';
+  readonly mime: string;
+}
+
 export interface IssueInput {
   readonly title: string;
   readonly text: string;
   readonly url: string | null;
+  /** Files attached to the run; the prompt lists them, the adapter sends their content. */
+  readonly attachments?: readonly AttachmentNote[];
 }
 
 export interface RepoInput {
@@ -201,6 +210,8 @@ export interface PrBodyInput {
   readonly verification: readonly VerifyResultInput[];
   readonly minorFindings: readonly { readonly nodeId: string | null; readonly finding: ReviewFinding }[];
   readonly notes?: readonly string[];
+  /** Names of the files attached to the run (listed, not uploaded). */
+  readonly attachments?: readonly string[];
   /** Conventional-commit style prefix (`feat`, `fix`, ...) if the repo uses it. */
   readonly titlePrefix?: string | null;
 }

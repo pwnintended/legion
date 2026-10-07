@@ -39,6 +39,7 @@ src/
     rpc.ts           typed RPC contract between renderer and engine (procedures + event stream)
     rpc-transport.ts typed client/server over any MessagePort-like object, RpcError
     host-protocol.ts main ↔ engine messages over parentPort;  bridge.ts  window.legion (preload) API
+    attachments.ts   attachment limits, magic-byte sniffing, AttachmentRef (shared by engine and renderer)
     ids.ts, util.ts
   main/              Electron main: windows, engine supervisor, MessagePort wiring, native niceties
   preload/           minimal contextBridge: hands the renderer its MessagePort
@@ -47,6 +48,7 @@ src/
     context.ts       EngineContext handed to handler modules
     rpc/             RPC server over MessagePort (implements shared/rpc.ts); core procedures
     db/              node:sqlite, migrations, typed repositories (Store), append-only event log
+    attachments/     content-addressed attachment store (`attachments.add/get`, draft GC)
     util/            AsyncQueue etc.;  test/  test helpers
     adapters/
       claude/        Claude Code CLI adapter (stream-json + control protocol)
@@ -62,6 +64,7 @@ src/
     layout/          tiling engine (pure TS tree + ops) and its React renderer
     tiles/<kind>/    one folder per tile kind, registered in tiles/registry.ts
     overlays/        inbox, composer, command palette
+    attachments/     draft attachments (paste / drop / dialog), chip tray, preview lightbox
     chrome/          title bar, rail, status bar
     theme/           tokens (CSS variables), fonts, motion constants
 docs/
@@ -125,7 +128,8 @@ Do not add dependencies outside your task. If you need one, say so in your repor
 ```
 Run        id, repoPath, baseRef, title, issueText, issueUrl?, status, paused, plannerEngine, plannerModel?,
            integrationBranch?, prUrl?, pr? {url, number, state: open|closed|merged, isDraft}, archived,
-           error?, createdAt, updatedAt
+           attachments? (AttachmentRef[]: id, name, mime, size, kind image|text|file, sha256), error?, createdAt,
+           updatedAt
            status: draft → clarifying → planning → awaiting_approval → executing → integrating
                    → finalizing → pr_ready → done | failed | cancelled   (+ paused flag)
 Plan       id, runId, version, markdown, dag (PlanDag = {nodes, annotations}), source (agent|user), feedback?,
@@ -173,14 +177,22 @@ interface AgentEngine {
 interface AgentSession {
   id: string;                                // engine-native session/thread id (known after init)
   events: AsyncIterable<AgentEvent>;         // normalized, ends when the process exits
-  send(text: string, priority?: 'now' | 'next'): Promise<void>; // follow-up / steer
+  send(text: string, priority?: 'now' | 'next', attachments?: SessionAttachment[]): Promise<void>; // follow-up / steer
   interrupt(): Promise<void>;                // stop current turn, keep session
   close(): Promise<void>;                    // kill process
   respond(requestId: string, decision: ApprovalDecision): Promise<void>; // answer an approval
 }
 SessionOptions = { role, cwd, prompt, systemPrompt?, model?, effort?, permission: PermissionProfile,
-                   outputSchema?: JSONSchema, mcp: { url, token }, env, addDirs? }
+                   outputSchema?: JSONSchema, mcp: { url, token }, env, addDirs?, attachments? }
+SessionAttachment = { name, mime, kind: image|text|file, path, size }   // sent with `prompt` / `send`
 ```
+
+Attachments on the wire (verified with the live tests, `*/attachments.live.test.ts`): Claude stream-json user
+messages get `content` blocks — `{type:'image', source:{type:'base64', media_type, data}}` per image and
+`{type:'document', source:{type:'base64', media_type:'application/pdf', data}, title}` per PDF, then one text
+block. Codex `turn/start` / `turn/steer` get one `text` input plus `{type:'localImage', path}` per image. Both
+inline text files as fenced blocks headed by the file name (first 100k characters, then the path) and reference
+anything else by path (`adapters/attachments.ts`).
 
 Normalized `AgentEvent` kinds: `session_started{sessionId, model, version}`, `text_delta`, `message`
 (final assistant text), `reasoning`, `tool_call{id, name, input, kind: read|edit|command|mcp|other}`,
@@ -362,6 +374,14 @@ The service applies `core/` decisions with CAS transitions; every flow is re-ent
 - **Pause** gates new agent sessions (dispatch, reviewers, fixers, resolvers, finalizer); turns in flight finish.
   **Cancel** cancels open tasks and attempts, dismisses open inbox items, interrupts and closes live sessions and
   takeover terminals (worktrees are kept).
+- **Attachments** (`engine/attachments/`): `attachments.add` sniffs the content (PNG/JPEG/GIF/WebP ≤ 10 MB;
+  UTF-8 text/code and PDF ≤ 2 MB; ≤ 10 per run/answer/message), stores `<dataDir>/attachments/<sha256>.<ext>` and
+  an `attachments` row (`run_id` null = draft); drafts unclaimed for a day are deleted with files no row references
+  (at start and hourly). `runs.create`, `runs.answerClarify` and `sessions.send` take `attachmentIds` and claim them.
+  The planner's first message carries the run's attachments, the resumed plan prompt the clarify answers' ones;
+  fresh coder sessions, reviewers and the finalizer get all of them (`Orchestrator.runAttachments`) and the issue
+  section of their prompt names them; resumed sessions (fix rounds, hand-back) do not resend them. The PR body
+  lists the names. Steer messages carry their own.
 - **Steering**: `sessions.send` / `sessions.interrupt` need a live session; a human interrupt does not end the step,
   the session waits for the next message. **Takeover**: `sessions.takeover` interrupts and closes the adapter
   session, marks the attempt `interrupted` (`error: "taken over by a human"`) and opens a PTY running
@@ -431,7 +451,8 @@ The service applies `core/` decisions with CAS transitions; every flow is re-ent
 - Per-repo config `legion.json` (optional): `{ setup?: string[], verify?: string[], copy?: string[],
   symlink?: string[], highRiskGlobs?: string[], installCommand?: string,
   lockfileCommand?: string }`.
-- App data: `~/Library/Application Support/Legion/legion.db` (override with `LEGION_HOME` for tests).
+- App data: `~/Library/Application Support/Legion/legion.db` and `attachments/` (override with `LEGION_HOME` for
+  tests).
 
 ## 10. RPC & events
 
@@ -478,7 +499,7 @@ re-attaches the transferred port to a live terminal (a detached shell, or the te
   bare `origin`.
 - Demo the app without real CLIs: `LEGION_FAKE_ENGINES=1 pnpm dev` (any repo; the PR step never pushes).
 - Test hooks: `LEGION_E2E_PICK_DIR=<path>` makes main answer the folder dialog with that path (Playwright cannot
-  drive native dialogs); `LEGION_SELFTEST=1` makes the engine spawn a PTY and query node:sqlite after start and log
+  drive native dialogs), `LEGION_E2E_PICK_FILES=<path>:<path>…` the attach-files dialog; `LEGION_SELFTEST=1` makes the engine spawn a PTY and query node:sqlite after start and log
   `selftest ok …` (`pnpm test:packaged` uses it on the packaged app).
 
 - `pnpm typecheck`, `pnpm lint`, `pnpm test` must pass before you report done. Add tests for logic you write.

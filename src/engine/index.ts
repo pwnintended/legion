@@ -13,6 +13,7 @@ import type { ServerEvent } from '@shared/events';
 import type { EngineToMainMessage, MainToEngineMessage } from '@shared/host-protocol';
 import { ENGINE_ENV } from '@shared/host-protocol';
 import type { MessageEndpoint, PortLike, RpcConnection } from '@shared/rpc-transport';
+import { AttachmentService, registerAttachmentHandlers } from './attachments';
 import { consoleLogger, type EngineContext, type Logger } from './context';
 import { openStore, type Store } from './db';
 import { type McpServerHandle, startMcpServer } from './mcp';
@@ -114,8 +115,11 @@ export async function startEngine(options: StartEngineOptions): Promise<EngineHa
     ...(options.engines ? { overrides: options.engines } : {}),
     ...(options.fakeStepDelayMs !== undefined ? { fakeStepDelayMs: options.fakeStepDelayMs } : {}),
   });
+  const attachments = new AttachmentService({ dataDir: options.dataDir, store: opened.store, log });
+  const stopAttachmentGc = registerAttachmentHandlers(server, attachments, log);
   const orchestrator = createOrchestrator({
     ctx,
+    attachments,
     registry,
     prHost: options.prHost ?? (fake ? new FakePrHost({ push: false }) : ghPrHost),
     ...(options.onHostMessage ? { host: options.onHostMessage } : {}),
@@ -169,6 +173,7 @@ export async function startEngine(options: StartEngineOptions): Promise<EngineHa
       closed = true;
       await ready;
       offSettings();
+      stopAttachmentGc();
       await orchestrator.close();
       terminals.dispose();
       await mcp.close();

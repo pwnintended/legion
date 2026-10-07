@@ -7,6 +7,7 @@
  * Every decision comes from `core/` (pure); this layer applies them with CAS transitions through the
  * Store, runs git through `engine/git`, and drives agents through `AgentRun`s.
  */
+import type { AttachmentRef } from '@shared/attachments';
 import type {
   Effort,
   EngineKind,
@@ -20,10 +21,17 @@ import type {
   TaskStatus,
 } from '@shared/domain';
 import { isTerminal, RUN_TRANSITIONS, TASK_TRANSITIONS } from '@shared/domain';
-import { type AgentEngine, type JsonSchema, permissionProfileFor, type SessionOptions } from '@shared/engine';
+import {
+  type AgentEngine,
+  type JsonSchema,
+  permissionProfileFor,
+  type SessionAttachment,
+  type SessionOptions,
+} from '@shared/engine';
 import type { AgentEvent } from '@shared/events';
 import type { EngineToMainMessage } from '@shared/host-protocol';
 import type { z } from 'zod';
+import { AttachmentService } from '../attachments';
 import type { EngineContext, Logger } from '../context';
 import type { Store } from '../db';
 import { integrationWorktreePath, type LegionConfig, loadLegionConfig, repoHash, taskWorktreePath } from '../git';
@@ -66,6 +74,8 @@ export interface OrchestratorOptions {
   host?: (message: EngineToMainMessage) => void;
   /** Interval of the open-PR status poll (default 3 min; 0 = off). */
   prPollMs?: number;
+  /** Attachment storage (default: `<dataDir>/attachments`). */
+  attachments?: AttachmentService;
 }
 
 /** An agent session could not do its job; `failure.kind` feeds the retry policy. */
@@ -99,6 +109,8 @@ export interface OpenSessionParams {
   resumeSessionId?: string | null;
   /** Re-use this `interrupted` attempt row (recovery) instead of inserting a new one. */
   reuseAttemptId?: string | null;
+  /** Files sent with the prompt (`runAttachments` for a session's first message). */
+  attachments?: readonly SessionAttachment[] | null;
 }
 
 type Waiter = {
@@ -151,6 +163,7 @@ export class Orchestrator {
   readonly ctx: EngineContext;
   readonly registry: EngineRegistry;
   readonly prHost: PrHost;
+  readonly attachments: AttachmentService;
   mcp: McpServerHandle | null = null;
   terminals: TerminalService | null = null;
   /** Resolves with the exit code of a PTY process by pid (set by the engine wiring). */
@@ -195,6 +208,9 @@ export class Orchestrator {
     this.log = options.ctx.log;
     this.registry = options.registry;
     this.prHost = options.prHost;
+    this.attachments =
+      options.attachments ??
+      new AttachmentService({ dataDir: options.ctx.dataDir, store: options.ctx.store, log: options.ctx.log });
     this.host = options.host ?? (() => {});
     this.offEvents = this.store.onEvents((events) => {
       let inboxChanged = false;
@@ -244,7 +260,19 @@ export class Orchestrator {
   }
 
   issue(run: Run): IssueInput {
-    return { title: run.title, text: run.issueText, url: run.issueUrl };
+    const attachments = this.attachmentRefs(run).map(({ name, kind, mime }) => ({ name, kind, mime }));
+    return { title: run.title, text: run.issueText, url: run.issueUrl, ...(attachments.length ? { attachments } : {}) };
+  }
+
+  /** Files attached to the run: at creation, then to the clarify answers. */
+  attachmentRefs(run: Run): AttachmentRef[] {
+    const all = [...(run.attachments ?? []), ...runMeta(this.store, run.id).answerAttachments];
+    return all.filter((ref, i) => all.findIndex((other) => other.id === ref.id) === i);
+  }
+
+  /** The run's attachments as sent with a session's first message (planner, coders, reviewers). */
+  runAttachments(run: Run): SessionAttachment[] {
+    return this.attachments.forSession(this.attachmentRefs(run));
   }
 
   integrationPath(run: Pick<Run, 'id' | 'repoPath'>): string {
@@ -413,6 +441,7 @@ export class Orchestrator {
       outputSchema: params.outputSchema,
       mcp: token && this.mcp ? { url: this.mcp.url, token } : null,
       env: this.sessionEnv(),
+      attachments: params.attachments?.length ? params.attachments : null,
     };
     let session: Awaited<ReturnType<AgentEngine['start']>>;
     try {

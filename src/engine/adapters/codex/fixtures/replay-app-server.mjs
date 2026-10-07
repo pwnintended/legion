@@ -2,7 +2,8 @@
 // {dir: 'in' | 'out', msg}). 'in' messages (server → client) are written to stdout; at each 'out'
 // message it waits for the client's next message and checks it has the same shape (method for requests
 // and notifications; result vs error for replies to server requests). Response ids are rewritten to the
-// ids the client actually used. Exits 0 when stdin ends, 3 on a mismatch. A synthetic
+// ids the client actually used. An 'out' entry with `expectParams` also checks those params exactly
+// (synthetic transcripts only; recorded ones carry their own prompts). Exits 0 when stdin ends, 3 on a mismatch. A synthetic
 // `{dir: 'exit', code}` entry makes it exit with that code (crash simulation).
 import { readFileSync } from 'node:fs';
 import { createInterface } from 'node:readline';
@@ -42,7 +43,7 @@ function fail(message) {
   process.exit(3);
 }
 
-for (const { dir, msg, code } of entries) {
+for (const { dir, msg, code, expectParams } of entries) {
   if (dir === 'exit') {
     // stdout is asynchronous for pipes on macOS: flush before exiting.
     await new Promise((resolve) => process.stdout.write('', resolve));
@@ -58,6 +59,13 @@ for (const { dir, msg, code } of entries) {
   if (msg.method !== undefined) {
     if (actual.method !== msg.method) fail(`expected ${msg.method}, got ${JSON.stringify(actual).slice(0, 300)}`);
     if (msg.id !== undefined) idMap.set(msg.id, actual.id);
+    for (const [key, value] of Object.entries(expectParams ?? {})) {
+      if (JSON.stringify(actual.params?.[key]) !== JSON.stringify(value)) {
+        fail(
+          `${msg.method} params.${key}: expected ${JSON.stringify(value)}, got ${JSON.stringify(actual.params?.[key])}`,
+        );
+      }
+    }
   } else {
     if (actual.id !== msg.id) fail(`expected reply to ${msg.id}, got ${JSON.stringify(actual).slice(0, 300)}`);
     if ((msg.error === undefined) !== (actual.error === undefined)) {

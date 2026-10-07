@@ -1,7 +1,9 @@
 /** Timeline row renderers (one compact row per folded event, see timeline.ts). */
+
 import type { ApprovalDecision, EngineKind, InboxItem, InboxItemOf } from '@shared/domain';
 import type { TodoItem } from '@shared/events';
 import { memo, type ReactNode, useState } from 'react';
+import { ChipList } from '../../attachments/Attachments';
 import type { SentMessage } from './actions';
 import { dismissSent } from './actions';
 import { ApprovalCard, approvalLabel } from './approval';
@@ -354,6 +356,9 @@ export function SentRow({ message, attemptId }: { message: SentMessage; attemptI
     <Ev icon={glyph('user')} tone="user" className="ev-you">
       <div className="you">
         <span className="you-text">{message.text}</span>
+        {message.attachments.length ? (
+          <ChipList chips={message.attachments} size="sm" label="Sent attachments" />
+        ) : null}
         <span className="you-meta">
           {message.status === 'sending'
             ? 'sending…'

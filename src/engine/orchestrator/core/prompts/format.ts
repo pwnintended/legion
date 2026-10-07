@@ -1,7 +1,7 @@
 /** Markdown building blocks shared by the prompt builders. */
 import type { ReviewCriterion, ReviewFinding, TaskNode } from '@shared/domain';
 import type { ScopeReport } from '../scope';
-import type { IssueInput, RepoInput, UpstreamSummary, VerifyResultInput } from './types';
+import type { AttachmentNote, IssueInput, RepoInput, UpstreamSummary, VerifyResultInput } from './types';
 
 /** Character budgets for embedded material. Prompts stay well inside both engines' context windows. */
 export const PROMPT_LIMITS = {
@@ -99,7 +99,22 @@ export function formatIssue(issue: IssueInput): string {
     `**${issue.title.trim()}**`,
     issue.url ? `Source: ${issue.url}` : null,
     fence(clipMiddle(issue.text.trim() || '(no description)', PROMPT_LIMITS.issueChars), 'text'),
+    formatAttachments(issue.attachments ?? []),
   );
+}
+
+const ATTACHMENT_KIND_LABEL: Record<AttachmentNote['kind'], string> = {
+  image: 'image',
+  text: 'text file',
+  file: 'document',
+};
+
+/** One line naming the files attached to the issue (their content travels with this message). */
+export function formatAttachments(attachments: readonly AttachmentNote[]): string | null {
+  if (attachments.length === 0) return null;
+  const list = attachments.map((a) => `\`${a.name.replace(/`/g, "'")}\` (${ATTACHMENT_KIND_LABEL[a.kind]})`).join(', ');
+  const images = attachments.some((a) => a.kind === 'image');
+  return `Attached by the human: ${list}. Their content is included in this conversation${images ? '; images are often UI references (mockups, screenshots of bugs) — look at them closely' : ''}.`;
 }
 
 export function formatRepo(repo: RepoInput): string {

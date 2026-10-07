@@ -42,6 +42,8 @@ export interface LegionBridge {
   requestEnginePort(): void;
   /** Native folder picker; resolves to null when cancelled. */
   pickDirectory(options?: { title?: string; defaultPath?: string }): Promise<string | null>;
+  /** Native multi-file picker (attachments); resolves to [] when cancelled. */
+  pickFiles(options?: { title?: string; extensions?: readonly string[] }): Promise<string[]>;
   /**
    * The filesystem path of a File from a drag-and-drop (Finder folder or file); '' when it has none.
    * (`File.path` is gone in sandboxed renderers; this wraps `webUtils.getPathForFile`.)
@@ -58,6 +60,7 @@ export const IPC = {
   requestEnginePort: 'legion:request-engine-port',
   enginePort: 'legion:engine-port',
   pickDirectory: 'legion:pick-directory',
+  pickFiles: 'legion:pick-files',
   openExternal: 'legion:open-external',
   showItemInFolder: 'legion:show-item-in-folder',
   /** main → renderer: a CommandId. */

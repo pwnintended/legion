@@ -26,6 +26,7 @@ const bridge: LegionBridge = {
   },
   requestEnginePort: () => ipcRenderer.send(IPC.requestEnginePort),
   pickDirectory: (options) => ipcRenderer.invoke(IPC.pickDirectory, options ?? {}),
+  pickFiles: (options) => ipcRenderer.invoke(IPC.pickFiles, options ?? {}),
   pathForFile: (file) => {
     try {
       return webUtils.getPathForFile(file);
