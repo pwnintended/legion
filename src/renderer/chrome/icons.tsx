@@ -186,7 +186,80 @@ const PATHS = {
     </>
   ),
   chevronDown: <path d="M6 9l6 6 6-6" />,
+  chevronRight: <path d="M9 6l6 6-6 6" />,
   chevronUpDown: <path d="M8 9.5l4-4 4 4M8 14.5l4 4 4-4" />,
+  file: (
+    <>
+      <path d="M14 3H7a2 2 0 00-2 2v14a2 2 0 002 2h10a2 2 0 002-2V8z" />
+      <path d="M14 3v5h5" />
+    </>
+  ),
+  fileCode: (
+    <>
+      <path d="M14 3H7a2 2 0 00-2 2v14a2 2 0 002 2h10a2 2 0 002-2V8z" />
+      <path d="M14 3v5h5M10 12.5l-2 2 2 2M14 12.5l2 2-2 2" />
+    </>
+  ),
+  fileText: (
+    <>
+      <path d="M14 3H7a2 2 0 00-2 2v14a2 2 0 002 2h10a2 2 0 002-2V8z" />
+      <path d="M14 3v5h5M9 13h6M9 17h4" />
+    </>
+  ),
+  image: (
+    <>
+      <rect x="3" y="4" width="18" height="16" rx="2" />
+      <circle cx="9" cy="10" r="1.6" />
+      <path d="M21 16l-5-5-9 9" />
+    </>
+  ),
+  folderOpen: (
+    <path d="M3.5 18.3V7.5a2 2 0 012-2h3.6l2 2.2h6.4a2 2 0 012 2v1.3M3.5 18.3l2.3-6.1a1.5 1.5 0 011.4-1h13.1a1 1 0 01.9 1.3l-2 6a1.5 1.5 0 01-1.4 1H5a1.5 1.5 0 01-1.5-1.2z" />
+  ),
+  link: (
+    <>
+      <path d="M10 14a4 4 0 005.7 0l3-3a4 4 0 00-5.7-5.7l-1.2 1.2" />
+      <path d="M14 10a4 4 0 00-5.7 0l-3 3a4 4 0 005.7 5.7l1.2-1.2" />
+    </>
+  ),
+  commit: (
+    <>
+      <circle cx="12" cy="12" r="3.5" />
+      <path d="M3 12h5.5M15.5 12H21" />
+    </>
+  ),
+  home: (
+    <>
+      <path d="M4 10.5L12 4l8 6.5" />
+      <path d="M6 9v10a1 1 0 001 1h3.5v-5h3v5H17a1 1 0 001-1V9" />
+    </>
+  ),
+  book: (
+    <>
+      <path d="M4 5.5A1.5 1.5 0 015.5 4H11v16H5.5A1.5 1.5 0 014 18.5z" />
+      <path d="M20 5.5A1.5 1.5 0 0018.5 4H13v16h5.5a1.5 1.5 0 001.5-1.5z" />
+    </>
+  ),
+  clock: (
+    <>
+      <circle cx="12" cy="12" r="8.5" />
+      <path d="M12 7.5V12l3 2" />
+    </>
+  ),
+  pin: <path d="M9 4h6l-1 5 3 3v2H7v-2l3-3zM12 14v6" />,
+  editor: (
+    <>
+      <rect x="3" y="4" width="18" height="16" rx="2" />
+      <path d="M7 9l3 3-3 3M12.5 15H17" />
+    </>
+  ),
+  tag: (
+    <>
+      <path d="M3.5 12.6V5a1.5 1.5 0 011.5-1.5h7.6l8 8a1.5 1.5 0 010 2.1l-7.5 7.5a1.5 1.5 0 01-2.1 0z" />
+      <circle cx="8" cy="8" r="1.3" />
+    </>
+  ),
+  quote: <path d="M5 8h14M5 12h14M5 16h9" />,
 } as const;
 
 export type IconName = keyof typeof PATHS;

@@ -28,6 +28,9 @@ export const MENU_ACCELERATORS: Partial<Record<CommandId, string>> = {
   'column.cycleMode': 'CmdOrCtrl+W',
   'mode.resize': 'CmdOrCtrl+R',
   'settings.open': 'CmdOrCtrl+,',
+  'project.add': 'CmdOrCtrl+Shift+N',
+  'file.goto': 'CmdOrCtrl+P',
+  'project.search': 'CmdOrCtrl+Shift+F',
 };
 
 export function buildMenuTemplate({ appName, isMac, isDev, send }: MenuTemplateOptions): MenuItemConstructorOptions[] {
@@ -57,6 +60,10 @@ export function buildMenuTemplate({ appName, isMac, isDev, send }: MenuTemplateO
     label: 'File',
     submenu: [
       item('New Run…', 'composer.open'),
+      item('Add Project…', 'project.add'),
+      { type: 'separator' },
+      item('Go to File…', 'file.goto'),
+      item('Search in Project…', 'project.search'),
       { type: 'separator' },
       item('Open Inbox', 'inbox.open'),
       item('Command Palette…', 'palette.open'),

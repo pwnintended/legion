@@ -3,7 +3,7 @@
  * Tailwind classes from the package are needed. Code blocks are highlighted with Shiki (lazy, catppuccin-mocha)
  * once the block is complete. Links open in the default browser, never inside the app window.
  */
-import { createElement, memo, type ReactNode, useEffect, useState } from 'react';
+import { createElement, memo, type ReactNode, useEffect, useMemo, useState } from 'react';
 import { type Components, Streamdown } from 'streamdown';
 import { themeHtml } from '../../theme/palette';
 
@@ -139,23 +139,30 @@ function makeComponents(live: boolean): Components {
 const STATIC_COMPONENTS = makeComponents(false);
 const LIVE_COMPONENTS = makeComponents(true);
 
-/** Rendered agent markdown. `streaming` tolerates unterminated syntax and shows the caret. */
+/**
+ * Rendered agent markdown. `streaming` tolerates unterminated syntax and shows the caret. `components`
+ * overrides individual element renderers (e.g. images resolved from a repository); keep it referentially stable.
+ */
 export const Markdown = memo(function Markdown({
   text,
   streaming,
   caret,
+  components,
 }: {
   text: string;
   streaming: boolean;
   caret: boolean;
+  components?: Partial<Components>;
 }) {
+  const base = streaming ? LIVE_COMPONENTS : STATIC_COMPONENTS;
+  const merged = useMemo(() => (components ? { ...base, ...components } : base), [base, components]);
   return (
     <div className={`md${caret ? ' md-caret' : ''}`}>
       <Streamdown
         mode={streaming ? 'streaming' : 'static'}
         parseIncompleteMarkdown={streaming}
         isAnimating={streaming}
-        components={streaming ? LIVE_COMPONENTS : STATIC_COMPONENTS}
+        components={merged}
         linkSafety={{ enabled: false }}
         controls={false}
       >

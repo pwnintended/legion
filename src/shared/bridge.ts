@@ -27,6 +27,9 @@ export const COMMAND_IDS = [
   'run.pause',
   'run.resume',
   'settings.open',
+  'project.add',
+  'file.goto',
+  'project.search',
 ] as const;
 export type CommandId = (typeof COMMAND_IDS)[number];
 

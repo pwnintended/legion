@@ -1,5 +1,6 @@
 /**
- * App shell: title bar, rail, the active run's workspace (or onboarding), status bar, overlays.
+ * App shell: title bar, rail, the workspace on screen (a run's, or a project's home), or onboarding when there
+ * is nothing yet, status bar, overlays.
  * Overlays (composer, inbox, palette) are rendered by `overlays/index.tsx` (default export, mounted once here)
  * and read `uiStore.overlay` to decide what to show.
  */
@@ -11,8 +12,9 @@ import { StatusBar } from '../chrome/StatusBar';
 import { TitleBar } from '../chrome/TitleBar';
 import { Workspace, WorkspaceSkeleton } from '../layout/Workspace';
 import { installKeybindings } from './commands';
-import { useActiveRunId, useConnection, useRuns, useUi } from './hooks';
+import { useConnection, useData, useRuns, useUi } from './hooks';
 import { useMotionConfig } from './prefs';
+import { activeWorkspaceKey } from './store';
 
 const overlayModules = import.meta.glob<{ default: ComponentType }>('../overlays/index.tsx');
 const overlayLoader = Object.values(overlayModules)[0];
@@ -28,13 +30,14 @@ export function App() {
   }, [overlay]);
   const runs = useRuns();
   const connection = useConnection();
-  const activeRunId = useActiveRunId();
+  const hasProjects = useData((s) => Object.keys(s.projects).length > 0);
+  const workspaceKey = useUi(activeWorkspaceKey);
   const reducedMotion = useMotionConfig();
 
   let content: React.ReactNode;
   if (!connection.loaded) content = <WorkspaceSkeleton />;
-  else if (runs.length === 0) content = <Onboarding />;
-  else if (activeRunId) content = <Workspace key={activeRunId} runId={activeRunId} />;
+  else if (runs.length === 0 && !hasProjects) content = <Onboarding />;
+  else if (workspaceKey) content = <Workspace key={workspaceKey} runId={workspaceKey} />;
   else content = <WorkspaceSkeleton />;
 
   return (

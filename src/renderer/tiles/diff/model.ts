@@ -198,6 +198,18 @@ const EXT_LANG: Record<string, string> = {
   go: 'go',
   rs: 'rust',
   toml: 'toml',
+  md: 'markdown',
+  mdx: 'markdown',
+  html: 'html',
+  htm: 'html',
+  java: 'java',
+  xml: 'xml',
+  svg: 'xml',
+  plist: 'xml',
+  diff: 'diff',
+  patch: 'diff',
+  jsonc: 'json',
+  json5: 'json',
 };
 
 export function languageOf(path: string): string | null {

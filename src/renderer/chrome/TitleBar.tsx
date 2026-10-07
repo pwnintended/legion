@@ -1,11 +1,14 @@
 /**
- * Title bar (hiddenInset window): drag region with room for the traffic lights, run breadcrumb, layout
- * switcher, and the Commands / Inbox / New run buttons.
+ * Title bar (hiddenInset window): drag region with room for the traffic lights, project / run breadcrumb (the
+ * project opens its home), layout switcher (runs only: a project home is always a strip), and the Commands /
+ * Inbox / New run buttons.
  */
 import { motion } from 'motion/react';
 import { commandTooltip, executeCommand } from '../app/commands';
-import { useActiveRun, useInbox, useUi } from '../app/hooks';
+import { useActiveRun, useData, useInbox, useUi } from '../app/hooks';
 import { useReducedMotionPref } from '../app/prefs';
+import { openProject } from '../app/project-actions';
+import { activeProjectOf } from '../app/store';
 import type { LayoutMode } from '../layout/tree';
 import { SPRING } from '../theme/motion';
 import { Icon, type IconName, LegionMark } from './icons';
@@ -28,6 +31,10 @@ export function TitleBar() {
   const inbox = useInbox(null);
   const reduced = useReducedMotionPref();
   const demo = useUi((s) => s.demo);
+  const activeRunId = useUi((s) => s.activeRunId);
+  const activeProjectId = useUi((s) => s.activeProjectId);
+  const project = useData((s) => activeProjectOf({ activeRunId, activeProjectId }, s));
+  const branch = useData((s) => (project ? (s.projectStatus[project.id]?.branch ?? null) : null));
   return (
     <header
       className="drag flex h-11 flex-none items-center gap-3 border-b border-[var(--chrome-line)] bg-mantle pr-2.5"
@@ -42,17 +49,36 @@ export function TitleBar() {
             demo
           </span>
         ) : null}
+        {project || run ? <span className="faint">/</span> : null}
+        {project ? (
+          <button
+            type="button"
+            className="tb-crumb no-drag"
+            onClick={() => openProject(project.id)}
+            title={run ? commandTooltip('project.home', `${project.name} home`) : project.path}
+            aria-current={run ? undefined : 'page'}
+            data-testid="titlebar-project"
+          >
+            {project.name}
+          </button>
+        ) : run ? (
+          <span className="whitespace-nowrap text-[13px] font-semibold" title={run.repoPath}>
+            {repoLabel(run.repoPath)}
+          </span>
+        ) : null}
         {run ? (
           <>
-            <span className="faint">/</span>
-            <span className="whitespace-nowrap text-[13px] font-semibold" title={run.repoPath}>
-              {repoLabel(run.repoPath)}
-            </span>
+            {project ? <span className="faint">/</span> : null}
             <span className="muted hidden truncate text-[13px] lg:inline" title={run.title}>
               {run.title}
             </span>
             {run.paused ? <span className="chip chip-warn">paused</span> : null}
           </>
+        ) : project && branch ? (
+          <span className="tb-branch mono" title={`On ${branch}`}>
+            <Icon name="branch" size={11} />
+            {branch}
+          </span>
         ) : null}
       </div>
 

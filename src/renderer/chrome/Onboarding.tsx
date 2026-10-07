@@ -1,12 +1,18 @@
-/** First screen when there are no runs: what Legion does, engine detection, and one obvious next step (⌘N). */
+/**
+ * First screen when there is nothing yet: one obvious next step (add a project, not "write a prompt"), the
+ * checkouts found on this Mac as one-click candidates, how a run flows, engine detection and diagnostics.
+ */
 
 import type { EngineInfo } from '@shared/engine';
 import type { AppInfo } from '@shared/rpc';
-import { Fragment } from 'react';
+import { Fragment, useState } from 'react';
 import { commandTooltip, executeCommand } from '../app/commands';
 import { useConnectionState, useRpcQuery } from '../app/engine';
 import { useEngines } from '../app/hooks';
+import { addProject } from '../app/project-actions';
 import { ENGINE_NAME } from '../layout/describe';
+import { toast } from '../overlays/nav';
+import { abbreviatePath } from '../overlays/picker-model';
 import { Icon, type IconName, LegionMark } from './icons';
 import { CommandKbd, Dot } from './ui';
 
@@ -23,7 +29,7 @@ export function Onboarding() {
   return (
     <div className="flex min-h-0 flex-1 overflow-auto" data-testid="onboarding">
       <div
-        className="m-auto flex w-full max-w-[680px] flex-col items-center gap-9 px-6 py-12 text-center"
+        className="m-auto flex w-full max-w-[680px] flex-col items-center gap-8 px-6 py-12 text-center"
         style={{ animation: 'lg-rise 0.4s var(--ease-out) both' }}
       >
         <div className="flex flex-col items-center gap-5">
@@ -37,31 +43,34 @@ export function Onboarding() {
             <LegionMark size={32} />
           </div>
           <div className="flex flex-col gap-2.5">
-            <h1 className="text-[26px] font-semibold tracking-[-0.02em] text-text">Point Legion at an issue.</h1>
+            <h1 className="text-[26px] font-semibold tracking-[-0.02em] text-text">Start with a project.</h1>
             <p className="mx-auto max-w-[520px] text-[14px] leading-relaxed text-subtext0">
-              It drafts a plan and a task graph for your sign-off, runs Claude Code and Codex side by side in their own
-              worktrees, has each engine review the other’s work, and hands you a single draft PR.
+              Add a repository you work in. Look around first: its files, history and pull requests. When you know what
+              should change, Legion plans it, runs Claude Code and Codex side by side and hands you one draft PR.
             </p>
           </div>
           <div className="mt-1 flex items-center gap-2">
             <button
               type="button"
               className="btn btn-primary h-9 px-4"
-              onClick={() => void executeCommand('composer.open')}
-              title={commandTooltip('composer.open')}
+              onClick={() => void executeCommand('project.add')}
+              title={commandTooltip('project.add')}
+              data-testid="onboarding-add-project"
             >
-              <Icon name="plus" strokeWidth={2.4} />
-              Start a run
-              <CommandKbd id="composer.open" />
+              <Icon name="folderPlus" size={15} />
+              Add a project
+              <CommandKbd id="project.add" />
             </button>
-            <button type="button" className="btn btn-ghost h-9" onClick={() => void executeCommand('palette.open')}>
-              All commands
-              <CommandKbd id="palette.open" />
+            <button type="button" className="btn btn-ghost h-9" onClick={() => void executeCommand('project.browse')}>
+              <Icon name="folder" size={14} />
+              Browse…
             </button>
           </div>
         </div>
 
-        <ol className="flex w-full items-center justify-center gap-1.5" aria-label="How a run flows">
+        <FoundRepos />
+
+        <ol className="ob-flow flex w-full items-center justify-center gap-1.5" aria-label="How a run flows">
           {STEPS.map((step, i) => (
             <Fragment key={step.label}>
               {i > 0 ? <li aria-hidden="true" className="h-px w-5 flex-none bg-surface1" /> : null}
@@ -93,6 +102,56 @@ export function Onboarding() {
         <Diagnostics />
       </div>
     </div>
+  );
+}
+
+/** Checkouts found on this Mac, one click away from being a project. */
+function FoundRepos() {
+  const found = useRpcQuery('repos.discover', {});
+  const info = useRpcQuery('app.info', {});
+  const [adding, setAdding] = useState<string | null>(null);
+  const repos = found.status === 'success' ? found.data.slice(0, 5) : [];
+  if (found.status === 'error' || (found.status === 'success' && repos.length === 0)) return null;
+  const home = info.status === 'success' ? (info.data.homeDir ?? null) : null;
+  const add = async (path: string) => {
+    setAdding(path);
+    try {
+      await addProject(path);
+    } catch (error) {
+      toast(`Couldn't add it: ${error instanceof Error ? error.message : String(error)}`, 'error');
+      setAdding(null);
+    }
+  };
+  return (
+    <section className="ob-found w-full text-left" aria-label="Repositories on this Mac" data-testid="onboarding-found">
+      <div className="ob-found-head">
+        <span className="sec">Found on this Mac</span>
+        {found.status === 'loading' ? <span className="ob-busy" /> : null}
+      </div>
+      {found.status === 'loading'
+        ? [0, 1, 2].map((i) => <div key={i} className="ob-found-row ob-found-ghost" />)
+        : repos.map((repo) => (
+            <button
+              key={repo.path}
+              type="button"
+              className="ob-found-row"
+              onClick={() => void add(repo.path)}
+              disabled={adding !== null}
+              data-testid="onboarding-repo"
+            >
+              <Icon name="repo" size={14} className="ob-found-icon" />
+              <span className="ob-found-name">{repo.name}</span>
+              <span className="ob-found-path mono">{abbreviatePath(repo.path, home)}</span>
+              {repo.branch ? (
+                <span className="ob-found-branch mono">
+                  <Icon name="branch" size={10} />
+                  {repo.branch}
+                </span>
+              ) : null}
+              <span className="ob-found-add">{adding === repo.path ? 'Adding…' : 'Add'}</span>
+            </button>
+          ))}
+    </section>
   );
 }
 

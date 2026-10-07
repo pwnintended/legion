@@ -8,6 +8,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import { commandTooltip, executeCommand } from '../app/commands';
 import { useData } from '../app/hooks';
 import { useReducedMotionPref } from '../app/prefs';
+import { isProjectKey } from '../app/projects';
 import { Icon } from '../chrome/icons';
 import { DURATION_OPEN_MS, SPRING } from '../theme/motion';
 import { ColumnView } from './ColumnView';
@@ -28,7 +29,7 @@ export function StripView({ layout }: { layout: Workspace }) {
   const range = visibleRange(boxes, scrollLeft, viewport, 1);
   const onScreen = visibleRange(boxes, scrollLeft, viewport, 0);
   // Gate rendering on the data being there (avoids a flash of empty frames on first load).
-  const ready = useData((s) => s.loadedRuns[layout.runId] !== undefined);
+  const ready = useData((s) => isProjectKey(layout.runId) || s.loadedRuns[layout.runId] !== undefined);
 
   useLayoutEffect(() => {
     const el = scroller.current;

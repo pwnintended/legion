@@ -666,6 +666,278 @@ body {
   font-weight: 600;
 }
 
+/* Rail: projects with their runs */
+.rail-head {
+  display: flex;
+  align-items: center;
+  height: 24px;
+  margin: 0 2px 4px 8px;
+}
+.rail-head-add {
+  margin-left: auto;
+  width: 24px;
+  height: 24px;
+  color: var(--overlay2);
+}
+.rp + .rp {
+  margin-top: 2px;
+}
+.rp-row {
+  position: relative;
+}
+.rp-item {
+  align-items: center;
+  padding: 7px 30px 7px 8px;
+}
+.rp-glyph {
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  flex: none;
+  border-radius: 7px;
+  font-size: 11.5px;
+  font-weight: 650;
+  color: color-mix(in srgb, var(--tint) 85%, var(--text));
+  background: color-mix(in srgb, var(--tint) 14%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--tint) 22%, transparent);
+}
+.rp-glyph[data-orphan="true"] {
+  background: transparent;
+  box-shadow: inset 0 0 0 1.5px var(--surface1);
+  color: var(--overlay1);
+}
+.rp-item[aria-current="true"] .rp-glyph {
+  color: var(--crust);
+  background: var(--tint);
+  box-shadow: none;
+}
+.rp-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  flex: 1;
+}
+.rp-name {
+  font-size: 13px;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.rp-sub {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  font-size: 11px;
+  color: var(--overlay2);
+}
+.rp-sub-pending {
+  width: 54px;
+  height: 8px;
+  margin-top: 3px;
+  border-radius: 4px;
+  background: var(--surface0);
+  opacity: 0.6;
+}
+.rp-branch-icon {
+  flex: none;
+  color: var(--overlay1);
+}
+.rp-dirty {
+  width: 6px;
+  height: 6px;
+  flex: none;
+  border-radius: 50%;
+  background: var(--peach);
+}
+.rp-badges {
+  display: flex;
+  align-items: center;
+  flex: none;
+}
+.rp-count {
+  display: grid;
+  place-items: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: 9px;
+  font-size: 10.5px;
+  color: var(--blue);
+  background: color-mix(in srgb, var(--blue) 13%, transparent);
+}
+.rp-twisty {
+  all: unset;
+  box-sizing: border-box;
+  cursor: pointer;
+  position: absolute;
+  right: 6px;
+  top: 50%;
+  translate: 0 -50%;
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 5px;
+  color: var(--overlay1);
+  opacity: 0;
+  transition:
+    opacity 0.15s,
+    background-color 0.15s;
+}
+.rp-row:hover .rp-twisty,
+.rp-twisty:focus-visible,
+.rp-twisty[aria-expanded="false"] {
+  opacity: 1;
+}
+.rp-twisty:hover {
+  background: var(--surface0);
+  color: var(--text);
+}
+.rp-twisty:disabled {
+  cursor: default;
+  opacity: 0;
+}
+.rp-twisty:focus-visible {
+  outline: 2px solid var(--mauve);
+  outline-offset: -1px;
+}
+.rp-twisty svg {
+  transition: transform 0.14s var(--ease-out);
+}
+.rp-twisty svg[data-open="true"] {
+  transform: rotate(90deg);
+}
+.rp-runs {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  margin: 1px 0 4px 19px;
+  padding-left: 7px;
+}
+.rp-runs::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 4px;
+  bottom: 4px;
+  width: 1.5px;
+  border-radius: 1px;
+  background: var(--surface0);
+}
+.rr-item {
+  padding: 6px 8px;
+  gap: 8px;
+}
+.rr-ws {
+  width: 18px;
+  height: 18px;
+  border-radius: 5px;
+  font-size: 10px;
+  margin-top: 1px;
+}
+
+/* Onboarding: repositories found on this Mac */
+.ob-found {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 10px 8px 8px;
+  border-radius: 14px;
+  border: 1.5px solid var(--surface0);
+  background: var(--base);
+  animation: lg-rise 0.4s var(--ease-out) 80ms both;
+}
+.ob-found-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 8px 6px;
+}
+.ob-busy {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--mauve);
+  animation: lg-breathe 1s ease-in-out infinite;
+}
+.ob-found-row {
+  all: unset;
+  box-sizing: border-box;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: 36px;
+  padding: 0 10px;
+  border-radius: 8px;
+  font-size: 13px;
+  color: var(--subtext1);
+  transition: background-color 0.12s;
+}
+.ob-found-row:hover,
+.ob-found-row:focus-visible {
+  background: var(--surface0);
+  color: var(--text);
+}
+.ob-found-row:focus-visible {
+  outline: 2px solid var(--mauve);
+  outline-offset: -2px;
+}
+.ob-found-row:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+.ob-found-ghost {
+  cursor: default;
+  margin: 2px 10px;
+  height: 28px;
+  background: color-mix(in srgb, var(--surface0) 45%, transparent);
+  animation: lg-breathe 1.6s ease-in-out infinite;
+}
+.ob-found-icon {
+  color: var(--overlay1);
+  flex: none;
+}
+.ob-found-name {
+  font-weight: 600;
+  color: var(--text);
+  white-space: nowrap;
+}
+.ob-found-path {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11.5px;
+  color: var(--overlay1);
+}
+.ob-found-branch {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex: none;
+  font-size: 11px;
+  color: var(--overlay2);
+}
+.ob-found-add {
+  flex: none;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--mauve);
+  opacity: 0;
+  transition: opacity 0.12s;
+}
+.ob-found-row:hover .ob-found-add,
+.ob-found-row:focus-visible .ob-found-add {
+  opacity: 1;
+}
+
 /* Ghost "+" column */
 .ghost {
   all: unset;
@@ -769,4 +1041,32 @@ body {
   .pnode[data-pulse="true"]::after {
     opacity: 0.7;
   }
+}
+
+/* Title bar breadcrumb */
+.tb-crumb {
+  all: unset;
+  cursor: pointer;
+  padding: 2px 6px;
+  margin: 0 -6px;
+  border-radius: 6px;
+  font-size: 13px;
+  font-weight: 600;
+  white-space: nowrap;
+  transition: background-color 0.15s;
+}
+.tb-crumb:hover {
+  background: var(--surface0);
+}
+.tb-crumb:focus-visible {
+  outline: 2px solid var(--mauve);
+  outline-offset: 0;
+}
+.tb-branch {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11.5px;
+  color: var(--overlay2);
+  white-space: nowrap;
 }

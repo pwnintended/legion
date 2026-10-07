@@ -43,8 +43,22 @@ function validParams(kind: string, params: unknown): boolean {
       if (target.kind === 'run') return isStr(target.runId);
       if (target.kind === 'range')
         return isStr(target.runId) && typeof target.from === 'string' && typeof target.to === 'string';
+      if (target.kind === 'commit') return isStr(target.projectId) && isStr(target.sha);
       return false;
     }
+    case 'project':
+    case 'activity':
+    case 'files':
+      return isStr(params.projectId);
+    case 'code':
+      return (
+        isStr(params.projectId) &&
+        isStr(params.path) &&
+        (params.line === null || Number.isInteger(params.line)) &&
+        (params.endLine === null || Number.isInteger(params.endLine))
+      );
+    case 'search':
+      return isStr(params.projectId) && typeof params.query === 'string';
     case 'terminal':
       return isNullableStr(params.terminalId) && isNullableStr(params.cwd) && isNullableStr(params.attemptId);
     case 'clarify':

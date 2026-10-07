@@ -54,6 +54,9 @@ describe('menu template', () => {
       'column.cycleMode': 'CmdOrCtrl+W',
       'mode.resize': 'CmdOrCtrl+R',
       'settings.open': 'CmdOrCtrl+,',
+      'project.add': 'CmdOrCtrl+Shift+N',
+      'file.goto': 'CmdOrCtrl+P',
+      'project.search': 'CmdOrCtrl+Shift+F',
     });
   });
 

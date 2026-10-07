@@ -1,7 +1,11 @@
-/** The active run's workspace in the current layout mode. */
+/**
+ * The workspace on screen in the current layout mode: a run's, or a project's home (`project:<id>`, always a
+ * strip: the run-centric Focus / Overview / Pipeline views don't apply to it).
+ */
 import { AnimatePresence, motion } from 'motion/react';
 import { useLayout, useUi } from '../app/hooks';
 import { useReducedMotionPref } from '../app/prefs';
+import { isProjectKey } from '../app/projects';
 import { FocusView } from './FocusView';
 import { OverviewView } from './OverviewView';
 import { PipelineView } from './PipelineView';
@@ -9,7 +13,8 @@ import { StripView } from './StripView';
 
 export function Workspace({ runId }: { runId: string }) {
   const layout = useLayout(runId);
-  const mode = useUi((s) => s.layoutMode);
+  const layoutMode = useUi((s) => s.layoutMode);
+  const mode = isProjectKey(runId) ? 'strip' : layoutMode;
   const reduced = useReducedMotionPref();
   if (!layout) return <WorkspaceSkeleton />;
   const view =

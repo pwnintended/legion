@@ -6,11 +6,14 @@ import { AnimatePresence, motion } from 'motion/react';
 import { useLayoutEffect, useRef } from 'react';
 import { useUi } from '../app/hooks';
 import type { Overlay } from '../app/store';
+import { AddProjectOverlay } from './AddProject';
 import { ComposerOverlay } from './Composer';
 import { ConfirmHost } from './Confirm';
+import { GoToFileOverlay } from './GoToFile';
 import { InboxOverlay } from './Inbox';
 import { useToasts } from './nav';
 import './overlays.css';
+import './projects.css';
 import { PaletteOverlay } from './Palette';
 import { SettingsOverlay } from './Settings';
 
@@ -19,6 +22,8 @@ const VIEWS: Record<Overlay, () => React.JSX.Element> = {
   inbox: InboxOverlay,
   palette: PaletteOverlay,
   settings: SettingsOverlay,
+  addProject: AddProjectOverlay,
+  goto: GoToFileOverlay,
 };
 
 /** Put focus back where it was (a rail button, ...) or on the focused tile once an overlay closes. */
