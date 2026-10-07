@@ -57,8 +57,12 @@ export function archiveReportOf(result: unknown): ArchiveReport {
  * else, see the report) and hides it from the rail. An active run is refused (`failed_precondition`) unless
  * `force`, which cancels it first.
  */
-export async function archiveRun(runId: string, force = false): Promise<ArchiveReport> {
-  const result = await callOptional('runs.archive', force ? { runId, force: true } : { runId });
+export async function archiveRun(runId: string, force = false, discard = false): Promise<ArchiveReport> {
+  const result = await callOptional('runs.archive', {
+    runId,
+    ...(force ? { force: true } : {}),
+    ...(discard ? { discard: true } : {}),
+  });
   const current = dataStore.getState().runs[runId];
   let row: Run | undefined = current;
   if (looksLikeRun(result, runId)) {
@@ -130,19 +134,66 @@ export async function archiveRunInteractively(run: Pick<Run, 'id' | 'title' | 's
     report = await archiveRun(run.id, true);
   }
   const lines = describeArchiveReport(report);
-  if (lines.length === 0) toast(`Archived “${run.title}”. Its worktrees are cleaned up.`);
-  else
-    void confirmAction({
-      title: `Archived “${run.title}”`,
-      body: [
-        report.problems.length
-          ? 'Some cleanup did not go through, and what holds work found nowhere else was kept:'
-          : 'Kept because they hold work found nowhere else (remove them yourself once you no longer need it):',
-      ],
-      items: lines,
-      confirmLabel: 'OK',
-      cancelLabel: null,
-    });
+  if (lines.length === 0) {
+    toast(`Archived “${run.title}”. Its worktrees are cleaned up.`);
+    return true;
+  }
+  // The report is not part of archiving: answered later, it may still remove what was kept.
+  void confirmAction({
+    title: `Archived “${run.title}”`,
+    body: [
+      report.problems.length
+        ? 'Some cleanup did not go through, and what holds work found nowhere else was kept:'
+        : 'Kept because they hold work found nowhere else:',
+      'Remove all of it to delete these worktrees and branches too, unmerged work included. Nothing on GitHub is touched.',
+    ],
+    items: lines,
+    confirmLabel: 'Remove all of it',
+    cancelLabel: 'Keep them',
+    tone: 'danger',
+  }).then((removeAll) =>
+    removeAll
+      ? discardLeftovers(run).catch((error: unknown) =>
+          toast(`Couldn't remove the run's leftovers: ${(error as Error).message}`, 'error'),
+        )
+      : undefined,
+  );
+  return true;
+}
+
+/**
+ * Remove everything an archived run left on disk (`runs.archive` with `discard`): kept worktrees, task branches
+ * with unmerged work and the integration branch. The remote is never touched.
+ */
+async function discardLeftovers(run: Pick<Run, 'id' | 'title'>): Promise<void> {
+  const report = await archiveRun(run.id, false, true);
+  const left = describeArchiveReport(report);
+  if (left.length === 0) {
+    toast(`Removed everything “${run.title}” left behind.`);
+    return;
+  }
+  void confirmAction({
+    title: `Some of “${run.title}” is still there`,
+    body: ['These could not be removed. If Legion was started before this option existed, restart it and try again.'],
+    items: left,
+    confirmLabel: 'OK',
+    cancelLabel: null,
+  });
+}
+
+/** For an archived run, from the sidebar or the palette: confirm, then remove everything it left on disk. */
+export async function discardRunInteractively(run: Pick<Run, 'id' | 'title'>): Promise<boolean> {
+  const ok = await confirmAction({
+    title: `Remove everything “${run.title}” left?`,
+    body: [
+      'Deletes the worktrees and branches Legion kept when the run was archived: uncommitted changes, task work that was never merged and the integration branch.',
+      'Pushed branches and pull requests on GitHub stay. This cannot be undone.',
+    ],
+    confirmLabel: 'Remove all of it',
+    tone: 'danger',
+  });
+  if (!ok) return false;
+  await discardLeftovers(run);
   return true;
 }
 

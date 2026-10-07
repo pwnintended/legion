@@ -310,6 +310,13 @@ describe('PR status, task reports and cleanup', () => {
     expect(await legionBranches(harness)).toEqual([integration, t2.branch as string].sort());
     expect(existsSync(t1.worktreePath as string)).toBe(false);
     expect(existsSync(join(t2.worktreePath as string, 'wip.txt'))).toBe(true);
+
+    // "Remove everything": a second archive with discard clears what was kept, integration branch included.
+    const cleared = await harness.client.call('runs.archive', { runId: run.id, discard: true });
+    expect(cleared).toMatchObject({ archived: true, archiveReport: { kept: [], problems: [] } });
+    expect(await legionBranches(harness)).toEqual([]);
+    expect(existsSync(t2.worktreePath as string)).toBe(false);
+    expect((await harness.repo.git('worktree', 'list', '--porcelain')).match(/^worktree /gm)).toHaveLength(1);
   });
 });
 

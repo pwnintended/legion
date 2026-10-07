@@ -635,7 +635,16 @@ export const rpcContract = {
    * listed in `archiveReport`. Restores `gc.auto`, sets `archived: true`. Idempotent.
    */
   'runs.archive': {
-    input: z.object({ runId: IdSchema, force: z.boolean().nullish() }),
+    input: z.object({
+      runId: IdSchema,
+      force: z.boolean().nullish(),
+      /**
+       * Remove everything the run left locally, also what a normal archive keeps: dirty worktrees, task branches
+       * with unmerged work and the integration branch. Implies `force`. Nothing on the remote is touched (pushed
+       * branches, pull requests). Also works on an archived run, to clear what an earlier archive kept.
+       */
+      discard: z.boolean().nullish(),
+    }),
     output: RunSchema.extend({ archiveReport: ArchiveReportSchema.nullish() }),
   },
 

@@ -43,7 +43,9 @@ export function registerOrchestratorHandlers(server: EngineRpcServer, o: Orchest
   server.implement('runs.cancel', ({ runId }) => cancelRun(o, runId));
   server.implement('runs.createPr', ({ runId, title, body }) => createPr(o, runId, title, body));
   server.implement('runs.refreshPr', ({ runId }) => refreshPr(o, runId));
-  server.implement('runs.archive', ({ runId, force }) => archiveRun(o, runId, { force: force === true }));
+  server.implement('runs.archive', ({ runId, force, discard }) =>
+    archiveRun(o, runId, { force: force === true, discard: discard === true }),
+  );
 
   server.implement('tasks.retry', ({ taskId, note }) => retryTask(o, taskId, note));
   server.implement('tasks.restart', ({ taskId, note }) => restartTask(o, taskId, note ?? null));

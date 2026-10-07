@@ -35,7 +35,7 @@ import {
   type Workspace,
 } from '../layout/tree';
 import { toast } from '../overlays/nav';
-import { canArchive, runPr } from './compat';
+import { canArchive, isArchived, runPr } from './compat';
 import { isConfirmOpen } from './confirm';
 import { type DataState, TERMINAL_RUN_STATUSES } from './data';
 import { rpc } from './hooks';
@@ -49,7 +49,7 @@ import {
   setPinned,
 } from './project-actions';
 import { selectWorkspaceRuns } from './projects';
-import { archiveRunInteractively, refreshPr, stopRunInteractively } from './run-actions';
+import { archiveRunInteractively, discardRunInteractively, refreshPr, stopRunInteractively } from './run-actions';
 import {
   actions,
   activeProjectOf,
@@ -723,6 +723,16 @@ export function builtinCommands(): Command[] {
         return !!run && run.paused;
       },
       run: (ctx) => rpc('runs.resume', { runId: ctx.activeRunId as string }),
+    },
+    {
+      id: 'run.discard',
+      title: 'Remove everything the run left…',
+      category: 'Run',
+      when: (ctx) => isArchived(activeRun(ctx)),
+      run: async (ctx) => {
+        const run = activeRun(ctx);
+        if (run) await discardRunInteractively(run);
+      },
     },
     {
       id: 'run.stop',

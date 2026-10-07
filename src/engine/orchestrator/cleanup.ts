@@ -80,12 +80,18 @@ async function doRefreshPr(o: Orchestrator, runId: string): Promise<Run> {
 
 /**
  * `runs.archive`: idempotent; concurrent calls for one run share the work. A run that is still active is
- * refused unless `force` (then it is cancelled first).
+ * refused unless `force` (then it is cancelled first). `discard` (implies `force`) also removes what is kept
+ * otherwise, the integration branch included; the remote is never touched.
  */
-export function archiveRun(o: Orchestrator, runId: string, opts: { force?: boolean } = {}): Promise<ArchivedRun> {
+export function archiveRun(
+  o: Orchestrator,
+  runId: string,
+  opts: { force?: boolean; discard?: boolean } = {},
+): Promise<ArchivedRun> {
   const inFlight = archiving.get(runId);
   if (inFlight) return inFlight;
-  const job = doArchive(o, runId, opts.force === true).finally(() => archiving.delete(runId));
+  const discard = opts.discard === true;
+  const job = doArchive(o, runId, opts.force === true || discard, discard).finally(() => archiving.delete(runId));
   archiving.set(runId, job);
   return job;
 }
@@ -121,7 +127,7 @@ async function isRegisteredWorktree(repo: string, path: string): Promise<boolean
   return false;
 }
 
-async function doArchive(o: Orchestrator, runId: string, force: boolean): Promise<ArchivedRun> {
+async function doArchive(o: Orchestrator, runId: string, force: boolean, discard: boolean): Promise<ArchivedRun> {
   let run = o.store.requireRun(runId);
   if (prInFlight.has(runId)) throw new RpcError('conflict', 'a pull request is being created for this run');
   if (!isTerminal(RUN_TRANSITIONS, run.status)) {
@@ -197,9 +203,9 @@ async function doArchive(o: Orchestrator, runId: string, force: boolean): Promis
 
   // The integration branch exists from planning on (the planner works in its worktree). It goes only when
   // its work is safe elsewhere: the PR was merged, or it was closed and the branch is fully pushed, or it
-  // has nothing beyond the base. `force` never deletes it.
-  let deleteIntegration = false;
-  if (integration) {
+  // has nothing beyond the base. `force` never deletes it; `discard` always does (locally).
+  let deleteIntegration = discard;
+  if (integration && !discard) {
     const state = run.pr?.state ?? (run.prUrl ? 'open' : null);
     if (state === 'merged') deleteIntegration = true;
     else if (state === 'closed' && (await fullyPushed(repo, integration))) deleteIntegration = true;

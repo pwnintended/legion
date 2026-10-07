@@ -66,12 +66,27 @@ describe('archiving a run that is still active', () => {
     expect(dataStore.getState().runs.run_a).not.toHaveProperty('archiveReport');
     const report = confirmStore.getState().request;
     expect(report?.title).toBe('Archived “Dark mode”');
-    expect(report?.cancelLabel).toBeNull();
+    expect(report?.confirmLabel).toBe('Remove all of it');
+    expect(report?.cancelLabel).toBe('Keep them');
     expect(report?.items).toEqual([
       'kept branch legion/dark/integration: its pull request is not merged',
       'problem: git gc failed',
     ]);
+    // "Keep them": nothing else happens.
+    answerConfirm(false);
+    await tick();
+    expect(calls).toHaveLength(2);
+  });
+
+  it('removes what was kept when asked from the report', async () => {
+    const result = archiveRunInteractively(run);
+    await tick();
     answerConfirm(true);
+    await result;
+    answerConfirm(true); // "Remove all of it"
+    await tick();
+    await tick();
+    expect(calls.at(-1)).toEqual({ method: 'runs.archive', input: { runId: 'run_a', discard: true } });
   });
 
   it('reads the report defensively', () => {

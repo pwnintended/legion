@@ -349,6 +349,8 @@ relies on this); when both exist the structured report wins.
    the PR was merged, or closed with the branch fully pushed to its upstream, or when it has nothing beyond the
    base (`force` never deletes it). The result's `archiveReport` lists what was kept and why. Restore
    `gc.auto`, set `archived: true` (hidden from `runs.list` unless `includeArchived`). Idempotent.
+   `discard: true` (implies `force`; also on an archived run, from the report dialog or the sidebar) removes
+   everything kept, the integration branch included; nothing on the remote is touched.
 
 ### 8.1 Lifecycle service (`engine/orchestrator/`)
 

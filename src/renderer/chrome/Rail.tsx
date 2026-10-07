@@ -20,7 +20,7 @@ import { rpc, useActiveRunId, useConnection, useData, useEngines, useUi } from '
 import { setPref, usePrefs } from '../app/prefs';
 import { openProject } from '../app/project-actions';
 import { activeRunsOf, type RailGroup, selectRailGroups, selectWorkspaceRuns } from '../app/projects';
-import { archiveRunInteractively, reloadRuns, stopRunInteractively } from '../app/run-actions';
+import { archiveRunInteractively, discardRunInteractively, reloadRuns, stopRunInteractively } from '../app/run-actions';
 import { actions, dataStore } from '../app/store';
 import { ENGINE_NAME } from '../layout/describe';
 import { toast } from '../overlays/nav';
@@ -86,6 +86,17 @@ function RailRun({ run, index, active }: { run: Run; index: number | null; activ
   const archivable = canArchive(run);
   const stoppable = !archived && !TERMINAL_RUN_STATUSES.has(run.status);
   const [stopping, setStopping] = useState(false);
+  const [discarding, setDiscarding] = useState(false);
+  const discard = async () => {
+    setDiscarding(true);
+    try {
+      await discardRunInteractively(run);
+    } catch (error) {
+      toast(`Couldn't remove the run's leftovers: ${errorText(error)}`, 'error');
+    } finally {
+      setDiscarding(false);
+    }
+  };
   const stop = async () => {
     setStopping(true);
     try {
@@ -148,6 +159,19 @@ function RailRun({ run, index, active }: { run: Run; index: number | null; activ
           data-testid="rail-stop"
         >
           <Icon name="stop" size={12} />
+        </button>
+      ) : null}
+      {archived ? (
+        <button
+          type="button"
+          className="rail-action btn btn-ghost btn-icon"
+          aria-label={`Remove everything ${run.title} left`}
+          title="Remove everything left: kept worktrees and branches (nothing on GitHub)"
+          disabled={discarding}
+          onClick={() => void discard()}
+          data-testid="rail-discard"
+        >
+          <Icon name="trash" size={12} />
         </button>
       ) : null}
       {archivable ? (
