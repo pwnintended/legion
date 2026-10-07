@@ -84,6 +84,7 @@ export async function mergeQueue(o: Orchestrator, runId: string): Promise<void> 
         patch: {},
         escalation: 'other',
         reason: `merging failed: ${(error as Error).message}`,
+        resume: 'merge',
       });
       outcome = 'done';
     }
@@ -185,7 +186,7 @@ async function mergeTask(o: Orchestrator, run: Run, task: Task): Promise<Outcome
       o.store.revertMerge(merge.id, 'post-merge verification failed; integration reset to the pre-merge sha');
     });
     const decision = decideAfterMerge(current, 'verify_failed', meta.resolverAttempts, o.limits());
-    if (decision.action === 'fix') {
+    if (decision.action === 'fix' || decision.resume === 'fix') {
       patchTaskMeta(o.store, task.id, {
         fix: {
           findings: [],
@@ -374,6 +375,7 @@ async function resolveConflicts(
           path: taskStatusPath(task.status, 'awaiting_human') ?? [],
           patch: {},
           escalation: 'other',
+          resume: 'merge',
           reason: `${node.id}: regenerating the lockfile after merging ${integrationRef} failed (${failure})`,
         });
         return 'done';

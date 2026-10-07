@@ -4,7 +4,7 @@
  */
 import type { ReviewCriterion, ReviewFinding } from '@shared/domain';
 import type { Store } from '../db';
-import type { ScopeReport, VerifyResultInput } from './core';
+import type { ResumeStep, ScopeReport, VerifyResultInput } from './core';
 
 export interface RunMeta {
   /** Base commit the integration branch was created from. */
@@ -57,6 +57,8 @@ export interface TaskMeta {
   reviewFailures: number;
   resolverAttempts: number;
   resolverFailure: string | null;
+  /** Step a human `retry` resumes while the task is `awaiting_human` (null = start over). */
+  resumeStep: ResumeStep | null;
 }
 
 const RUN_DEFAULTS: RunMeta = {
@@ -85,6 +87,7 @@ const TASK_DEFAULTS: TaskMeta = {
   reviewFailures: 0,
   resolverAttempts: 0,
   resolverFailure: null,
+  resumeStep: null,
 };
 
 export function runMeta(store: Store, runId: string): RunMeta {

@@ -93,16 +93,32 @@ function resolveTaskItems(o: Orchestrator, task: Task, resolution: (item: InboxI
   }
 }
 
-export function retryTask(o: Orchestrator, taskId: string, note: string | null): Task {
+function retryable(o: Orchestrator, taskId: string, verb: string): Task {
   const task = o.store.requireTask(taskId);
   if (task.status !== 'failed' && task.status !== 'awaiting_human') {
-    throw new RpcError('conflict', `task ${task.nodeId} is ${task.status}; only failed or awaiting_human tasks retry`);
+    throw new RpcError(
+      'conflict',
+      `task ${task.nodeId} is ${task.status}; only failed or awaiting_human tasks ${verb}`,
+    );
   }
   activeRun(o, task.runId);
-  const summary = [task.error, note?.trim() ? `Note from the human: ${note.trim()}` : null]
-    .filter(Boolean)
-    .join('\n\n');
-  const next = o.store.transaction(() => {
+  return task;
+}
+
+const humanNote = (note: string | null | undefined): string | null =>
+  note?.trim() ? `Note from the human: ${note.trim()}` : null;
+
+/**
+ * `tasks.retry`: an escalated task with work to keep resumes the step that failed (`TaskMeta.resumeStep`:
+ * re-review, re-merge with a fresh resolver budget, continue fixing with a fresh fix budget, or the coder
+ * turn in the existing worktree); anything else starts over like {@link restartTask}.
+ */
+export function retryTask(o: Orchestrator, taskId: string, note: string | null): Task {
+  const task = retryable(o, taskId, 'retry');
+  const meta = taskMeta(o.store, taskId);
+  const step = task.status === 'awaiting_human' ? meta.resumeStep : null;
+  if (!step || !task.worktreePath || !task.branch) return startOver(o, task, note, 'retry');
+  return o.store.transaction(() => {
     resolveTaskItems(o, task, (item) =>
       item.kind === 'escalation'
         ? { kind: 'escalation', action: 'retry', note }
@@ -110,9 +126,59 @@ export function retryTask(o: Orchestrator, taskId: string, note: string | null):
           ? { kind: 'conflict', action: 'retry', note }
           : null,
     );
-    return o.applyDecision(taskId, decideEscalation(task, 'retry'), { summary: summary || 'retried by a human' });
+    patchTaskMeta(o.store, taskId, { resumeStep: null });
+    let next: Task;
+    switch (step) {
+      case 'review':
+        patchTaskMeta(o.store, taskId, { reviewFailures: 0 });
+        next = o.moveTask(taskId, ['reviewing'], { error: null });
+        break;
+      case 'merge':
+        patchTaskMeta(o.store, taskId, { resolverAttempts: 0, resolverFailure: null });
+        next = o.moveTask(taskId, ['approved'], { error: null });
+        break;
+      case 'fix':
+        patchTaskMeta(o.store, taskId, {
+          fix: {
+            findings: meta.fix?.findings ?? [],
+            unmetCriteria: meta.fix?.unmetCriteria ?? [],
+            failedVerify: meta.fix?.failedVerify ?? [],
+            humanNote: note?.trim() || null,
+            mergedIntegrationRef: meta.fix?.mergedIntegrationRef ?? null,
+          },
+        });
+        // A fresh fix-round budget: this round is the first of it.
+        next = o.moveTask(taskId, ['fixing'], { error: null, fixRounds: 1 });
+        break;
+      case 'code':
+        patchTaskMeta(o.store, taskId, {
+          previousFailure: [task.error, humanNote(note)].filter(Boolean).join('\n\n') || null,
+        });
+        next = o.moveTask(taskId, ['running'], { error: null });
+        break;
+    }
+    o.scheduleTick();
+    return next;
   });
-  return next;
+}
+
+/** `tasks.restart`: start over from scratch (fresh worktree from integration, fresh attempt budget). */
+export function restartTask(o: Orchestrator, taskId: string, note: string | null): Task {
+  return startOver(o, retryable(o, taskId, 'restart'), note, 'restart');
+}
+
+function startOver(o: Orchestrator, task: Task, note: string | null, action: 'retry' | 'restart'): Task {
+  const summary = [task.error, humanNote(note)].filter(Boolean).join('\n\n');
+  return o.store.transaction(() => {
+    resolveTaskItems(o, task, (item) =>
+      item.kind === 'escalation'
+        ? { kind: 'escalation', action, note }
+        : item.kind === 'conflict'
+          ? { kind: 'conflict', action: 'retry', note }
+          : null,
+    );
+    return o.applyDecision(task.id, decideEscalation(task, action), { summary: summary || `${action} by a human` });
+  });
 }
 
 export async function skipTask(o: Orchestrator, taskId: string): Promise<Task> {
@@ -242,10 +308,16 @@ async function applyTaskEscalation(
   const taskId = item.taskId as string;
   switch (resolution.action) {
     case 'retry':
-    case 'edit':
       o.store.transaction(() => {
         resolveIfOpen(o, item.id, resolution);
         retryTask(o, taskId, resolution.note);
+      });
+      return;
+    case 'edit':
+    case 'restart':
+      o.store.transaction(() => {
+        resolveIfOpen(o, item.id, resolution);
+        restartTask(o, taskId, resolution.note);
       });
       return;
     case 'skip': {
@@ -314,7 +386,8 @@ export async function resolveInbox(o: Orchestrator, itemId: string, resolution: 
     }
     case 'escalation': {
       const escalation = item as InboxItemOf<'escalation'>;
-      if (!escalation.payload.actions.includes(resolution.action)) {
+      const offered = escalation.payload.actions as readonly string[];
+      if (!offered.includes(resolution.action) && !(resolution.action === 'restart' && offered.includes('retry'))) {
         throw new RpcError('bad_request', `action ${resolution.action} is not offered for this escalation`);
       }
       if (item.taskId === null) await applyRunEscalation(o, escalation, resolution);

@@ -341,8 +341,16 @@ The service applies `core/` decisions with CAS transitions; every flow is re-ent
 - **Escalations**: task items carry `taskId`; run-level items (`taskId: null`) come from the final verify
   (`verify_failed`), the final review (`final_review`) or a finalizer that cannot run (`other`), with actions `[retry,
   skip, abort]`: retry reruns the step, skip moves on (integrating → finalizing → pr_ready), abort cancels the run.
-  Task `edit` = retry with the note as context for the next attempt. Answering through `inbox.resolve` and through
-  the `tasks.*` procedures is equivalent; both resolve the item.
+  Task retry (`tasks.retry`, escalation `retry`) resumes the step that failed when the task has work to keep: the
+  escalation payload's `resume` (also `TaskMeta.resumeStep`) is `review` (reviewer failed → `reviewing`), `merge`
+  (merge failed, conflict unresolved, lockfile regeneration failed, high-risk gate → `approved`, fresh resolver
+  budget), `fix` (fix rounds or verify exhausted, reviewer asked for a re-plan, agent blocked → `fixing` in the same
+  coder session with a fresh fix budget and the note) or `code` (coder auth failure → `running` in the existing
+  worktree). Without `resume` (or for `failed` tasks) retry starts over. Starting over explicitly: `tasks.restart
+  ({taskId, note?})` or the escalation resolution `restart` (accepted wherever `retry` is offered): fresh worktree from
+  integration, fresh attempt budget, the note as context. Task `edit` = start over with the note as context for the
+  next attempt. Answering through `inbox.resolve` and through the `tasks.*` procedures is equivalent; both resolve
+  the item.
 - **Rate limits**: a `rate_limit` event with `usedPct ≥ 95`, or a retryable 429-like error, pauses new sessions on that
   engine until the reset (60 s when unknown); the failed coder attempt is re-queued without being charged.
 - **Budget**: `settings.budget.perRunUsd` (or a per-run limit raised through the `budget` item) reached → run paused +

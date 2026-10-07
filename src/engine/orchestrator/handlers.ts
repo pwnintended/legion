@@ -6,6 +6,7 @@ import {
   pauseRun,
   requestChanges,
   resolveInbox,
+  restartTask,
   resumeRun,
   retryTask,
   setTaskEngine,
@@ -40,6 +41,7 @@ export function registerOrchestratorHandlers(server: EngineRpcServer, o: Orchest
   server.implement('runs.archive', ({ runId }) => archiveRun(o, runId));
 
   server.implement('tasks.retry', ({ taskId, note }) => retryTask(o, taskId, note));
+  server.implement('tasks.restart', ({ taskId, note }) => restartTask(o, taskId, note ?? null));
   server.implement('tasks.skip', ({ taskId }) => skipTask(o, taskId));
   server.implement('tasks.setEngine', ({ taskId, engine, model, effort }) =>
     setTaskEngine(o, taskId, engine, model, effort),

@@ -227,3 +227,19 @@ describe('checkScope', () => {
     expect(checkScope(node, ['src/api/x.ts']).ok).toBe(true);
   });
 });
+
+describe('resume steps for a human retry', () => {
+  it('marks escalations whose work can be kept with the step to resume', () => {
+    expect(decideAfterVerify(task('verifying', 1, 2), false, limits).resume).toBe('fix');
+    expect(decideAfterMerge(task('merging', 1, 2), 'verify_failed', 0, limits).resume).toBe('fix');
+    expect(decideAfterMerge(task('merging'), 'conflict', limits.maxResolverAttempts, limits).resume).toBe('merge');
+    const blocked = decideAfterCoderTurn(task('running'), { report: { status: 'blocked' }, changedFiles: 0 }, limits);
+    expect(blocked.resume).toBe('fix');
+    expect(decideAfterFailure(task('running'), { kind: 'auth', message: 'x' }, limits).resume).toBe('code');
+    expect(decideAfterFailure(task('running'), { kind: 'agent_error', message: 'x' }, limits).resume).toBeUndefined();
+    expect(decideEscalation(task('awaiting_human', 2, 2), 'restart')).toMatchObject({
+      path: ['queued'],
+      patch: { attemptCount: 0, fixRounds: 0 },
+    });
+  });
+});

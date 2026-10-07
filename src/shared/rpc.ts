@@ -314,6 +314,15 @@ export const rpcContract = {
     input: z.object({ taskId: IdSchema, note: z.string().nullable() }),
     output: TaskSchema,
   },
+  /**
+   * Start a failed / awaiting_human task over from scratch: fresh worktree from integration, fresh attempt
+   * budget, the note (and the last error) as context for the new coder. `tasks.retry` instead resumes the
+   * failed step when there is work to keep.
+   */
+  'tasks.restart': {
+    input: z.object({ taskId: IdSchema, note: z.string().nullish() }),
+    output: TaskSchema,
+  },
   'tasks.skip': { input: ByTask, output: TaskSchema },
   'tasks.setEngine': {
     input: z.object({ taskId: IdSchema, engine: EngineKindSchema, ...NullableModel }),

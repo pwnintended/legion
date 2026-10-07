@@ -431,7 +431,7 @@ async function verify(o: Orchestrator, run: Run, task: Task): Promise<Step> {
   const current = o.store.requireTask(task.id);
   const decision = decideAfterVerify(current, outcome.ok, o.limits());
   const failed = outcome.results.filter((r) => r.exitCode !== 0);
-  if (decision.action === 'fix') {
+  if (decision.action === 'fix' || decision.resume === 'fix') {
     patchTaskMeta(o.store, task.id, {
       fix: { findings: [], unmetCriteria: [], failedVerify: failed, humanNote: null, mergedIntegrationRef: null },
     });
@@ -522,6 +522,7 @@ async function review(o: Orchestrator, run: Run, task: Task): Promise<Step> {
       patch: {},
       escalation: 'other',
       reason: `the ${engine} reviewer failed ${failures} time(s): ${failure.message}`,
+      resume: 'review',
     };
     o.applyDecision(task.id, escalation);
     return 'next';
@@ -544,7 +545,7 @@ async function review(o: Orchestrator, run: Run, task: Task): Promise<Step> {
     { node, highRiskGlobs: config?.highRiskGlobs ?? [], previousFindings, sensitiveChanges: meta.sensitive },
     o.limits(),
   );
-  if (decision.action === 'fix') {
+  if (decision.action === 'fix' || decision.resume === 'fix') {
     patchTaskMeta(o.store, task.id, {
       fix: {
         findings: blockingFindings(output),
@@ -569,6 +570,7 @@ async function review(o: Orchestrator, run: Run, task: Task): Promise<Step> {
       'other',
       `${node.id} (${node.title}) ${why} and passed review. Approve the merge (tasks.approveMerge) or request changes (tasks.requestChanges).`,
       ['skip', 'abort'],
+      'merge',
     );
   }
   return 'next';

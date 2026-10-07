@@ -41,6 +41,7 @@ import {
   planDispatch,
   type RateLimit,
   type RepoInput,
+  type ResumeStep,
   SLOT_STATUSES,
   type TaskDecision,
   type ToolNames,
@@ -657,6 +658,7 @@ export class Orchestrator {
     reason: Extract<InboxItem, { kind: 'escalation' }>['payload']['reason'],
     summary: string,
     actions: Extract<InboxItem, { kind: 'escalation' }>['payload']['actions'],
+    resume: ResumeStep | null = null,
   ): void {
     this.dismissOpen(
       runId,
@@ -668,7 +670,7 @@ export class Orchestrator {
       taskId,
       attemptId: null,
       kind: 'escalation',
-      payload: { reason, summary, actions },
+      payload: { reason, summary, actions, ...(resume ? { resume } : {}) },
     });
   }
 
@@ -776,8 +778,10 @@ export class Orchestrator {
           decision.escalation,
           `${task.nodeId}: ${options.summary ?? decision.reason}`,
           task.status === 'failed' ? ['retry', 'skip', 'edit', 'abort'] : ['retry', 'skip', 'abort'],
+          task.status === 'awaiting_human' ? (decision.resume ?? null) : null,
         );
       }
+      if (task.status === 'awaiting_human') patchTaskMeta(this.store, task.id, { resumeStep: decision.resume ?? null });
       if (decision.action === 'retry' || decision.action === 'requeue') {
         patchTaskMeta(this.store, task.id, freshAttemptMeta(options.summary ?? decision.reason));
         if (task.report) task = this.store.updateTask(task.id, { report: null });
