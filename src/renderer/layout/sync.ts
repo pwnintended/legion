@@ -29,6 +29,10 @@ export interface RunLayoutInput {
   tasks: readonly { id: string; nodeId: string; status: TaskStatus }[];
   /** Open clarify question (inbox item id), if any. */
   clarifyItemId: string | null;
+  /** The run's assistant attempt (the conversation), if any. */
+  assistantAttemptId: string | null;
+  /** The run has coordinating agents (an assistant or a lead): show the agents and messages tiles. */
+  hierarchy: boolean;
 }
 
 interface DesiredColumn {
@@ -67,10 +71,29 @@ function tile<K extends LayoutTile['kind']>(id: string, kind: K, params: LayoutT
 
 export function desiredColumns(input: RunLayoutInput): DesiredColumn[] {
   const out: DesiredColumn[] = [];
+  if (input.assistantAttemptId) {
+    out.push({
+      key: 'assistant',
+      mode: 'split',
+      width: '1/2',
+      collapsed: false,
+      tiles: [tile('assistant', 'session', { attemptId: input.assistantAttemptId, taskId: null })],
+    });
+  }
   const planTiles: LayoutTile[] = [];
   if (input.clarifyItemId) planTiles.push(tile('clarify', 'clarify', { inboxItemId: input.clarifyItemId }));
   planTiles.push(tile('plan', 'plan', { planId: null }));
   out.push({ key: 'plan', mode: 'split', width: '1/3', collapsed: false, tiles: planTiles });
+
+  if (input.hierarchy) {
+    out.push({
+      key: 'agents',
+      mode: 'stacked',
+      width: '1/3',
+      collapsed: input.status !== 'executing',
+      tiles: [tile('agents', 'agents', {}), tile('messages', 'messages', {})],
+    });
+  }
 
   if (input.nodes.length > 0 && PRE_EXECUTION.includes(input.status)) {
     out.push({
@@ -184,6 +207,10 @@ function insertionIndex(columns: readonly Column[], desired: DesiredColumn, all:
 }
 
 function defaultFocus(ws: Workspace, input: RunLayoutInput): Workspace {
+  if (input.status === 'chatting') {
+    const conversation = ws.strip.columns.find((c) => c.key === 'assistant');
+    if (conversation) return { ...ws, focus: { column: conversation.id, tile: conversation.active } };
+  }
   for (const status of FOCUS_PRIORITY) {
     const task = [...input.tasks].sort((a, b) => compareNodeIds(a.nodeId, b.nodeId)).find((t) => t.status === status);
     const column = task && ws.strip.columns.find((c) => c.key === taskKey(task.nodeId));

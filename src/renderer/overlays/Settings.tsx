@@ -405,7 +405,33 @@ function RunsSection({ settings, commit }: { settings: Settings; commit: Commit 
       <h2 id="st-runs" className="st-h">
         Runs
       </h2>
-      <div className="st-sub mt-0">Concurrency</div>
+      <div className="st-sub mt-0">Coordination</div>
+      <p className="st-lede">
+        The assistant turns your prompt into a conversation that can start work; the lead coordinates the coders once a
+        plan is approved. Both only talk: they never touch files.
+      </p>
+      <div className="st-grid">
+        <div className="st-row">
+          <span className="st-label">Assistant</span>
+          <span className="flex-1" />
+          <Switch
+            label="Assistant"
+            checked={settings.assistant.enabled}
+            onChange={(enabled) => commit({ assistant: { enabled } })}
+          />
+        </div>
+        <div className="st-row">
+          <span className="st-label">Implementation lead</span>
+          <span className="flex-1" />
+          <Switch
+            label="Implementation lead"
+            checked={settings.lead.enabled}
+            onChange={(enabled) => commit({ lead: { enabled } })}
+          />
+        </div>
+      </div>
+
+      <div className="st-sub">Concurrency</div>
       <p className="st-lede">Agents working at the same time, across all runs. Each holds one worktree and one CLI.</p>
       <div className="st-grid">
         <Field

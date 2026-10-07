@@ -82,6 +82,8 @@ test('full run: composer → clarify → plan → approval → review fix round 
     await expect(composer.getByTestId('repo-status')).toContainText('main', { timeout: 15_000 });
     await expect(composer.getByTestId('repo-picker')).toHaveAttribute('title', repo);
     await shot(window, 'composer');
+    // These specs exercise the planner-first path: skip the assistant.
+    await composer.getByTestId('composer-direct').check();
     await composer.locator('textarea').press('Meta+Enter');
     await expect(composer).toBeHidden({ timeout: 15_000 });
 

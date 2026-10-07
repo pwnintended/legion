@@ -11,6 +11,7 @@ import {
   latestPlan,
   latestReview,
   mergesOfRun,
+  messagesOfRun,
   openInbox,
   tasksOfRun,
   verificationsOfRun,
@@ -406,6 +407,26 @@ export function describeTile(state: DataState, runId: string, tile: LayoutTile, 
         note: 'planner questions',
         tone: urgent.length > 0 ? 'warn' : 'idle',
       };
+    case 'agents': {
+      const agents = attemptsOfRun(state.attempts, runId);
+      const live = agents.filter((a) => a.status === 'running').length;
+      return {
+        ...base,
+        status: { label: `${live} live`, tone: live > 0 ? 'run' : 'idle', live: live > 0 },
+        note: `${agents.length} agent${agents.length === 1 ? '' : 's'}`,
+        tone: live > 0 ? 'run' : 'idle',
+      };
+    }
+    case 'messages': {
+      const all = messagesOfRun(state.messages, runId);
+      const queued = all.filter((m) => m.deliveredAt === null).length;
+      return {
+        ...base,
+        status: { label: `${all.length}`, tone: queued > 0 ? 'warn' : 'idle', live: false },
+        note: queued > 0 ? `${queued} queued` : 'between agents',
+        tone: queued > 0 ? 'warn' : 'idle',
+      };
+    }
     case 'terminal': {
       const params = tile.params as { cwd: string | null; attemptId: string | null };
       const cwd = params.cwd?.split('/').filter(Boolean).at(-1) ?? null;
@@ -447,6 +468,8 @@ export const TITLES: Record<TileKind, string> = {
   pr: 'Pull request',
   integration: 'Integration',
   clarify: 'Clarify',
+  agents: 'Agents',
+  messages: 'Messages',
   project: 'Overview',
   activity: 'Activity',
   files: 'Files',

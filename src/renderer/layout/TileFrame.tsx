@@ -35,6 +35,8 @@ export const KIND_ICON: Record<TileKind, IconName> = {
   pr: 'pr',
   integration: 'merge',
   clarify: 'question',
+  agents: 'session',
+  messages: 'list',
   project: 'book',
   activity: 'clock',
   files: 'folder',

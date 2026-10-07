@@ -331,6 +331,21 @@ export class DemoClient implements EngineClient {
         return demoBranches(input.path as string);
       case 'runs.create':
         return this.createRun(input as unknown as RpcInput<'runs.create'>);
+      case 'runs.chat': {
+        // Demo mode has no assistant: the prompt goes straight to the scripted planner.
+        const chat = input as unknown as RpcInput<'runs.chat'>;
+        return this.createRun({
+          repoPath: chat.repoPath,
+          baseRef: chat.baseRef,
+          title: null,
+          issueText: chat.prompt,
+          issueUrl: null,
+          plannerEngine: chat.engine,
+          plannerModel: chat.model,
+          skipClarify: false,
+          attachmentIds: chat.attachmentIds,
+        });
+      }
       case 'runs.answerClarify':
         return this.answerClarify(
           input.runId as string,

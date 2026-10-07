@@ -13,7 +13,7 @@ import { clearLayout, loadLayout, saveLayout } from '../layout/persist';
 import { defaultProjectLayout, isUsableProjectLayout } from '../layout/project';
 import { type RunLayoutInput, syncWithRun } from '../layout/sync';
 import { allTiles, focusTile, type LayoutMode, type Workspace } from '../layout/tree';
-import { type DataState, initialData, latestPlan, openInbox, selectRunList, tasksOfRun } from './data';
+import { attemptsOfRun, type DataState, initialData, latestPlan, openInbox, selectRunList, tasksOfRun } from './data';
 import { projectOfRun, projectWorkspaceKey, selectProjects } from './projects';
 
 export type Overlay = 'composer' | 'inbox' | 'palette' | 'settings' | 'addProject' | 'goto';
@@ -114,12 +114,17 @@ export function runLayoutInput(data: DataState, runId: string): RunLayoutInput |
   const run = data.runs[runId];
   if (!run || data.loadedRuns[runId] === undefined) return null;
   const clarify = openInbox(data.inbox, runId).find((i) => i.kind === 'question' && i.payload.source === 'clarify');
+  const attempts = attemptsOfRun(data.attempts, runId);
+  const assistants = attempts.filter((a) => a.role === 'assistant');
+  const assistant = assistants.find((a) => a.status === 'running' || a.status === 'interrupted') ?? assistants.at(-1);
   return {
     runId,
     status: run.status,
     nodes: latestPlan(data, runId)?.dag.nodes ?? [],
     tasks: tasksOfRun(data.tasks, runId).map((t) => ({ id: t.id, nodeId: t.nodeId, status: t.status })),
     clarifyItemId: clarify?.id ?? null,
+    assistantAttemptId: assistant?.id ?? null,
+    hierarchy: attempts.some((a) => a.role === 'assistant' || a.role === 'lead'),
   };
 }
 

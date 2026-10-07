@@ -12,6 +12,9 @@ export const TILE_KINDS = [
   'pr',
   'integration',
   'clarify',
+  // The agent hierarchy and its mailbox (§7, §8.4-8.6).
+  'agents',
+  'messages',
   // Project home (a project's workspace when no run is focused).
   'project',
   'activity',
@@ -39,6 +42,10 @@ export interface TileParamsByKind {
   integration: None;
   /** Clarify questions; an inbox item of kind `question`. */
   clarify: { inboxItemId: string | null };
+  /** The run's agents as a tree (assistant → lead → coders, researchers under their spawner). */
+  agents: None;
+  /** Every agent-to-agent message of the run. */
+  messages: None;
   /** Project overview: README, repository facts, quick actions. */
   project: { projectId: string };
   /** The project's runs, git history and open pull requests. */

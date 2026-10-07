@@ -10,6 +10,7 @@
  * (recent activity lines, rate limits).
  */
 import type {
+  AgentMessage,
   Attempt,
   EngineKind,
   InboxItem,
@@ -37,7 +38,8 @@ export type EntityKind =
   | 'inbox'
   | 'verification'
   | 'merge'
-  | 'project';
+  | 'project'
+  | 'message';
 
 export interface Transcript {
   status: 'loading' | 'ready' | 'error';
@@ -118,6 +120,8 @@ export interface DataState {
   inbox: Record<string, InboxItem>;
   verifications: Record<string, Verification>;
   merges: Record<string, Merge>;
+  /** Agent-to-agent messages (`message.updated`, `RunSnapshot.messages`). */
+  messages: Record<string, AgentMessage>;
   /** `${kind}:${id}` → seq the stored row reflects. */
   versions: Record<string, number>;
   transcripts: Record<string, Transcript>;
@@ -150,6 +154,7 @@ export function initialData(): DataState {
     inbox: {},
     verifications: {},
     merges: {},
+    messages: {},
     versions: {},
     transcripts: {},
     activity: {},
@@ -167,7 +172,7 @@ export function initialData(): DataState {
 
 type Collections = Pick<
   DataState,
-  'runs' | 'plans' | 'tasks' | 'attempts' | 'reviews' | 'inbox' | 'verifications' | 'merges' | 'projects'
+  'runs' | 'plans' | 'tasks' | 'attempts' | 'reviews' | 'inbox' | 'verifications' | 'merges' | 'projects' | 'messages'
 >;
 const COLLECTION: { [K in EntityKind]: keyof Collections } = {
   run: 'runs',
@@ -179,6 +184,7 @@ const COLLECTION: { [K in EntityKind]: keyof Collections } = {
   verification: 'verifications',
   merge: 'merges',
   project: 'projects',
+  message: 'messages',
 };
 
 type MutableKeys =
@@ -476,6 +482,9 @@ export function applyEvents(state: DataState, events: readonly ServerEvent[]): D
       case 'merge.updated':
         draft.put('merge', event.merge, event.seq);
         break;
+      case 'message.updated':
+        draft.put('message', event.message, event.seq);
+        break;
       case 'agent.event':
         applyAgentEvent(draft, event);
         break;
@@ -506,6 +515,7 @@ export function applySnapshot(state: DataState, snapshot: RunSnapshot): DataStat
     ['inbox', snapshot.inbox],
     ['verification', snapshot.verifications],
     ['merge', snapshot.merges],
+    ['message', snapshot.messages ?? []],
   ];
   for (const [kind, rows] of lists) {
     const ids = new Set(rows.map((r) => r.id));
@@ -781,6 +791,12 @@ export const attemptsOfRun = memoByRun((attempts: Record<string, Attempt>, runId
   Object.values(attempts)
     .filter((a) => a.runId === runId)
     .sort((a, b) => a.startedAt - b.startedAt),
+);
+
+export const messagesOfRun = memoByRun((messages: Record<string, AgentMessage>, runId: string) =>
+  Object.values(messages)
+    .filter((m) => m.runId === runId)
+    .sort((a, b) => a.createdAt - b.createdAt || a.id.localeCompare(b.id)),
 );
 
 export const reviewsOfRun = memoByRun((reviews: Record<string, Review>, runId: string) =>

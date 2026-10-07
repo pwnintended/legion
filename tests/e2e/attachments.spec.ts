@@ -238,7 +238,8 @@ test('attachments: paste, drop, dialog, preview, remove, then the planner receiv
     await shot(window, 'tray-1000x700');
     await setSize(app, window, [1280, 800]);
 
-    // Create the run.
+    // Create the run (planner-first path: skip the assistant).
+    await composer.getByTestId('composer-direct').check();
     await textarea.press('Meta+Enter');
     await expect(composer).toBeHidden({ timeout: 15_000 });
 

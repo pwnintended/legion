@@ -602,6 +602,12 @@ re-attaches the transferred port to a live terminal (a detached shell, or the te
   this…" (⌘⏎) opens the composer with the project and a `path:lines` reference. Adding a project opens its home,
   never the composer; ⌘N preselects the project on screen (`app/composer-seed.ts`); ⌘⇧H returns to the home. The
   empty state leads with adding a project (and lists checkouts found on this Mac).
+- Coordination (§8.4-8.6): the composer's prompt starts a conversation with the assistant (`runs.chat`) unless
+  "Plan directly" is ticked (`runs.create`). A run with an assistant gets a first `assistant` column holding its
+  session tile (the transcript is the conversation, the steer bar the reply box; focus lands there while
+  `chatting`). A run with an assistant or a lead also gets an `agents` column (stacked `agents` tile = the attempt
+  tree by `parentAttemptId` with status and queued-message counts, click opens the agent's session; `messages` tile
+  = every agent-to-agent message), open while executing. Settings → Runs → Coordination switches both off.
 - Layout engine is a pure TS tree (Workspace → Strip → Column(split|stacked|tabbed) → Tile) with ops
   (insertAfter, remove, focusDir, moveDir, setWidthPreset, collapse, toggleStacked) and full unit tests.
   The run's DAG drives insertion; the user's manual changes persist per run.

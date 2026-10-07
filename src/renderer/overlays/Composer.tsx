@@ -36,8 +36,10 @@ interface Draft {
   base: string;
   engine: EngineKind | null;
   clarify: boolean;
+  /** Skip the assistant and hand the prompt to the planner at once. */
+  direct: boolean;
 }
-let saved: Draft = { text: '', repoPath: null, base: '', engine: null, clarify: true };
+let saved: Draft = { text: '', repoPath: null, base: '', engine: null, clarify: true, direct: false };
 /** The composer's attachments: kept (uploaded drafts) while the overlay is closed. */
 const savedAttachments = createDraft();
 
@@ -135,6 +137,10 @@ export function ComposerOverlay() {
   const [base, setBase] = useState(() => seededBase(saved.base, saved.repoPath, seed));
   const [engine, setEngine] = useState<EngineKind>(saved.engine ?? settings?.roles.planner.engine ?? 'claude');
   const [clarify, setClarify] = useState(saved.clarify);
+  // With the assistant on, the prompt starts a conversation; "Plan directly" keeps the planner-first path.
+  const assistantAvailable = settings?.assistant.enabled !== false;
+  const [direct, setDirect] = useState(saved.direct);
+  const viaAssistant = assistantAvailable && !direct;
   const [recent, setRecent] = useState<RecentRepo[]>([]);
   const [found, setFound] = useState<DiscoveredRepo[]>(lastFound ?? []);
   const [discovering, setDiscovering] = useState(lastFound === null);
@@ -156,8 +162,8 @@ export function ComposerOverlay() {
   });
 
   useEffect(() => {
-    saved = { text, repoPath, base, engine, clarify };
-  }, [text, repoPath, base, engine, clarify]);
+    saved = { text, repoPath, base, engine, clarify, direct };
+  }, [text, repoPath, base, engine, clarify, direct]);
 
   useEffect(() => {
     let cancelled = false;
@@ -288,18 +294,27 @@ export function ComposerOverlay() {
     }
     setCreating(true);
     try {
-      const run = await rpc('runs.create', {
-        repoPath: inspection?.root ?? repoPath,
-        baseRef: base.trim() || null,
-        title: null,
-        issueText: text.trim(),
-        issueUrl: link?.url ?? null,
-        plannerEngine: engine,
-        plannerModel: null,
-        skipClarify: !clarify,
-        attachmentIds: savedAttachments.ids,
-      });
-      saved = { text: '', repoPath, base: '', engine, clarify };
+      const run = viaAssistant
+        ? await rpc('runs.chat', {
+            repoPath: inspection?.root ?? repoPath,
+            baseRef: base.trim() || null,
+            prompt: text.trim(),
+            engine,
+            model: null,
+            attachmentIds: savedAttachments.ids,
+          })
+        : await rpc('runs.create', {
+            repoPath: inspection?.root ?? repoPath,
+            baseRef: base.trim() || null,
+            title: null,
+            issueText: text.trim(),
+            issueUrl: link?.url ?? null,
+            plannerEngine: engine,
+            plannerModel: null,
+            skipClarify: !clarify,
+            attachmentIds: savedAttachments.ids,
+          });
+      saved = { text: '', repoPath, base: '', engine, clarify, direct };
       savedAttachments.clear();
       actions.closeOverlay();
       // Into the store first: the run's `run.updated` may still be on its way, and an active run the store
@@ -505,10 +520,23 @@ export function ComposerOverlay() {
           {engineError ? <span className="cmp-error">{engineError}</span> : null}
 
           <div className="cmp-foot">
-            <label className="cmp-check">
-              <input type="checkbox" checked={clarify} onChange={(event) => setClarify(event.target.checked)} />
-              Let the planner ask clarifying questions first
-            </label>
+            {assistantAvailable ? (
+              <label className="cmp-check">
+                <input
+                  type="checkbox"
+                  checked={direct}
+                  data-testid="composer-direct"
+                  onChange={(event) => setDirect(event.target.checked)}
+                />
+                Plan directly, without the assistant
+              </label>
+            ) : null}
+            {viaAssistant ? null : (
+              <label className="cmp-check">
+                <input type="checkbox" checked={clarify} onChange={(event) => setClarify(event.target.checked)} />
+                Let the planner ask clarifying questions first
+              </label>
+            )}
             <span className="cmp-submit-wrap" data-blocked={!!blocked && !creating}>
               <button
                 type="submit"
@@ -519,7 +547,7 @@ export function ComposerOverlay() {
                 data-ready={ready}
                 data-testid="composer-submit"
               >
-                {creating ? 'Creating…' : 'Plan it'}
+                {creating ? 'Creating…' : viaAssistant ? 'Ask' : 'Plan it'}
                 <Kbd>⌘⏎</Kbd>
               </button>
               {blocked && !creating ? (
@@ -535,8 +563,9 @@ export function ComposerOverlay() {
             </span>
           ) : null}
           <p className="cmp-hint">
-            The planner reads the repo{clarify ? ', asks up to 5 clarifying questions,' : ''} then drafts the task DAG
-            for your sign-off. Nothing runs until you approve it.
+            {viaAssistant
+              ? 'The assistant answers, researches the repo when needed, and hands a brief to the planner when you want the work done. Nothing runs until you approve the plan.'
+              : `The planner reads the repo${clarify ? ', asks up to 5 clarifying questions,' : ''} then drafts the task DAG for your sign-off. Nothing runs until you approve it.`}
           </p>
         </form>
         {drop.dragging ? <DropHint intent={dragIntent(drop.dragging)} /> : null}

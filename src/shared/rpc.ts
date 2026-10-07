@@ -161,6 +161,8 @@ export const RunSnapshotSchema = z.object({
   inbox: z.array(InboxItemSchema),
   verifications: z.array(VerificationSchema),
   merges: z.array(MergeSchema),
+  /** Agent-to-agent messages of the run (§7), oldest first. Optional for older clients' fixtures. */
+  messages: z.array(AgentMessageSchema).optional(),
 });
 export type RunSnapshot = z.infer<typeof RunSnapshotSchema>;
 

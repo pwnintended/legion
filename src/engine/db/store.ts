@@ -781,6 +781,7 @@ export class Store {
       inbox: this.listInbox({ runId, includeResolved: true }),
       verifications: this.listVerifications(runId),
       merges: this.listMerges(runId),
+      messages: this.listMessages(runId),
     };
   }
 
