@@ -20,6 +20,7 @@ import {
   MergeSchema,
   PlanAnnotationSchema,
   PlanSchema,
+  ProjectSchema,
   QuestionAnswerSchema,
   ReviewSchema,
   RunSchema,
@@ -175,6 +176,8 @@ export const DiffTargetSchema = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('run'), runId: IdSchema }),
   /** Arbitrary range inside the run's repo. */
   z.object({ kind: z.literal('range'), runId: IdSchema, from: z.string(), to: z.string() }),
+  /** One commit of a project against its first parent (same answer as `git.show`). */
+  z.object({ kind: z.literal('commit'), projectId: IdSchema, sha: z.string() }),
 ]);
 export type DiffTarget = z.infer<typeof DiffTargetSchema>;
 
@@ -239,6 +242,168 @@ export const TerminalMessageSchema = z.discriminatedUnion('type', [
 ]);
 export type TerminalMessage = z.infer<typeof TerminalMessageSchema>;
 
+// ---------------------------------------------------------------------------------------------
+// Projects: the repositories in the rail, browsed read-only (files, history, pull requests)
+// ---------------------------------------------------------------------------------------------
+
+/** Live git state of a project's checkout, for the rail. */
+export const ProjectStatusSchema = z.object({
+  projectId: IdSchema,
+  /** The checkout is still there and still a git repository. */
+  exists: z.boolean(),
+  /** null when HEAD is detached or unknown. */
+  branch: z.string().nullable(),
+  /** Tracked files modified. */
+  dirty: z.boolean(),
+  /** Commits ahead of / behind the upstream (null without one). */
+  ahead: z.number().int().nonnegative().nullable(),
+  behind: z.number().int().nonnegative().nullable(),
+});
+export type ProjectStatus = z.infer<typeof ProjectStatusSchema>;
+
+export const CommitRefSchema = z.object({
+  name: z.string(),
+  kind: z.enum(['head', 'branch', 'remote', 'tag']),
+});
+export type CommitRef = z.infer<typeof CommitRefSchema>;
+
+export const CommitSchema = z.object({
+  sha: z.string(),
+  shortSha: z.string(),
+  parents: z.array(z.string()),
+  author: z.string(),
+  authorEmail: z.string(),
+  /** Author date, ms. */
+  date: TimestampSchema,
+  subject: z.string(),
+  /** Branch / tag decorations (`HEAD -> main` is a `head` ref named `main`). */
+  refs: z.array(CommitRefSchema),
+});
+export type Commit = z.infer<typeof CommitSchema>;
+
+export const LanguageStatSchema = z.object({
+  name: z.string(),
+  files: z.number().int().nonnegative(),
+  bytes: z.number().int().nonnegative(),
+});
+export type LanguageStat = z.infer<typeof LanguageStatSchema>;
+
+export const ProjectInfoSchema = z.object({
+  project: ProjectSchema,
+  exists: z.boolean(),
+  currentBranch: z.string().nullable(),
+  headSha: z.string().nullable(),
+  defaultBranch: z.string().nullable(),
+  remotes: z.array(RemoteSchema),
+  github: z.object({ owner: z.string(), name: z.string() }).nullable(),
+  dirty: z.boolean(),
+  hasGh: z.boolean(),
+  ghAuthenticated: z.boolean().nullable(),
+  /** Repo-relative path of the README at the root, if any. */
+  readme: z.string().nullable(),
+  /** Tracked + untracked-not-ignored files. */
+  fileCount: z.number().int().nonnegative(),
+  totalBytes: z.number().int().nonnegative(),
+  /** By bytes, largest first (files without a known language are left out). */
+  languages: z.array(LanguageStatSchema),
+  lastCommit: CommitSchema.nullable(),
+  commitCount: z.number().int().nonnegative().nullable(),
+});
+export type ProjectInfo = z.infer<typeof ProjectInfoSchema>;
+
+export const FileEntrySchema = z.object({
+  name: z.string(),
+  /** Repo-relative, `/`-separated. */
+  path: z.string(),
+  /** Symlinks are listed, never followed. */
+  type: z.enum(['file', 'dir', 'symlink']),
+  /** Bytes (files only). */
+  size: z.number().int().nonnegative().nullable(),
+});
+export type FileEntry = z.infer<typeof FileEntrySchema>;
+
+export const FileListSchema = z.object({
+  /** The listed directory ('' = the project root). */
+  dir: z.string(),
+  /** Directories first, then files; natural, case-insensitive order. */
+  entries: z.array(FileEntrySchema),
+});
+export type FileList = z.infer<typeof FileListSchema>;
+
+export const FileContentSchema = z.object({
+  path: z.string(),
+  size: z.number().int().nonnegative(),
+  /** `too_large`: an image over the image cap (text is truncated instead, see `truncated`). */
+  kind: z.enum(['text', 'image', 'binary', 'too_large']),
+  /** Text content (`text` only). */
+  text: z.string().nullable(),
+  /** `utf-8`, `utf-16le` or `latin1` (`text` only). */
+  encoding: z.string().nullable(),
+  /** Only the first `maxBytes` (cut at a line end) were returned. */
+  truncated: z.boolean(),
+  image: z.object({ mime: z.string(), base64: z.string() }).nullable(),
+});
+export type FileContent = z.infer<typeof FileContentSchema>;
+
+export const FileMatchSchema = z.object({
+  path: z.string(),
+  /** Higher is better. */
+  score: z.number(),
+  /** Indexes into `path` of the matched characters (for highlighting). */
+  positions: z.array(z.number().int().nonnegative()),
+});
+export type FileMatch = z.infer<typeof FileMatchSchema>;
+
+export const SearchMatchSchema = z.object({
+  path: z.string(),
+  /** 1-based. */
+  line: z.number().int().positive(),
+  /** 1-based column of the first match, in characters of the full line. */
+  column: z.number().int().positive(),
+  /** The line (long lines clipped around the match; `clipStart` = characters cut from the front). */
+  text: z.string(),
+  clipStart: z.number().int().nonnegative(),
+});
+export type SearchMatch = z.infer<typeof SearchMatchSchema>;
+
+export const SearchResultSchema = z.object({
+  matches: z.array(SearchMatchSchema),
+  /** More matches exist than `limit`. */
+  truncated: z.boolean(),
+  /** Files with at least one returned match. */
+  fileCount: z.number().int().nonnegative(),
+});
+export type SearchResult = z.infer<typeof SearchResultSchema>;
+
+export const PullRequestSummarySchema = z.object({
+  number: z.number().int().nonnegative(),
+  title: z.string(),
+  state: z.enum(['open', 'closed', 'merged']),
+  isDraft: z.boolean(),
+  /** Head branch. */
+  branch: z.string(),
+  author: z.string().nullable(),
+  url: z.string(),
+  updatedAt: TimestampSchema.nullable(),
+});
+export type PullRequestSummary = z.infer<typeof PullRequestSummarySchema>;
+
+export const PrListSchema = z.object({
+  /** gh is installed, signed in and the project has a GitHub remote. */
+  available: z.boolean(),
+  /** Why not (`gh is not installed`, ...), when unavailable. */
+  reason: z.string().nullable(),
+  prs: z.array(PullRequestSummarySchema),
+});
+export type PrList = z.infer<typeof PrListSchema>;
+
+export const CommitDiffSchema = DiffResultSchema.extend({
+  commit: CommitSchema.extend({ body: z.string() }),
+});
+export type CommitDiff = z.infer<typeof CommitDiffSchema>;
+
+const ByProject = z.object({ projectId: IdSchema });
+
 const TerminalSize = { cols: z.number().int().min(1).max(1000), rows: z.number().int().min(1).max(1000) };
 
 const NullableModel = { model: z.string().nullable(), effort: EffortSchema.nullable() };
@@ -291,6 +456,74 @@ export const rpcContract = {
   },
   /** Branches of a repo for the base-branch picker (empty lists for a non-repo). */
   'repos.branches': { input: z.object({ path: z.string().min(1) }), output: RepoBranchesSchema },
+
+  // projects ------------------------------------------------------------------------------------
+  /** Pinned first, then in the order they were added. */
+  'projects.list': { input: Empty, output: z.array(ProjectSchema) },
+  /**
+   * Add a checkout (any folder inside one; the top level's real path is stored). Idempotent: an existing
+   * project is returned (and touched). `bad_request` when the folder is not a git repository.
+   */
+  'projects.add': { input: z.object({ path: z.string().min(1) }), output: ProjectSchema },
+  /** Forget a project. Nothing on disk changes; its runs stay (with `projectId: null`). */
+  'projects.remove': { input: ByProject, output: OkSchema },
+  /** Record that the user opened the project (`lastOpenedAt`). */
+  'projects.touch': { input: ByProject, output: ProjectSchema },
+  'projects.pin': { input: z.object({ projectId: IdSchema, pinned: z.boolean() }), output: ProjectSchema },
+  /** Branch / dirty state of one project (or all of them with `projectId: null`), for the rail. */
+  'projects.status': {
+    input: z.object({ projectId: IdSchema.nullable() }),
+    output: z.array(ProjectStatusSchema),
+  },
+  /** Facts for the project home: branches, remotes, gh, README, languages, size, last commit. */
+  'projects.info': { input: ByProject, output: ProjectInfoSchema },
+
+  // project files: read-only, confined to the project root, ignored files invisible ----------------
+  /** One directory's entries (`dir: ''` = the root). */
+  'files.list': { input: z.object({ projectId: IdSchema, dir: z.string() }), output: FileListSchema },
+  /**
+   * A file's content: text (encoding detected, cut at `maxBytes`, default 1 MiB), images (png, jpg, gif,
+   * webp, svg, ico; up to 8 MiB) as base64, else `binary`. Refused (`bad_request`): paths outside the project,
+   * inside `.git`, through a symlink that leaves the root; `not_found`: missing or ignored files.
+   */
+  'files.read': {
+    input: z.object({
+      projectId: IdSchema,
+      path: z.string().min(1),
+      maxBytes: z
+        .number()
+        .int()
+        .min(1)
+        .max(8 * 1024 * 1024)
+        .nullish(),
+    }),
+    output: FileContentSchema,
+  },
+  /** Fuzzy path match over the project's files (cached index), best first. */
+  'files.find': {
+    input: z.object({ projectId: IdSchema, query: z.string(), limit: z.number().int().min(1).max(500) }),
+    output: z.array(FileMatchSchema),
+  },
+  /** Content search (`git grep` over tracked + untracked-not-ignored text files). */
+  'files.search': {
+    input: z.object({
+      projectId: IdSchema,
+      query: z.string().min(1).max(500),
+      regex: z.boolean().nullish(),
+      caseSensitive: z.boolean().nullish(),
+      limit: z.number().int().min(1).max(5000),
+    }),
+    output: SearchResultSchema,
+  },
+  /** History of `ref` (default HEAD), newest first. Empty for a repository without commits. */
+  'git.log': {
+    input: z.object({ projectId: IdSchema, limit: z.number().int().min(1).max(1000), ref: z.string().nullish() }),
+    output: z.array(CommitSchema),
+  },
+  /** One commit and its diff against its first parent (a root commit against the empty tree). */
+  'git.show': { input: z.object({ projectId: IdSchema, sha: z.string().min(4) }), output: CommitDiffSchema },
+  /** Open pull requests (`gh pr list`); `available: false` with a reason when gh can't answer. */
+  'prs.list': { input: ByProject, output: PrListSchema },
 
   // runs ----------------------------------------------------------------------------------------
   /** Newest first; archived runs only with `includeArchived: true`. */

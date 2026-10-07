@@ -1,4 +1,5 @@
 /** RPC procedures of the lifecycle service (`runs.*`, `tasks.*`, `inbox.*`, `sessions.*`, ...). */
+import { gitShow } from '../projects';
 import type { EngineRpcServer } from '../rpc/server';
 import {
   approveMerge,
@@ -68,5 +69,9 @@ export function registerOrchestratorHandlers(server: EngineRpcServer, o: Orchest
     return store.attemptTranscript(attemptId, sinceSeq, limit);
   });
 
-  server.implement('diff.get', ({ target, contextLines }) => getDiff(o, target, contextLines));
+  server.implement('diff.get', ({ target, contextLines }) =>
+    target.kind === 'commit'
+      ? gitShow(store.requireProject(target.projectId).path, target.sha)
+      : getDiff(o, target, contextLines),
+  );
 }

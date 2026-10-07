@@ -24,6 +24,7 @@ import {
   type Merge,
   normalizeSettings,
   type Plan,
+  type Project,
   type Review,
   RUN_TRANSITIONS,
   type Run,
@@ -89,6 +90,7 @@ class Table<T extends { id: string }> {
 const runs = new Table<Run>('runs', {
   id: ['id'],
   repoPath: ['repo_path'],
+  projectId: ['project_id'],
   baseRef: ['base_ref'],
   title: ['title'],
   issueText: ['issue_text'],
@@ -104,6 +106,15 @@ const runs = new Table<Run>('runs', {
   error: ['error'],
   createdAt: ['created_at'],
   updatedAt: ['updated_at'],
+});
+
+const projects = new Table<Project>('projects', {
+  id: ['id'],
+  path: ['path'],
+  name: ['name'],
+  addedAt: ['added_at'],
+  lastOpenedAt: ['last_opened_at'],
+  pinned: ['pinned', 'bool'],
 });
 
 const plans = new Table<Plan>('plans', {
@@ -220,7 +231,7 @@ export type NewRun = Pick<
   Run,
   'repoPath' | 'baseRef' | 'title' | 'issueText' | 'issueUrl' | 'plannerEngine' | 'plannerModel'
 > &
-  Partial<Pick<Run, 'id' | 'status'>>;
+  Partial<Pick<Run, 'id' | 'status' | 'projectId'>>;
 export type NewPlan = Pick<Plan, 'runId' | 'markdown' | 'dag' | 'source' | 'feedback'> & Partial<Pick<Plan, 'id'>>;
 export type NewTask = Pick<Task, 'runId' | 'nodeId'> & Partial<Pick<Task, 'id' | 'status'>>;
 export type NewAttempt = Pick<Attempt, 'runId' | 'taskId' | 'role' | 'engine' | 'model' | 'effort'> &
@@ -518,6 +529,79 @@ export class Store {
     );
   }
 
+  // -- projects ---------------------------------------------------------------------------------
+
+  /** Pinned first, then in the order they were added. */
+  listProjects(): Project[] {
+    return this.all('SELECT * FROM projects ORDER BY pinned DESC, added_at, id').map((row) => projects.fromRow(row));
+  }
+
+  getProject(id: string): Project | null {
+    return this.select(projects, id);
+  }
+
+  requireProject(id: string): Project {
+    const project = this.getProject(id);
+    if (!project) throw notFound('project', id);
+    return project;
+  }
+
+  projectByPath(path: string): Project | null {
+    const row = this.get('SELECT * FROM projects WHERE path = ?', path);
+    return row ? projects.fromRow(row) : null;
+  }
+
+  /**
+   * The project at `path` (a checkout's real top-level path), created if needed. `open` also stamps
+   * `lastOpenedAt` (adding a project from the UI opens it; `runs.create` doesn't).
+   */
+  ensureProject(path: string, name: string, open = false): Project {
+    return this.transaction(() => {
+      const existing = this.projectByPath(path);
+      if (existing) return open ? this.touchProject(existing.id) : existing;
+      const now = this.now();
+      const project: Project = {
+        id: newId('project'),
+        path,
+        name,
+        addedAt: now,
+        lastOpenedAt: open ? now : null,
+        pinned: false,
+      };
+      this.insert(projects, project);
+      this.append({ type: 'project.updated', project, removed: false });
+      return project;
+    });
+  }
+
+  touchProject(id: string): Project {
+    return this.updateProject(id, { lastOpenedAt: this.now() });
+  }
+
+  updateProject(id: string, patch: Partial<Pick<Project, 'name' | 'lastOpenedAt' | 'pinned'>>): Project {
+    return this.transaction(() => {
+      if (!this.patchRow(projects, id, patch)) throw notFound('project', id);
+      const project = this.requireProject(id);
+      this.append({ type: 'project.updated', project, removed: false });
+      return project;
+    });
+  }
+
+  /** Forget a project; its runs keep their rows with `projectId: null` (nothing on disk is touched). */
+  removeProject(id: string): Project {
+    return this.transaction(() => {
+      const project = this.requireProject(id);
+      const runIds = this.all('SELECT id FROM runs WHERE project_id = ?', id).map((row) => row.id as string);
+      this.run('DELETE FROM projects WHERE id = ?', id);
+      for (const runId of runIds) {
+        const run = this.requireRun(runId);
+        this.append({ type: 'run.updated', run, from: null });
+      }
+      this.append({ type: 'project.updated', project, removed: true });
+      return project;
+    });
+  }
+
   // -- runs -------------------------------------------------------------------------------------
 
   createRun(input: NewRun): Run {
@@ -526,6 +610,7 @@ export class Store {
       const run: Run = {
         id: input.id ?? newId('run'),
         repoPath: input.repoPath,
+        projectId: input.projectId ?? null,
         baseRef: input.baseRef,
         title: input.title,
         issueText: input.issueText,

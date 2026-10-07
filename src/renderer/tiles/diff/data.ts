@@ -21,11 +21,16 @@ export interface DiffEntry {
 }
 
 export function targetKey(target: DiffTarget): string {
-  return target.kind === 'task'
-    ? `task:${target.taskId}`
-    : target.kind === 'run'
-      ? `run:${target.runId}`
-      : `range:${target.runId}:${target.from}..${target.to}`;
+  switch (target.kind) {
+    case 'task':
+      return `task:${target.taskId}`;
+    case 'run':
+      return `run:${target.runId}`;
+    case 'range':
+      return `range:${target.runId}:${target.from}..${target.to}`;
+    case 'commit':
+      return `commit:${target.projectId}:${target.sha}`;
+  }
 }
 
 type Fetch = (target: DiffTarget) => Promise<DiffResult>;

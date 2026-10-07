@@ -2,6 +2,7 @@
  * §8 steps 1–5: create run → clarify (planner, read-only) → plan (same planner session, resumed) →
  * validate → plan versions + sign-off → approval (integration branch, tasks, execution).
  */
+import { realpath } from 'node:fs/promises';
 import { basename } from 'node:path';
 import {
   type InboxItem,
@@ -89,8 +90,12 @@ export async function createRun(o: Orchestrator, input: RpcInput<'runs.create'>)
   const usable = o.registry.usable(input.plannerEngine);
   if (!usable.ok) throw new RpcError('failed_precondition', usable.reason);
 
+  // The run belongs to the project of its checkout (added on the fly when it's new).
+  const projectPath = await realpath(root).catch(() => root);
+  const project = o.store.ensureProject(projectPath, basename(projectPath));
   const created = o.store.createRun({
     repoPath: root,
+    projectId: project.id,
     baseRef,
     title: input.title?.trim() || deriveTitle(input.issueText),
     issueText: input.issueText,

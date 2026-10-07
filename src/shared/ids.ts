@@ -16,6 +16,7 @@ export const ID_PREFIXES = {
   terminal: 'term',
   merge: 'mrg',
   verification: 'ver',
+  project: 'prj',
 } as const;
 
 export type IdKind = keyof typeof ID_PREFIXES;

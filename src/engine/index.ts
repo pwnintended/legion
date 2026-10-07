@@ -29,6 +29,7 @@ import {
   resolveAttemptTerminal,
   trackPtyExits,
 } from './orchestrator';
+import { registerProjectHandlers } from './projects';
 import { createNodePtySpawn, type PtySpawn, registerTerminalHandlers, type TerminalService } from './pty';
 import { registerCoreHandlers } from './rpc/core';
 import { createEngineRpcServer, type EngineRpcServer } from './rpc/server';
@@ -102,6 +103,7 @@ export async function startEngine(options: StartEngineOptions): Promise<EngineHa
   };
   const server = createEngineRpcServer(ctx);
   registerCoreHandlers(server, ctx);
+  registerProjectHandlers(server, ctx);
 
   const fake = options.fakeEngines ?? env[FAKE_ENGINES_ENV] === '1';
   const registry = new EngineRegistry({
