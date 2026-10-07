@@ -7,7 +7,7 @@ import { canArchive, isArchived, runPr } from '../app/compat';
 import { openInboxCount, runningAttempts, selectArchivedRuns, taskCounts } from '../app/data';
 import { useActiveRunId, useConnection, useData, useEngines, useRuns } from '../app/hooks';
 import { setPref, usePrefs } from '../app/prefs';
-import { archiveRun, reloadRuns } from '../app/run-actions';
+import { archiveRunInteractively, reloadRuns } from '../app/run-actions';
 import { actions } from '../app/store';
 import { ENGINE_NAME, type Tone } from '../layout/describe';
 import { toast } from '../overlays/nav';
@@ -81,8 +81,7 @@ function RailItem({ run, index, active }: { run: Run; index: number | null; acti
   const archive = async () => {
     setArchiving(true);
     try {
-      await archiveRun(run.id);
-      toast(`Archived “${run.title}”. Its worktrees are cleaned up.`);
+      if (!(await archiveRunInteractively(run))) setArchiving(false);
     } catch (error) {
       toast(`Couldn't archive: ${errorText(error)}`, 'error');
       setArchiving(false);
@@ -203,7 +202,7 @@ function EnginesFooter() {
   const statusColor =
     connection.status === 'connected'
       ? 'var(--green)'
-      : connection.status === 'connecting'
+      : connection.status === 'connecting' || connection.status === 'degraded'
         ? 'var(--peach)'
         : 'var(--red)';
   return (
@@ -246,10 +245,17 @@ function EnginesFooter() {
         })
       )}
       <div className="faint flex items-center gap-2 px-1 pt-0.5 text-[11px]">
-        <Dot color={statusColor} live={connection.status === 'connecting' || connection.syncing} />
+        <Dot
+          color={statusColor}
+          live={connection.status === 'connecting' || connection.status === 'degraded' || connection.syncing}
+        />
         engine
-        <span className="mono ml-auto" data-testid="connection-status">
-          {connection.status}
+        <span
+          className="mono ml-auto"
+          data-testid="connection-status"
+          title={connection.status === 'degraded' ? 'No live updates from the engine; reconnecting…' : undefined}
+        >
+          {connection.status === 'degraded' ? 'no live updates' : connection.status}
         </span>
       </div>
     </div>

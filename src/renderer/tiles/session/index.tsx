@@ -38,7 +38,7 @@ import { EscalationCard, type EscalationItem, resolveEscalation } from './escala
 import { Glyph } from './glyphs';
 import { Row, type RowContext, SentRow } from './Rows';
 import './session.css';
-import { buildTimeline, type TimelineRow } from './timeline';
+import { entryTs, type TimelineRow, timelineCursor } from './timeline';
 
 // ---------------------------------------------------------------------------------------------
 // Keyboard: a / A / d answer the focused session's pending approval
@@ -233,7 +233,9 @@ export default function SessionTile({ tileId, runId, params, focused }: TileProp
   const node = useTaskNode(runId, task?.nodeId);
 
   const transcript = useTranscript(attempt?.id);
-  const timeline = useMemo(() => buildTimeline(transcript.entries), [transcript.entries]);
+  // Incremental: a live event folds one entry into the timeline instead of rebuilding it.
+  const [cursor] = useState(timelineCursor);
+  const timeline = useMemo(() => cursor(transcript.entries, transcript.count), [cursor, transcript]);
   const approvalItems = useData(
     useShallow((s) =>
       attempt
@@ -253,11 +255,7 @@ export default function SessionTile({ tileId, runId, params, focused }: TileProp
   }, [approvalItems]);
   const escalation = useData((s) => taskEscalation(s, runId, task?.id ?? null));
   const pendingExtra = useData(
-    useShallow((s) =>
-      openApprovals(s, runId, attempt).filter(
-        (i) => !timeline.rows.some((r) => r.kind === 'approval' && r.requestId === i.payload.requestId),
-      ),
-    ),
+    useShallow((s) => openApprovals(s, runId, attempt).filter((i) => !timeline.approvalIds.has(i.payload.requestId))),
   );
 
   const sent = useSentMessages(attempt?.id);
@@ -270,18 +268,27 @@ export default function SessionTile({ tileId, runId, params, focused }: TileProp
   const rows = timeline.rows.slice(start);
   // Your steer messages sit between the rows that happened before and after them.
   const feed = useMemo(() => {
-    const tsOf = new Map(transcript.entries.map((e) => [e.seq, e.ts]));
-    const items: ({ kind: 'row'; row: TimelineRow } | { kind: 'sent'; message: (typeof sent)[number] })[] = [];
+    const items: (
+      | { kind: 'row'; row: TimelineRow }
+      | { kind: 'sent'; message: (typeof sent)[number] }
+      | { kind: 'gap'; dropped: number }
+    )[] = [];
     let next = 0;
+    // A very long session keeps its start and its recent part; mark where the middle was trimmed.
+    let gap = transcript.gap;
     for (const row of rows) {
-      const ts = tsOf.get(row.key) ?? 0;
+      if (gap && row.key > gap.to) {
+        if (items.length > 0 || start > 0) items.push({ kind: 'gap', dropped: transcript.dropped });
+        gap = null;
+      }
+      const ts = sent.length ? entryTs(transcript.entries, transcript.count, row.key) : 0;
       while (next < sent.length && (sent[next] as (typeof sent)[number]).ts < ts)
         items.push({ kind: 'sent', message: sent[next++] as (typeof sent)[number] });
       items.push({ kind: 'row', row });
     }
     while (next < sent.length) items.push({ kind: 'sent', message: sent[next++] as (typeof sent)[number] });
     return items;
-  }, [rows, sent, transcript.entries]);
+  }, [rows, sent, transcript, start]);
   const growBy = useRef<number | null>(null);
   // biome-ignore lint/correctness/useExhaustiveDependencies: runs after older rows were prepended (`extra`).
   useLayoutEffect(() => {
@@ -439,6 +446,10 @@ export default function SessionTile({ tileId, runId, params, focused }: TileProp
                 item.kind === 'row' ? (
                   <div className="ss-row" key={item.row.key}>
                     <Row row={item.row} ctx={ctx} last={i === feed.length - 1} />
+                  </div>
+                ) : item.kind === 'gap' ? (
+                  <div className="ss-gap" key="gap" data-testid="session-gap">
+                    {item.dropped > 0 ? `${item.dropped} earlier events trimmed` : 'Earlier events not loaded'}
                   </div>
                 ) : (
                   <div className="ss-row" key={`you-${item.message.id}`}>

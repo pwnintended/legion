@@ -13,6 +13,7 @@ import { type CommandContext, registerCommands } from '../../app/commands';
 import { taskReport } from '../../app/compat';
 import { attemptsOfRun, openInbox, reviewsOfRun, verificationsOfRun } from '../../app/data';
 import { rpc, useData, useLatestPlan, useNow, useSettings, useTranscript } from '../../app/hooks';
+import { whenData } from '../../app/pending';
 import { actions, dataStore } from '../../app/store';
 import { Chip, EngineChip, Kbd } from '../../chrome/ui';
 import { displayEngine, ENGINE_LABEL, ENGINE_NAME, formatDuration, otherEngine } from '../../layout/describe';
@@ -38,12 +39,17 @@ function useApproveState(taskId: string): ApproveState {
   return useStore(approveStore, (s) => s[taskId] ?? IDLE);
 }
 
-async function approveMerge(taskId: string): Promise<void> {
+/**
+ * Approve a task for the merge queue. Stays pending until the task leaves `awaiting_human` in the store (the
+ * `task.updated` event), so a held ⌘⏎ can't send a second `tasks.approveMerge`.
+ */
+export async function approveMerge(taskId: string): Promise<void> {
   const set = (next: ApproveState) => approveStore.setState({ ...approveStore.getState(), [taskId]: next });
   if (approveStore.getState()[taskId]?.pending) return;
   set({ pending: true, error: null });
   try {
     await rpc('tasks.approveMerge', { taskId });
+    await whenData((data) => data.tasks[taskId]?.status !== 'awaiting_human');
     set(IDLE);
   } catch (error) {
     set({ pending: false, error: errorText(error) });
@@ -136,16 +142,16 @@ function useAgentReport(attempts: Attempt[]): { text: string | null; attempt: At
   const previous = attempts.at(-2) ?? null;
   const t1 = useTranscript(latest?.id);
   const t0 = useTranscript(previous?.id);
-  const last = (entries: typeof t1.entries) => {
-    for (let i = entries.length - 1; i >= 0; i--) {
-      const e = entries[i]?.event;
+  const last = (t: typeof t1) => {
+    for (let i = t.count - 1; i >= 0; i--) {
+      const e = t.entries[i]?.event;
       if (e?.type === 'message') return e.text;
     }
     return null;
   };
-  const text = last(t1.entries);
+  const text = last(t1);
   if (text) return { text, attempt: latest };
-  return { text: last(t0.entries), attempt: previous };
+  return { text: last(t0), attempt: previous };
 }
 
 // ---------------------------------------------------------------------------------------------

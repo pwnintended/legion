@@ -31,12 +31,28 @@ export type EntityKind = 'run' | 'plan' | 'task' | 'attempt' | 'review' | 'inbox
 
 export interface Transcript {
   status: 'loading' | 'ready' | 'error';
-  /** Sorted by seq, unique. */
+  /**
+   * Sorted by seq, unique. Live events are appended in place (O(1)): the array is shared by successive
+   * states and only `entries[0 .. count)` belongs to this one, so read it through the latest Transcript and
+   * key memos on the Transcript (or `count`), not on the array. It is replaced (new identity) when history
+   * pages are merged in or it is trimmed.
+   */
   entries: TranscriptEntry[];
+  /** Entries of this state (`entries.length` for the latest state). */
+  count: number;
   /** Highest seq in `entries` (0 when empty). */
   lastSeq: number;
   error: string | null;
+  /**
+   * Entries trimmed to bound memory (see `compactEntries`): they sat between the session's head and the
+   * rest, seqs `gap.from ..= gap.to`. History pages don't bring them back.
+   */
+  dropped: number;
+  gap: { from: number; to: number } | null;
 }
+
+/** A stored entry; `through` = the last seq a coalesced text/reasoning entry covers. */
+type StoredEntry = TranscriptEntry & { through?: number };
 
 export interface RateLimit {
   engine: EngineKind;
@@ -47,7 +63,12 @@ export interface RateLimit {
 }
 
 export interface DiffStat {
+  /** The attempt's run (for pruning when the run goes away); null when not known yet. */
+  runId: string | null;
+  /** Highest `file_change` seq counted. */
   seq: number;
+  /** Seqs of the `file_change` events counted (each is counted once, whichever way it arrives). */
+  counted: number[];
   added: number;
   removed: number;
   files: string[];
@@ -59,7 +80,8 @@ export interface EnginesState {
 }
 
 export interface ConnectionInfo {
-  status: 'connecting' | 'connected' | 'disconnected';
+  /** `degraded`: the engine answers calls but the live event stream is down (being retried). */
+  status: 'connecting' | 'connected' | 'degraded' | 'disconnected';
   generation: number;
   /** A snapshot fetch is in flight. */
   syncing: boolean;
@@ -86,7 +108,7 @@ export interface DataState {
   versions: Record<string, number>;
   transcripts: Record<string, Transcript>;
   /** Last few human-readable activity lines per attempt (for cards, thin columns, overview). */
-  activity: Record<string, { seq: number; lines: string[] }>;
+  activity: Record<string, { runId: string | null; seq: number; lines: string[] }>;
   /** Lines added/removed and files touched per attempt, from `file_change` agent events. */
   diffstats: Record<string, DiffStat>;
   /** engine → window → latest reading. */
@@ -250,46 +272,152 @@ export function pushActivity(lines: readonly string[], line: string): string[] {
 function addDiffStat(
   draft: Draft,
   attemptId: string,
+  runId: string | null,
   seq: number,
   change: { path: string; added: number; removed: number },
 ): void {
   const current = draft.next.diffstats[attemptId];
-  if (current && seq <= current.seq) return;
+  // Deduplicated by the event's seq (not "newer than the last one counted"): history may arrive after
+  // live events and still holds older changes that must be counted.
+  if (current?.counted.includes(seq)) return;
   draft.map('diffstats')[attemptId] = {
-    seq,
+    runId: runId ?? current?.runId ?? null,
+    seq: Math.max(seq, current?.seq ?? 0),
+    counted: [...(current?.counted ?? []), seq],
     added: (current?.added ?? 0) + change.added,
     removed: (current?.removed ?? 0) + change.removed,
     files: current?.files.includes(change.path) ? current.files : [...(current?.files ?? []), change.path],
   };
 }
 
-function mergeEntries(a: readonly TranscriptEntry[], b: readonly TranscriptEntry[]): TranscriptEntry[] {
+/** After compaction a transcript is at most this full, so compactions are amortized over many appends. */
+const COMPACT_TO = Math.floor(MAX_TRANSCRIPT_ENTRIES * 0.8);
+/** Entries always kept from the start of a session (its start row, the first steps), whatever is trimmed. */
+export const TRANSCRIPT_HEAD = 200;
+
+/**
+ * Shrink a transcript that grew past the cap without changing what the timeline shows where possible:
+ * 1. consecutive `text_delta`s (and `reasoning` chunks) fold into one entry with the joined text, keeping
+ *    the first one's seq (the row key) — streamed text is most of a long transcript;
+ * 2. `usage` keeps only its latest reading and `rate_limit` readings go (the timeline doesn't show them);
+ * 3. only if that is not enough, the oldest entries *after* the session's head are dropped (counted in
+ *    `dropped`), never the start of the session.
+ */
+type Retention = Pick<Transcript, 'dropped' | 'gap'>;
+
+export function compactEntries(
+  entries: readonly TranscriptEntry[],
+  retention: Retention = { dropped: 0, gap: null },
+): { entries: TranscriptEntry[] } & Retention {
+  const out: StoredEntry[] = [];
+  let lastUsage = -1;
+  for (let i = entries.length - 1; i >= 0; i--) {
+    if (entries[i]?.event.type === 'usage') {
+      lastUsage = i;
+      break;
+    }
+  }
+  entries.forEach((entry, i) => {
+    const { event } = entry;
+    if (event.type === 'rate_limit' || (event.type === 'usage' && i !== lastUsage)) return;
+    const prev = out.at(-1);
+    const through = (entry as StoredEntry).through ?? entry.seq;
+    if (prev && event.type === 'text_delta' && prev.event.type === 'text_delta') {
+      out[out.length - 1] = { ...prev, event: { ...prev.event, text: prev.event.text + event.text }, through };
+      return;
+    }
+    if (prev && event.type === 'reasoning' && prev.event.type === 'reasoning') {
+      out[out.length - 1] = { ...prev, event: { ...prev.event, text: prev.event.text + event.text }, through };
+      return;
+    }
+    out.push(entry);
+  });
+  if (out.length <= COMPACT_TO) return { entries: out, dropped: retention.dropped, gap: retention.gap };
+  const drop = out.length - COMPACT_TO;
+  const first = out[TRANSCRIPT_HEAD] as StoredEntry;
+  const last = out[TRANSCRIPT_HEAD + drop - 1] as StoredEntry;
+  const from = Math.min(first.seq, retention.gap?.from ?? first.seq);
+  const to = Math.max(last.through ?? last.seq, retention.gap?.to ?? 0);
+  return {
+    entries: [...out.slice(0, TRANSCRIPT_HEAD), ...out.slice(TRANSCRIPT_HEAD + drop)],
+    dropped: retention.dropped + drop,
+    gap: { from, to },
+  };
+}
+
+/** Keep a transcript under the cap (see `compactEntries`). */
+function bounded(entries: TranscriptEntry[], retention: Retention): { entries: TranscriptEntry[] } & Retention {
+  if (entries.length <= MAX_TRANSCRIPT_ENTRIES) return { entries, dropped: retention.dropped, gap: retention.gap };
+  return compactEntries(entries, retention);
+}
+
+/**
+ * Merge history into a transcript (deduplicated by seq, sorted). Always returns a new array. Entries the
+ * transcript already holds in compacted form (inside a coalesced text run, or in the trimmed gap) are not
+ * added again.
+ */
+function mergeEntries(
+  a: readonly TranscriptEntry[],
+  b: readonly TranscriptEntry[],
+  retention: Retention,
+): { entries: TranscriptEntry[] } & Retention {
+  const covered: [number, number][] = [];
+  if (retention.gap) covered.push([retention.gap.from, retention.gap.to]);
   const bySeq = new Map<number, TranscriptEntry>();
-  for (const entry of a) bySeq.set(entry.seq, entry);
-  for (const entry of b) bySeq.set(entry.seq, entry);
-  const merged = [...bySeq.values()].sort((x, y) => x.seq - y.seq);
-  return merged.length > MAX_TRANSCRIPT_ENTRIES ? merged.slice(merged.length - MAX_TRANSCRIPT_ENTRIES) : merged;
+  for (const entry of a) {
+    bySeq.set(entry.seq, entry);
+    const through = (entry as StoredEntry).through;
+    if (through !== undefined) covered.push([entry.seq, through]);
+  }
+  covered.sort((x, y) => x[0] - y[0]);
+  let r = 0;
+  for (const entry of [...b].sort((x, y) => x.seq - y.seq)) {
+    while (r < covered.length && (covered[r] as [number, number])[1] < entry.seq) r++;
+    const range = covered[r];
+    if (bySeq.has(entry.seq) || (range && entry.seq >= range[0])) continue;
+    bySeq.set(entry.seq, entry);
+  }
+  return bounded(
+    [...bySeq.values()].sort((x, y) => x.seq - y.seq),
+    retention,
+  );
+}
+
+/**
+ * Append one live entry (seq > lastSeq) in O(1) amortized: pushes onto the shared array when this state owns
+ * its tail, copies only when an older state is being extended (never in practice).
+ */
+export function appendEntry(transcript: Transcript, entry: TranscriptEntry): Transcript {
+  let entries = transcript.entries;
+  if (entries.length !== transcript.count) entries = entries.slice(0, transcript.count);
+  entries.push(entry);
+  const next = bounded(entries, transcript);
+  return {
+    ...transcript,
+    entries: next.entries,
+    count: next.entries.length,
+    dropped: next.dropped,
+    gap: next.gap,
+    lastSeq: entry.seq,
+  };
 }
 
 function applyAgentEvent(draft: Draft, event: ServerEvent & { type: 'agent.event' }): void {
   const { attemptId } = event;
   const transcript = draft.next.transcripts[attemptId];
   if (transcript && event.seq > transcript.lastSeq) {
-    draft.map('transcripts')[attemptId] = {
-      ...transcript,
-      entries: mergeEntries(transcript.entries, [{ seq: event.seq, ts: event.ts, event: event.event }]),
-      lastSeq: event.seq,
-    };
+    draft.map('transcripts')[attemptId] = appendEntry(transcript, { seq: event.seq, ts: event.ts, event: event.event });
   }
   const line = activityLine(event.event);
   const activity = draft.next.activity[attemptId];
   if (line && (!activity || event.seq > activity.seq)) {
     draft.map('activity')[attemptId] = {
+      runId: event.runId,
       seq: event.seq,
       lines: pushActivity(activity?.lines ?? [], line),
     };
   }
-  if (event.event.type === 'file_change') addDiffStat(draft, attemptId, event.seq, event.event);
+  if (event.event.type === 'file_change') addDiffStat(draft, attemptId, event.runId, event.seq, event.event);
   if (event.event.type === 'rate_limit') {
     const { engine, window, usedPct, resetsAt } = event.event;
     const rateLimits = { ...draft.next.rateLimits };
@@ -370,6 +498,16 @@ export function applySnapshot(state: DataState, snapshot: RunSnapshot): DataStat
   return draft.next;
 }
 
+/**
+ * A run row returned by a procedure (`runs.create`, `runs.archive`, ...) after client seq `atSeq`: it is at
+ * least as new as what the store has (the procedure ran after all of it). Its `run.updated` event may still
+ * come and then applies on top.
+ */
+export function applyRunRow(state: DataState, run: Run, atSeq: number): DataState {
+  const draft = new Draft(state);
+  return draft.put('run', run, Math.max(atSeq, draft.version('run', run.id)), true) ? draft.next : state;
+}
+
 /** `runs.list` result read at (or after) client seq `atSeq`. */
 export function applyRunList(state: DataState, list: readonly RunSummary[], atSeq: number): DataState {
   const draft = new Draft(state);
@@ -379,13 +517,16 @@ export function applyRunList(state: DataState, list: readonly RunSummary[], atSe
     draft.put('run', run, atSeq, true);
     draft.map('summaries')[run.id] = summary;
   }
+  const gone = new Set<string>();
   for (const id of Object.keys(state.runs)) {
     if (!ids.has(id) && draft.version('run', id) <= atSeq) {
       draft.drop('run', id);
       delete draft.map('summaries')[id];
       delete draft.map('loadedRuns')[id];
+      gone.add(id);
     }
   }
+  pruneDerived(draft, gone);
   draft.next.connection = { ...draft.next.connection, loaded: true };
   return draft.next;
 }
@@ -409,9 +550,21 @@ export function beginTranscript(state: DataState, attemptId: string): DataState 
     ...state,
     transcripts: {
       ...state.transcripts,
-      [attemptId]: { status: 'loading', entries: current?.entries ?? [], lastSeq: current?.lastSeq ?? 0, error: null },
+      [attemptId]: { ...(current ?? emptyTranscript()), status: 'loading', error: null },
     },
   };
+}
+
+/** A fresh transcript (its own entries array: live events are appended to it in place). */
+function emptyTranscript(): Transcript {
+  return { status: 'loading', entries: [], count: 0, lastSeq: 0, error: null, dropped: 0, gap: null };
+}
+
+/** The entries of this state (see `Transcript.entries`). */
+export function transcriptEntries(transcript: Transcript): readonly TranscriptEntry[] {
+  return transcript.entries.length === transcript.count
+    ? transcript.entries
+    : transcript.entries.slice(0, transcript.count);
 }
 
 export function applyTranscriptPage(
@@ -419,30 +572,49 @@ export function applyTranscriptPage(
   attemptId: string,
   entries: readonly TranscriptEntry[],
   complete: boolean,
+  /** History stopped early after this seq (fetch cap): what follows up to the live part was not loaded. */
+  truncatedAfter: number | null = null,
 ): DataState {
   const current = state.transcripts[attemptId];
-  const merged = mergeEntries(current?.entries ?? [], entries);
+  const next = mergeEntries(current ? transcriptEntries(current) : [], entries, current ?? { dropped: 0, gap: null });
+  const merged = next.entries;
+  const tail = merged.at(-1) as StoredEntry | undefined;
+  let gap = next.gap;
+  if (truncatedAfter !== null) {
+    const after = merged.find((e) => e.seq > truncatedAfter);
+    // Live events after the last applied seq keep arriving; the gap ends before them.
+    gap = { from: Math.min(truncatedAfter + 1, gap?.from ?? Infinity), to: after ? after.seq - 1 : state.seq };
+  }
   const draft = new Draft(state);
   draft.map('transcripts')[attemptId] = {
     status: complete ? 'ready' : 'loading',
     entries: merged,
-    lastSeq: merged.at(-1)?.seq ?? 0,
+    count: merged.length,
+    lastSeq: Math.max(tail?.through ?? tail?.seq ?? 0, current?.lastSeq ?? 0),
     error: null,
+    dropped: next.dropped,
+    gap,
   };
-  // Seed diff stats from history the live stream did not deliver.
-  const seenUpTo = draft.next.diffstats[attemptId]?.seq ?? 0;
+  const runId = state.attempts[attemptId]?.runId ?? null;
+  // Seed diff stats from history the live stream did not deliver (also older changes when live events
+  // arrived first).
   for (const entry of entries) {
-    if (entry.event.type === 'file_change' && entry.seq > seenUpTo)
-      addDiffStat(draft, attemptId, entry.seq, entry.event);
+    if (entry.event.type === 'file_change') addDiffStat(draft, attemptId, runId, entry.seq, entry.event);
   }
   // Seed activity lines from history when no live events have produced any yet.
   if (!state.activity[attemptId]) {
+    // The last few lines only need the tail of the history.
     const lines = merged
+      .slice(-64)
       .map((e) => activityLine(e.event))
       .filter((l): l is string => l !== null)
       .reduce<string[]>((acc, line) => pushActivity(acc, line), []);
     if (lines.length > 0)
-      draft.map('activity')[attemptId] = { seq: merged.at(-1)?.seq ?? 0, lines: lines.slice(-ACTIVITY_LINES) };
+      draft.map('activity')[attemptId] = {
+        runId,
+        seq: merged.at(-1)?.seq ?? 0,
+        lines: lines.slice(-ACTIVITY_LINES),
+      };
   }
   return draft.next;
 }
@@ -453,9 +625,32 @@ export function failTranscript(state: DataState, attemptId: string, error: strin
     ...state,
     transcripts: {
       ...state.transcripts,
-      [attemptId]: { status: 'error', entries: current?.entries ?? [], lastSeq: current?.lastSeq ?? 0, error },
+      [attemptId]: { ...(current ?? emptyTranscript()), status: 'error', error },
     },
   };
+}
+
+/** Forget an attempt's transcript (no tile has shown it for a while; it is refetched when needed again). */
+export function dropTranscript(state: DataState, attemptId: string): DataState {
+  if (!state.transcripts[attemptId]) return state;
+  const transcripts = { ...state.transcripts };
+  delete transcripts[attemptId];
+  return { ...state, transcripts };
+}
+
+/** Drop per-attempt derived data (transcripts, activity, diff stats) of runs that are gone from the store. */
+function pruneDerived(draft: Draft, goneRuns: ReadonlySet<string>): void {
+  if (goneRuns.size === 0) return;
+  const { activity, diffstats, attempts } = draft.next;
+  const runOf = (attemptId: string) =>
+    attempts[attemptId]?.runId ?? activity[attemptId]?.runId ?? diffstats[attemptId]?.runId ?? null;
+  const gone = (attemptId: string) => {
+    const run = runOf(attemptId);
+    return run !== null && goneRuns.has(run);
+  };
+  for (const id of Object.keys(activity)) if (gone(id)) delete draft.map('activity')[id];
+  for (const id of Object.keys(diffstats)) if (gone(id)) delete draft.map('diffstats')[id];
+  for (const id of Object.keys(draft.next.transcripts)) if (gone(id)) delete draft.map('transcripts')[id];
 }
 
 // ---------------------------------------------------------------------------------------------

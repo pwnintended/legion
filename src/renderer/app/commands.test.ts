@@ -1,5 +1,6 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { builtinCommands, handleKeyDown, registerCommand, registerCommands } from './commands';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { currentToasts } from '../overlays/nav';
+import { builtinCommands, executeCommand, handleKeyDown, registerCommand, registerCommands } from './commands';
 import { initialUi, uiStore } from './store';
 
 interface FakeKey {
@@ -8,6 +9,7 @@ interface FakeKey {
   metaKey?: boolean;
   altKey?: boolean;
   shiftKey?: boolean;
+  repeat?: boolean;
   target?: unknown;
 }
 
@@ -95,6 +97,58 @@ describe('key dispatch', () => {
       uiStore.setState({ overlay: 'inbox' });
       handleKeyDown(cmdEnter() as unknown as KeyboardEvent);
       expect(ran).toEqual(['test.approve']);
+    } finally {
+      off();
+    }
+  });
+
+  it('says so in a toast when a command fails (key or palette/menu)', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const off = registerCommands([
+      {
+        id: 'test.pause',
+        title: 'Pause run',
+        keybinding: 'P',
+        run: async () => {
+          throw Object.assign(new Error('run is done'), { code: 'conflict' });
+        },
+      },
+      {
+        id: 'test.boom',
+        title: 'Resume run',
+        run: () => {
+          throw new Error('nope');
+        },
+      },
+    ]);
+    try {
+      handleKeyDown(keydown({ key: 'p', code: 'KeyP', target: button }) as unknown as KeyboardEvent);
+      await new Promise((r) => setTimeout(r, 0));
+      expect(currentToasts().at(-1)).toMatchObject({ tone: 'error', text: 'Pause run failed: run is done' });
+      expect(await executeCommand('test.boom')).toBe(false);
+      expect(currentToasts().at(-1)).toMatchObject({ tone: 'error', text: 'Resume run failed: nope' });
+    } finally {
+      off();
+      vi.restoreAllMocks();
+    }
+  });
+
+  it('runs action commands once per press: a held key (auto-repeat) is swallowed, navigation repeats', () => {
+    const off = registerCommands([
+      { id: 'test.approve', title: 'Approve', keybinding: 'A', run: () => void ran.push('test.approve') },
+      { id: 'test.next', title: 'Next', keybinding: 'J', repeatable: true, run: () => void ran.push('test.next') },
+    ]);
+    try {
+      const press = (key: string, repeat: boolean) =>
+        keydown({ key, code: `Key${key.toUpperCase()}`, repeat, target: button });
+      expect(handleKeyDown(press('a', false) as unknown as KeyboardEvent)).toBe(true);
+      const held = press('a', true);
+      expect(handleKeyDown(held as unknown as KeyboardEvent)).toBe(true);
+      expect(held.prevented).toBe(true);
+      handleKeyDown(press('a', true) as unknown as KeyboardEvent);
+      handleKeyDown(press('j', false) as unknown as KeyboardEvent);
+      handleKeyDown(press('j', true) as unknown as KeyboardEvent);
+      expect(ran).toEqual(['test.approve', 'test.next', 'test.next']);
     } finally {
       off();
     }

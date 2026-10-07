@@ -5,8 +5,9 @@
 import { useStore } from 'zustand';
 import { createStore } from 'zustand/vanilla';
 import { type CommandContext, registerCommands } from '../../app/commands';
-import { latestPlan } from '../../app/data';
+import { type DataState, latestPlan } from '../../app/data';
 import { rpc } from '../../app/hooks';
+import { whenData } from '../../app/pending';
 import { dataStore } from '../../app/store';
 import { focusedTile } from '../../layout/tree';
 import { flushPlan } from './draft';
@@ -37,6 +38,15 @@ export function canApprove(runId: string): boolean {
   return !!run && !!plan && run.status === 'awaiting_approval' && plan.approvedAt === null;
 }
 
+/** The run has left plan sign-off (approved and executing, or back to planning for a revision). */
+const signedOff = (runId: string, planId: string) => (data: DataState) => {
+  return data.runs[runId]?.status !== 'awaiting_approval' || latestPlan(data, runId)?.id !== planId;
+};
+
+/**
+ * Approve the latest plan. Stays pending until the run leaves sign-off in the store (the `run.updated`
+ * event), so a held ⌘⏎ or a second click can't send a second `runs.approvePlan`.
+ */
 export async function approvePlan(runId: string): Promise<boolean> {
   if (signoff.getState()[runId]?.pending) return false;
   set(runId, { pending: 'approve', error: null });
@@ -47,6 +57,7 @@ export async function approvePlan(runId: string): Promise<boolean> {
     if (plan && !analyzePlan(plan.dag, dataStore.getState().settings).validation.ok)
       throw new Error('The plan has problems the engine would reject. Fix them first.');
     await rpc('runs.approvePlan', { runId, planId });
+    await whenData((data) => data.plans[planId]?.approvedAt != null || signedOff(runId, planId)(data));
     set(runId, IDLE);
     return true;
   } catch (error) {
@@ -55,12 +66,15 @@ export async function approvePlan(runId: string): Promise<boolean> {
   }
 }
 
+/** Ask the planner for a revision; ignored while a sign-off action is in flight. */
 export async function requestRevision(runId: string, feedback: string): Promise<void> {
+  if (signoff.getState()[runId]?.pending) return;
   set(runId, { pending: 'revise', error: null });
   try {
     const plan = latestPlan(dataStore.getState(), runId);
     if (!plan) throw new Error('No plan to revise.');
     await rpc('runs.requestPlanRevision', { runId, planId: plan.id, feedback });
+    await whenData(signedOff(runId, plan.id));
     set(runId, IDLE);
   } catch (error) {
     set(runId, { pending: null, error: errorText(error) });

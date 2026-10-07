@@ -18,6 +18,7 @@ import {
   moveDir,
   normalize,
   remove,
+  setTileParams,
   setWidthPreset,
   toggleCollapsed,
   toggleStacked,
@@ -237,5 +238,17 @@ describe('normalize', () => {
     cycleWidth(w, 'a');
     remove(w, 'a1');
     expect(JSON.stringify(w)).toBe(snapshot);
+  });
+});
+
+describe('setTileParams', () => {
+  it('records new params on one tile (a terminal tile remembering its engine terminal)', () => {
+    const w = ws(col('a', 'x', 'y'));
+    const params = { terminalId: 'term_1', cwd: '/repo', attemptId: null };
+    const next = setTileParams(w, 'y', params);
+    expect(next.strip.columns[0]?.tiles[1]?.params).toEqual(params);
+    expect(next.strip.columns[0]?.tiles[0]).toBe(w.strip.columns[0]?.tiles[0]);
+    expect(setTileParams(next, 'y', { ...params })).toBe(next);
+    expect(setTileParams(next, 'missing', params)).toBe(next);
   });
 });

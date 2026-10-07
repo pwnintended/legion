@@ -12,7 +12,17 @@ import { Chip, Kbd } from '../chrome/ui';
 import { displayEngine, formatCost, formatDuration, type Tone } from '../layout/describe';
 import { type ApprovalChoice, resolveApproval, trackResolution, usePendingResolution } from '../tiles/session/actions';
 import { ApprovalButtons, ApprovalSubjectView, describeApproval } from '../tiles/session/approval';
-import { type RankedItem, rankInbox, runLabel } from './inbox-model';
+import { canStartOver, resolveEscalation, retryChoice, startOver } from '../tiles/session/escalation';
+import {
+  type InboxSelection,
+  moveSelection,
+  NO_SELECTION,
+  type RankedItem,
+  rankInbox,
+  runLabel,
+  selectAt,
+  selectedIndex,
+} from './inbox-model';
 import { jumpToItem } from './nav';
 import { OverlayPanel } from './Shell';
 
@@ -35,10 +45,17 @@ export function InboxOverlay() {
   const state = useData((s) => s);
   const ranked = useMemo(() => rankInbox(state, items), [state, items]);
   const agents = useAgentsRunning();
-  const [selected, setSelected] = useState(0);
+  // Selected by item id: a new or resolved item re-sorting above it must not change what `a` approves.
+  const [selection, setSelection] = useState<InboxSelection>(NO_SELECTION);
   const listRef = useRef<HTMLDivElement>(null);
-  const index = Math.min(selected, Math.max(0, ranked.length - 1));
+  const index = selectedIndex(ranked, selection);
   const current = ranked[index]?.item ?? null;
+
+  // Pin the shown row by id (first render, or after the selected item left the list).
+  useEffect(() => {
+    const id = current?.id ?? null;
+    if (id !== selection.id || index !== selection.index) setSelection({ id, index });
+  }, [current, index, selection]);
 
   useEffect(() => {
     listRef.current
@@ -49,8 +66,13 @@ export function InboxOverlay() {
   const onKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
     if (event.metaKey || event.ctrlKey || event.altKey || isTextInput(event.target)) return;
     const key = event.key;
-    if (key === 'j' || key === 'ArrowDown') setSelected(Math.min(ranked.length - 1, index + 1));
-    else if (key === 'k' || key === 'ArrowUp') setSelected(Math.max(0, index - 1));
+    // A held key repeats: fine for moving the selection, never for answering or jumping.
+    if (event.repeat && !['j', 'k', 'ArrowDown', 'ArrowUp'].includes(key)) {
+      if (['a', 'A', 'd', 'Enter'].includes(key)) event.preventDefault();
+      return;
+    }
+    if (key === 'j' || key === 'ArrowDown') setSelection(moveSelection(ranked, selection, 1));
+    else if (key === 'k' || key === 'ArrowUp') setSelection(moveSelection(ranked, selection, -1));
     else if (key === 'Enter' && current && (event.target as HTMLElement).tagName !== 'BUTTON') jumpToItem(current);
     else if (current?.kind === 'approval' && (key === 'a' || key === 'A' || key === 'd')) {
       void resolveApproval(current, key === 'd' ? 'deny' : event.shiftKey || key === 'A' ? 'acceptTask' : 'accept');
@@ -83,7 +105,7 @@ export function InboxOverlay() {
                 entry={entry}
                 index={i}
                 selected={i === index}
-                onSelect={() => setSelected(i)}
+                onSelect={() => setSelection(selectAt(ranked, i))}
               />
             ))}
           </div>
@@ -138,7 +160,7 @@ function InboxRow({
         <span className="muted ib-context">{context}</span>
         <span className="faint ib-blocks">{entry.blocksLabel ?? formatDuration(Date.now() - item.createdAt)}</span>
       </div>
-      <ItemBody item={item} selected={selected} />
+      <ItemBody item={item} selected={selected} taskLabel={task?.nodeId ?? null} />
       {pending?.state === 'error' ? <div className="ib-error">{pending.message}</div> : null}
     </div>
   );
@@ -153,7 +175,7 @@ function JumpButton({ item, label = 'Jump to tile' }: { item: InboxItem; label?:
   );
 }
 
-function ItemBody({ item, selected }: { item: InboxItem; selected: boolean }) {
+function ItemBody({ item, selected, taskLabel }: { item: InboxItem; selected: boolean; taskLabel: string | null }) {
   switch (item.kind) {
     case 'approval': {
       const subject = describeApproval(item.payload.tool, item.payload.input);
@@ -183,11 +205,23 @@ function ItemBody({ item, selected }: { item: InboxItem; selected: boolean }) {
                   key={action}
                   type="button"
                   className={`btn btn-sm${action === 'retry' ? ' btn-warn' : action === 'abort' ? ' btn-ghost' : ''}`}
-                  onClick={() => void resolve(item, { kind: 'escalation', action, note: null })}
+                  title={action === 'retry' ? retryChoice(item).title : undefined}
+                  onClick={() => void resolveEscalation(item, action, null)}
                 >
-                  {action === 'retry' ? 'Retry' : action === 'skip' ? 'Skip task' : 'Abort run'}
+                  {action === 'retry' ? retryChoice(item).label : action === 'skip' ? 'Skip task' : 'Abort run'}
                 </button>
               ))}
+            {canStartOver(item) ? (
+              <button
+                type="button"
+                className="btn btn-sm"
+                title="Discard the work and start the task over from scratch"
+                onClick={() => void startOver(item, taskLabel ?? 'this task')}
+                data-testid="inbox-restart"
+              >
+                Start over…
+              </button>
+            ) : null}
             {/* "edit" = retry with a note for the next attempt: written in the task's tile. */}
             <JumpButton
               item={item}

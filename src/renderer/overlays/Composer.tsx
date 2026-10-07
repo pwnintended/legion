@@ -8,6 +8,7 @@ import type { EngineInfo } from '@shared/engine';
 import type { RecentRepo, RepoInspection } from '@shared/rpc';
 import { useEffect, useId, useMemo, useRef, useState } from 'react';
 import { rpc, useActiveRun, useEngines, useSettings } from '../app/hooks';
+import { adoptRun } from '../app/run-actions';
 import { actions } from '../app/store';
 import { Icon } from '../chrome/icons';
 import { Kbd } from '../chrome/ui';
@@ -155,6 +156,9 @@ export function ComposerOverlay() {
       });
       saved = { text: '', repoPath, base: '', engine, clarify };
       actions.closeOverlay();
+      // Into the store first: the run's `run.updated` may still be on its way, and an active run the store
+      // doesn't know is replaced by the first run of the list on the next data event.
+      adoptRun(run);
       actions.setActiveRun(run.id);
     } catch (error) {
       setSubmitError(errorMessage(error));

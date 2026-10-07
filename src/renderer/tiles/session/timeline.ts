@@ -5,6 +5,9 @@
  * - `file_change` counts attach to the edit call for the same path (or become an edit row of their own);
  * - `todo` snapshots replace the previous checklist; `usage` is summarized, not listed.
  * Row keys are the seq of the row's first event, so they stay stable while the transcript grows.
+ *
+ * Building is incremental (`TimelineBuilder` / `timelineCursor`): a live event costs O(1), not a rebuild of
+ * the whole timeline.
  */
 import type { TodoItem } from '@shared/events';
 import type { TranscriptEntry } from '@shared/rpc';
@@ -33,11 +36,17 @@ export interface Usage {
 }
 
 export interface Timeline {
+  /**
+   * The rows (rows themselves are immutable; the array grows in place as the builder advances, so read
+   * it through the latest Timeline).
+   */
   rows: TimelineRow[];
   usage: Usage | null;
   model: string | null;
   /** The last row is assistant text that is still streaming. */
   streaming: boolean;
+  /** Request ids of the approval rows (approvals already shown inline). */
+  approvalIds: ReadonlySet<string>;
 }
 
 function record(input: unknown): Record<string, unknown> {
@@ -88,61 +97,80 @@ export function splitMcpName(name: string): { server: string; tool: string } {
   return { server: 'mcp', tool: name };
 }
 
-export function buildTimeline(entries: readonly TranscriptEntry[]): Timeline {
-  const rows: TimelineRow[] = [];
-  /** tool call id → row index, to attach results. */
-  const calls = new Map<string, number>();
-  let usage: Usage | null = null;
-  let model: string | null = null;
+/** Folds entries into rows one at a time; every step is O(1) amortized (a todo snapshot moves its row). */
+export class TimelineBuilder {
+  readonly rows: TimelineRow[] = [];
+  /** tool call id → row index, to attach results (dropped once the result arrived). */
+  private readonly calls = new Map<string, number>();
+  /** Indices of text rows that are still streaming, oldest first. */
+  private streamingRows: number[] = [];
+  private readonly approvals = new Set<string>();
+  private todoIndex = -1;
+  private usage: Usage | null = null;
+  private model: string | null = null;
 
-  const last = () => rows.at(-1);
-  const set = (index: number, row: TimelineRow) => {
-    rows[index] = row;
-  };
+  private last(): TimelineRow | undefined {
+    return this.rows.at(-1);
+  }
 
-  for (const { seq, event } of entries) {
+  private set(index: number, row: TimelineRow): void {
+    this.rows[index] = row;
+  }
+
+  private add(row: TimelineRow): number {
+    this.rows.push(row);
+    return this.rows.length - 1;
+  }
+
+  /** Remove a row in the middle (the previous todo snapshot), keeping the index maps right. */
+  private removeAt(index: number): void {
+    this.rows.splice(index, 1);
+    for (const [id, i] of this.calls) if (i > index) this.calls.set(id, i - 1);
+    this.streamingRows = this.streamingRows.filter((i) => i !== index).map((i) => (i > index ? i - 1 : i));
+  }
+
+  push({ seq, event }: TranscriptEntry): void {
+    const rows = this.rows;
     switch (event.type) {
       case 'session_started':
-        model = event.model ?? model;
-        rows.push({ kind: 'start', key: seq, model: event.model, version: event.version });
+        this.model = event.model ?? this.model;
+        this.add({ kind: 'start', key: seq, model: event.model, version: event.version });
         break;
       case 'text_delta': {
-        const prev = last();
-        if (prev?.kind === 'text' && prev.streaming) set(rows.length - 1, { ...prev, text: prev.text + event.text });
-        else rows.push({ kind: 'text', key: seq, text: event.text, streaming: true });
+        const prev = this.last();
+        if (prev?.kind === 'text' && prev.streaming)
+          this.set(rows.length - 1, { ...prev, text: prev.text + event.text });
+        else this.streamingRows.push(this.add({ kind: 'text', key: seq, text: event.text, streaming: true }));
         break;
       }
       case 'message': {
         // The final text replaces the deltas streamed for it (the most recent streaming row).
-        let index = -1;
-        for (let i = rows.length - 1; i >= 0; i--) {
-          const row = rows[i];
-          if (row?.kind === 'text' && row.streaming) {
-            index = i;
-            break;
-          }
-        }
-        const existing = index >= 0 ? rows[index] : undefined;
-        if (existing) set(index, { kind: 'text', key: existing.key, text: event.text, streaming: false });
-        else rows.push({ kind: 'text', key: seq, text: event.text, streaming: false });
+        const index = this.streamingRows.pop();
+        const existing = index === undefined ? undefined : rows[index];
+        if (index !== undefined && existing)
+          this.set(index, { kind: 'text', key: existing.key, text: event.text, streaming: false });
+        else this.add({ kind: 'text', key: seq, text: event.text, streaming: false });
         break;
       }
       case 'reasoning': {
-        const prev = last();
-        if (prev?.kind === 'reasoning') set(rows.length - 1, { ...prev, text: `${prev.text}${event.text}` });
-        else rows.push({ kind: 'reasoning', key: seq, text: event.text });
+        const prev = this.last();
+        if (prev?.kind === 'reasoning') this.set(rows.length - 1, { ...prev, text: `${prev.text}${event.text}` });
+        else this.add({ kind: 'reasoning', key: seq, text: event.text });
         break;
       }
       case 'tool_call': {
         if (event.kind === 'read') {
           const path = toolPath(event.input) ?? event.name;
-          const prev = last();
+          const prev = this.last();
           if (prev?.kind === 'reads') {
-            set(rows.length - 1, { ...prev, paths: prev.paths.includes(path) ? prev.paths : [...prev.paths, path] });
-          } else rows.push({ kind: 'reads', key: seq, paths: [path], failed: 0 });
-          calls.set(event.id, rows.length - 1);
+            this.set(rows.length - 1, {
+              ...prev,
+              paths: prev.paths.includes(path) ? prev.paths : [...prev.paths, path],
+            });
+          } else this.add({ kind: 'reads', key: seq, paths: [path], failed: 0 });
+          this.calls.set(event.id, rows.length - 1);
         } else if (event.kind === 'edit') {
-          rows.push({
+          const at = this.add({
             kind: 'edit',
             key: seq,
             path: toolPath(event.input) ?? event.name,
@@ -150,22 +178,29 @@ export function buildTimeline(entries: readonly TranscriptEntry[]): Timeline {
             removed: null,
             status: 'running',
           });
-          calls.set(event.id, rows.length - 1);
+          this.calls.set(event.id, at);
         } else if (event.kind === 'command') {
-          rows.push({
+          const at = this.add({
             kind: 'command',
             key: seq,
             command: commandText(event.input) ?? (inputSummary(event.input) || event.name),
             status: 'running',
             output: null,
           });
-          calls.set(event.id, rows.length - 1);
+          this.calls.set(event.id, at);
         } else if (event.kind === 'mcp') {
           const { server, tool } = splitMcpName(event.name);
-          rows.push({ kind: 'mcp', key: seq, server, tool, summary: inputSummary(event.input), status: 'running' });
-          calls.set(event.id, rows.length - 1);
+          const at = this.add({
+            kind: 'mcp',
+            key: seq,
+            server,
+            tool,
+            summary: inputSummary(event.input),
+            status: 'running',
+          });
+          this.calls.set(event.id, at);
         } else {
-          rows.push({
+          const at = this.add({
             kind: 'tool',
             key: seq,
             name: event.name,
@@ -173,19 +208,21 @@ export function buildTimeline(entries: readonly TranscriptEntry[]): Timeline {
             status: 'running',
             output: null,
           });
-          calls.set(event.id, rows.length - 1);
+          this.calls.set(event.id, at);
         }
         break;
       }
       case 'tool_result': {
-        const index = calls.get(event.id);
+        const index = this.calls.get(event.id);
         const row = index === undefined ? undefined : rows[index];
         if (index === undefined || !row) break;
+        this.calls.delete(event.id);
         const status: RowStatus = event.ok ? 'ok' : 'failed';
         if (row.kind === 'reads') {
-          if (!event.ok) set(index, { ...row, failed: row.failed + 1 });
-        } else if (row.kind === 'command' || row.kind === 'tool') set(index, { ...row, status, output: event.output });
-        else if (row.kind === 'edit' || row.kind === 'mcp') set(index, { ...row, status });
+          if (!event.ok) this.set(index, { ...row, failed: row.failed + 1 });
+        } else if (row.kind === 'command' || row.kind === 'tool')
+          this.set(index, { ...row, status, output: event.output });
+        else if (row.kind === 'edit' || row.kind === 'mcp') this.set(index, { ...row, status });
         break;
       }
       case 'file_change': {
@@ -194,7 +231,7 @@ export function buildTimeline(entries: readonly TranscriptEntry[]): Timeline {
         for (let i = rows.length - 1; i >= Math.max(0, rows.length - 12); i--) {
           const row = rows[i];
           if (row?.kind === 'edit' && row.path === event.path && row.added === null) {
-            set(i, {
+            this.set(i, {
               ...row,
               added: event.added,
               removed: event.removed,
@@ -205,7 +242,7 @@ export function buildTimeline(entries: readonly TranscriptEntry[]): Timeline {
           }
         }
         if (!attached)
-          rows.push({
+          this.add({
             kind: 'edit',
             key: seq,
             path: event.path,
@@ -216,13 +253,13 @@ export function buildTimeline(entries: readonly TranscriptEntry[]): Timeline {
         break;
       }
       case 'todo': {
-        const previous = rows.findIndex((r) => r.kind === 'todo');
-        if (previous >= 0) rows.splice(previous, 1);
-        rows.push({ kind: 'todo', key: seq, items: event.items });
+        if (this.todoIndex >= 0) this.removeAt(this.todoIndex);
+        this.todoIndex = this.add({ kind: 'todo', key: seq, items: event.items });
         break;
       }
       case 'approval_request':
-        rows.push({
+        this.approvals.add(event.requestId);
+        this.add({
           kind: 'approval',
           key: seq,
           requestId: event.requestId,
@@ -232,27 +269,85 @@ export function buildTimeline(entries: readonly TranscriptEntry[]): Timeline {
         });
         break;
       case 'usage':
-        usage = { inputTokens: event.inputTokens, outputTokens: event.outputTokens, costUsd: event.costUsd };
+        this.usage = { inputTokens: event.inputTokens, outputTokens: event.outputTokens, costUsd: event.costUsd };
         break;
       case 'turn_complete': {
         // A turn ends any streaming text that never got its final message.
-        const prev = last();
-        if (prev?.kind === 'text' && prev.streaming) set(rows.length - 1, { ...prev, streaming: false });
-        rows.push({ kind: 'turn', key: seq, isError: event.isError, reason: event.reason });
+        const prev = this.last();
+        if (prev?.kind === 'text' && prev.streaming) {
+          this.set(rows.length - 1, { ...prev, streaming: false });
+          this.streamingRows = this.streamingRows.filter((i) => i !== rows.length - 1);
+        }
+        this.add({ kind: 'turn', key: seq, isError: event.isError, reason: event.reason });
         break;
       }
       case 'error':
-        rows.push({ kind: 'error', key: seq, message: event.message, retryable: event.retryable });
+        this.add({ kind: 'error', key: seq, message: event.message, retryable: event.retryable });
         break;
       case 'exited':
-        rows.push({ kind: 'exited', key: seq, code: event.code });
+        this.add({ kind: 'exited', key: seq, code: event.code });
         break;
       case 'rate_limit':
         break;
     }
   }
-  const tail = rows.at(-1);
-  return { rows, usage, model, streaming: tail?.kind === 'text' && tail.streaming };
+
+  /** The current state (a new object each call; `rows` is shared, see `Timeline.rows`). */
+  snapshot(): Timeline {
+    const tail = this.rows.at(-1);
+    return {
+      rows: this.rows,
+      usage: this.usage,
+      model: this.model,
+      streaming: tail?.kind === 'text' && tail.streaming,
+      approvalIds: this.approvals,
+    };
+  }
+}
+
+export function buildTimeline(entries: readonly TranscriptEntry[]): Timeline {
+  const builder = new TimelineBuilder();
+  for (const entry of entries) builder.push(entry);
+  return builder.snapshot();
+}
+
+/**
+ * An incremental view over a growing transcript: called with the transcript's (append-only) entries array
+ * and its count, it only folds in the entries it hasn't seen. A different array (history merged in,
+ * transcript trimmed) or a shorter count starts over.
+ */
+export function timelineCursor(): (entries: readonly TranscriptEntry[], count?: number) => Timeline {
+  let source: readonly TranscriptEntry[] | null = null;
+  let consumed = 0;
+  let builder = new TimelineBuilder();
+  let last: Timeline | null = null;
+  return (entries, count = entries.length) => {
+    if (entries !== source || count < consumed) {
+      source = entries;
+      consumed = 0;
+      builder = new TimelineBuilder();
+      last = null;
+    }
+    if (last && count === consumed) return last;
+    for (let i = consumed; i < count; i++) builder.push(entries[i] as TranscriptEntry);
+    consumed = count;
+    last = builder.snapshot();
+    return last;
+  };
+}
+
+/** Timestamp of the entry with `seq` (entries are sorted by seq), or 0. O(log n). */
+export function entryTs(entries: readonly TranscriptEntry[], count: number, seq: number): number {
+  let lo = 0;
+  let hi = Math.min(count, entries.length) - 1;
+  while (lo <= hi) {
+    const mid = (lo + hi) >> 1;
+    const entry = entries[mid] as TranscriptEntry;
+    if (entry.seq === seq) return entry.ts;
+    if (entry.seq < seq) lo = mid + 1;
+    else hi = mid - 1;
+  }
+  return 0;
 }
 
 /** Is this row noise once something follows it (successful turn ends between follow-ups)? */

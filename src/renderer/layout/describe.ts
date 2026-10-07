@@ -5,6 +5,7 @@
 import type { Attempt, EngineKind, InboxItem, Plan, Task, TaskNode, TaskStatus } from '@shared/domain';
 import { type PullRequestInfo, runPr } from '../app/compat';
 import {
+  attemptsOfRun,
   type DataState,
   latestAttempt,
   latestPlan,
@@ -211,7 +212,7 @@ export function taskDiffStat(state: DataState, task: Task): { added: number; rem
   let added = 0;
   let removed = 0;
   const files = new Set<string>();
-  for (const attempt of Object.values(state.attempts)) {
+  for (const attempt of attemptsOfRun(state.attempts, task.runId)) {
     if (attempt.taskId !== task.id || attempt.role === 'reviewer') continue;
     const stat = state.diffstats[attempt.id];
     if (!stat) continue;
@@ -220,6 +221,19 @@ export function taskDiffStat(state: DataState, task: Task): { added: number; rem
     for (const f of stat.files) files.add(f);
   }
   return added || removed ? { added, removed, files: files.size } : null;
+}
+
+/**
+ * The part of the diff stats a tile's meta depends on, as a primitive (for selectors): the `+/−` of a merged
+ * task's session/review tile, '' otherwise. A `file_change` elsewhere leaves it unchanged, so it doesn't
+ * re-render every tile.
+ */
+export function tileDiffStatKey(state: DataState, tile: LayoutTile): string {
+  const taskId = tileTaskId(tile);
+  const task = taskId ? state.tasks[taskId] : undefined;
+  if (task?.status !== 'merged') return '';
+  const stat = taskDiffStat(state, task);
+  return stat ? `${stat.added}:${stat.removed}:${stat.files}` : '-';
 }
 
 export function describeTile(state: DataState, runId: string, tile: LayoutTile, now: number = Date.now()): TileMeta {
@@ -258,10 +272,12 @@ export function describeTile(state: DataState, runId: string, tile: LayoutTile, 
       );
       let status = taskStatusChip(state, task, coder, reviewer, pendingDeps, now);
       if (urgent.length > 0 && tile.kind === 'session') status = { label: 'needs you', tone: 'warn', live: false };
-      const stat = taskDiffStat(state, task);
       let note = status.label;
-      if (task.status === 'merged') note = stat ? `merged · +${stat.added} −${stat.removed}` : 'merged';
-      else if (task.status === 'blocked' && pendingDeps.length) note = `waits on ${pendingDeps.join(' ')}`;
+      // Diff stats only show on merged tasks (keep `tileDiffStatKey` in step with this).
+      if (task.status === 'merged') {
+        const stat = taskDiffStat(state, task);
+        note = stat ? `merged · +${stat.added} −${stat.removed}` : 'merged';
+      } else if (task.status === 'blocked' && pendingDeps.length) note = `waits on ${pendingDeps.join(' ')}`;
       else if (task.progress) note = task.progress;
       const effort = task.effortOverride ?? coder?.effort ?? node?.agent.effort ?? null;
       if (tile.kind === 'review') {

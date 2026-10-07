@@ -36,10 +36,11 @@ import {
 } from '../layout/tree';
 import { toast } from '../overlays/nav';
 import { canArchive, runPr } from './compat';
+import { isConfirmOpen } from './confirm';
 import { type DataState, selectRunList, TERMINAL_RUN_STATUSES } from './data';
 import { rpc } from './hooks';
 import { formatChord, isTerminal, isTextInput, matchesChord, parseChord } from './keys';
-import { archiveRun, refreshPr } from './run-actions';
+import { archiveRunInteractively, refreshPr } from './run-actions';
 import { actions, dataStore, jumpToNextUrgent, type KeyMode, type UiState, uiStore } from './store';
 
 export interface CommandContext {
@@ -74,6 +75,11 @@ export interface Command {
    * commands (e.g. ⌘⏎ "approve" on a focused review) use it to take precedence over global ones.
    */
   priority?: number;
+  /**
+   * Fires again on key auto-repeat (holding the key): navigation and resizing. Everything else runs once per
+   * press, so holding `a` or ⌘⏎ can't approve twice.
+   */
+  repeatable?: boolean;
 }
 
 export interface CommandView extends Command {
@@ -144,7 +150,22 @@ export function isEnabled(command: Command, ctx: CommandContext = context()): bo
   }
 }
 
-/** Run a command by id. Resolves to false when it doesn't exist or isn't available. */
+/** A command threw or its promise rejected (e.g. `runs.pause` refused): say so, don't fail silently. */
+function reportFailure(command: Command, error: unknown): void {
+  console.error(`[legion] command ${command.id} failed`, error);
+  const code = (error as { code?: unknown } | null)?.code;
+  const message =
+    code === 'disconnected'
+      ? 'the engine is not connected'
+      : code === 'not_implemented'
+        ? 'this engine does not support it yet'
+        : error instanceof Error
+          ? error.message
+          : String(error);
+  toast(`${command.title.replace(/…$/, '')} failed: ${message}`, 'error');
+}
+
+/** Run a command by id. Resolves to false when it doesn't exist, isn't available or fails (with a toast). */
 export async function executeCommand(id: string): Promise<boolean> {
   const command = registry.get(id);
   if (!command) {
@@ -157,7 +178,7 @@ export async function executeCommand(id: string): Promise<boolean> {
     await command.run(ctx);
     return true;
   } catch (error) {
-    console.error(`[legion] command ${id} failed`, error);
+    reportFailure(command, error);
     return false;
   }
 }
@@ -225,6 +246,8 @@ export function keyGuard(
 /** Global keydown handler. Returns true when a command handled the event. */
 export function handleKeyDown(event: KeyboardEvent): boolean {
   if (event.defaultPrevented || event.isComposing) return false;
+  // A confirm dialog is up: it owns every key (Esc must not close the overlay underneath).
+  if (isConfirmOpen()) return false;
   if (['Meta', 'Control', 'Alt', 'Shift'].includes(event.key)) return false;
   const inInput = isTextInput(event.target);
   const inTerminal = isTerminal(event.target);
@@ -236,9 +259,13 @@ export function handleKeyDown(event: KeyboardEvent): boolean {
       if (!keyGuard(command, ctx, { modChord: chord.mod || chord.ctrl, inInput, inTerminal })) continue;
       event.preventDefault();
       event.stopPropagation();
-      void Promise.resolve(command.run(ctx)).catch((error: unknown) =>
-        console.error(`[legion] command ${command.id} failed`, error),
-      );
+      // Auto-repeat of a held key: swallowed unless the command is meant to repeat.
+      if (event.repeat && !command.repeatable) return true;
+      try {
+        void Promise.resolve(command.run(ctx)).catch((error: unknown) => reportFailure(command, error));
+      } catch (error) {
+        reportFailure(command, error);
+      }
       return true;
     }
   }
@@ -415,6 +442,7 @@ export function builtinCommands(): Command[] {
       title: `Focus ${name}`,
       category: 'Focus',
       keybinding: keys.map((k) => `Mod+Alt+${k}`),
+      repeatable: true,
       when: hasLayout,
       run: layoutOp((l) => focusDir(l, dir)),
     })),
@@ -423,6 +451,7 @@ export function builtinCommands(): Command[] {
       title: dir === 'h' || dir === 'l' ? `Move column ${name}` : `Move tile ${name}`,
       category: 'Focus',
       keybinding: keys.map((k) => `Mod+Alt+Shift+${k}`),
+      repeatable: true,
       when: hasLayout,
       run: layoutOp((l) => moveDir(l, dir)),
     })),
@@ -432,6 +461,7 @@ export function builtinCommands(): Command[] {
       keybinding: keys,
       mode: 'move',
       hidden: true,
+      repeatable: true,
       when: hasLayout,
       run: layoutOp((l) => moveDir(l, dir)),
     })),
@@ -476,6 +506,7 @@ export function builtinCommands(): Command[] {
       keybinding: ['H', 'Left'],
       mode: 'resize',
       hidden: true,
+      repeatable: true,
       run: onFocusedColumn((l, c) => cycleWidth(l, c, -1)),
     },
     {
@@ -484,6 +515,7 @@ export function builtinCommands(): Command[] {
       keybinding: ['L', 'Right'],
       mode: 'resize',
       hidden: true,
+      repeatable: true,
       run: onFocusedColumn((l, c) => cycleWidth(l, c, 1)),
     },
     {
@@ -584,8 +616,7 @@ export function builtinCommands(): Command[] {
         const run = activeRun(ctx);
         if (!run) return;
         try {
-          await archiveRun(run.id);
-          toast(`Archived “${run.title}”. Its worktrees are cleaned up.`);
+          await archiveRunInteractively(run);
         } catch (error) {
           toast(`Couldn't archive: ${error instanceof Error ? error.message : String(error)}`, 'error');
         }

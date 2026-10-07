@@ -7,6 +7,7 @@ import { useLayoutEffect, useRef } from 'react';
 import { useUi } from '../app/hooks';
 import type { Overlay } from '../app/store';
 import { ComposerOverlay } from './Composer';
+import { ConfirmHost } from './Confirm';
 import { InboxOverlay } from './Inbox';
 import { useToasts } from './nav';
 import './overlays.css';
@@ -51,6 +52,7 @@ export default function Overlays() {
   return (
     <>
       <AnimatePresence>{View && overlay ? <View key={overlay} /> : null}</AnimatePresence>
+      <ConfirmHost />
       <Toasts />
     </>
   );

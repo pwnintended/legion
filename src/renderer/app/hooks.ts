@@ -13,7 +13,7 @@ import type { ProcedureName, RpcInput, RpcOutput } from '@shared/rpc';
 import { useCallback, useEffect, useState } from 'react';
 import { useStore } from 'zustand';
 import { useShallow } from 'zustand/react/shallow';
-import { describeTile, type TileMeta } from '../layout/describe';
+import { describeTile, type TileMeta, tileDiffStatKey } from '../layout/describe';
 import type { LayoutTile, Workspace } from '../layout/tree';
 import {
   attemptsOfRun,
@@ -132,7 +132,15 @@ export function useAcknowledged(itemIds: readonly string[]): boolean {
 // Live sessions
 // ---------------------------------------------------------------------------------------------
 
-const EMPTY_TRANSCRIPT: Transcript = { status: 'loading', entries: [], lastSeq: 0, error: null };
+const EMPTY_TRANSCRIPT: Transcript = {
+  status: 'loading',
+  entries: [],
+  count: 0,
+  lastSeq: 0,
+  error: null,
+  dropped: 0,
+  gap: null,
+};
 
 /**
  * An attempt's transcript: fetched once on first use, then appended live from agent events.
@@ -141,7 +149,12 @@ const EMPTY_TRANSCRIPT: Transcript = { status: 'loading', entries: [], lastSeq: 
 export function useTranscript(attemptId: string | null | undefined): Transcript {
   const transcript = useData((s) => (attemptId ? s.transcripts[attemptId] : undefined));
   useEffect(() => {
-    if (attemptId) void getSync()?.requestTranscript(attemptId);
+    const sync = getSync();
+    if (!attemptId || !sync) return;
+    // Kept while shown; dropped a while after the last view of it unmounts.
+    const release = sync.retainTranscript(attemptId);
+    void sync.requestTranscript(attemptId);
+    return release;
   }, [attemptId]);
   return transcript ?? EMPTY_TRANSCRIPT;
 }
@@ -194,7 +207,8 @@ export function useLayout(runId: string | null | undefined): Workspace | null {
 
 /** Header/card metadata for a tile. Pass `now` to tick durations. */
 export function useTileMeta(runId: string, tile: LayoutTile, now?: number): TileMeta {
-  // describeTile builds a new object; select its inputs and memoize on them instead.
+  // describeTile builds a new object; select its inputs and memoize on them instead. Diff stats change on
+  // every `file_change` of any agent: only the tile's own part of them is selected (a primitive).
   const deps = useData(
     useShallow((s) => [
       s.runs[runId],
@@ -205,7 +219,7 @@ export function useTileMeta(runId: string, tile: LayoutTile, now?: number): Tile
       s.inbox,
       s.merges,
       s.verifications,
-      s.diffstats,
+      tileDiffStatKey(s, tile),
     ]),
   );
   const [cache] = useState(() => ({
