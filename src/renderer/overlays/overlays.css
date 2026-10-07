@@ -259,8 +259,10 @@
   border: 1.5px solid var(--surface0);
   isolation: isolate;
 }
+/* The track sets the height (36px here, 32px in settings); segments fill what its border and padding leave. */
 .cmp-seg {
-  height: 28px;
+  height: auto;
+  align-self: stretch;
 }
 .cmp-seg[aria-checked="true"][data-engine="claude"] {
   color: var(--mauve);
@@ -973,18 +975,15 @@
   align-items: center;
   font-size: 12.5px;
   color: var(--subtext0);
-  transition:
-    background-color 0.15s,
-    color 0.15s;
+  transition: color 0.15s;
 }
+/* A table of contents, not a list of tabs: the section in view is the one set bright and heavier. */
 .st-nav-item:hover {
   color: var(--text);
-  background: var(--surface0);
 }
 .st-nav-item[aria-current="true"] {
   color: var(--text);
-  background: var(--surface0);
-  box-shadow: inset 2px 0 0 var(--mauve);
+  font-weight: 600;
 }
 .st-nav-item:focus-visible {
   outline: 2px solid var(--mauve);
