@@ -275,6 +275,28 @@ describe('transcripts', () => {
     expect(grown?.entries.at(-1)?.seq).toBe(500);
   });
 
+  it('counts every file change once, also when live events arrived before the history', () => {
+    const change = (seq: number, path: string, added: number) => ({
+      seq,
+      ts: seq,
+      event: { type: 'file_change' as const, path, added, removed: 1 },
+    });
+    let s = beginTranscript(initialData(), 'a');
+    // A live change lands first...
+    s = applyEvents(s, [
+      ev(10, { type: 'agent.event', runId: 'r', taskId: null, attemptId: 'a', event: change(10, 'b.ts', 5).event }),
+    ]);
+    // ...then the history, which has an older change and the same live one.
+    s = applyTranscriptPage(s, 'a', [change(3, 'a.ts', 2), change(10, 'b.ts', 5)], true);
+    expect(s.diffstats.a).toMatchObject({ added: 7, removed: 2, files: ['b.ts', 'a.ts'], seq: 10 });
+    // Replays and refetches don't count twice.
+    s = applyTranscriptPage(s, 'a', [change(3, 'a.ts', 2)], true);
+    s = applyEvents(s, [
+      ev(10, { type: 'agent.event', runId: 'r', taskId: null, attemptId: 'a', event: change(10, 'b.ts', 5).event }),
+    ]);
+    expect(s.diffstats.a).toMatchObject({ added: 7, removed: 2 });
+  });
+
   it('seeds activity lines from history', () => {
     const s = applyTranscriptPage(
       initialData(),

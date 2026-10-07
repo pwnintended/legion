@@ -65,7 +65,10 @@ export interface RateLimit {
 export interface DiffStat {
   /** The attempt's run (for pruning when the run goes away); null when not known yet. */
   runId: string | null;
+  /** Highest `file_change` seq counted. */
   seq: number;
+  /** Seqs of the `file_change` events counted (each is counted once, whichever way it arrives). */
+  counted: number[];
   added: number;
   removed: number;
   files: string[];
@@ -273,10 +276,13 @@ function addDiffStat(
   change: { path: string; added: number; removed: number },
 ): void {
   const current = draft.next.diffstats[attemptId];
-  if (current && seq <= current.seq) return;
+  // Deduplicated by the event's seq (not "newer than the last one counted"): history may arrive after
+  // live events and still holds older changes that must be counted.
+  if (current?.counted.includes(seq)) return;
   draft.map('diffstats')[attemptId] = {
     runId: runId ?? current?.runId ?? null,
-    seq,
+    seq: Math.max(seq, current?.seq ?? 0),
+    counted: [...(current?.counted ?? []), seq],
     added: (current?.added ?? 0) + change.added,
     removed: (current?.removed ?? 0) + change.removed,
     files: current?.files.includes(change.path) ? current.files : [...(current?.files ?? []), change.path],
@@ -579,11 +585,10 @@ export function applyTranscriptPage(
     gap,
   };
   const runId = state.attempts[attemptId]?.runId ?? null;
-  // Seed diff stats from history the live stream did not deliver.
-  const seenUpTo = draft.next.diffstats[attemptId]?.seq ?? 0;
+  // Seed diff stats from history the live stream did not deliver (also older changes when live events
+  // arrived first).
   for (const entry of entries) {
-    if (entry.event.type === 'file_change' && entry.seq > seenUpTo)
-      addDiffStat(draft, attemptId, runId, entry.seq, entry.event);
+    if (entry.event.type === 'file_change') addDiffStat(draft, attemptId, runId, entry.seq, entry.event);
   }
   // Seed activity lines from history when no live events have produced any yet.
   if (!state.activity[attemptId]) {
