@@ -42,7 +42,7 @@ interface DesiredColumn {
   task?: { nodeId: string; topo: number; firstDep: string | null };
 }
 
-const PRE_EXECUTION: readonly RunStatus[] = ['draft', 'clarifying', 'planning', 'awaiting_approval'];
+const PRE_EXECUTION: readonly RunStatus[] = ['chatting', 'draft', 'clarifying', 'planning', 'awaiting_approval'];
 const END_STATUSES: readonly RunStatus[] = ['executing', 'integrating', 'finalizing', 'pr_ready', 'done'];
 const PR_STATUSES: readonly RunStatus[] = ['finalizing', 'pr_ready', 'done'];
 /** Tasks that have not started or are finished collapse to thin columns. */

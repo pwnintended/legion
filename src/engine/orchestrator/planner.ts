@@ -73,6 +73,21 @@ export async function validateOptions(o: Orchestrator, run: Run): Promise<Valida
 // -- create ----------------------------------------------------------------------------------------
 
 export async function createRun(o: Orchestrator, input: RpcInput<'runs.create'>): Promise<Run> {
+  const created = await insertRun(o, input, 'draft');
+  const run = o.store.transitionRun(created.id, 'draft', input.skipClarify ? 'planning' : 'clarifying');
+  startPlanner(o, run.id);
+  return run;
+}
+
+/** Inspect the repository, add its project, store the run row in `status` (`runs.create`, `runs.chat`). */
+export async function insertRun(
+  o: Orchestrator,
+  input: Pick<
+    RpcInput<'runs.create'>,
+    'repoPath' | 'baseRef' | 'title' | 'issueText' | 'issueUrl' | 'plannerEngine' | 'plannerModel' | 'attachmentIds'
+  >,
+  status: 'draft' | 'chatting',
+): Promise<Run> {
   o.assertOpen();
   const inspection = await inspectRepo(input.repoPath, o.ctx.env);
   if (!inspection.isGitRepo || !inspection.root) {
@@ -106,15 +121,14 @@ export async function createRun(o: Orchestrator, input: RpcInput<'runs.create'>)
       plannerEngine: input.plannerEngine,
       plannerModel: input.plannerModel,
       attachments,
+      status,
     });
     o.attachments.claim(attachments, run.id);
     return run;
   });
   patchRunMeta(o.store, created.id, { baseSha });
   o.store.touchRecentRepo(root, basename(root));
-  const run = o.store.transitionRun(created.id, 'draft', input.skipClarify ? 'planning' : 'clarifying');
-  startPlanner(o, run.id);
-  return run;
+  return created;
 }
 
 /** Start whatever planner step the run's status calls for (also used by recovery and inbox answers). */

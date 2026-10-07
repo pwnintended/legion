@@ -566,6 +566,18 @@ export const rpcContract = {
     }),
     output: RunSchema,
   },
+  /** Start a conversation with the assistant (§8.6): a run in `chatting` whose first message is `prompt`. */
+  'runs.chat': {
+    input: z.object({
+      repoPath: z.string().min(1),
+      baseRef: z.string().nullable(),
+      prompt: z.string().min(1),
+      engine: EngineKindSchema,
+      model: z.string().nullable(),
+      attachmentIds: AttachmentIds,
+    }),
+    output: RunSchema,
+  },
   'runs.answerClarify': {
     input: z.object({ runId: IdSchema, answers: z.array(QuestionAnswerSchema), attachmentIds: AttachmentIds }),
     output: RunSchema,

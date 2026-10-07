@@ -33,6 +33,8 @@ export interface ToolNames {
   readonly cancelTask: string;
   readonly spawnResearch: string;
   readonly waitForReply: string;
+  readonly startImplementation: string;
+  readonly runStatus: string;
 }
 
 export const DEFAULT_TOOL_NAMES: ToolNames = {
@@ -48,6 +50,8 @@ export const DEFAULT_TOOL_NAMES: ToolNames = {
   cancelTask: 'cancel_task',
   spawnResearch: 'spawn_research',
   waitForReply: 'wait_for_reply',
+  startImplementation: 'start_implementation',
+  runStatus: 'run_status',
 };
 
 /** A file the human attached to the run (sent with the agent's first message by the adapter). */
@@ -156,6 +160,24 @@ export interface LeadPromptInput {
   readonly planMarkdown: string;
   readonly nodes: readonly TaskNode[];
   readonly tools?: ToolNames;
+  /** The lead reports to an assistant that talks to the human (decisions go through it). */
+  readonly parent?: boolean;
+}
+
+export interface AssistantPromptInput {
+  /** The human's first message. */
+  readonly message: string;
+  readonly repo: RepoInput;
+  readonly projectName: string;
+  readonly tools?: ToolNames;
+}
+
+export interface AssistantWakeInput {
+  /** Rendered queued messages (`renderMessages`), or null. */
+  readonly messages: string | null;
+  /** One line per conversation change since the last wake (run status, things waiting for the human). */
+  readonly changes: readonly string[];
+  readonly tools?: ToolNames;
 }
 
 export interface LeadWakeInput {
@@ -165,6 +187,7 @@ export interface LeadWakeInput {
   readonly changes: readonly string[];
   readonly board: readonly BoardRow[];
   readonly tools?: ToolNames;
+  readonly parent?: boolean;
 }
 
 export interface ResearcherPromptInput {

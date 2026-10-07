@@ -12,6 +12,8 @@ export function runStatusLine(
 ): { text: string; tone: Tone; live: boolean } {
   const paused = run.paused ? ' · paused' : '';
   switch (run.status) {
+    case 'chatting':
+      return { text: 'conversation', tone: agents > 0 ? 'run' : 'idle', live: agents > 0 };
     case 'draft':
       return { text: `draft${paused}`, tone: 'idle', live: false };
     case 'clarifying':

@@ -14,10 +14,21 @@ interface Calls {
   waits: Array<[McpBinding, string | null, number | null]>;
   amend: Array<[string, string]>;
   research: Array<[string, string, string]>;
+  start: Array<[string, boolean]>;
 }
 
 function fakeHost() {
-  const calls: Calls = { progress: [], ask: [], approve: [], done: [], sent: [], waits: [], amend: [], research: [] };
+  const calls: Calls = {
+    progress: [],
+    ask: [],
+    approve: [],
+    done: [],
+    sent: [],
+    waits: [],
+    amend: [],
+    research: [],
+    start: [],
+  };
   const pendingAsks: Array<(a: string) => void> = [];
   const pendingWaits: Array<(m: AgentMessage | null) => void> = [];
   let messageSeq = 0;
@@ -82,6 +93,21 @@ function fakeHost() {
       calls.research.push([b.role, r.title, r.mode]);
       return { attemptId: 'att_r1', role: r.mode === 'team' ? 'research_lead' : 'researcher' };
     },
+    startImplementation: (b, r) => {
+      calls.start.push([r.title, r.clarify]);
+      return { runId: b.runId, status: r.clarify ? 'clarifying' : 'planning' };
+    },
+    runStatus: (b) => ({
+      runId: b.runId,
+      title: 'T',
+      status: 'chatting',
+      paused: false,
+      plan: null,
+      tasks: [],
+      waitingForHuman: [],
+      prUrl: null,
+      error: null,
+    }),
   };
   return { host, calls, pendingAsks, pendingWaits };
 }
@@ -286,6 +312,46 @@ describe('legion mcp server', () => {
         ['amend', 'T2:title,risk'],
         ['cancel', 'T3'],
       ]);
+    });
+  });
+
+  describe('assistant tools', () => {
+    const assistant: McpBinding = {
+      runId: 'r1',
+      taskId: null,
+      attemptId: 'as1',
+      role: 'assistant',
+      parentAttemptId: null,
+    };
+
+    it('start the work and read its status; the assistant also gets the coordinator tools', async () => {
+      const c = await connect(srv.issueToken(assistant));
+      const names = (await c.listTools()).tools.map((t) => t.name).sort();
+      expect(names).toEqual(
+        [
+          'approve',
+          'list_agents',
+          'report_progress',
+          'request_human_input',
+          'run_status',
+          'send_message',
+          'spawn_research',
+          'start_implementation',
+          'wait_for_reply',
+        ].sort(),
+      );
+      expect(
+        JSON.parse((await call(c, 'start_implementation', { title: 'CSV export', brief: 'Add it.' })).text),
+      ).toEqual({
+        runId: 'r1',
+        status: 'clarifying',
+      });
+      await call(c, 'start_implementation', { title: 'Again', brief: 'x', clarify: false });
+      expect(f.calls.start).toEqual([
+        ['CSV export', true],
+        ['Again', false],
+      ]);
+      expect(JSON.parse((await call(c, 'run_status', {})).text)).toMatchObject({ status: 'chatting', tasks: [] });
     });
   });
 

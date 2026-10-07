@@ -1,3 +1,4 @@
+export { buildAssistantPrompt, buildAssistantWakePrompt } from './assistant';
 export { buildCoderPrompt, buildFixerPrompt, buildResolverPrompt } from './coder';
 export { clipMiddle, clipTail, demoteHeadings, fence, markdownSection, PROMPT_LIMITS } from './format';
 export { buildLeadPrompt, buildLeadWakePrompt } from './lead';

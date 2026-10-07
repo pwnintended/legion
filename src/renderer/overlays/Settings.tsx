@@ -30,6 +30,7 @@ const ROLES: { role: Role; label: string; note: string }[] = [
   { role: 'lead', label: 'Lead', note: 'Coordinates the coders after approval; talks, never touches files.' },
   { role: 'researcher', label: 'Researcher', note: 'Read-only repository and web research on a brief.' },
   { role: 'research_lead', label: 'Research lead', note: 'Splits a broad brief over researchers and synthesises.' },
+  { role: 'assistant', label: 'Assistant', note: 'Your conversation partner; starts the work and relays the lead.' },
 ];
 const SECTIONS: { id: SettingsSection; label: string }[] = [
   { id: 'engines', label: 'Engines' },

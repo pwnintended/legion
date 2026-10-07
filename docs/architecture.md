@@ -132,8 +132,9 @@ Run        id, projectId?, repoPath, baseRef, title, issueText, issueUrl?, statu
            integrationBranch?, prUrl?, pr? {url, number, state: open|closed|merged, isDraft}, archived,
            attachments? (AttachmentRef[]: id, name, mime, size, kind image|text|file, sha256), error?, createdAt,
            updatedAt
-           status: draft → clarifying → planning → awaiting_approval → executing → integrating
-                   → finalizing → pr_ready → done | failed | cancelled   (+ paused flag)
+           status: chatting → | draft → clarifying → planning → awaiting_approval → executing → integrating
+                   → finalizing → pr_ready → done | failed | cancelled   (+ paused flag; chatting = a
+                   conversation with the assistant, §8.6, that may become work or end as done/cancelled)
 Plan       id, runId, version, markdown, dag (PlanDag = {nodes, annotations}), source (agent|user), feedback?,
            createdAt, approvedAt?
 TaskNode   (inside PlanDag) id "T1".., title, goal, kind (contracts|feature|test|refactor|docs|integration),
@@ -143,7 +144,7 @@ Task       runtime row per node: runId, nodeId, status, branch, worktreePath, st
            mergedSha?, engine/model/effortOverride?, progress?, report? {summary, commitMessage}, error?
            status: blocked → queued → provisioning → running → verifying → reviewing → fixing
                    → approved → awaiting_human → merging → merged | failed | skipped | cancelled
-Attempt    id, taskId?, runId, role (planner|coder|reviewer|resolver|finalizer|lead|researcher|research_lead), engine, model,
+Attempt    id, taskId?, runId, role (planner|coder|reviewer|resolver|finalizer|lead|researcher|research_lead|assistant), engine, model,
            sessionId (claude session / codex thread), parentAttemptId? (the attempt it reports to), status,
            startedAt, endedAt, costUsd?, tokens?, error?
            status: pending → running → succeeded | failed | interrupted | cancelled  (interrupted → running on resume)
@@ -213,7 +214,7 @@ Normalized `AgentEvent` kinds: `session_started{sessionId, model, version}`, `te
 | planner, reviewer, finalizer | `--permission-mode dontAsk --permission-prompts none`, `--allowedTools mcp__legion`, `--disallowedTools` edit tools + AskUserQuestion/Enter/ExitPlanMode. Reads inside cwd/`--add-dir` and commands the CLI classifies as read-only (`ls`, `git diff`, …) need no rule. | `sandbox: read-only`, `approvalPolicy: never` |
 | researcher | as above plus `--allowedTools WebSearch,WebFetch` (`PermissionProfile.web`) | as above plus `web_search = "live"` |
 | coder, resolver | `--permission-mode acceptEdits` (edits inside the working dirs), `--allowedTools` = `Bash(<cmd>)`/`Bash(<cmd> *)` per verify command + `mcp__legion`; everything else → `--permission-prompt-tool stdio` → `approval_request` (or `--permission-prompts none` when `askHuman` is false) | `sandbox: workspace-write` (cwd = worktree), `approvalPolicy: on-request` → requestApproval → inbox |
-| lead (`coordinate`); research_lead = the same plus `WebSearch`, `WebFetch` allowed | `dontAsk --permission-prompts none`, `--allowedTools mcp__legion`, `--disallowedTools` = the read-only list + `Read, Glob, Grep, LS, Bash, BashOutput, KillShell, WebFetch, WebSearch, Task, Agent, NotebookRead, TodoWrite, Skill, ToolSearch`: the session can only talk | `sandbox: read-only`, `approvalPolicy: never` (best effort: Codex's tool list cannot be trimmed) |
+| lead, assistant (`coordinate`); research_lead = the same plus `WebSearch`, `WebFetch` allowed | `dontAsk --permission-prompts none`, `--allowedTools mcp__legion`, `--disallowedTools` = the read-only list + `Read, Glob, Grep, LS, Bash, BashOutput, KillShell, WebFetch, WebSearch, Task, Agent, NotebookRead, TodoWrite, Skill, ToolSearch`: the session can only talk | `sandbox: read-only`, `approvalPolicy: never` (best effort: Codex's tool list cannot be trimmed) |
 
 Every Claude profile also denies `Bash(git commit *)`, `Bash(git push *)`, Enter/ExitWorktree and the
 scheduling tools (Cron*, ScheduleWakeup, RemoteTrigger, PushNotification). Approval decisions: allow →
@@ -282,6 +283,7 @@ tools are in §8.4:
   `wait_for_reply` in one blocking call
 - `spawn_research({title, brief, mode})` (coordinators) — open a researcher (`single`) or a research lead (`team`) as
   the caller's child; its report comes back as a `report` message (§8.5)
+- `start_implementation({title, brief, clarify})`, `run_status()` (assistant only, §8.6)
 
 Delivery: a message resolves a blocked `wait_for_reply` / `ask_lead` of its recipient at once; otherwise it stays
 queued (`deliveredAt: null`) and is prepended to the prompt the next time the orchestrator resumes that recipient's
@@ -490,6 +492,26 @@ MCP tool. Research agents read and never write, so they can never make a decisio
   (`formatResearchReport`, bounded to 12k characters) and posts it to the parent as a `report` message, then closes
   the agent; a failure posts a `status` message so the parent never waits on a dead child. The lead reads reports on
   its next wake; a research lead blocks in `wait_for_reply` for each of its researchers.
+
+### 8.6 The assistant (`orchestrator/assistant.ts`)
+
+The human's conversation partner: a `coordinate` session (role `assistant`, `settings.roles.assistant`,
+`settings.assistant.enabled`) that talks to the human and to agents and nothing else. A conversation is a run:
+`runs.chat({repoPath, baseRef, prompt, engine, model, attachmentIds})` creates a run in status **`chatting`** whose
+first message is the prompt and opens the assistant (engine = the run's planner engine). The human keeps talking
+through `sessions.send` on the assistant attempt: its process stays alive and idle between turns.
+
+- **Tools** (role `assistant`): `start_implementation({title, brief, clarify})` moves the run to `clarifying` or
+  `planning` with the brief as the issue text (the usual flow follows: clarify questions and plan sign-off in the
+  inbox, then the lead, whose parent is the assistant); `run_status` (status, plan, every task, what waits for the
+  human, PR); plus the coordinator tools (`list_agents`, `send_message`, `wait_for_reply`, `spawn_research`,
+  research cap 3). A conversation that never starts work stays `chatting` until archived or cancelled.
+- **Wakes**: like the lead loop, one message per batch of news: queued messages (the lead's questions and reports,
+  research reports) and conversation changes (run status transitions, new inbox items waiting for the human). The
+  store's `run.updated` and `inbox.updated` events wake it. The lead sends decisions that are the human's to its
+  parent (kind `question`) instead of `request_human_input` when it has one.
+- **Failures**: resumed as a new attempt with its children re-parented; after `MAX_ASSISTANT_FAILURES` (3) without
+  a completed turn it is given up (`RunMeta.assistantDisabled`), and a run still `chatting` fails.
 
 ## 9. Git & filesystem conventions
 

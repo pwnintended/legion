@@ -6,7 +6,7 @@ import { bullets, clipMiddle, join } from './prompts/format';
 export const RESEARCH_ROLES: ReadonlySet<Role> = new Set<Role>(['researcher', 'research_lead']);
 
 /** Research agents a parent may have running at once, by the parent's role (absent = may not spawn). */
-export const RESEARCH_CAPS: Partial<Record<Role, number>> = { lead: 3, research_lead: 4 };
+export const RESEARCH_CAPS: Partial<Record<Role, number>> = { lead: 3, research_lead: 4, assistant: 3 };
 
 /** A report as its parent reads it (one message, bounded). */
 export const REPORT_MAX_CHARS = 12_000;

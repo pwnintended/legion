@@ -152,6 +152,12 @@ export const demoScript: FakeScript = (ctx) => {
       { kind: 'output', value: 'auto' },
     ];
   }
+  if (role === 'assistant') {
+    return [
+      { kind: 'text', text: ctx.turn === 0 ? 'Happy to help. What would you like done?' : 'Noted.' },
+      usage(0.003),
+    ];
+  }
   if (role === 'lead') {
     return [{ kind: 'text', text: ctx.turn === 0 ? 'Plan read; standing by for my coders.' : 'Noted.' }, usage(0.004)];
   }

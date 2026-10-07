@@ -13,6 +13,7 @@ import {
   setTaskEngine,
   skipTask,
 } from './actions';
+import { createChat } from './assistant';
 import { archiveRun, refreshPr } from './cleanup';
 import { getDiff } from './diff';
 import { createPr } from './finalize';
@@ -28,6 +29,7 @@ export function registerOrchestratorHandlers(server: EngineRpcServer, o: Orchest
 
   server.implement('runs.get', ({ runId }) => store.runSnapshot(runId));
   server.implement('runs.create', (input) => createRun(o, input));
+  server.implement('runs.chat', (input) => createChat(o, input));
   server.implement('runs.answerClarify', ({ runId, answers, attachmentIds }) =>
     answerClarify(o, runId, answers, null, attachmentIds ?? null),
   );

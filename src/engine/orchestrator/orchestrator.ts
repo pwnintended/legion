@@ -42,12 +42,14 @@ import {
   type AgentPeer,
   type AmendmentResult,
   type ApproveResult,
+  type AssistantRunStatus,
   CLAUDE_TOOL_NAMES,
   type McpBinding,
   type McpHost,
   type McpServerHandle,
   type PlanStatus,
   type SpawnResearchRequest,
+  type StartImplementationRequest,
   type TaskNodePatch,
 } from '../mcp';
 import type { TerminalService } from '../pty';
@@ -206,6 +208,8 @@ export const CLAUDE_PROMPT_TOOLS: ToolNames = {
   cancelTask: CLAUDE_TOOL_NAMES.cancelTask,
   spawnResearch: CLAUDE_TOOL_NAMES.spawnResearch,
   waitForReply: CLAUDE_TOOL_NAMES.waitForReply,
+  startImplementation: CLAUDE_TOOL_NAMES.startImplementation,
+  runStatus: CLAUDE_TOOL_NAMES.runStatus,
 };
 
 export const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms).unref?.());
@@ -237,6 +241,8 @@ export class Orchestrator {
   readonly takeovers = new Map<string, string>();
   /** Implementation lead loops by run id (`lead.ts`). */
   readonly leadLoops = new Map<string, LeadLoopHandle>();
+  /** Assistant loops by run id (`assistant.ts`). */
+  readonly assistantLoops = new Map<string, LeadLoopHandle>();
   closed = false;
   /** Stopped on close (timers set up by the wiring, e.g. PR polling). */
   readonly disposers: (() => void)[] = [];
@@ -272,8 +278,11 @@ export class Orchestrator {
     this.offEvents = this.store.onEvents((events) => {
       let inboxChanged = false;
       for (const event of events) {
+        // The assistant hears about status changes and new inbox items (§8.6).
+        if (event.type === 'run.updated' && event.from !== null) this.wakeAssistant(event.run.id);
         if (event.type !== 'inbox.updated') continue;
         inboxChanged = true;
+        this.wakeAssistant(event.item.runId);
         if (event.item.resolvedAt === null) this.notifyItem(event.item);
       }
       if (inboxChanged) this.host({ type: 'badge', count: this.openInboxCount() });
@@ -588,7 +597,9 @@ export class Orchestrator {
   private deliverMessage(message: AgentMessage): void {
     const waiting = this.messageWaiters.get(message.toAttemptId);
     if (!waiting) {
-      if (runMeta(this.store, message.runId).leadAttemptId === message.toAttemptId) this.wakeLead(message.runId);
+      const meta = runMeta(this.store, message.runId);
+      if (meta.leadAttemptId === message.toAttemptId) this.wakeLead(message.runId);
+      if (meta.assistantAttemptId === message.toAttemptId) this.wakeAssistant(message.runId);
       return;
     }
     const index = waiting.findIndex((w) => w.replyTo === null || w.replyTo === message.replyTo);
@@ -1019,7 +1030,52 @@ export class Orchestrator {
       cancelTask(binding: McpBinding, nodeId: string, reason: string): Promise<AmendmentResult>;
     };
     spawnResearch(binding: McpBinding, request: SpawnResearchRequest): Promise<{ attemptId: string; role: Role }>;
+    assistant(runId: string, loop: LeadLoopHandle): Promise<void>;
+    assistantEnabled(runId: string): boolean;
+    assistantTools: {
+      startImplementation(binding: McpBinding, request: StartImplementationRequest): { runId: string; status: string };
+      runStatus(binding: McpBinding): AssistantRunStatus;
+    };
   } | null = null;
+
+  /** Open the run's assistant loop (no-op when one runs). */
+  startAssistant(runId: string): void {
+    if (this.closed || this.assistantLoops.has(runId) || !this.flows) return;
+    const flows = this.flows;
+    const loop: LeadLoopHandle = { wake: deferred<void>() };
+    this.assistantLoops.set(runId, loop);
+    this.background(`assistant ${runId}`, () =>
+      flows.assistant(runId, loop).finally(() => {
+        if (this.assistantLoops.get(runId) === loop) this.assistantLoops.delete(runId);
+      }),
+    );
+  }
+
+  wakeAssistant(runId: string): void {
+    const loop = this.assistantLoops.get(runId);
+    if (!loop) return;
+    loop.wake.resolve();
+    loop.wake = deferred<void>();
+  }
+
+  /** The run's assistant attempt (the lead's parent), when there is one and it was not given up. */
+  assistantAttemptId(runId: string): string | null {
+    const meta = runMeta(this.store, runId);
+    return meta.assistantDisabled ? null : meta.assistantAttemptId;
+  }
+
+  /** Keep every live conversation's assistant running and informed (called from the tick). */
+  private tickAssistants(): void {
+    if (!this.flows) return;
+    for (const run of this.store.listRuns()) {
+      if (isTerminal(RUN_TRANSITIONS, run.status) || run.archived) continue;
+      const meta = runMeta(this.store, run.id);
+      if (run.status !== 'chatting' && meta.assistantAttemptId === null) continue;
+      if (!this.flows.assistantEnabled(run.id)) continue;
+      this.startAssistant(run.id);
+      this.wakeAssistant(run.id);
+    }
+  }
 
   /** Open the run's lead loop (no-op when one runs). */
   startLead(runId: string): void {
@@ -1150,6 +1206,7 @@ export class Orchestrator {
 
   private async tick(): Promise<void> {
     if (this.closed || !this.flows) return;
+    this.tickAssistants();
     const settings = this.settings();
     const runs = this.store.listRuns().filter((r) => r.status === 'executing');
     for (const run of runs) {
@@ -1346,6 +1403,16 @@ export class Orchestrator {
       if (!this.flows) throw new Error('research is not wired');
       return this.flows.spawnResearch(binding, request);
     },
+    startImplementation: (binding, request) => {
+      this.assertOpen();
+      if (!this.flows) throw new Error('the assistant is not wired');
+      return this.flows.assistantTools.startImplementation(binding, request);
+    },
+    runStatus: (binding) => {
+      this.assertOpen();
+      if (!this.flows) throw new Error('the assistant is not wired');
+      return this.flows.assistantTools.runStatus(binding);
+    },
   };
 
   private leadTools(): NonNullable<Orchestrator['flows']>['leadTools'] {
@@ -1371,6 +1438,7 @@ export class Orchestrator {
     for (const attemptId of [...this.messageWaiters.keys()])
       this.rejectMessageWaiters(attemptId, 'engine shutting down');
     for (const loop of this.leadLoops.values()) loop.wake.resolve();
+    for (const loop of this.assistantLoops.values()) loop.wake.resolve();
     await Promise.allSettled([...this.live.values()].map((run) => run.close()));
     await Promise.race([Promise.allSettled([...this.jobs]), sleep(5_000)]);
     await this.tickChain.catch(() => undefined);

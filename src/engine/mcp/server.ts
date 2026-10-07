@@ -69,6 +69,27 @@ export interface AmendmentResult {
 
 export type TaskNodePatch = Partial<Omit<TaskNode, 'id'>>;
 
+/** `run_status` for the assistant. */
+export interface AssistantRunStatus {
+  runId: string;
+  title: string;
+  status: string;
+  paused: boolean;
+  plan: { version: number; approved: boolean } | null;
+  tasks: Array<{ nodeId: string; title: string; status: string; summary: string | null; error: string | null }>;
+  /** Open inbox items that wait for the human, one line each. */
+  waitingForHuman: string[];
+  prUrl: string | null;
+  error: string | null;
+}
+
+export interface StartImplementationRequest {
+  title: string;
+  brief: string;
+  /** Let the planner ask clarifying questions first (default true). */
+  clarify: boolean;
+}
+
 export interface SpawnResearchRequest {
   title: string;
   brief: string;
@@ -112,6 +133,12 @@ export interface McpHost {
   addTask(binding: McpBinding, node: TaskNode): AmendmentResult | Promise<AmendmentResult>;
   amendTask(binding: McpBinding, nodeId: string, patch: TaskNodePatch): AmendmentResult | Promise<AmendmentResult>;
   cancelTask(binding: McpBinding, nodeId: string, reason: string): AmendmentResult | Promise<AmendmentResult>;
+  /** Assistant tools (role `assistant`). */
+  startImplementation(
+    binding: McpBinding,
+    request: StartImplementationRequest,
+  ): { runId: string; status: string } | Promise<{ runId: string; status: string }>;
+  runStatus(binding: McpBinding): AssistantRunStatus | Promise<AssistantRunStatus>;
   /** Open a research agent as the caller's child; its report arrives later as a `report` message. */
   spawnResearch(
     binding: McpBinding,
@@ -250,6 +277,7 @@ function buildServer(binding: McpBinding, host: McpHost, log: Log): McpServer {
     registerMessaging(server, binding, host, guard);
   if (binding.role === 'lead') registerLeadTools(server, binding, host, guard);
   if (COORDINATOR_ROLES.has(binding.role)) registerResearch(server, binding, host, guard);
+  if (binding.role === 'assistant') registerAssistantTools(server, binding, host, guard);
 
   if (WRITE_ROLES.has(binding.role)) {
     server.registerTool(
@@ -396,6 +424,43 @@ function registerResearch(server: McpServer, binding: McpBinding, host: McpHost,
       async ({ title, brief, mode }: { title: string; brief: string; mode?: 'single' | 'team' }) =>
         host.spawnResearch(binding, { title, brief, mode: teamAllowed && mode === 'team' ? 'team' : 'single' }),
     ),
+  );
+}
+
+/** The assistant's own tools: start the work, see where it stands. */
+function registerAssistantTools(server: McpServer, binding: McpBinding, host: McpHost, guard: Guard): void {
+  server.registerTool(
+    'start_implementation',
+    {
+      description:
+        'Turn this conversation into work: the brief becomes the issue a planner plans from (the human signs the ' +
+        'plan off in the inbox; an implementation lead then coordinates the coders and reports to you). Write the ' +
+        'brief like a good issue: what and why, scope, constraints, decisions the human made here. Once per ' +
+        'conversation. Returns {runId, status}.',
+      inputSchema: {
+        title: z.string().min(1).max(120).describe('Short title of the work.'),
+        brief: z.string().min(1).describe('The issue text (markdown).'),
+        clarify: z
+          .boolean()
+          .optional()
+          .describe('Let the planner ask the human clarifying questions first (default true).'),
+      },
+    },
+    guard(
+      'start_implementation',
+      async ({ title, brief, clarify }: { title: string; brief: string; clarify?: boolean }) =>
+        host.startImplementation(binding, { title, brief, clarify: clarify !== false }),
+    ),
+  );
+  server.registerTool(
+    'run_status',
+    {
+      description:
+        'Where the work stands: run status, plan version and whether it is approved, every task with its status and ' +
+        'latest summary, what waits for the human in the inbox, the pull request if any.',
+      inputSchema: {},
+    },
+    guard('run_status', async () => host.runStatus(binding)),
   );
 }
 

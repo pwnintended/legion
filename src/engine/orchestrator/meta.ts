@@ -32,6 +32,11 @@ export interface RunMeta {
   leadSessionId: string | null;
   leadFailures: number;
   leadDisabled: boolean;
+  /** The assistant (`assistant.ts`): its current attempt and engine session, failures, and whether it was given up. */
+  assistantAttemptId: string | null;
+  assistantSessionId: string | null;
+  assistantFailures: number;
+  assistantDisabled: boolean;
   /** A plan version proposed by the lead that waits for, or just got, the human's answer. */
   amendment: {
     planId: string;
@@ -92,6 +97,10 @@ const RUN_DEFAULTS: RunMeta = {
   leadSessionId: null,
   leadFailures: 0,
   leadDisabled: false,
+  assistantAttemptId: null,
+  assistantSessionId: null,
+  assistantFailures: 0,
+  assistantDisabled: false,
   amendment: null,
 };
 

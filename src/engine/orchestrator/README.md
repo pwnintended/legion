@@ -20,6 +20,7 @@ applies it with CAS transitions through `Store`, runs git through `engine/git`, 
 | `recovery.ts` | crash recovery on engine start |
 | `lead.ts` | the implementation lead (§8.4): the per-run lead loop (open, wake with news, resume after a crash, give up) and its tools (`plan_status`, `add_task`, `amend_task`, `cancel_task`, amendment sign-off) |
 | `research.ts` | research agents (§8.5): `spawn_research` (caps, depth), the driver that posts the agent's `ResearchReport` to its parent |
+| `assistant.ts` | the assistant (§8.6): `runs.chat`, the per-run assistant loop (wakes on messages, status changes, inbox items), `start_implementation`, `run_status` |
 | `registry.ts` | `EngineRegistry` (Claude, Codex, fakes; probes, usability) |
 | `pr-host.ts` | `PrHost` (`ghPrHost` for the app, `FakePrHost` for tests and demo mode) |
 | `demo.ts` | the scripted agent of `LEGION_FAKE_ENGINES=1` |
@@ -28,6 +29,6 @@ applies it with CAS transitions through `Store`, runs git through `engine/git`, 
 | `test-harness.ts` | test-only: temp repo + bare origin, fake engines standing in for Claude/Codex, RPC client |
 
 Wiring is in `engine/index.ts` (`createOrchestrator`, MCP server, terminals, `recover`). Tests: `lifecycle.test.ts`
-(end to end on a real repo), `service.test.ts`, `messaging.test.ts` (agent hierarchy and mailbox), `lead.test.ts` (the implementation lead), `research.test.ts` (research agents), `accounting.test.ts`, `finish.test.ts` (plan annotations, PR status,
+(end to end on a real repo), `service.test.ts`, `messaging.test.ts` (agent hierarchy and mailbox), `lead.test.ts` (the implementation lead), `research.test.ts` (research agents), `assistant.test.ts` (the assistant), `accounting.test.ts`, `finish.test.ts` (plan annotations, PR status,
 archive, task reports, same-engine review, live engine settings), `demo.test.ts` (fake mode end to end); `run.live.test.ts` runs a tiny real run with
 `pnpm test:live` (Claude haiku coders, Codex low-effort reviewer, stops at `pr_ready`).

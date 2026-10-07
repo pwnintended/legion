@@ -29,6 +29,7 @@ function phases(run: Run, merged: number, total: number, planExists: boolean): P
     }));
   let list: Phase[];
   switch (run.status) {
+    case 'chatting':
     case 'draft':
     case 'clarifying':
     case 'planning':

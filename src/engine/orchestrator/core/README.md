@@ -131,3 +131,4 @@ may apply at once: `high` risk, or a write touch whose directory (`touchDirector
 `RESEARCH_ROLES` (researcher, research_lead), `RESEARCH_CAPS` (running research agents a parent may have: lead 3,
 research lead 4), `formatResearchReport(title, report)` → the markdown a parent reads (bounded to `REPORT_MAX_CHARS`).
 Prompts: `prompts/research.ts` (`buildResearcherPrompt`, `buildResearchLeadPrompt`).
+Assistant prompts: `prompts/assistant.ts` (`buildAssistantPrompt`, `buildAssistantWakePrompt`).

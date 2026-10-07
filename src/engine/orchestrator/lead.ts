@@ -104,7 +104,13 @@ export async function runLead(
         }
         o.store.markDelivered(queued.map((m) => m.id));
         const messages = renderMessages(queued.map((m) => messageLine(m, o.agentName(m.fromAttemptId))));
-        const prompt = buildLeadWakePrompt({ messages, changes, board: current, tools });
+        const prompt = buildLeadWakePrompt({
+          messages,
+          changes,
+          board: current,
+          tools,
+          parent: o.assistantAttemptId(runId) !== null,
+        });
         try {
           await session.session.send(prompt.prompt, 'next');
         } catch (error) {
@@ -158,14 +164,17 @@ async function openLead(
   if (!plan) return null;
   await o.waitForEngine(engine);
   const cwd = await ensureIntegrationWorktree(o, run);
+  const parentAttemptId = o.assistantAttemptId(run.id);
+  const parent = parentAttemptId !== null;
   const prompt = resumeSessionId
     ? buildLeadWakePrompt({
         messages: null,
         changes: ['Legion resumed your session.', ...changes],
         board: current,
         tools,
+        parent,
       })
-    : buildLeadPrompt({ issue: o.issue(run), planMarkdown: plan.markdown, nodes: plan.dag.nodes, tools });
+    : buildLeadPrompt({ issue: o.issue(run), planMarkdown: plan.markdown, nodes: plan.dag.nodes, tools, parent });
   try {
     const session = await o.openSession({
       run,
@@ -178,7 +187,7 @@ async function openLead(
       outputSchema: null,
       cwd,
       resumeSessionId,
-      parentAttemptId: null,
+      parentAttemptId,
       attachments: resumeSessionId ? null : o.runAttachments(run),
     });
     const previous = runMeta(o.store, run.id).leadAttemptId;

@@ -69,6 +69,7 @@ export const ROLE_PERMISSION_MODE: { readonly [R in Role]: PermissionProfile['mo
   lead: 'coordinate',
   researcher: 'read_only',
   research_lead: 'coordinate',
+  assistant: 'coordinate',
 };
 
 /** Roles whose profile includes the web tools. */
@@ -89,7 +90,7 @@ export function permissionProfileFor(role: Role, allowedCommands: readonly strin
  * `wait_for_reply`) even without a parent. A non-coordinator gets the tools only when it was opened with a
  * parent attempt.
  */
-export const COORDINATOR_ROLES: ReadonlySet<Role> = new Set<Role>(['lead', 'research_lead']);
+export const COORDINATOR_ROLES: ReadonlySet<Role> = new Set<Role>(['lead', 'research_lead', 'assistant']);
 
 export interface McpConnection {
   /** Legion MCP server URL, e.g. http://127.0.0.1:43123/mcp */

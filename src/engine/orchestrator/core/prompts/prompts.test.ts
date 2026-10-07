@@ -4,6 +4,8 @@ import { checkScope } from '../scope';
 import { makeNode } from '../testing';
 import {
   type AgentPrompt,
+  buildAssistantPrompt,
+  buildAssistantWakePrompt,
   buildClarifyPrompt,
   buildCoderPrompt,
   buildFinalizerPrompt,
@@ -442,5 +444,27 @@ describe('research prompts', () => {
     expect(team.prompt).toContain('at most 4 independent sub-questions');
     expect(team.prompt).toContain('`spawn_research`');
     expect(team.prompt).toContain('`wait_for_reply`');
+  });
+});
+
+describe('assistant prompts', () => {
+  it("open with the human's message and wake with news", () => {
+    const first = buildAssistantPrompt({ message: 'Add CSV export.', repo, projectName: 'app' });
+    expect(first.systemPrompt).toContain('works on the repository "app"');
+    expect(first.systemPrompt).toContain('`start_implementation`');
+    expect(first.systemPrompt).toContain('Never call `wait_for_reply`');
+    expect(first.prompt.startsWith('Add CSV export.')).toBe(true);
+    const wake = buildAssistantWakePrompt(
+      { messages: null, changes: ['run status planning → awaiting_approval'] },
+      'app',
+    );
+    expect(wake.prompt).toContain('Update from Legion (not from the human).');
+    expect(wake.prompt).toContain('- run status planning → awaiting_approval');
+  });
+
+  it('points the lead at its parent when it has one', () => {
+    const base = { issue, planMarkdown: '# Plan', nodes: [contracts] };
+    expect(buildLeadPrompt({ ...base, parent: true }).systemPrompt).toContain('your parent, the assistant');
+    expect(buildLeadPrompt(base).systemPrompt).toContain('`request_human_input`');
   });
 });

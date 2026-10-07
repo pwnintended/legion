@@ -83,6 +83,8 @@ export async function startHarness(options: {
   lead?: Script;
   /** Script for research agents (default: a report derived from the output schema). */
   research?: Script;
+  /** Script for the assistant (default: one short text turn). */
+  assistant?: Script;
 }): Promise<Harness> {
   const repo = await makeRepo({ 'README.md': '# fixture\n', ...options.files });
   const origin = await makeBare(repo.scratch);
@@ -101,13 +103,16 @@ export async function startHarness(options: {
 
   const leadScript: Script = options.lead ?? (() => [{ kind: 'text', text: 'Standing by.' }]);
   const researchScript: Script = options.research ?? (() => [{ kind: 'output', value: 'auto' }]);
+  const assistantScript: Script = options.assistant ?? (() => [{ kind: 'text', text: 'Hello.' }]);
   const boot = async (script: Script) => {
     const play = (ctx: FakeTurnContext, engine: EngineName) =>
       ctx.opts.role === 'lead'
         ? leadScript(ctx, engine)
-        : ctx.opts.role === 'researcher' || ctx.opts.role === 'research_lead'
-          ? researchScript(ctx, engine)
-          : script(ctx, engine);
+        : ctx.opts.role === 'assistant'
+          ? assistantScript(ctx, engine)
+          : ctx.opts.role === 'researcher' || ctx.opts.role === 'research_lead'
+            ? researchScript(ctx, engine)
+            : script(ctx, engine);
     const claude = new FakeEngine({ script: (ctx) => play(ctx, 'claude') });
     const codex = new FakeEngine({ script: (ctx) => play(ctx, 'codex') });
     const engine = await startEngine({

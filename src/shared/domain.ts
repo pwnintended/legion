@@ -37,6 +37,7 @@ export const ROLES = [
   'lead',
   'researcher',
   'research_lead',
+  'assistant',
 ] as const;
 export const RoleSchema = z.enum(ROLES);
 export type Role = z.infer<typeof RoleSchema>;
@@ -63,6 +64,7 @@ export function isTerminal<S extends string>(table: TransitionTable<S>, status: 
 }
 
 export const RUN_STATUSES = [
+  'chatting',
   'draft',
   'clarifying',
   'planning',
@@ -85,6 +87,8 @@ export type RunStatus = z.infer<typeof RunStatusSchema>;
  * - pr_ready: waiting for the human PR gate; `runs.createPr` pushes and opens the draft PR → done.
  */
 export const RUN_TRANSITIONS: TransitionTable<RunStatus> = {
+  // chatting: a conversation with the assistant (§8.6); `start_implementation` moves it on.
+  chatting: ['clarifying', 'planning', 'done', 'failed', 'cancelled'],
   draft: ['clarifying', 'planning', 'failed', 'cancelled'],
   clarifying: ['planning', 'failed', 'cancelled'],
   planning: ['clarifying', 'awaiting_approval', 'failed', 'cancelled'],
@@ -695,9 +699,14 @@ export const SettingsSchema = z.object({
     lead: RoleDefaultsSchema,
     researcher: RoleDefaultsSchema,
     research_lead: RoleDefaultsSchema,
+    assistant: RoleDefaultsSchema,
   }),
   lead: z.object({
     /** Open an implementation lead for every run once its plan is approved (`orchestrator/lead.ts`). */
+    enabled: z.boolean(),
+  }),
+  assistant: z.object({
+    /** The composer talks to an assistant (`runs.chat`) instead of starting the planner directly. */
     enabled: z.boolean(),
   }),
   budget: z.object({
@@ -737,8 +746,10 @@ export const DEFAULT_SETTINGS: Settings = {
     lead: roleDefaults('claude'),
     researcher: roleDefaults('claude'),
     research_lead: roleDefaults('claude'),
+    assistant: roleDefaults('claude'),
   },
   lead: { enabled: true },
+  assistant: { enabled: true },
   budget: { perRunUsd: null, warnAtPct: 80 },
   limits: { maxRetries: 2, maxFixRounds: 2, maxResolverAttempts: 2 },
   engines: {
@@ -774,9 +785,11 @@ export const SettingsPatchSchema = z
         lead: RoleDefaultsPatchSchema,
         researcher: RoleDefaultsPatchSchema,
         research_lead: RoleDefaultsPatchSchema,
+        assistant: RoleDefaultsPatchSchema,
       })
       .partial(),
     lead: SettingsSchema.shape.lead.partial(),
+    assistant: SettingsSchema.shape.assistant.partial(),
     budget: SettingsSchema.shape.budget.partial(),
     limits: SettingsSchema.shape.limits.partial(),
     engines: z

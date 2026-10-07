@@ -3,6 +3,7 @@
  * (`engine/index.ts`) adds the MCP server, terminals, RPC handlers and recovery. See README.md.
  */
 import type { PtyProcess, PtySpawn } from '../pty';
+import { assistantEnabled, runAssistant, runStatus, startImplementation } from './assistant';
 import { PR_POLL_MS, startPrPolling } from './cleanup';
 import { finalize } from './finalize';
 import { addTask, amendTask, cancelTask, leadEnabled, planStatus, runLead } from './lead';
@@ -12,6 +13,7 @@ import { spawnResearch } from './research';
 import { driveTask } from './tasks';
 
 export * from './actions';
+export { assistantEnabled, createChat, MAX_ASSISTANT_FAILURES, runAssistant } from './assistant';
 export { archiveRun, PR_POLL_MS, refreshPr, startPrPolling } from './cleanup';
 export { DEMO_PLAN, demoScript } from './demo';
 export { getDiff } from './diff';
@@ -50,6 +52,12 @@ export function createOrchestrator(options: OrchestratorOptions): Orchestrator {
       cancelTask: (binding, nodeId, reason) => cancelTask(o, binding, nodeId, reason),
     },
     spawnResearch: (binding, request) => spawnResearch(o, binding, request),
+    assistant: (runId, loop) => runAssistant(o, runId, loop),
+    assistantEnabled: (runId) => assistantEnabled(o, runId),
+    assistantTools: {
+      startImplementation: (binding, request) => startImplementation(o, binding, request),
+      runStatus: (binding) => runStatus(o, binding),
+    },
   };
   const pollMs = options.prPollMs ?? PR_POLL_MS;
   if (pollMs > 0) o.disposers.push(startPrPolling(o, pollMs));

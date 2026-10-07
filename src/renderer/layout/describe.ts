@@ -119,7 +119,8 @@ export function displayEngine(
     case 'reviewer':
       return otherEngine(planned ?? fallback);
     case 'planner':
-    case 'lead': {
+    case 'lead':
+    case 'assistant': {
       const engine = state.runs[attempt.runId]?.plannerEngine;
       return engine && engine !== 'fake' ? engine : configured('planner', 'claude');
     }

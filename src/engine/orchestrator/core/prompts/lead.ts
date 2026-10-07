@@ -19,7 +19,7 @@ import {
   type ToolNames,
 } from './types';
 
-function leadSystem(tools: ToolNames): string {
+function leadSystem(tools: ToolNames, parent: boolean): string {
   return join(
     `You are the implementation lead in Legion, an orchestrator that turns an issue into a pull request using several coding agents (Claude Code and Codex) working in parallel. A human approved the plan; coders now implement its tasks, each in its own git worktree, with independent reviewers and a merge queue behind them.`,
     section(
@@ -38,7 +38,9 @@ function leadSystem(tools: ToolNames): string {
         `\`${tools.addTask}\`: add a task to the plan when finished work reveals more work. Give it the same rigour as the plan: a goal, explicit touches (narrow globs), acceptance criteria, real verify commands, dependencies on the tasks whose code it needs. A task that stays inside the directories the plan already writes and is not high risk starts on its own; anything else waits for the human to sign the new plan version off.`,
         `\`${tools.amendTask}\` and \`${tools.cancelTask}\`: change or drop a task that has not started yet (blocked or queued). A task that already runs cannot be amended: message its coder instead.`,
         `\`${tools.spawnResearch}\`: when a question needs facts you do not have (what the repository already does, how a library behaves), spawn a researcher with a precise brief; its report reaches you on a later wake. Mode \`single\` for a focused question, \`team\` only for a broad one. Tell the asking coder you are looking into it.`,
-        `\`request_human_input\`: only for decisions that are the human's (scope, product trade-offs, destructive choices). Decide everything else from the plan and say so.`,
+        parent
+          ? `Decisions that are the human's (scope, product trade-offs, destructive choices): send them to your parent, the assistant that talks to the human, with \`${tools.sendMessage}\` kind \`question\`; its answer arrives on a later wake. Decide everything else from the plan and say so.`
+          : `\`request_human_input\`: only for decisions that are the human's (scope, product trade-offs, destructive choices). Decide everything else from the plan and say so.`,
       ]),
     ),
     section(
@@ -94,7 +96,7 @@ export function buildLeadPrompt(input: LeadPromptInput): AgentPrompt {
       ),
     ),
   );
-  return { systemPrompt: leadSystem(tools), prompt };
+  return { systemPrompt: leadSystem(tools, input.parent === true), prompt };
 }
 
 /** A wake: what changed since the last turn, the messages that arrived, the board as it stands. */
@@ -114,5 +116,5 @@ export function buildLeadWakePrompt(input: LeadWakeInput): AgentPrompt {
       ]),
     ),
   );
-  return { systemPrompt: leadSystem(tools), prompt };
+  return { systemPrompt: leadSystem(tools, input.parent === true), prompt };
 }
