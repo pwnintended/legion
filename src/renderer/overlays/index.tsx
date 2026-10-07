@@ -6,6 +6,7 @@ import { AnimatePresence, motion } from 'motion/react';
 import { useLayoutEffect, useRef } from 'react';
 import { useUi } from '../app/hooks';
 import type { Overlay } from '../app/store';
+import { PreviewHost } from '../attachments/Attachments';
 import { ComposerOverlay } from './Composer';
 import { ConfirmHost } from './Confirm';
 import { InboxOverlay } from './Inbox';
@@ -52,6 +53,7 @@ export default function Overlays() {
   return (
     <>
       <AnimatePresence>{View && overlay ? <View key={overlay} /> : null}</AnimatePresence>
+      <PreviewHost />
       <ConfirmHost />
       <Toasts />
     </>

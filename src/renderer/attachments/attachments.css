@@ -1,0 +1,485 @@
+/*
+ * Attachments: chips (image thumbnails, file chips), the tray with inline errors, the Attach button and the
+ * preview (lightbox for images, a text viewer for text files).
+ */
+
+/* Tray ------------------------------------------------------------------------------------- */
+.at-tray {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+.at-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 0;
+  padding: 2px 0 0;
+  list-style: none;
+}
+.at-list-sm {
+  gap: 6px;
+  padding: 0;
+}
+
+/* Chips ------------------------------------------------------------------------------------ */
+.at-chip {
+  --at-h: 56px;
+  position: relative;
+  flex: none;
+  animation: at-in 0.18s var(--ease-out) both;
+}
+.at-sm {
+  --at-h: 40px;
+}
+.at-open {
+  all: unset;
+  box-sizing: border-box;
+  position: relative;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  height: var(--at-h);
+  border-radius: 9px;
+  background: var(--mantle);
+  border: 1px solid var(--surface0);
+  overflow: hidden;
+  transition:
+    border-color 0.15s,
+    background-color 0.15s;
+}
+.at-open:hover {
+  border-color: var(--surface2);
+}
+.at-open:focus-visible {
+  outline: 2px solid var(--mauve);
+  outline-offset: 2px;
+}
+.at-open:disabled {
+  cursor: progress;
+}
+.at-img .at-open {
+  width: var(--at-h);
+  justify-content: center;
+}
+.at-thumb {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+.at-thumb-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--overlay0);
+}
+.at-file .at-open {
+  max-width: 232px;
+  padding: 0 12px 0 8px;
+}
+.at-sm.at-file .at-open {
+  max-width: 200px;
+  padding: 0 10px 0 6px;
+  gap: 7px;
+}
+.at-badge {
+  position: relative;
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 38px;
+  height: 40px;
+  color: var(--at-tone);
+}
+.at-sm .at-badge {
+  width: 26px;
+  height: 28px;
+}
+.at-badge-label {
+  position: absolute;
+  left: 50%;
+  bottom: 4px;
+  translate: -50% 0;
+  padding: 0 3px;
+  border-radius: 3px;
+  background: var(--at-tone);
+  color: var(--crust);
+  font-family: var(--font-code);
+  font-size: 8.5px;
+  font-weight: 700;
+  line-height: 12px;
+  letter-spacing: 0.02em;
+}
+.at-sm .at-badge-label {
+  bottom: 2px;
+  font-size: 7px;
+  line-height: 10px;
+}
+.at-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.at-name {
+  font-size: 12.5px;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.at-sm .at-name {
+  font-size: 12px;
+}
+.at-meta {
+  font-family: var(--font-code);
+  font-size: 10.5px;
+  color: var(--overlay2);
+}
+
+/* Uploading: dimmed, with an indeterminate bar along the bottom edge. */
+.at-chip[data-busy] .at-open {
+  border-color: var(--surface0);
+}
+.at-chip[data-busy] .at-thumb,
+.at-chip[data-busy] .at-badge,
+.at-chip[data-busy] .at-name {
+  opacity: 0.55;
+}
+.at-chip[data-busy] .at-open::after {
+  content: "";
+  position: absolute;
+  left: 6px;
+  right: 6px;
+  bottom: 4px;
+  height: 2px;
+  border-radius: 2px;
+  background: linear-gradient(90deg, transparent 0%, var(--mauve) 45%, var(--mauve) 55%, transparent 100%);
+  background-size: 50% 100%;
+  background-repeat: no-repeat;
+  animation: at-busy 1.1s ease-in-out infinite;
+}
+
+/* Remove: a small round button on the corner, shown on hover / keyboard focus. */
+.at-x {
+  all: unset;
+  box-sizing: border-box;
+  cursor: pointer;
+  position: absolute;
+  top: -6px;
+  right: -6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: var(--surface1);
+  color: var(--text);
+  box-shadow: 0 0 0 2px var(--base);
+  opacity: 0;
+  transform: scale(0.85);
+  transition:
+    opacity 0.12s,
+    transform 0.12s var(--ease-out),
+    background-color 0.12s;
+}
+.at-chip:hover .at-x,
+.at-chip:focus-within .at-x {
+  opacity: 1;
+  transform: none;
+}
+.at-x:hover {
+  background: var(--red);
+  color: var(--crust);
+}
+
+/* Errors ----------------------------------------------------------------------------------- */
+.at-errors {
+  display: flex;
+  align-items: flex-start;
+  gap: 7px;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--red);
+  animation: at-in 0.16s var(--ease-out) both;
+}
+.at-errors svg {
+  margin-top: 2px;
+}
+.at-errors-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  flex: 1;
+}
+.at-errors-x {
+  all: unset;
+  cursor: pointer;
+  display: flex;
+  padding: 2px;
+  border-radius: 4px;
+  color: var(--overlay2);
+}
+.at-errors-x:hover {
+  color: var(--text);
+  background: var(--surface0);
+}
+.at-errors-x:focus-visible {
+  outline: 2px solid var(--mauve);
+}
+
+/* Attach button ---------------------------------------------------------------------------- */
+.at-attach {
+  all: unset;
+  box-sizing: border-box;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 24px;
+  padding: 0 8px;
+  border-radius: 6px;
+  font-size: 12px;
+  color: var(--overlay2);
+  transition:
+    background-color 0.15s,
+    color 0.15s;
+}
+.at-attach:hover {
+  background: var(--surface0);
+  color: var(--text);
+}
+.at-attach:focus-visible {
+  outline: 2px solid var(--mauve);
+  outline-offset: 1px;
+}
+.at-attach-icon {
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  justify-content: center;
+}
+
+/* Drop hint shared by the composer, the steer bar and the clarify form. */
+.at-drop {
+  position: absolute;
+  inset: 6px;
+  z-index: 3;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  border-radius: 10px;
+  border: 1.5px dashed color-mix(in srgb, var(--mauve) 75%, transparent);
+  background: color-mix(in srgb, var(--base) 86%, var(--mauve));
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 500;
+  pointer-events: none;
+  animation: at-in 0.14s var(--ease-out) both;
+}
+.at-drop svg {
+  color: var(--mauve);
+}
+
+/* Preview ---------------------------------------------------------------------------------- */
+.at-lb {
+  position: fixed;
+  inset: 0;
+  z-index: 75;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 48px 32px;
+}
+.at-lb-scrim {
+  all: unset;
+  position: absolute;
+  inset: 0;
+  background: color-mix(in srgb, var(--crust) 78%, transparent);
+  backdrop-filter: blur(6px);
+}
+.at-lb-panel {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  max-width: 100%;
+  max-height: 100%;
+  min-width: 0;
+  min-height: 0;
+  border-radius: 14px;
+  background: var(--base);
+  border: 1px solid var(--surface0);
+  box-shadow: 0 24px 64px color-mix(in srgb, var(--shadow) 55%, transparent);
+  overflow: hidden;
+}
+.at-lb-image {
+  background: var(--mantle);
+}
+.at-lb-text {
+  width: min(880px, 100%);
+  max-height: min(760px, 100%);
+}
+.at-lb-card {
+  width: min(460px, 100%);
+}
+.at-lb-head {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  padding: 10px 10px 10px 14px;
+  border-bottom: 1px solid var(--hairline);
+}
+.at-badge-lg {
+  width: 34px;
+  height: 38px;
+}
+.at-lb-title {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  flex: 1;
+}
+.at-lb-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.at-lb-meta {
+  font-family: var(--font-code);
+  font-size: 11px;
+  color: var(--overlay2);
+}
+.at-lb-nav {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+.at-lb-count {
+  min-width: 42px;
+  text-align: center;
+  font-family: var(--font-code);
+  font-size: 11px;
+  color: var(--subtext0);
+}
+.at-lb-body {
+  position: relative;
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+}
+.at-lb-img {
+  display: block;
+  /* Natural size, scaled down to the window (minus the header and the margins). */
+  max-width: min(1280px, calc(100vw - 66px));
+  max-height: calc(100vh - 96px - 58px);
+  object-fit: contain;
+  margin: 0 auto;
+  background-image:
+    linear-gradient(45deg, var(--surface0) 25%, transparent 25%),
+    linear-gradient(-45deg, var(--surface0) 25%, transparent 25%),
+    linear-gradient(45deg, transparent 75%, var(--surface0) 75%),
+    linear-gradient(-45deg, transparent 75%, var(--surface0) 75%);
+  background-size: 16px 16px;
+  background-position:
+    0 0,
+    0 8px,
+    8px -8px,
+    -8px 0;
+}
+.at-lb-note {
+  padding: 22px 18px 24px;
+  font-size: 12.5px;
+  line-height: 1.55;
+  color: var(--subtext0);
+}
+.at-lb-error {
+  color: var(--red);
+}
+.at-text-view {
+  flex: 1;
+  min-height: 160px;
+  overflow: auto;
+  background: var(--mantle);
+}
+.at-text-view:focus-visible {
+  outline: none;
+  box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--mauve) 60%, transparent);
+}
+.at-lines {
+  margin: 0;
+  padding: 12px 18px 16px 0;
+  list-style: none;
+  counter-reset: line;
+  font-family: var(--font-code);
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--text);
+  white-space: pre;
+  tab-size: 2;
+}
+.at-lines li {
+  counter-increment: line;
+  min-height: 1.6em;
+}
+.at-lines li::before {
+  content: counter(line);
+  display: inline-block;
+  box-sizing: content-box;
+  width: var(--at-gutter, 3ch);
+  margin-right: 14px;
+  padding: 0 12px 0 16px;
+  border-right: 1px solid var(--hairline);
+  text-align: right;
+  color: var(--overlay0);
+  user-select: none;
+  position: sticky;
+  left: 0;
+  background: var(--mantle);
+}
+.at-lb-cut {
+  position: sticky;
+  left: 0;
+  padding: 10px 18px 14px;
+  font-size: 12px;
+  color: var(--overlay2);
+  border-top: 1px solid var(--hairline);
+}
+
+@keyframes at-in {
+  from {
+    opacity: 0;
+    transform: translateY(3px) scale(0.98);
+  }
+}
+@keyframes at-busy {
+  from {
+    background-position: -100% 0;
+  }
+  to {
+    background-position: 200% 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .at-chip,
+  .at-errors,
+  .at-drop {
+    animation: none;
+  }
+  .at-chip[data-busy] .at-open::after {
+    animation-duration: 2.4s;
+  }
+}

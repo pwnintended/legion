@@ -14,6 +14,18 @@ import { useActivity, useData, useTask, useTaskNode, useTranscript } from '../..
 import { prefersReducedMotion } from '../../app/prefs';
 import { dataStore } from '../../app/store';
 import { getSync } from '../../app/sync';
+import {
+  AttachButton,
+  AttachmentTray,
+  attachShortcut,
+  chipOfDraft,
+  createDraft,
+  pasteInto,
+  splitDrop,
+  useDraft,
+  useFileDrop,
+} from '../../attachments/Attachments';
+import type { AttachmentDraft } from '../../attachments/model';
 import { Icon } from '../../chrome/icons';
 import { Chip } from '../../chrome/ui';
 import { displayEngine, formatCost, formatTokens } from '../../layout/describe';
@@ -544,6 +556,20 @@ function NotStarted({ node, status }: { node: TaskNode | null; status: string | 
   );
 }
 
+/** Steer drafts per attempt: attachments wait in the bar until sent (or the attempt ends). */
+const steerDrafts = new Map<string, AttachmentDraft>();
+function steerDraft(attemptId: string): AttachmentDraft {
+  let draft = steerDrafts.get(attemptId);
+  if (!draft) {
+    draft = createDraft();
+    steerDrafts.set(attemptId, draft);
+  }
+  return draft;
+}
+
+/** Sent with attachments but no words. */
+export const ATTACHMENTS_ONLY_TEXT = 'See the attached files.';
+
 function SteerBar({
   attempt,
   label,
@@ -556,57 +582,82 @@ function SteerBar({
   onSent: () => void;
 }) {
   const [text, setText] = useState('');
+  const inputRef = useRef<HTMLInputElement>(null);
+  const draft = steerDraft(attempt.id);
+  const { items } = useDraft(draft);
+  const uploading = items.some((i) => i.status === 'uploading');
+  const drop = useFileDrop((data) => {
+    const { folders, files } = splitDrop(data);
+    if (folders.length) draft.report("Folders can't be attached. Drop files instead.");
+    if (files.length) void draft.addFiles(files);
+  }, running);
   const inputId = `steer-${attempt.id}`;
   const send = (priority: 'now' | 'next') => {
     const value = text.trim();
-    if (!value || !running) return;
+    if ((!value && items.length === 0) || !running || uploading) return;
     setText('');
-    void steer(attempt.id, value, priority);
+    const sent = draft.take().map(chipOfDraft);
+    void steer(attempt.id, value || ATTACHMENTS_ONLY_TEXT, priority, sent);
     onSent();
   };
   return (
     <form
       className="ss-steer"
+      data-has-attachments={items.length > 0 || undefined}
+      {...drop.handlers}
       onSubmit={(event) => {
         event.preventDefault();
         send('next');
       }}
     >
-      <label className="sr-only" htmlFor={inputId}>
-        Message {label}
-      </label>
-      <input
-        id={inputId}
-        className="ss-input"
-        value={text}
-        disabled={!running}
-        placeholder={running ? `Steer ${label}…` : `${label} is not running`}
-        autoComplete="off"
-        spellCheck={false}
-        onChange={(event) => setText(event.target.value)}
-        onKeyDown={(event) => {
-          if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) {
-            event.preventDefault();
-            send('now');
-          }
-        }}
-      />
-      {running ? (
-        <>
-          <span className="ss-keys" aria-hidden="true">
-            <span className="kbd">⏎ queue</span>
-            <span className="kbd">⌘⏎ now</span>
-          </span>
-          <button
-            type="button"
-            className="btn btn-ghost btn-icon"
-            aria-label="Interrupt"
-            title="Interrupt the current turn"
-            onClick={() => void interrupt(attempt.id)}
-          >
-            <Glyph name="stop" size={11} fill="currentColor" strokeWidth={1.5} />
-          </button>
-        </>
+      {running ? <AttachmentTray draft={draft} size="sm" returnFocus={() => inputRef.current?.focus()} /> : null}
+      <div className="ss-steer-row">
+        <label className="sr-only" htmlFor={inputId}>
+          Message {label}
+        </label>
+        {running ? <AttachButton draft={draft} testId="steer-attach" /> : null}
+        <input
+          ref={inputRef}
+          id={inputId}
+          className="ss-input"
+          value={text}
+          disabled={!running}
+          placeholder={running ? `Steer ${label}…` : `${label} is not running`}
+          autoComplete="off"
+          spellCheck={false}
+          onChange={(event) => setText(event.target.value)}
+          onPaste={(event) => void pasteInto(draft, event)}
+          onKeyDown={(event) => {
+            if (attachShortcut(draft, event)) return;
+            if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) {
+              event.preventDefault();
+              send('now');
+            }
+          }}
+        />
+        {running ? (
+          <>
+            <span className="ss-keys" aria-hidden="true">
+              <span className="kbd">⏎ queue</span>
+              <span className="kbd">⌘⏎ now</span>
+            </span>
+            <button
+              type="button"
+              className="btn btn-ghost btn-icon"
+              aria-label="Interrupt"
+              title="Interrupt the current turn"
+              onClick={() => void interrupt(attempt.id)}
+            >
+              <Glyph name="stop" size={11} fill="currentColor" strokeWidth={1.5} />
+            </button>
+          </>
+        ) : null}
+      </div>
+      {drop.dragging ? (
+        <div className="at-drop">
+          <Icon name="paperclip" size={16} />
+          Drop to send with your next message
+        </div>
       ) : null}
     </form>
   );

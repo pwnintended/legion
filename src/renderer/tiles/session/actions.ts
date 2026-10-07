@@ -3,12 +3,14 @@
  * interrupting, taking over, opening a task's diff. Small external stores track in-flight state so a decision
  * made by keyboard (`a`/`A`/`d`) shows the same feedback as a click.
  */
+
 import type { ApprovalDecision, Attempt, InboxItemOf, Task } from '@shared/domain';
 import { useSyncExternalStore } from 'react';
 import { attemptsOfRun, type DataState, openInbox } from '../../app/data';
 import { rpc } from '../../app/hooks';
 import { itemResolved, whenData } from '../../app/pending';
 import { actions, dataStore, uiStore } from '../../app/store';
+import type { ChipData } from '../../attachments/Attachments';
 import {
   allocateId,
   allTiles,
@@ -149,6 +151,8 @@ export function resolveSessionAttempt(
 export interface SentMessage {
   id: number;
   text: string;
+  /** Files sent with the message (thumbnails stay with it). */
+  attachments: ChipData[];
   priority: 'now' | 'next';
   status: 'sending' | 'sent' | 'error';
   error: string | null;
@@ -161,9 +165,14 @@ const NO_SENT: SentMessage[] = [];
 
 export const useSentMessages = (attemptId: string | null | undefined) => useMapStore(sentStore, attemptId) ?? NO_SENT;
 
-export async function steer(attemptId: string, text: string, priority: 'now' | 'next'): Promise<void> {
+export async function steer(
+  attemptId: string,
+  text: string,
+  priority: 'now' | 'next',
+  attachments: ChipData[] = [],
+): Promise<void> {
   const id = ++sentId;
-  const message: SentMessage = { id, text, priority, status: 'sending', error: null, ts: Date.now() };
+  const message: SentMessage = { id, text, attachments, priority, status: 'sending', error: null, ts: Date.now() };
   const update = (patch: Partial<SentMessage>) =>
     sentStore.set(
       attemptId,
@@ -171,7 +180,8 @@ export async function steer(attemptId: string, text: string, priority: 'now' | '
     );
   sentStore.set(attemptId, [...(sentStore.get(attemptId) ?? []), message]);
   try {
-    await rpc('sessions.send', { attemptId, text, priority });
+    const attachmentIds = attachments.flatMap((a) => (a.ref ? [a.ref.id] : []));
+    await rpc('sessions.send', { attemptId, text, priority, ...(attachmentIds.length ? { attachmentIds } : {}) });
     update({ status: 'sent' });
   } catch (error) {
     update({ status: 'error', error: errorMessage(error) });
