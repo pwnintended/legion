@@ -26,7 +26,10 @@ export const terminalTheme: ITheme = {
   brightWhite: '#a6adc8',
 };
 
-/** Catppuccin Latte for xterm. */
+/**
+ * Catppuccin Latte for xterm. xterm paints on a canvas and can't read CSS variables, so both flavours are literal
+ * hexes here (the one place outside theme.css), kept to the stock Catppuccin terminal spec.
+ */
 export const terminalThemeLatte: ITheme = {
   background: '#eff1f5',
   foreground: '#4c4f69',

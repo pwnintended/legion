@@ -130,13 +130,8 @@ function RailRun({ run, index, active }: { run: Run; index: number | null; activ
         <span className="flex min-w-0 flex-1 flex-col gap-[2px]">
           <span className="flex min-w-0 items-center gap-1.5">
             <span className="truncate text-[12.5px] font-medium">{run.title}</span>
-            {stats.urgent > 0 ? (
-              <span className="ml-auto flex-none" title={`${stats.urgent} waiting for you`}>
-                <Dot color="var(--peach)" live />
-              </span>
-            ) : null}
           </span>
-          <span className="flex items-center gap-1.5 text-[11px]" style={{ color: toneColor(line.tone) }}>
+          <span className="flex min-w-0 items-center gap-1.5 text-[11px]" style={{ color: toneColor(line.tone) }}>
             <Dot color={toneColor(line.tone)} live={line.live} />
             <span className={line.tone === 'idle' ? 'muted truncate' : 'truncate'}>
               {archived ? `archived · ${line.text}` : line.text}
@@ -257,13 +252,15 @@ function ProjectGroup({
             )}
           </span>
           <span className="rp-badges">
-            {urgent > 0 ? (
-              <span className="rp-urgent" title={`${urgent} waiting for you`}>
-                <Dot color="var(--peach)" live />
-              </span>
-            ) : running > 0 ? (
+            {running > 0 ? (
               <span className="rp-count mono" title={`${running} active run${running === 1 ? '' : 's'}`}>
                 {running}
+              </span>
+            ) : null}
+            {urgent > 0 ? (
+              <span className="rp-urgent" title={`${urgent} waiting for you`}>
+                <Dot color="var(--peach)" />
+                <span className="sr-only">{`${urgent} waiting for you`}</span>
               </span>
             ) : null}
           </span>

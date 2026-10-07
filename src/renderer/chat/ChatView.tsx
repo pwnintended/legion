@@ -8,12 +8,14 @@ import type { Attempt, Run } from '@shared/domain';
 import { AnimatePresence, motion } from 'motion/react';
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useShallow } from 'zustand/react/shallow';
+import { runPr } from '../app/compat';
 import {
   attemptsOfRun,
   latestPlan,
   mergesOfRun,
   messagesOfRun,
   presentationsOfRun,
+  runCost,
   tasksOfRun,
   transcriptEntries,
 } from '../app/data';
@@ -22,7 +24,8 @@ import { useReducedMotionPref } from '../app/prefs';
 import { actions, jumpToNextDecision } from '../app/store';
 import { ChipList, chipOfRef } from '../attachments/Attachments';
 import { Icon } from '../chrome/icons';
-import { formatClock } from '../layout/describe';
+import { Chip } from '../chrome/ui';
+import { formatClock, formatCost, formatDuration } from '../layout/describe';
 import { useSentMessages } from '../tiles/session/actions';
 import { Markdown } from '../tiles/session/Markdown';
 import '../tiles/session/session.css';
@@ -43,6 +46,9 @@ import {
 import './chat.css';
 
 const EMPTY: never[] = [];
+
+/** The last `chatFocus` request brought into view; kept across remounts so a returning view does not replay it. */
+let consumedFocus = 0;
 
 /** Keeps an assistant attempt's transcript loaded while the conversation is on screen. */
 function KeepTranscript({ attemptId }: { attemptId: string }) {
@@ -106,6 +112,7 @@ function useThreadOf(run: Run) {
 
 /** Why the human cannot reply right now (null = they can). */
 function closedReason(run: Run, live: Attempt | null, hadAssistant: boolean): string | null {
+  if (run.archived) return 'This run is archived: its worktrees and branches are cleaned up. Start a new one with ⌘N.';
   if (run.status === 'done') return 'This run is finished. Start a new one with ⌘N.';
   if (run.status === 'cancelled') return 'This run was stopped.';
   if (run.status === 'failed') return 'This run failed. Its agents are still in the Agents view (⌘E).';
@@ -172,17 +179,22 @@ function Conversation({ run }: { run: Run }) {
   // thread may still be loading around it, so it is kept in view while the feed settles (see the observer).
   // biome-ignore lint/correctness/useExhaustiveDependencies: re-run when the thread renders the target
   useEffect(() => {
-    if (!chatFocus) return;
+    if (!chatFocus || chatFocus.nonce === consumedFocus) return;
     const target = scrollRef.current?.querySelector<HTMLElement>(`[data-thread-key="${CSS.escape(chatFocus.itemId)}"]`);
     if (!target) return;
+    consumedFocus = chatFocus.nonce;
     pinnedRef.current = false;
     setPinned(false);
     focusing.current = { key: chatFocus.itemId, until: Date.now() + 2500 };
     target.scrollIntoView({ block: 'center', behavior: reduced ? 'auto' : 'smooth' });
     setHighlight(chatFocus.itemId);
+  }, [chatFocus, thread.length]);
+
+  useEffect(() => {
+    if (!highlight) return;
     const timer = setTimeout(() => setHighlight(null), 1800);
     return () => clearTimeout(timer);
-  }, [chatFocus, thread.length]);
+  }, [highlight]);
 
   return (
     <div className="ch" data-testid="chat" data-run={run.id}>
@@ -207,6 +219,10 @@ function Conversation({ run }: { run: Run }) {
         }}
         onScroll={(event) => {
           const el = event.currentTarget;
+          // A jump to a decision scrolls on its own; until it settles (or the reader takes over), passing near
+          // the bottom must not pin the view and drag it back down.
+          const focus = focusing.current;
+          if (focus && Date.now() < focus.until && Date.now() - intent.current >= 400) return;
           const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 72;
           if (atBottom && !pinnedRef.current) {
             pinnedRef.current = true;
@@ -220,8 +236,10 @@ function Conversation({ run }: { run: Run }) {
         <div className="ch-feed" ref={feedRef}>
           <header className="ch-head">
             <h1 className="ch-title">{run.title}</h1>
-            <p className="ch-sub mono">
-              {run.repoPath.split('/').filter(Boolean).at(-1)} · {run.baseRef} · started {formatClock(run.createdAt)}
+            <p className="ch-sub">
+              <span className="mono">{run.repoPath.split('/').filter(Boolean).at(-1)}</span> ·{' '}
+              <span className="mono">{run.baseRef}</span> · started{' '}
+              <span className="mono">{formatClock(run.createdAt)}</span>
             </p>
           </header>
           {loading && thread.length === 0 ? (
@@ -246,6 +264,7 @@ function Conversation({ run }: { run: Run }) {
               </li>
             ))}
           </ol>
+          {!loading ? <Outcome run={run} /> : null}
           {busy ? <Typing /> : null}
         </div>
       </div>
@@ -330,6 +349,92 @@ function Row({ item }: { item: ThreadItem }) {
         </div>
       );
   }
+}
+
+const OUTCOME_TITLE: Partial<Record<Run['status'], string>> = {
+  done: 'Finished',
+  failed: 'Failed',
+  cancelled: 'Stopped',
+};
+
+/** The end of a finished run, in one place: where the change went, how much of the plan landed, what it cost. */
+function Outcome({ run }: { run: Run }) {
+  const counts = useData(
+    useShallow((s) => {
+      const tasks = tasksOfRun(s.tasks, run.id);
+      return {
+        merged: tasks.filter((t) => t.status === 'merged').length,
+        total: tasks.length,
+        cost: runCost(s, run.id),
+      };
+    }),
+  );
+  const title = OUTCOME_TITLE[run.status];
+  if (!title) return null;
+  const pr = runPr(run);
+  const prWord = pr
+    ? pr.state === 'merged'
+      ? 'merged'
+      : pr.state === 'closed'
+        ? 'closed'
+        : pr.isDraft
+          ? 'draft'
+          : 'open'
+    : null;
+  return (
+    <section className="ch-outcome" data-status={run.status} aria-label={`Run ${title.toLowerCase()}`}>
+      <h2 className="ch-outcome-title">
+        <span
+          className="ch-receipt-mark"
+          data-tone={run.status === 'done' ? 'ok' : run.status === 'failed' ? 'bad' : 'muted'}
+          aria-hidden="true"
+        >
+          <Icon
+            name={run.status === 'done' ? 'check' : run.status === 'failed' ? 'close' : 'stop'}
+            size={11}
+            strokeWidth={2.6}
+          />
+        </span>
+        {title}
+        {run.archived ? <Chip tone="idle">archived</Chip> : null}
+      </h2>
+      <dl className="ch-outcome-facts">
+        {pr ? (
+          <div>
+            <dt>Pull request</dt>
+            <dd>
+              <a
+                href={pr.url}
+                onClick={(event) => {
+                  event.preventDefault();
+                  openExternal(pr.url);
+                }}
+              >
+                <span className="mono">#{pr.number ?? '?'}</span> {prWord}
+                <Icon name="external" size={11} />
+              </a>
+            </dd>
+          </div>
+        ) : null}
+        {counts.total ? (
+          <div>
+            <dt>Tasks merged</dt>
+            <dd className="mono">
+              {counts.merged}/{counts.total}
+            </dd>
+          </div>
+        ) : null}
+        <div>
+          <dt>Spent</dt>
+          <dd className="mono">{formatCost(counts.cost)}</dd>
+        </div>
+        <div>
+          <dt>Took</dt>
+          <dd className="mono">{formatDuration(run.updatedAt - run.createdAt)}</dd>
+        </div>
+      </dl>
+    </section>
+  );
 }
 
 function openExternal(href: string): void {
@@ -434,16 +539,23 @@ function Update({ item }: { item: Extract<ThreadItem, { kind: 'update' }> }) {
   const agent = useData(useShallow((s) => agentLabel(s, item.message.fromAttemptId)));
   const [open, setOpen] = useState(false);
   const [headline, ...rest] = item.message.body.trim().split('\n');
+  const more = rest.join('\n').trim();
   return (
     <div className="ch-update">
-      <button type="button" className="ch-update-line" aria-expanded={open} onClick={() => setOpen((v) => !v)}>
+      <button
+        type="button"
+        className="ch-update-line"
+        aria-expanded={more ? open : undefined}
+        disabled={!more}
+        onClick={() => setOpen((v) => !v)}
+      >
         <AgentName agent={agent} />
         <span className="ch-update-text">{headline}</span>
         <time className="ch-time">{formatClock(item.ts)}</time>
       </button>
-      {open && rest.join('\n').trim() ? (
+      {open && more ? (
         <div className="ch-update-body">
-          <Markdown text={rest.join('\n').trim()} streaming={false} caret={false} />
+          <Markdown text={more} streaming={false} caret={false} />
         </div>
       ) : null}
     </div>
@@ -476,12 +588,13 @@ function NeedsYou({ runId, open }: { runId: string; open: ReturnType<typeof open
                 {item.taskId && tasks[item.taskId] ? <span className="mono"> {tasks[item.taskId]?.nodeId}</span> : null}
               </button>
             ))}
+            {open.length > 4 ? <span className="ch-needs-more">+{open.length - 4} more</span> : null}
           </span>
         </>
       ) : null}
       {elsewhere ? (
         <button type="button" className="ch-needs-other" onClick={() => jumpToNextDecision()}>
-          {elsewhere} in other runs
+          {open.length ? `${elsewhere} in other runs` : `${elsewhere} waiting for you in other runs`}
           <Icon name="arrowRight" size={11} />
         </button>
       ) : null}

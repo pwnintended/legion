@@ -17,7 +17,7 @@ colors:
   subtext1: "#bac2de"
   subtext0: "#a6adc8"
   overlay2: "#9399b2"
-  overlay1: "#7f849c"
+  overlay1: "#82879f"
   overlay0: "#6c7086"
   surface2: "#585b70"
   surface1: "#45475a"
@@ -252,11 +252,12 @@ A cool lilac-grey night (Mocha) or a cool paper day (Latte), with pastel signal 
 - **Code Yellow** (yellow): inline code text on a 7% yellow wash inside markdown.
 
 ### Neutral
-- **Crust** (crust): the window body and the agents-mode gutter; kbd caps, thumbnail backing, tooltips, text on mauve/peach fills.
+- **Crust** (crust): the window body and the agents-mode gutter; kbd caps, thumbnail backing, tooltips.
+- **On-fill** (`--on-fill`): text on solid signal fills (primary, warn and danger buttons, counts, the send button). Crust in Mocha, white in Latte.
 - **Mantle** (mantle): status bar, decision cards, composer, sources drawer, tool/mini blocks.
 - **Base** (base): the conversation ground, tiles, overlay panels, fields inside cards.
 - **Surface 0 / 1 / 2** (surface0, surface1, surface2): human bubbles, default buttons and hovers, card and tile borders, idle chips; surface1 for overlay borders and kbd outlines; surface2 for hover borders and pending dots.
-- **Text / Subtext 1 / Subtext 0** (text, subtext1, subtext0): primary, secondary (assistant name, captions) and muted (event lines, receipts) text. Latte darkens subtext to meet WCAG AA.
+- **Text / Subtext 1 / Subtext 0** (text, subtext1, subtext0): primary, secondary (assistant name, captions) and muted (event lines, receipts) text. Latte darkens subtext, overlay1 and every signal colour (mauve, red, peach, yellow, green, teal, blue, lavender) so chip text holds 4.5:1 on its own wash over base and mantle; Mocha lifts overlay1 one notch (#7f849c to #82879f) for the same reason.
 - **Overlay 2 / 1 / 0** (overlay2, overlay1, overlay0): faint metadata, timestamps, placeholders, icon buttons.
 - **Hairline** (hairline) and **Chrome Line** (chrome-line): derived between-steps for dividers inside surfaces and for the window chrome edges.
 
@@ -352,7 +353,7 @@ Compact and solid, the kit from the incumbent mockup.
 ### Navigation
 - **Title bar:** crumb (13px/600, surface0 hover), Chat | Agents segmented control with a spring-animated pill, ghost Commands button with kbd, the needs-you ghost button (green dot "All clear" or peach dot, label and a peach count badge), primary New run.
 - **Segmented control:** crust track, 1px surface0 border, 9px radius, 3px padding; 26px segments in subtext0, the selected one on a surface0 pill.
-- **Rail:** projects with tinted letter glyphs (tint at 14% with a 22% inset ring, solid when current) and their runs on a 1.5px surface0 spine; items are 10px rounded, base on hover, base plus 1.5px surface0 border when current. Group headers use the section label.
+- **Rail:** projects with tinted letter glyphs (tint at 14% with a 22% inset ring, solid when current) and their runs on a 1.5px surface0 spine; a run's status line leads with what waits on the user ("2 waiting for you", "PR ready for you") in peach with a static dot, so the rail needs no second marker; items are 10px rounded, base on hover, base plus 1.5px surface0 border when current. Group headers use the section label.
 - **Status bar:** mono 11px on mantle; run spend and per-engine rate meters (engine-coloured, peach at 75%, red at 90%); in agents mode a key-mode pill (mauve normal, peach resize, blue move).
 
 ### Progress Strip (signature)
@@ -364,6 +365,8 @@ A 42px strip pinned at the top of the column: phase steps (plan, execute n/m, in
 - **Events:** quiet 12px subtext0 lines with a hairline rule; PR links green.
 - **Typing:** three 5px overlay1 dots hopping, turning mauve at the top.
 - **Dock:** needs-you bar (peach dot, count, kind chips, "n in other runs" link) above the composer.
+- **Outcome:** a finished, failed or stopped run ends on a quiet summary under a hairline: an 18px receipt mark with the title (Finished, Failed, Stopped), then facts in subtext0 labels over mono values (pull request and its state, tasks merged, spent, took). Unboxed, like the rest of the thread.
+- **Escalation actions:** the usual answers stay in view (Retry, Retry with a note); Start over, Skip and Stop sit behind a More toggle, with Stop pushed to the row's end and confirmed first.
 
 ### Motion
 Critically damped springs (stiffness 800, damping 2*sqrt(800)) for layout pills; the only bouncy spring is for attention pop-ins. The house ease-out is `cubic-bezier(0.16, 1, 0.3, 1)`. New thread items rise 6px from opacity 0 over 200ms; answered cards fold in 260ms; overlays open in 150ms; hovers transition colour in 150ms. Ambient loops are opacity-only: breathe (1.4s) for live dots and skeletons, the urgency pulse (1.6s) on tiles, and in conversation mode exactly one ping, the dock's needs-you dot (2.4s). Reduced motion (OS or Settings override) collapses every duration to instant.

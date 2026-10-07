@@ -67,7 +67,7 @@ export function CommandKbd({ id }: { id: string }) {
 export function Bar({ pct, color, width = 40 }: { pct: number; color: string; width?: number }) {
   return (
     <span className="bar" style={{ width }}>
-      <span style={{ width: `${Math.max(0, Math.min(100, pct))}%`, background: color }} />
+      <span style={{ transform: `scaleX(${Math.max(0, Math.min(100, pct)) / 100})`, background: color }} />
     </span>
   );
 }

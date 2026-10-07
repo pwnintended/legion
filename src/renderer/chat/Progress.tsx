@@ -2,11 +2,12 @@
  * The run at a glance, pinned above the conversation: where it is (plan › execute n/m › integrate › PR) and one
  * dot per task. Hovering a dot says what that agent is doing; clicking it opens the task among the agents.
  */
-import type { Run, Task, TaskNode, TaskStatus } from '@shared/domain';
+import type { InboxItem, Run, Task, TaskNode, TaskStatus } from '@shared/domain';
 import { Fragment } from 'react';
 import { useShallow } from 'zustand/react/shallow';
 import { latestPlan, tasksOfRun } from '../app/data';
 import { useData, useNow } from '../app/hooks';
+import { TASK_WORD } from '../app/status-words';
 import { actions, uiStore } from '../app/store';
 import { Icon } from '../chrome/icons';
 import { formatDuration } from '../layout/describe';
@@ -31,31 +32,25 @@ const TASK_TONE: Record<TaskStatus, Tone> = {
   cancelled: 'gone',
 };
 
-const TASK_WORD: Record<TaskStatus, string> = {
-  blocked: 'waiting for its dependencies',
-  queued: 'queued',
-  provisioning: 'setting up its worktree',
-  running: 'coding',
-  verifying: 'running its checks',
-  reviewing: 'in review',
-  fixing: 'fixing review findings',
-  approved: 'approved, waiting to merge',
-  merging: 'merging',
-  merged: 'merged',
-  awaiting_human: 'waiting for you',
-  failed: 'failed',
-  skipped: 'skipped',
-  cancelled: 'cancelled',
-};
+/** The run's unanswered inbox items. */
+function openItemsOf(inbox: Record<string, InboxItem>, runId: string): InboxItem[] {
+  return Object.values(inbox).filter((i) => i.runId === runId && i.resolvedAt === null);
+}
 
 type StepState = 'done' | 'current' | 'attention' | 'todo';
 
-function steps(run: Run, merged: number, total: number): { label: string; state: StepState }[] {
+function steps(run: Run, merged: number, total: number, waiting: boolean): { label: string; state: StepState }[] {
   const order = ['Plan', `Execute${total ? ` ${merged}/${total}` : ''}`, 'Integrate', 'Pull request'];
   const at = (index: number, attention = false) =>
     order.map((label, i) => ({
       label,
-      state: (i < index ? 'done' : i === index ? (attention ? 'attention' : 'current') : 'todo') as StepState,
+      state: (i < index
+        ? 'done'
+        : i === index
+          ? attention || waiting
+            ? 'attention'
+            : 'current'
+          : 'todo') as StepState,
     }));
   switch (run.status) {
     case 'chatting':
@@ -80,10 +75,10 @@ function steps(run: Run, merged: number, total: number): { label: string; state:
 }
 
 /** What the run is doing when no task is running yet (the planner's phase). */
-function planningLine(run: Run): string | null {
+function planningLine(run: Run, waiting: boolean): string | null {
   switch (run.status) {
     case 'clarifying':
-      return 'The planner is reading the request';
+      return waiting ? 'The planner has questions for you' : 'The planner is reading the request';
     case 'planning':
       return 'The planner is exploring the repository and drafting a plan';
     case 'awaiting_approval':
@@ -101,17 +96,23 @@ export function Progress({ run }: { run: Run }) {
   const { tasks, nodes } = useData(
     useShallow((s) => ({ tasks: tasksOfRun(s.tasks, run.id), nodes: latestPlan(s, run.id)?.dag.nodes ?? null })),
   );
+  const open = useData(useShallow((s) => openItemsOf(s.inbox, run.id)));
   const now = useNow(15_000, run.status === 'planning' || run.status === 'clarifying');
   if (run.status === 'chatting') return null;
+  // What waits on the human outranks what the agents are doing: a task with an open item is the human's, and a
+  // budget stop (or a pause) means nothing is working, whatever the task statuses say.
+  const waitingTasks = new Set(open.flatMap((i) => (i.taskId ? [i.taskId] : [])));
+  const halted = run.paused || open.some((i) => i.kind === 'budget');
   const merged = tasks.filter((t) => t.status === 'merged').length;
-  const line = planningLine(run);
+  const line = planningLine(run, open.length > 0);
   const sorted = [...tasks].sort((a, b) => Number(a.nodeId.slice(1)) - Number(b.nodeId.slice(1)));
-  const working = tasks.filter((t) => TASK_TONE[t.status] === 'live').length;
+  const working = halted ? 0 : tasks.filter((t) => TASK_TONE[t.status] === 'live' && !waitingTasks.has(t.id)).length;
+  const lineTone = open.length > 0 || run.status === 'awaiting_approval' ? 'attention' : 'live';
   return (
     <div className="ch-progress" data-testid="chat-progress" data-status={run.status}>
       <div className="ch-progress-inner">
         <ol className="ch-steps" aria-label="Run progress">
-          {steps(run, merged, tasks.length).map((step, i) => (
+          {steps(run, merged, tasks.length, open.length > 0).map((step, i) => (
             <Fragment key={step.label}>
               {i > 0 ? (
                 <li className="ch-step-sep" aria-hidden="true">
@@ -132,21 +133,34 @@ export function Progress({ run }: { run: Run }) {
         {sorted.length ? (
           <ul className="ch-dots" aria-label="Tasks">
             {sorted.map((task) => (
-              <TaskDot key={task.id} task={task} node={nodes?.find((n) => n.id === task.nodeId) ?? null} />
+              <TaskDot
+                key={task.id}
+                task={task}
+                node={nodes?.find((n) => n.id === task.nodeId) ?? null}
+                waiting={waitingTasks.has(task.id)}
+              />
             ))}
           </ul>
         ) : line ? (
-          <span className="ch-progress-line">
-            <span className="dot live" aria-hidden="true" />
+          <span className="ch-progress-line" data-tone={lineTone}>
+            <span className={lineTone === 'live' ? 'dot live' : 'dot'} aria-hidden="true" />
             {line}
             {run.status === 'planning' || run.status === 'clarifying' ? (
               <span className="ch-dim"> · {formatDuration(now - run.updatedAt)}</span>
             ) : null}
           </span>
         ) : null}
-        {working ? (
-          <span className="ch-working-count" title="Agents working on tasks right now">
-            {working} working
+        {halted && open.length ? (
+          <span className="ch-working-count" data-tone="attention">
+            Paused · waiting for you
+          </span>
+        ) : working ? (
+          <span className="ch-working-count" title="Tasks with an agent on them right now">
+            {working} task{working === 1 ? '' : 's'} in progress
+          </span>
+        ) : sorted.length && open.length ? (
+          <span className="ch-working-count" data-tone="attention">
+            Waiting for you
           </span>
         ) : sorted.length && line ? (
           <span className="ch-working-count">{line}</span>
@@ -166,8 +180,9 @@ function openTask(task: Task): void {
   }
 }
 
-function TaskDot({ task, node }: { task: Task; node: TaskNode | null }) {
-  const tone = TASK_TONE[task.status];
+function TaskDot({ task, node, waiting }: { task: Task; node: TaskNode | null; waiting: boolean }) {
+  const tone: Tone = waiting && TASK_TONE[task.status] !== 'bad' ? 'attention' : TASK_TONE[task.status];
+  const word = tone === 'attention' ? TASK_WORD.awaiting_human : TASK_WORD[task.status];
   const title = node ? node.title : task.nodeId;
   const detail = task.status === 'failed' ? (task.error ?? task.progress) : task.progress;
   return (
@@ -176,7 +191,7 @@ function TaskDot({ task, node }: { task: Task; node: TaskNode | null }) {
         type="button"
         className="ch-dot"
         data-tone={tone}
-        aria-label={`${task.nodeId} ${title}: ${TASK_WORD[task.status]}. Open among the agents.`}
+        aria-label={`${task.nodeId} ${title}: ${word}. Open among the agents.`}
         onClick={() => openTask(task)}
         data-testid="chat-task-dot"
       >
@@ -187,7 +202,7 @@ function TaskDot({ task, node }: { task: Task; node: TaskNode | null }) {
           <span className="mono">{task.nodeId}</span> {title}
         </span>
         <span className="ch-dot-tip-status" data-tone={tone}>
-          {TASK_WORD[task.status]}
+          {word}
         </span>
         {detail && tone !== 'done' ? <span className="ch-dot-tip-line">{detail}</span> : null}
       </span>

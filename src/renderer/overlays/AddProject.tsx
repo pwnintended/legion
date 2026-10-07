@@ -162,11 +162,11 @@ export function AddProjectOverlay() {
           if (path) void add(path);
         }}
       >
-        <div className="ap-head">
-          <span className="ap-title">Add a project</span>
-          <span className="ap-sub">A repository you work in. You can browse it first and start runs whenever.</span>
+        <div className="addp-head">
+          <span className="addp-title">Add a project</span>
+          <span className="addp-sub">A repository you work in. You can browse it first and start runs whenever.</span>
         </div>
-        <div className="pk-search ap-search">
+        <div className="pk-search addp-search">
           <Icon name="search" size={14} className="pk-search-icon" />
           <input
             className="pk-input"
@@ -191,12 +191,12 @@ export function AddProjectOverlay() {
           {discovering ? <span className="pk-busy" title="Looking for repositories…" /> : null}
         </div>
         {error ? (
-          <div className="ap-error" role="alert" data-testid="add-project-error">
+          <div className="addp-error" role="alert" data-testid="add-project-error">
             <Icon name="alert" size={12} />
             {error}
           </div>
         ) : null}
-        <div ref={listRef} id={listId} role="listbox" aria-label="Repositories" className="pk-list ap-list">
+        <div ref={listRef} id={listId} role="listbox" aria-label="Repositories" className="pk-list addp-list">
           {view.sections.map((section) => (
             // biome-ignore lint/a11y/useSemanticElements: an ARIA listbox group
             <div key={section.id} role="group" aria-label={section.label ?? 'Path'} className="pk-group">
@@ -219,7 +219,7 @@ export function AddProjectOverlay() {
                     aria-selected={index === current}
                     data-active={index === current}
                     data-busy={busy === path || undefined}
-                    className="pk-row ap-row"
+                    className="pk-row addp-row"
                     data-testid="add-project-option"
                     onMouseDown={(event) => event.preventDefault()}
                     onMouseMove={() => index !== current && setActive(index)}

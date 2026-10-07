@@ -917,7 +917,7 @@ mark {
   background: var(--surface0);
 }
 .sr-toggle[aria-pressed="true"] {
-  color: var(--crust);
+  color: var(--on-fill);
   background: var(--mauve);
 }
 .sr-toggle:focus-visible {

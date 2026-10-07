@@ -50,10 +50,10 @@ export const DECISION_TITLE: Record<InboxItem['kind'], string> = {
   approval: 'Approval',
   question: 'Question',
   plan_signoff: 'Plan sign-off',
-  escalation: 'Needs a decision',
+  escalation: 'Escalation',
   conflict: 'Merge conflict',
   pr_ready: 'Pull request',
-  budget: 'Budget reached',
+  budget: 'Budget',
 };
 
 const ESCALATION_DONE: Record<string, string> = {
@@ -114,7 +114,7 @@ export function receiptText(item: InboxItem, taskLabel: string | null): string {
             : 'Conflict closed';
     }
     case 'pr_ready':
-      return resolutionOf(item)?.approved ? 'Opened the draft pull request' : 'Pull request gate closed';
+      return resolutionOf(item)?.approved ? 'Opened the draft pull request' : 'Closed without opening a pull request';
     case 'budget': {
       const resolution = resolutionOf(item);
       if (resolution?.action === 'raise' && resolution.newLimitUsd !== null)

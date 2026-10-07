@@ -544,6 +544,11 @@
   border-radius: 4px;
   padding: 1px 4px;
 }
+/* Identifiers in a table cell stay whole (INVALID_ATTESTATION, not INVALID_ATTESTA / TION). */
+.md :is(th, td) .md-inline {
+  overflow-wrap: normal;
+  white-space: nowrap;
+}
 .md-code {
   position: relative;
   margin: 6px 0;

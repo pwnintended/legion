@@ -6,6 +6,7 @@ import type { InboxItem, InboxItemOf, InboxResolution } from '@shared/domain';
 import { AnimatePresence, motion } from 'motion/react';
 import { useState } from 'react';
 import { useShallow } from 'zustand/react/shallow';
+import { confirmAction } from '../app/confirm';
 import { latestPlan, tasksOfRun } from '../app/data';
 import { rpc, useData } from '../app/hooks';
 import { useReducedMotionPref } from '../app/prefs';
@@ -35,6 +36,23 @@ function resolve(item: InboxItem, resolution: InboxResolution, choice = 'accept'
   return trackResolution(item.id, choice, () => rpc('inbox.resolve', { itemId: item.id, resolution }));
 }
 
+/** Stopping from a card ends the run for good, as the rail's Stop does: ask first. */
+function confirmStop(runTitle: string | null): Promise<boolean> {
+  return confirmAction({
+    title: runTitle ? `Stop “${runTitle}”?` : 'Stop this run?',
+    body: [
+      'Every agent of this run stops now and unfinished tasks are cancelled.',
+      'Merged work, worktrees and branches stay; archive the run afterwards to clean them up. A stopped run cannot be resumed.',
+    ],
+    confirmLabel: 'Stop run',
+    tone: 'danger',
+  });
+}
+
+function useRunTitle(runId: string): string | null {
+  return useData((s) => s.runs[runId]?.title ?? null);
+}
+
 /** An answered card folds into its receipt (height and opacity; instant with reduced motion). */
 export function Decision({ item }: { item: InboxItem }) {
   const reduced = useReducedMotionPref();
@@ -56,13 +74,14 @@ export function Decision({ item }: { item: InboxItem }) {
   );
 }
 
+/** An open card waits on the human, so its kind reads peach; only a failure (escalation, conflict) reads red. */
 const KIND_TONE: Record<InboxItem['kind'], Tone> = {
   approval: 'warn',
-  question: 'accent',
+  question: 'warn',
   plan_signoff: 'warn',
   escalation: 'bad',
   conflict: 'bad',
-  pr_ready: 'ok',
+  pr_ready: 'warn',
   budget: 'warn',
 };
 
@@ -156,7 +175,7 @@ function ApprovalBody({ item }: { item: InboxItemOf<'approval'> }) {
     <div className="ch-card-body">
       <ApprovalSubjectView subject={subject} />
       {item.payload.reason ? <p className="ch-note">{item.payload.reason}</p> : null}
-      <ApprovalButtons item={item} showKeys={false} />
+      <ApprovalButtons item={item} showKeys={false} compact />
     </div>
   );
 }
@@ -324,8 +343,14 @@ function EscalationBody({ item }: { item: EscalationItem }) {
   const gate = useMergeGate(item);
   const pending = usePendingResolution(item.id);
   const [note, setNote] = useState<string | null>(null);
+  const [more, setMore] = useState(false);
   const busy = pending?.state === 'pending';
   const label = task ?? 'this task';
+  // The usual answers stay in view; starting over, skipping and stopping are rarer (and final), one step away.
+  const canSkip = item.kind === 'conflict' || item.payload.actions.includes('skip');
+  const canAbort = item.kind === 'escalation' && item.payload.actions.includes('abort');
+  const hasMore = canStartOver(item) || canSkip || canAbort;
+  const runTitle = useRunTitle(item.runId);
   return (
     <div className="ch-card-body">
       <p className="ch-lede">{item.payload.summary}</p>
@@ -396,12 +421,12 @@ function EscalationBody({ item }: { item: EscalationItem }) {
               {gate ? 'Request changes' : 'Retry with a note'}
             </button>
           ) : null}
-          {canStartOver(item) ? (
+          {more && canStartOver(item) ? (
             <button type="button" className="btn btn-sm" disabled={busy} onClick={() => void startOver(item, label)}>
               Start over…
             </button>
           ) : null}
-          {item.kind === 'conflict' || item.payload.actions.includes('skip') ? (
+          {more && canSkip ? (
             <button
               type="button"
               className="btn btn-sm btn-ghost"
@@ -411,14 +436,27 @@ function EscalationBody({ item }: { item: EscalationItem }) {
               Skip {label}
             </button>
           ) : null}
-          {item.kind === 'escalation' && item.payload.actions.includes('abort') ? (
+          {more && canAbort ? (
             <button
               type="button"
-              className="btn btn-sm btn-ghost"
+              className="btn btn-sm btn-ghost ch-end-run"
               disabled={busy}
-              onClick={() => void resolveEscalation(item, 'abort', null)}
+              onClick={async () => {
+                if (await confirmStop(runTitle)) void resolveEscalation(item, 'abort', null);
+              }}
             >
               Stop the run
+            </button>
+          ) : null}
+          {hasMore ? (
+            <button
+              type="button"
+              className="btn btn-sm btn-ghost ch-more-toggle"
+              aria-expanded={more}
+              onClick={() => setMore((v) => !v)}
+            >
+              {more ? 'Fewer' : 'More'}
+              <Icon name="chevronDown" size={12} />
             </button>
           ) : null}
         </div>
@@ -475,6 +513,9 @@ function PrBody({ item }: { item: InboxItemOf<'pr_ready'> }) {
 function BudgetBody({ item }: { item: InboxItemOf<'budget'> }) {
   const { spentUsd, limitUsd } = item.payload;
   const raised = Math.ceil(limitUsd * 1.5);
+  const pending = usePendingResolution(item.id);
+  const busy = pending?.state === 'pending';
+  const runTitle = useRunTitle(item.runId);
   return (
     <div className="ch-card-body">
       <p className="ch-lede">
@@ -484,14 +525,20 @@ function BudgetBody({ item }: { item: InboxItemOf<'budget'> }) {
         <button
           type="button"
           className="btn btn-sm btn-warn"
+          disabled={busy}
           onClick={() => void resolve(item, { kind: 'budget', action: 'raise', newLimitUsd: raised }, 'raise')}
         >
-          Raise to {formatCost(raised)}
+          {pending?.state === 'pending' && pending.choice === 'raise' ? 'Raising…' : `Raise to ${formatCost(raised)}`}
         </button>
         <button
           type="button"
-          className="btn btn-sm btn-ghost"
-          onClick={() => void resolve(item, { kind: 'budget', action: 'stop', newLimitUsd: null }, 'stop')}
+          className="btn btn-sm btn-ghost ch-end-run"
+          disabled={busy}
+          onClick={async () => {
+            if (await confirmStop(runTitle)) {
+              void resolve(item, { kind: 'budget', action: 'stop', newLimitUsd: null }, 'stop');
+            }
+          }}
         >
           Stop the run
         </button>

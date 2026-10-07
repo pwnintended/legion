@@ -27,7 +27,8 @@
   --subtext1: #bac2de;
   --subtext0: #a6adc8;
   --overlay2: #9399b2;
-  --overlay1: #7f849c;
+  /* Lifted from Mocha's #7f849c (4.44:1 on base) so timestamps and meta lines meet WCAG AA. */
+  --overlay1: #82879f;
   --overlay0: #6c7086;
   --surface2: #585b70;
   --surface1: #45475a;
@@ -43,6 +44,8 @@
   --peach-hover: #fbc19d;
   --green-hover: #b8eab4;
   --shadow: #000000;
+  /* Text on a solid signal fill (primary, warn and danger buttons, counts, the send button). */
+  --on-fill: var(--crust);
 
   /* Semantic aliases (architecture §11). */
   --accent: var(--lavender);
@@ -64,23 +67,28 @@
   --rosewater: #dc8a78;
   --flamingo: #dd7878;
   --pink: #ea76cb;
-  --mauve: #8839ef;
-  --red: #d20f39;
+  /*
+   * Signal steps darkened from Latte's #8839ef/#d20f39/#fe640b/#df8e1d/#40a02b/#179299/#1e66f5/#7287fd: the
+   * originals fall to 2.1-4.3:1 as chip and count text on paper. These hold 4.5:1 as chip text on their own wash
+   * over base and mantle, and white text (--on-fill) on them holds 6:1 or better.
+   */
+  --mauve: #7013ea;
+  --red: #b10d30;
   --maroon: #e64553;
-  --peach: #fe640b;
-  --yellow: #df8e1d;
-  --green: #40a02b;
-  --teal: #179299;
+  --peach: #9b3901;
+  --yellow: #895712;
+  --green: #29681c;
+  --teal: #10666a;
   --sky: #04a5e5;
   --sapphire: #209fb5;
-  --blue: #1e66f5;
-  --lavender: #7287fd;
+  --blue: #094dd4;
+  --lavender: #1538fc;
   --text: #4c4f69;
   /* Text steps darkened from Latte's #5c5f77/#6c6f85/#7c7f93/#8c8fa1 so secondary text meets WCAG AA. */
   --subtext1: #4f5268;
   --subtext0: #575a70;
   --overlay2: #5f6278;
-  --overlay1: #74778c;
+  --overlay1: #626478;
   --overlay0: #9ca0b0;
   --surface2: #acb0be;
   --surface1: #bcc0cc;
@@ -91,10 +99,11 @@
 
   --hairline: #dfe2ea;
   --chrome-line: #d3d7e0;
-  --mauve-hover: #7629dc;
-  --peach-hover: #e85a06;
-  --green-hover: #37902a;
+  --mauve-hover: #5f0fc9;
+  --peach-hover: #823001;
+  --green-hover: #225717;
   --shadow: #4c4f69;
+  --on-fill: #ffffff;
 }
 
 @theme inline {
@@ -132,6 +141,7 @@
   --color-ok: var(--ok);
   --color-error: var(--error);
   --color-running: var(--running);
+  --color-on-fill: var(--on-fill);
 
   --font-sans: var(--font-ui);
   --font-mono: var(--font-code);

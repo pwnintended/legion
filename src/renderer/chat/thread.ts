@@ -196,8 +196,9 @@ export function buildThread(input: ThreadInput): ThreadItem[] {
     if (entries) foldTranscript(attempt, entries, items, order);
   }
 
-  // Planner-first runs (and runs whose assistant never opened): the request is the human's first message.
-  if (assistants.length === 0) {
+  // Planner-first runs (and runs whose assistant never opened): the request is the human's first message,
+  // when there is one to show (a run started from an issue reference alone has no text of its own).
+  if (assistants.length === 0 && (input.run.issueText.trim() || input.run.attachments?.length)) {
     items.push({
       kind: 'human',
       key: `you:${input.run.id}:request`,

@@ -85,7 +85,7 @@ export async function stopRunInteractively(run: Pick<Run, 'id' | 'title'>): Prom
   const ok = await confirmAction({
     title: `Stop “${run.title}”?`,
     body: [
-      'Every agent of this run stops now: the assistant, the planner or lead, coders and reviewers. Unfinished tasks are cancelled and what waits in the inbox for this run is dismissed.',
+      'Every agent of this run stops now: the assistant, the planner or lead, coders and reviewers. Unfinished tasks are cancelled and anything still waiting for your answer is dismissed.',
       'Merged work, worktrees and branches stay; archive the run afterwards to clean them up. A stopped run cannot be resumed (Pause can).',
     ],
     confirmLabel: 'Stop run',

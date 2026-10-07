@@ -483,7 +483,7 @@ function RunsSection({ settings, commit }: { settings: Settings; commit: Commit 
 
       <div className="st-sub">Budget</div>
       <p className="st-lede">
-        Estimated spend per run. Crossing it pauses the run and asks you in the inbox whether to raise it.
+        Estimated spend per run. Crossing it pauses the run and asks you in its conversation whether to raise it.
       </p>
       <div className="st-grid">
         <Field
@@ -506,7 +506,9 @@ function RunsSection({ settings, commit }: { settings: Settings; commit: Commit 
       </div>
 
       <div className="st-sub">Before asking you</div>
-      <p className="st-lede">How often Legion tries again on its own before a task escalates to your inbox.</p>
+      <p className="st-lede">
+        How often Legion tries again on its own before a task escalates and asks you what to do.
+      </p>
       <div className="st-grid">
         <Field
           label="Retries"
@@ -562,7 +564,7 @@ function AppearanceSection() {
           value={flavour}
           options={[
             { value: 'mocha', label: 'Mocha', swatch: ['#1e1e2e', '#cba6f7'] },
-            { value: 'latte', label: 'Latte', swatch: ['#eff1f5', '#8839ef'] },
+            { value: 'latte', label: 'Latte', swatch: ['#eff1f5', '#7013ea'] },
           ]}
           onChange={(v) => setPref('flavour', v)}
         />

@@ -738,7 +738,7 @@
   border: 1.5px solid var(--surface2);
 }
 .pk-state[data-dirty="true"] {
-  background: var(--peach);
+  background: var(--subtext0);
 }
 .pk-check {
   flex: none;
@@ -812,7 +812,6 @@
   overflow-y: auto;
   overscroll-behavior: contain;
   padding: 6px;
-  transition: height 0.12s var(--ease-out);
 }
 .pal-group [cmdk-group-heading] {
   padding: 8px 10px 4px;

@@ -37,7 +37,7 @@ export function StatusBar() {
       {view === 'agents' ? (
         <>
           <span
-            className="rounded px-1.5 py-px font-semibold tracking-[0.04em] text-crust transition-colors"
+            className="rounded px-1.5 py-px font-semibold tracking-[0.04em] text-on-fill transition-colors"
             style={{ background: pill.bg }}
             data-testid="mode-pill"
           >

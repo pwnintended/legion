@@ -16,6 +16,7 @@ import {
   tasksOfRun,
   verificationsOfRun,
 } from '../app/data';
+import { TASK_SHORT } from '../app/status-words';
 import type { LayoutTile } from './tree';
 import type { TileKind } from './types';
 
@@ -173,21 +174,22 @@ function taskStatusChip(
     case 'queued':
       return { label: 'queued', tone: 'idle', live: false };
     case 'provisioning':
-      return { label: 'provisioning', tone: 'run', live: true };
+      return { label: TASK_SHORT.provisioning, tone: 'run', live: true };
     case 'running':
-      return { label: `running ${formatDuration(now - since)}`, tone: 'run', live: true };
+      return { label: `${TASK_SHORT.running} ${formatDuration(now - since)}`, tone: 'run', live: true };
     case 'verifying':
-      return { label: 'verifying', tone: 'run', live: true };
+      return { label: TASK_SHORT.verifying, tone: 'run', live: true };
     case 'reviewing': {
       const engine = reviewer ? displayEngine(state, reviewer) : otherEngine(taskEngine(state, coder));
       return { label: `${ENGINE_LABEL[engine]} reviewing`, tone: engineTone(engine), live: true };
     }
     case 'fixing':
-      return { label: `fixing ${task.fixRounds}/2`, tone: engineTone(taskEngine(state, coder)), live: true };
+      // The engine already has its chip beside the status; the status says what is happening, in the run tone.
+      return { label: `${TASK_SHORT.fixing} ${task.fixRounds}/2`, tone: 'run', live: true };
     case 'approved':
       return { label: 'approved', tone: 'ok', live: false };
     case 'awaiting_human':
-      return { label: 'needs you', tone: 'warn', live: false };
+      return { label: TASK_SHORT.awaiting_human, tone: 'warn', live: false };
     case 'merging':
       return { label: 'merging', tone: 'run', live: true };
     case 'merged':
@@ -276,7 +278,8 @@ export function describeTile(state: DataState, runId: string, tile: LayoutTile, 
         (dep) => tasks.find((t) => t.nodeId === dep)?.status !== 'merged',
       );
       let status = taskStatusChip(state, task, coder, reviewer, pendingDeps, now);
-      if (urgent.length > 0 && tile.kind === 'session') status = { label: 'needs you', tone: 'warn', live: false };
+      if (urgent.length > 0 && tile.kind === 'session')
+        status = { label: TASK_SHORT.awaiting_human, tone: 'warn', live: false };
       let note = status.label;
       // Diff stats only show on merged tasks (keep `tileDiffStatKey` in step with this).
       if (task.status === 'merged') {
@@ -297,7 +300,7 @@ export function describeTile(state: DataState, runId: string, tile: LayoutTile, 
           };
         else if (review?.verdict === 'approve') reviewStatus = { label: 'approved', tone: 'ok', live: false };
         else if (review?.verdict === 'request_changes')
-          reviewStatus = { label: 'changes requested', tone: 'warn', live: false };
+          reviewStatus = { label: 'changes requested', tone: 'accent', live: false };
         else if (review?.verdict === 'reject_replan') reviewStatus = { label: 'rejected', tone: 'bad', live: false };
         else reviewStatus = { label: 'pending', tone: 'idle', live: false };
         return {
@@ -401,7 +404,7 @@ export function describeTile(state: DataState, runId: string, tile: LayoutTile, 
         ...base,
         status:
           urgent.length > 0
-            ? { label: 'needs you', tone: 'warn', live: false }
+            ? { label: 'waiting for you', tone: 'warn', live: false }
             : { label: 'answered', tone: 'ok', live: false },
         note: 'planner questions',
         tone: urgent.length > 0 ? 'warn' : 'idle',
@@ -411,8 +414,8 @@ export function describeTile(state: DataState, runId: string, tile: LayoutTile, 
       const live = agents.filter((a) => a.status === 'running').length;
       return {
         ...base,
-        status: { label: `${live} live`, tone: live > 0 ? 'run' : 'idle', live: live > 0 },
-        note: `${agents.length} agent${agents.length === 1 ? '' : 's'}`,
+        status: { label: `${live} working`, tone: live > 0 ? 'run' : 'idle', live: live > 0 },
+        note: `${agents.length} in this run`,
         tone: live > 0 ? 'run' : 'idle',
       };
     }
@@ -421,9 +424,9 @@ export function describeTile(state: DataState, runId: string, tile: LayoutTile, 
       const queued = all.filter((m) => m.deliveredAt === null).length;
       return {
         ...base,
-        status: { label: `${all.length}`, tone: queued > 0 ? 'warn' : 'idle', live: false },
+        status: { label: `${all.length}`, tone: queued > 0 ? 'run' : 'idle', live: false },
         note: queued > 0 ? `${queued} queued` : 'between agents',
-        tone: queued > 0 ? 'warn' : 'idle',
+        tone: queued > 0 ? 'run' : 'idle',
       };
     }
     case 'terminal': {

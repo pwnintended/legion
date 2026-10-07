@@ -21,6 +21,7 @@
   overscroll-behavior: contain;
   /* Pinning to the latest message is ours: the browser's anchoring would move a pinned view off the bottom. */
   overflow-anchor: none;
+  scrollbar-gutter: stable both-edges;
 }
 .ch-feed {
   width: var(--ch-col);
@@ -250,8 +251,11 @@
   font-size: 12.5px;
   transition: background-color 0.15s;
 }
-.ch-update-line:hover {
+.ch-update-line:hover:not(:disabled) {
   background: color-mix(in srgb, var(--surface0) 55%, transparent);
+}
+.ch-update-line:disabled {
+  cursor: default;
 }
 .ch-update-line:focus-visible {
   outline: 2px solid var(--mauve);
@@ -347,6 +351,63 @@
 .ch-event a:hover {
   text-decoration: underline;
   text-underline-offset: 3px;
+}
+
+/* The end of a finished run: a quiet summary on the ground under the last item. */
+.ch-outcome {
+  margin-top: 28px;
+  padding-top: 18px;
+  border-top: 1px solid var(--hairline);
+}
+.ch-outcome-title {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  margin: 0 0 12px;
+  font-size: 15.5px;
+  line-height: 1.35;
+  font-weight: 600;
+  color: var(--text);
+}
+.ch-outcome .ch-receipt-mark[data-tone="bad"] {
+  color: var(--red);
+  background: color-mix(in srgb, var(--red) 14%, transparent);
+}
+.ch-outcome .ch-receipt-mark[data-tone="muted"] {
+  color: var(--overlay2);
+  background: var(--surface0);
+}
+.ch-outcome-facts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 32px;
+  margin: 0;
+  padding-left: 27px;
+}
+.ch-outcome-facts dt {
+  font-size: 12px;
+  color: var(--subtext0);
+}
+.ch-outcome-facts dd {
+  margin: 3px 0 0;
+  font-size: 13px;
+  color: var(--text);
+}
+.ch-outcome-facts a {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--green);
+  text-decoration: none;
+}
+.ch-outcome-facts a:hover {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.ch-outcome-facts a:focus-visible {
+  outline: 2px solid var(--mauve);
+  outline-offset: 2px;
+  border-radius: 4px;
 }
 
 /* Cards: decisions and presentations ------------------------------------------------------------- */
@@ -470,6 +531,14 @@
   flex-wrap: wrap;
   align-items: center;
   gap: 8px;
+}
+/* Ending the run sits apart from the answers, at the far end of the row. */
+.ch-actions .ch-end-run {
+  margin-left: auto;
+}
+.ch-actions .ch-end-run:hover:not(:disabled) {
+  color: var(--red);
+  background: color-mix(in srgb, var(--red) 12%, transparent);
 }
 .ch-error {
   margin: 0;
@@ -603,8 +672,13 @@
 .ch-pr-body[data-open="true"] {
   max-height: none;
 }
-.ch-pr-body:not([data-open="true"]) .md {
-  mask-image: linear-gradient(to bottom, black 55%, transparent 100%);
+.ch-pr-body:not([data-open="true"])::after {
+  content: "";
+  position: absolute;
+  inset: auto 0 0;
+  height: 76px;
+  background: linear-gradient(to bottom, transparent, var(--base) 62%);
+  pointer-events: none;
 }
 .ch .ch-pr-body .md {
   font-size: 13px;
@@ -612,6 +686,7 @@
 }
 .ch-pr-body .ch-more {
   position: absolute;
+  z-index: 1;
   left: 14px;
   bottom: 9px;
 }
@@ -853,11 +928,18 @@
 .ch-progress-line .dot {
   color: var(--blue);
 }
+.ch-progress-line[data-tone="attention"] .dot {
+  color: var(--peach);
+}
 .ch-working-count {
   margin-left: auto;
   font-size: 12px;
   color: var(--subtext0);
   white-space: nowrap;
+}
+.ch-working-count[data-tone="attention"] {
+  color: var(--peach);
+  font-weight: 500;
 }
 .ch-dots {
   list-style: none;
@@ -1036,6 +1118,11 @@
   min-width: 0;
   overflow: hidden;
 }
+.ch-needs-more {
+  flex: none;
+  font-size: 12px;
+  color: var(--subtext0);
+}
 .ch-needs-chip {
   all: unset;
   cursor: pointer;
@@ -1151,7 +1238,7 @@
   outline-offset: 2px;
 }
 .ch-send {
-  color: var(--crust);
+  color: var(--on-fill);
   background: var(--mauve);
 }
 .ch-send:hover:not(:disabled) {
@@ -1303,4 +1390,12 @@
   .ch-working-count {
     display: none;
   }
+}
+
+/* An escalation card's More / Fewer toggle. */
+.ch-actions > .ch-more-toggle[aria-expanded] svg {
+  transition: rotate 0.15s var(--ease-out);
+}
+.ch-actions > .ch-more-toggle[aria-expanded="true"] svg {
+  rotate: 180deg;
 }

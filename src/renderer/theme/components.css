@@ -150,21 +150,21 @@ body {
 }
 .btn-primary {
   background: var(--mauve);
-  color: var(--crust);
+  color: var(--on-fill);
 }
 .btn-primary:hover {
   background: var(--mauve-hover);
 }
 .btn-warn {
   background: var(--peach);
-  color: var(--crust);
+  color: var(--on-fill);
 }
 .btn-warn:hover {
   background: var(--peach-hover);
 }
 .btn-danger {
   background: var(--red);
-  color: var(--crust);
+  color: var(--on-fill);
 }
 .btn-danger:hover {
   background: color-mix(in srgb, var(--red) 86%, var(--text));
@@ -196,7 +196,7 @@ body {
 .btn-warn .kbd {
   background: color-mix(in srgb, var(--crust) 18%, transparent);
   border-color: color-mix(in srgb, var(--crust) 25%, transparent);
-  color: var(--crust);
+  color: var(--on-fill);
 }
 
 .sec {
@@ -229,7 +229,8 @@ body {
   display: block;
   height: 100%;
   border-radius: 2px;
-  transition: width 0.4s var(--ease-out);
+  transform-origin: left;
+  transition: transform 0.4s var(--ease-out);
 }
 
 /* Segmented control (layout switcher) ----------------------------------------------------------- */
@@ -662,7 +663,7 @@ body {
 }
 .rail-item[aria-current="true"] .ws {
   background: var(--mauve);
-  color: var(--crust);
+  color: var(--on-fill);
   font-weight: 600;
 }
 
@@ -702,13 +703,16 @@ body {
   background: color-mix(in srgb, var(--tint) 14%, transparent);
   box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--tint) 22%, transparent);
 }
+:root[data-flavour="latte"] .rp-glyph {
+  color: color-mix(in srgb, var(--tint) 45%, var(--text));
+}
 .rp-glyph[data-orphan="true"] {
   background: transparent;
   box-shadow: inset 0 0 0 1.5px var(--surface1);
   color: var(--overlay1);
 }
 .rp-item[aria-current="true"] .rp-glyph {
-  color: var(--crust);
+  color: var(--on-fill);
   background: var(--tint);
   box-shadow: none;
 }
@@ -751,11 +755,12 @@ body {
   height: 6px;
   flex: none;
   border-radius: 50%;
-  background: var(--peach);
+  background: var(--subtext0);
 }
 .rp-badges {
   display: flex;
   align-items: center;
+  gap: 6px;
   flex: none;
 }
 .rp-count {
@@ -1104,6 +1109,6 @@ body {
   justify-content: center;
   font-size: 11px;
   font-weight: 600;
-  color: var(--crust);
+  color: var(--on-fill);
   background: var(--peach);
 }

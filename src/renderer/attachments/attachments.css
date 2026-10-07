@@ -107,17 +107,15 @@
   padding: 0 3px;
   border-radius: 3px;
   background: var(--at-tone);
-  color: var(--crust);
+  color: var(--on-fill);
   font-family: var(--font-code);
-  font-size: 8.5px;
+  font-size: 10px;
   font-weight: 700;
-  line-height: 12px;
-  letter-spacing: 0.02em;
+  line-height: 13px;
 }
+/* At chip size the type label can't be read; the file name beside it already says what it is. */
 .at-sm .at-badge-label {
-  bottom: 2px;
-  font-size: 7px;
-  line-height: 10px;
+  display: none;
 }
 .at-text {
   display: flex;
@@ -195,7 +193,7 @@
 }
 .at-x:hover {
   background: var(--red);
-  color: var(--crust);
+  color: var(--on-fill);
 }
 
 /* Errors ----------------------------------------------------------------------------------- */

@@ -326,7 +326,12 @@ export const actions = {
   },
   /** Switch to `mode`, or back to the previous mode when already there. */
   toggleLayoutMode(mode: LayoutMode): void {
-    const { layoutMode, previousMode } = uiStore.getState();
+    const { layoutMode, previousMode, view } = uiStore.getState();
+    // From the conversation, asking for a layout opens the agents in it; toggling back is for when it is showing.
+    if (view !== 'agents') {
+      actions.setLayoutMode(mode);
+      return;
+    }
     actions.setLayoutMode(layoutMode === mode ? (previousMode === mode ? 'strip' : previousMode) : mode);
   },
 

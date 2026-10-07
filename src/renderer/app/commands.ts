@@ -558,6 +558,15 @@ export function builtinCommands(): Command[] {
       run: () => actions.toggleLayoutMode('focus'),
     },
     {
+      // Layout: Focus from the conversation. The agents-view command owns ⌘⏎, which the conversation leaves to
+      // its cards, so this twin carries no binding and only lists outside the agents view.
+      id: 'layout.focus.open',
+      title: 'Layout: Focus',
+      category: 'Layout',
+      when: (ctx) => ctx.ui.view !== 'agents' && activeRun(ctx) !== null,
+      run: () => actions.setLayoutMode('focus'),
+    },
+    {
       id: 'layout.overview',
       title: 'Layout: Overview',
       category: 'Layout',

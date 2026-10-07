@@ -9,10 +9,11 @@ import { Command, defaultFilter } from 'cmdk';
 import { type ReactNode, useMemo, useState } from 'react';
 import { type CommandView, executeCommand, useCommands } from '../app/commands';
 import { attemptsOfRun, latestPlan, tasksOfRun } from '../app/data';
-import { useActiveRunId, useData, useLayout } from '../app/hooks';
+import { useActiveRunId, useData, useLayout, useUi } from '../app/hooks';
 import { formatChord } from '../app/keys';
 import { openProject } from '../app/project-actions';
 import { selectProjects, selectWorkspaceRuns } from '../app/projects';
+import { TASK_SHORT } from '../app/status-words';
 import { actions } from '../app/store';
 import { Icon, type IconName } from '../chrome/icons';
 import { displayEngine } from '../layout/describe';
@@ -146,6 +147,7 @@ function useEntries(): { contextual: Entry[]; data: Entry[] } {
   const activeRunId = useActiveRunId();
   const layout = useLayout(activeRunId);
   const state = useData((s) => s);
+  const view = useUi((s) => s.view);
   return useMemo(() => {
     const contextual: Entry[] = [];
     const data: Entry[] = [];
@@ -185,7 +187,8 @@ function useEntries(): { contextual: Entry[]; data: Entry[] } {
     const plan = latestPlan(state, activeRunId);
     const tasks = tasksOfRun(state.tasks, activeRunId);
     const attempts = attemptsOfRun(state.attempts, activeRunId);
-    const focused = layout ? focusedTile(layout) : null;
+    // The focused tile is an Agents-view idea: in the conversation it would lead with a task the reader never chose.
+    const focused = layout && view === 'agents' ? focusedTile(layout) : null;
     const focusedTaskId =
       focused && (focused.kind === 'session' || focused.kind === 'review')
         ? (focused.params as { taskId: string | null }).taskId
@@ -208,7 +211,7 @@ function useEntries(): { contextual: Entry[]; data: Entry[] } {
         ),
         value: `${task.nodeId} ${title}`,
         keywords: [task.nodeId, task.status],
-        hint: task.status.replace('_', ' '),
+        hint: TASK_SHORT[task.status],
         icon: 'session',
         run: () => revealInRun(activeRunId, tileId),
       });
@@ -236,7 +239,7 @@ function useEntries(): { contextual: Entry[]; data: Entry[] } {
       });
     }
     return { contextual, data };
-  }, [state, activeRunId, layout]);
+  }, [state, activeRunId, layout, view]);
 }
 
 function CommandRow({ entry }: { entry: Entry }) {
@@ -321,8 +324,9 @@ export function PaletteOverlay() {
 
   const commandEntries = useMemo(
     () =>
+      // Only what can run now: a greyed "Approve plan" in a run that is long past its plan only adds noise.
       commands
-        .filter((c) => c.id !== 'palette.open')
+        .filter((c) => c.id !== 'palette.open' && c.enabled)
         .map(fromCommand)
         .sort((a, b) => Number(a.disabled ?? false) - Number(b.disabled ?? false)),
     [commands],
@@ -336,15 +340,17 @@ export function PaletteOverlay() {
     'cmd:project.search',
     'cmd:project.add',
   ];
-  const lead = LEAD.map((id) => commandEntries.find((e) => e.id === id)).filter((e): e is Entry => !!e);
+  const lead = LEAD.map((id) => commandEntries.find((e) => e.id === id))
+    .filter((e): e is Entry => !!e)
+    .slice(0, 4);
   const rest = commandEntries.filter((e) => !lead.includes(e));
 
   const groups: [string, Entry[]][] = searching
     ? groupBy([...contextual, ...commandEntries, ...data])
     : [
-        ['Suggested', lead.filter((e) => !e.disabled)],
+        ['Suggested', lead],
         ...groupBy(contextual),
-        ['Commands', rest.filter((e) => !e.disabled)],
+        ['Commands', rest],
         ['Projects', data.filter((e) => e.group === 'Projects')],
         ['Runs', data.filter((e) => e.group === 'Runs')],
         ['Tasks', data.filter((e) => e.group === 'Tasks')],

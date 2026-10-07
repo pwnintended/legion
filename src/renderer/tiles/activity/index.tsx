@@ -55,7 +55,7 @@ function RunRow({ run, active, index, now }: { run: Run; active: boolean; index:
       title={`Open the run “${run.title}”`}
     >
       <span className="ac-run-dot">
-        {stats.urgent > 0 ? <Dot color="var(--peach)" live /> : <Dot color={toneColor(line.tone)} live={line.live} />}
+        <Dot color={toneColor(line.tone)} live={line.live} />
       </span>
       <span className="ac-main">
         <span className="ac-title">{run.title}</span>

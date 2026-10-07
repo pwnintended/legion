@@ -346,7 +346,7 @@
   }
   .lg-btn-ok {
     background: var(--green);
-    color: var(--crust);
+    color: var(--on-fill);
   }
   .lg-btn-ok:hover {
     background: var(--green-hover);
@@ -354,7 +354,7 @@
   .lg-btn-ok .kbd {
     background: color-mix(in srgb, var(--crust) 18%, transparent);
     border-color: color-mix(in srgb, var(--crust) 25%, transparent);
-    color: var(--crust);
+    color: var(--on-fill);
   }
   .lg-link {
     all: unset;
