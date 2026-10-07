@@ -148,6 +148,7 @@ const PATHS = {
     </>
   ),
   play: <path d="M6 4l14 8-14 8z" />,
+  stop: <rect x="5" y="5" width="14" height="14" rx="2" />,
   spark: <path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8z" />,
   layers: (
     <>

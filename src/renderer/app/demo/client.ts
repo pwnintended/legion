@@ -262,6 +262,8 @@ export class DemoClient implements EngineClient {
       case 'runs.pause':
       case 'runs.resume':
         return this.updateRun(input.runId as string, { paused: method === 'runs.pause' });
+      case 'runs.cancel':
+        return this.updateRun(input.runId as string, { status: 'cancelled', paused: false });
       case 'runs.approvePlan':
         return this.approvePlan(input.runId as string);
       case 'projects.list':

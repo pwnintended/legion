@@ -8,12 +8,19 @@ import { useEffect, useState } from 'react';
 import { useShallow } from 'zustand/react/shallow';
 import { commandTooltip, executeCommand } from '../app/commands';
 import { canArchive, isArchived } from '../app/compat';
-import { applyProjectStatus, openInboxCount, runningAttempts, selectArchivedRuns, taskCounts } from '../app/data';
+import {
+  applyProjectStatus,
+  openInboxCount,
+  runningAttempts,
+  selectArchivedRuns,
+  TERMINAL_RUN_STATUSES,
+  taskCounts,
+} from '../app/data';
 import { rpc, useActiveRunId, useConnection, useData, useEngines, useUi } from '../app/hooks';
 import { setPref, usePrefs } from '../app/prefs';
 import { openProject } from '../app/project-actions';
 import { activeRunsOf, type RailGroup, selectRailGroups, selectWorkspaceRuns } from '../app/projects';
-import { archiveRunInteractively, reloadRuns } from '../app/run-actions';
+import { archiveRunInteractively, reloadRuns, stopRunInteractively } from '../app/run-actions';
 import { actions, dataStore } from '../app/store';
 import { ENGINE_NAME } from '../layout/describe';
 import { toast } from '../overlays/nav';
@@ -77,6 +84,18 @@ function RailRun({ run, index, active }: { run: Run; index: number | null; activ
   const line = runStatusLine(run, stats.agents, stats.merged, stats.total, stats.urgent);
   const archived = isArchived(run);
   const archivable = canArchive(run);
+  const stoppable = !archived && !TERMINAL_RUN_STATUSES.has(run.status);
+  const [stopping, setStopping] = useState(false);
+  const stop = async () => {
+    setStopping(true);
+    try {
+      await stopRunInteractively(run);
+    } catch (error) {
+      toast(`Couldn't stop the run: ${errorText(error)}`, 'error');
+    } finally {
+      setStopping(false);
+    }
+  };
   const archive = async () => {
     setArchiving(true);
     try {
@@ -114,6 +133,23 @@ function RailRun({ run, index, active }: { run: Run; index: number | null; activ
           </span>
         </span>
       </button>
+      {stoppable ? (
+        <button
+          type="button"
+          className="rail-action btn btn-ghost btn-icon"
+          aria-label={`Stop ${run.title}`}
+          title={
+            active
+              ? commandTooltip('run.stop', 'Stop run')
+              : 'Stop run: every agent stops, unfinished tasks are cancelled'
+          }
+          disabled={stopping}
+          onClick={() => void stop()}
+          data-testid="rail-stop"
+        >
+          <Icon name="stop" size={12} />
+        </button>
+      ) : null}
       {archivable ? (
         <button
           type="button"

@@ -49,7 +49,7 @@ import {
   setPinned,
 } from './project-actions';
 import { selectWorkspaceRuns } from './projects';
-import { archiveRunInteractively, refreshPr } from './run-actions';
+import { archiveRunInteractively, refreshPr, stopRunInteractively } from './run-actions';
 import {
   actions,
   activeProjectOf,
@@ -723,6 +723,19 @@ export function builtinCommands(): Command[] {
         return !!run && run.paused;
       },
       run: (ctx) => rpc('runs.resume', { runId: ctx.activeRunId as string }),
+    },
+    {
+      id: 'run.stop',
+      title: 'Stop run…',
+      category: 'Run',
+      when: (ctx) => {
+        const run = activeRun(ctx);
+        return !!run && !TERMINAL_RUN_STATUSES.has(run.status);
+      },
+      run: async (ctx) => {
+        const run = activeRun(ctx);
+        if (run) await stopRunInteractively(run);
+      },
     },
     {
       id: 'run.archive',

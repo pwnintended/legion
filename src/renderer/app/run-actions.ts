@@ -73,6 +73,25 @@ export async function archiveRun(runId: string, force = false): Promise<ArchiveR
   return archiveReportOf(result);
 }
 
+/**
+ * Stop a run for good (`runs.cancel`) after a confirm: every agent of the run stops, its tasks are cancelled and
+ * its open inbox items dismissed. Worktrees and branches stay until the run is archived. False when declined.
+ */
+export async function stopRunInteractively(run: Pick<Run, 'id' | 'title'>): Promise<boolean> {
+  const ok = await confirmAction({
+    title: `Stop “${run.title}”?`,
+    body: [
+      'Every agent of this run stops now: the assistant, the planner or lead, coders and reviewers. Unfinished tasks are cancelled and what waits in the inbox for this run is dismissed.',
+      'Merged work, worktrees and branches stay; archive the run afterwards to clean them up. A stopped run cannot be resumed (Pause can).',
+    ],
+    confirmLabel: 'Stop run',
+    tone: 'danger',
+  });
+  if (!ok) return false;
+  applyRun(await getClient().call('runs.cancel', { runId: run.id }));
+  return true;
+}
+
 /** The engine refused because the run is still active. */
 export function isActiveRunRefusal(error: unknown): boolean {
   return error instanceof RpcError && error.code === 'failed_precondition';
