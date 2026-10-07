@@ -53,17 +53,30 @@ describe('key dispatch', () => {
     uiStore.setState(initialUi());
   });
 
-  it('runs global layout bindings when no overlay is open, in the agents view only', () => {
-    expect(handleKeyDown(cmdEnter() as unknown as KeyboardEvent)).toBe(false);
-    expect(ran).toEqual([]);
-    uiStore.setState({ view: 'agents' });
-    const event = cmdEnter();
-    expect(handleKeyDown(event as unknown as KeyboardEvent)).toBe(true);
-    expect(ran).toEqual(['layout.focus']);
-    expect(event.prevented).toBe(true);
+  it("runs a view's bindings only in that view, when no overlay is open", () => {
+    const off = registerCommand({
+      id: 'test.codeOnly',
+      title: 'Code only',
+      keybinding: 'Mod+Enter',
+      when: (ctx) => ctx.ui.view === 'code',
+      run: () => void ran.push('test.codeOnly'),
+    });
+    try {
+      expect(handleKeyDown(cmdEnter() as unknown as KeyboardEvent)).toBe(false);
+      uiStore.setState({ view: 'agents' });
+      expect(handleKeyDown(cmdEnter() as unknown as KeyboardEvent)).toBe(false);
+      expect(ran).toEqual([]);
+      uiStore.setState({ view: 'code' });
+      const event = cmdEnter();
+      expect(handleKeyDown(event as unknown as KeyboardEvent)).toBe(true);
+      expect(ran).toEqual(['test.codeOnly']);
+      expect(event.prevented).toBe(true);
+    } finally {
+      off();
+    }
   });
 
-  it('leaves keys to an open overlay: ⌘⏎ on a button inside the composer is not layout.focus', () => {
+  it('leaves keys to an open overlay: ⌘⏎ on a button inside the composer runs no command', () => {
     uiStore.setState({ overlay: 'composer' });
     const event = cmdEnter();
     expect(handleKeyDown(event as unknown as KeyboardEvent)).toBe(false);

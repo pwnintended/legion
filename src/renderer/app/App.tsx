@@ -1,14 +1,15 @@
 /**
- * App shell: title bar, rail, then what is in view: a run's conversation (chat view) or its agents' workspace
- * (agents view); a project's new-conversation page (chat) or its repository home (agents); onboarding when there
- * is nothing yet. Status bar, overlays.
+ * App shell: title bar, rail, then what is in view: the project's board of conversations (chat view; the active
+ * run is its focused tile), the active run's route map of agents (agents view), or the project's code strip
+ * (code view, and a project with no run); onboarding when there is nothing yet. Status bar, overlays.
  * Overlays (composer, inbox, palette) are rendered by `overlays/index.tsx` (default export, mounted once here)
  * and read `uiStore.overlay` to decide what to show.
  */
 import { MotionConfig } from 'motion/react';
 import { type ComponentType, lazy, Suspense, useEffect } from 'react';
-import { ChatView } from '../chat/ChatView';
-import { NewConversation } from '../chat/NewConversation';
+import { RouteMap } from '../agents/RouteMap';
+import { Board } from '../board/Board';
+import { boardKeyOf } from '../board/state';
 import { Onboarding } from '../chrome/Onboarding';
 import { Rail } from '../chrome/Rail';
 import { StatusBar } from '../chrome/StatusBar';
@@ -38,15 +39,18 @@ export function App() {
   const activeRunId = useUi((s) => s.activeRunId);
   const activeProjectId = useUi((s) => s.activeProjectId);
   const view = useUi((s) => s.view);
+  const boardKey = useData((s) => {
+    const run = activeRunId ? s.runs[activeRunId] : undefined;
+    return run ? boardKeyOf(s, run) : activeProjectId;
+  });
   const reducedMotion = useMotionConfig();
 
   let content: React.ReactNode;
   if (!connection.loaded) content = <WorkspaceSkeleton />;
   else if (runs.length === 0 && !hasProjects) content = <Onboarding />;
-  else if (view === 'chat' && activeRunId) content = <ChatView key={activeRunId} runId={activeRunId} />;
-  else if (view === 'chat' && activeProjectId)
-    content = <NewConversation key={activeProjectId} projectId={activeProjectId} />;
-  else if (workspaceKey) content = <Workspace key={workspaceKey} runId={workspaceKey} />;
+  else if (view === 'chat' && boardKey) content = <Board key={boardKey} boardKey={boardKey} />;
+  else if (view === 'agents' && activeRunId) content = <RouteMap key={activeRunId} runId={activeRunId} />;
+  else if (workspaceKey) content = <Workspace key={workspaceKey} workspaceKey={workspaceKey} />;
   else content = <WorkspaceSkeleton />;
 
   return (

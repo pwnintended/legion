@@ -28,8 +28,10 @@ import type {
 } from '@shared/rpc';
 import { RpcError } from '@shared/rpc-transport';
 import { isArchived } from '../compat';
+import { demoScale } from '../demo-mode';
 import type { ConnectionState } from '../engine-connection';
 import type { EngineClient } from '../sync';
+import { withBoardDemo } from './board';
 import { DEMO_FILES, drawDemoShot, withConversationDemo } from './conversation';
 import { createDemoWorld, type DemoWorld, LIVE_SCRIPT, snapshotOf } from './fixtures';
 import { extra, withLifecycleDemo } from './lifecycle';
@@ -47,6 +49,7 @@ import {
   demoShow,
   demoStatus,
 } from './projects';
+import { withScaleDemo } from './scale';
 import { withSessionLive } from './sessions';
 
 const SCRIPT = withSessionLive(LIVE_SCRIPT);
@@ -73,7 +76,8 @@ export class DemoClient implements EngineClient {
     const now = options.now ?? Date.now();
     const world = createDemoWorld(now);
     extendDemoWorld(world, now);
-    this.world = withConversationDemo(withLifecycleDemo(world, now), now);
+    const base = withBoardDemo(withConversationDemo(withLifecycleDemo(world, now), now), now);
+    this.world = demoScale() ? withScaleDemo(base, now) : base;
     this.now = now;
     this.projects = createDemoProjects(this.world.runs, now);
     // Transcript history gets seqs below the snapshot seq (it happened before the snapshot was read).

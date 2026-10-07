@@ -1,0 +1,927 @@
+/*
+ * Agents mode: the route map (left) and the station pane (right) on the crust gutter, both in the tile frame.
+ *
+ *   .route                       the view: map + pane, 10px gutters
+ *   .rm-map .rm-head .rm-line    the map panel, its header, the trunk list
+ *   .rm-stop .rm-row .rm-marker  termini and wave lines, task rows, the rings on the trunk and the buses
+ *   .rm-lit                      the selected station's outline (glides between rows)
+ *   .rm-pane .rm-track .rm-tabs  the station pane, its stage track and tabs
+ *
+ * Geometry, a tree view in straight lines: the trunk runs at x = 27 inside the list; a wave's rows hang off it on
+ * straight branches to rings at x = 51. Stops carry 22px rings centred on the trunk, rows 16px rings centred on
+ * the trunk (a wave of one) or at the branch's end. Left of the trunk is the gutter the selected task's
+ * dependency links run in.
+ */
+
+.route {
+  --rm-trunk: 27px;
+  --rm-bus: 51px;
+  --rm-line: var(--surface1);
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+  display: grid;
+  grid-template-columns: minmax(340px, min(420px, 32%)) minmax(0, 1fr);
+  gap: 10px;
+  padding: 10px;
+}
+.route[data-narrow="true"] {
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: auto minmax(0, 1fr);
+}
+
+/* Map panel ---------------------------------------------------------------------------------------- */
+.rm-map {
+  container: rm-map / inline-size;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  background: var(--base);
+  border: var(--border-w) solid var(--surface0);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+.rm-head {
+  flex: none;
+  padding: 16px 18px 12px;
+  border-bottom: 1px solid var(--hairline);
+}
+.rm-title {
+  margin: 0;
+  font-size: 15.5px;
+  font-weight: 600;
+  line-height: 1.3;
+  letter-spacing: -0.01em;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.rm-counts {
+  margin: 5px 0 0;
+  font-size: 13.5px;
+  color: var(--subtext0);
+}
+.rm-sep {
+  color: var(--overlay0);
+}
+.rm-count-jump {
+  all: unset;
+  cursor: pointer;
+  border-radius: 4px;
+}
+.rm-count-jump[data-tone="warn"] {
+  color: var(--peach);
+}
+.rm-count-jump[data-tone="bad"] {
+  color: var(--red);
+}
+button.rm-count-jump:hover {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+button.rm-count-jump:focus-visible {
+  outline: 2px solid var(--peach);
+  outline-offset: 2px;
+}
+.rm-crew {
+  all: unset;
+  box-sizing: border-box;
+  position: relative;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  width: 100%;
+  margin-top: 10px;
+  padding: 6px 8px;
+  border-radius: 10px;
+  font-size: 12.5px;
+  color: var(--subtext1);
+  transition: background-color 0.15s;
+}
+.rm-crew > * {
+  position: relative;
+  z-index: 1;
+}
+.rm-crew:hover {
+  background: color-mix(in srgb, var(--surface0) 55%, transparent);
+}
+.rm-crew:focus-visible {
+  outline: 2px solid var(--mauve);
+  outline-offset: 1px;
+}
+.rm-crew .mono {
+  font-size: 11.5px;
+}
+
+.rm-scroll {
+  /* Sized to its content: the termini follow the last wave, and stay pinned once the map has to scroll. */
+  flex: 0 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  display: flex;
+  flex-direction: column;
+  padding: 10px 8px 0 4px;
+}
+/* When the map overflows, rows fade out at the edge instead of being cut through. */
+.rm-scroll[data-overflow="true"] {
+  mask-image: linear-gradient(to bottom, #000 calc(100% - 22px), transparent);
+}
+.rm-line-wrap {
+  position: relative;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+}
+.rm-line {
+  position: relative;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+/* The trunk: Plan to Pull request. */
+.rm-line::before {
+  content: "";
+  position: absolute;
+  left: calc(var(--rm-trunk) - 1px);
+  top: 22px;
+  bottom: 22px;
+  width: 2px;
+  border-radius: 999px;
+  background: var(--rm-line);
+}
+/* The trunk runs on through the scrolling part to the pinned termini below. */
+.rm-line-wrap > .rm-line {
+  flex: 1;
+  padding-bottom: 8px;
+}
+.rm-line-wrap > .rm-line::before {
+  bottom: 0;
+}
+/* Integration and Pull request, pinned under the scrolling part of the map. */
+.rm-line.rm-line-end {
+  flex: none;
+  /* A margin, not padding, so the trunk (absolutely placed) lines up with the scrolling part's. */
+  margin-left: 4px;
+  padding: 0 8px 10px 0;
+}
+.rm-line.rm-line-end::before {
+  top: 0;
+}
+.rm-item {
+  position: relative;
+}
+
+/* Rings ---------------------------------------------------------------------------------------------- */
+.rm-marker {
+  position: relative;
+  z-index: 2;
+  flex: none;
+  box-sizing: border-box;
+  display: grid;
+  place-items: center;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  border: 2px solid var(--surface2);
+  background: var(--base);
+  color: var(--on-fill);
+}
+.rm-marker[data-size="stop"] {
+  width: 22px;
+  height: 22px;
+  border-width: 2.5px;
+}
+.rm-marker[data-state="live"],
+.rm-marker[data-state="current"],
+.rm-marker[data-state="wave-live"] {
+  border-color: var(--blue);
+}
+.rm-marker-core {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--blue);
+  animation: lg-breathe 1.4s ease-in-out infinite;
+}
+.rm-marker[data-size="stop"] .rm-marker-core {
+  width: 8px;
+  height: 8px;
+}
+.rm-marker[data-state="done"] {
+  border-color: var(--green);
+  background: var(--green);
+}
+.rm-marker[data-state="waiting"] {
+  border-color: var(--peach);
+}
+.rm-marker[data-state="failed"] {
+  border-color: var(--red);
+}
+.rm-marker[data-state="pending"] {
+  border-style: dashed;
+  border-color: var(--surface2);
+}
+.rm-marker[data-state="gone"] {
+  border-color: var(--surface1);
+  opacity: 0.7;
+}
+.rm-item[data-critical="true"] .rm-marker[data-state="pending"] {
+  border-color: color-mix(in srgb, var(--lavender) 70%, var(--surface2));
+}
+
+/* Termini and wave lines -------------------------------------------------------------------------- */
+.rm-stop {
+  all: unset;
+  box-sizing: border-box;
+  position: relative;
+  z-index: 1;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 22px;
+  width: 100%;
+  min-height: 46px;
+  padding: 6px 10px 6px calc(var(--rm-trunk) - 11px);
+  border-radius: 10px;
+  color: var(--text);
+  transition: background-color 0.15s;
+}
+.rm-stop-static {
+  cursor: default;
+}
+/*
+ * Highlights (hover, related, selected) start right of the ring and wrap the text only: the trunk, the branches,
+ * the rings and the dependency links never cross a highlight's border.
+ */
+.rm-stop {
+  --rm-hl-left: calc(var(--rm-trunk) + 19px);
+}
+.rm-stop::after,
+.rm-row::after {
+  content: "";
+  position: absolute;
+  z-index: -1;
+  top: 0;
+  bottom: 0;
+  right: 0;
+  left: var(--rm-hl-left);
+  border-radius: 10px;
+  background: transparent;
+  transition: background-color 0.15s;
+}
+.rm-stop:not(.rm-stop-static):hover::after,
+.rm-row:hover::after {
+  background: color-mix(in srgb, var(--surface0) 45%, transparent);
+}
+.rm-stop:focus-visible,
+.rm-row:focus-visible {
+  outline: none;
+}
+.rm-stop:focus-visible::after,
+.rm-row:focus-visible::after {
+  outline: 2px solid var(--mauve);
+  outline-offset: -2px;
+}
+.rm-stop-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.rm-stop-title {
+  font-size: 14.5px;
+  font-weight: 500;
+  line-height: 1.25;
+}
+.rm-stop-caption {
+  font-size: 12.5px;
+  line-height: 1.3;
+  color: var(--subtext0);
+}
+.rm-stop-caption[data-state="waiting"] {
+  color: var(--peach);
+}
+.rm-fold-text {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  min-width: 0;
+  flex: 1;
+  font-size: 14.5px;
+}
+.rm-fold-detail {
+  color: var(--subtext0);
+  font-size: 13.5px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.rm-chevron {
+  flex: none;
+  color: var(--overlay1);
+}
+.rm-wave-head[data-phase="ahead"] .rm-stop-title,
+.rm-fold.rm-later .rm-stop-title {
+  color: var(--subtext1);
+}
+/* Not reached yet: the trunk into a pending terminus is dashed. */
+.rm-terminus[data-state="pending"]::before {
+  content: "";
+  position: absolute;
+  z-index: 0;
+  left: calc(var(--rm-trunk) - 1px);
+  top: -4px;
+  height: calc(50% - 6px);
+  width: 2px;
+  background: repeating-linear-gradient(to bottom, var(--rm-line) 0 4px, var(--base) 4px 8px);
+}
+.rm-terminus[data-state="pending"] .rm-stop-title {
+  color: var(--subtext1);
+}
+.rm-note {
+  padding: 10px 10px 10px calc(var(--rm-trunk) + 23px);
+  font-size: 13px;
+  line-height: 1.45;
+  color: var(--subtext0);
+}
+
+/* Waves: each row hangs off the trunk on a straight branch, a tree in the trunk's colour. */
+.rm-bus-item::before {
+  content: "";
+  position: absolute;
+  z-index: 0;
+  left: var(--rm-trunk);
+  width: calc(var(--rm-bus) - var(--rm-trunk) - 8px);
+  top: calc(50% - 1px);
+  height: 2px;
+  background: var(--rm-line);
+}
+.rm-bus-item[data-critical="true"]::before {
+  background: color-mix(in srgb, var(--lavender) 75%, var(--rm-line));
+}
+
+/* Task rows ------------------------------------------------------------------------------------- */
+.rm-row {
+  all: unset;
+  --rm-hl-left: calc(var(--rm-trunk) + 17px);
+  box-sizing: border-box;
+  position: relative;
+  z-index: 1;
+  cursor: pointer;
+  display: grid;
+  grid-template-columns: 16px 36px minmax(0, 1fr) auto 18px;
+  align-items: center;
+  column-gap: 10px;
+  width: 100%;
+  height: 34px;
+  padding: 0 8px 0 calc(var(--rm-trunk) - 8px);
+  border-radius: 10px;
+  font-size: 13.5px;
+  color: var(--text);
+  transition:
+    background-color 0.15s,
+    opacity 0.15s;
+}
+.rm-bus-item .rm-row {
+  --rm-hl-left: calc(var(--rm-bus) + 16px);
+  padding-left: calc(var(--rm-bus) - 8px);
+}
+.rm-item[data-related="true"] .rm-row::after {
+  background: color-mix(in srgb, var(--lavender) 8%, transparent);
+}
+.rm-item[data-dense="true"] .rm-row {
+  height: 26px;
+  font-size: 12.5px;
+}
+.rm-item[data-dim="true"] .rm-row {
+  opacity: 0.6;
+}
+.rm-item[data-dim="true"] .rm-row:hover,
+.rm-item[data-dim="true"][data-related="true"] .rm-row {
+  opacity: 1;
+}
+.rm-id {
+  margin-left: 10px;
+  font-size: 12.5px;
+  color: var(--subtext1);
+}
+.rm-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.rm-stage {
+  font-size: 12.5px;
+  white-space: nowrap;
+  color: var(--overlay1);
+}
+.rm-stage[data-state="live"] {
+  color: var(--blue);
+}
+.rm-stage[data-state="waiting"] {
+  color: var(--peach);
+}
+.rm-stage[data-state="failed"] {
+  color: var(--red);
+}
+.rm-stage[data-state="done"] {
+  color: var(--green);
+}
+.rm-engines {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  font-size: 12px;
+  color: var(--overlay2);
+  white-space: nowrap;
+}
+.rm-edot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--mauve);
+}
+.rm-edot[data-engine="codex"] {
+  background: var(--teal);
+}
+.rm-merged-row {
+  grid-template-columns: 16px auto auto;
+  justify-content: start;
+}
+.rm-merged-text {
+  margin-left: 10px;
+  color: var(--green);
+  font-size: 12.5px;
+}
+
+/* The followed station stays lit. */
+.rm-lit {
+  position: absolute;
+  z-index: 1;
+  inset: 0;
+  border: var(--border-w) solid var(--mauve);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--mauve) 7%, transparent);
+  pointer-events: none;
+}
+.rm-bus-item .rm-lit {
+  left: calc(var(--rm-bus) + 16px);
+}
+.rm-solo .rm-lit {
+  left: calc(var(--rm-trunk) + 19px);
+}
+/* A wave of one task: a stop on the trunk with its wave under the title. */
+.rm-solo-stop .rm-stop-text {
+  flex: 1;
+  min-width: 0;
+}
+.rm-solo .rm-solo-stop .rm-stop-title {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  min-width: 0;
+}
+.rm-solo-stop .rm-id {
+  flex: none;
+  margin-left: 0;
+}
+.rm-solo-stop .rm-name {
+  min-width: 0;
+}
+.rm-solo-stop .rm-engines {
+  flex: none;
+  padding-right: 6px;
+}
+.rm-item[data-related="true"] .rm-stop::after {
+  background: color-mix(in srgb, var(--lavender) 8%, transparent);
+}
+.rm-item[data-dim="true"] .rm-stop {
+  opacity: 0.6;
+}
+.rm-item[data-dim="true"] .rm-stop:hover {
+  opacity: 1;
+}
+.rm-terminus .rm-lit {
+  left: calc(var(--rm-trunk) + 19px);
+}
+/* The selected station's ring carries the selection on the line itself. */
+[aria-current="true"] > .rm-marker {
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--mauve) 30%, transparent);
+}
+.rm-row[aria-current="true"]::after,
+.rm-stop[aria-current="true"]::after {
+  background: transparent;
+}
+
+/* Dependency links of the selected row. */
+.rm-links {
+  position: absolute;
+  z-index: 1;
+  left: 0;
+  top: 0;
+  overflow: visible;
+  pointer-events: none;
+}
+.rm-links path {
+  fill: none;
+  stroke: var(--lavender);
+  stroke-width: 1.5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  opacity: 0.9;
+}
+.rm-links path[data-up="false"] {
+  stroke-dasharray: 3 4;
+}
+
+/* The map folded into a bar (narrow windows) ------------------------------------------------- */
+.rm-bar-wrap {
+  position: relative;
+  z-index: 5;
+}
+.rm-bar {
+  all: unset;
+  box-sizing: border-box;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  height: 42px;
+  padding: 0 14px;
+  background: var(--base);
+  border: var(--border-w) solid var(--surface0);
+  border-radius: var(--radius);
+  font-size: 13px;
+  color: var(--subtext0);
+}
+.rm-bar:focus-visible {
+  outline: 2px solid var(--mauve);
+  outline-offset: 2px;
+}
+.rm-bar-station {
+  font-weight: 600;
+  color: var(--text);
+}
+.rm-bar .rm-counts-text {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.rm-bar-chevron {
+  transition: transform 0.15s var(--ease-out);
+}
+.rm-bar[aria-expanded="true"] .rm-bar-chevron {
+  transform: rotate(180deg);
+}
+.rm-pop {
+  position: absolute;
+  top: 48px;
+  left: 0;
+  width: min(380px, 100%);
+  max-height: min(72vh, 680px);
+  display: flex;
+  border-radius: var(--radius);
+  box-shadow:
+    0 24px 64px color-mix(in srgb, var(--shadow) 55%, transparent),
+    0 0 0 1px color-mix(in srgb, var(--shadow) 40%, transparent);
+  animation: lg-rise 0.15s var(--ease-out);
+}
+.rm-pop .rm-map {
+  flex: 1;
+}
+
+/* Station pane ------------------------------------------------------------------------------------ */
+.rm-pane {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  background: var(--base);
+  border: var(--border-w) solid var(--surface0);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+.rm-pane-head {
+  flex: none;
+  padding: 18px 22px 4px;
+}
+.rm-pane-titlerow {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+.rm-idchip {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 34px;
+  height: 30px;
+  padding: 0 8px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--mauve) 14%, transparent);
+  color: var(--mauve);
+  font-size: 13px;
+  font-weight: 600;
+}
+.rm-pane-title {
+  margin: 0;
+  min-width: 0;
+  font-size: 21px;
+  font-weight: 600;
+  line-height: 1.3;
+  letter-spacing: -0.012em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.rm-pane-chips {
+  display: flex;
+  flex: none;
+  gap: 6px;
+}
+.rm-chip-role {
+  opacity: 0.72;
+}
+.rm-pane-actions {
+  display: flex;
+  flex: none;
+  gap: 2px;
+  opacity: 1;
+}
+.rm-pane-actions:empty {
+  display: none;
+}
+.rm-pane-caption {
+  margin: 8px 0 0;
+  max-width: 90ch;
+  font-size: 14px;
+  line-height: 1.5;
+  color: var(--subtext0);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+/* Stage track: rings joined by lines, labels under them. */
+.rm-track {
+  flex: none;
+  display: flex;
+  margin: 0;
+  padding: 16px 22px 6px;
+  list-style: none;
+}
+.rm-step {
+  position: relative;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.rm-step:not([data-first])::before {
+  content: "";
+  position: absolute;
+  top: 10px;
+  right: calc(50% + 15px);
+  left: calc(-50% + 15px);
+  height: 2px;
+  border-radius: 999px;
+  background: var(--surface1);
+}
+.rm-step[data-state="done"]::before {
+  background: var(--green);
+}
+.rm-step[data-state="current"]::before {
+  background: linear-gradient(to right, var(--green), var(--mauve));
+}
+.rm-step[data-state="attention"]::before {
+  background: linear-gradient(to right, var(--green), var(--peach));
+}
+.rm-step[data-state="bad"]::before {
+  background: linear-gradient(to right, var(--green), var(--red));
+}
+.rm-step-ring {
+  box-sizing: border-box;
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  border: 2px solid var(--surface2);
+  background: var(--base);
+  color: var(--on-fill);
+}
+.rm-step[data-state="done"] .rm-step-ring {
+  border-color: var(--green);
+  background: var(--green);
+}
+.rm-step[data-state="current"] .rm-step-ring,
+.rm-step[data-state="attention"] .rm-step-ring,
+.rm-step[data-state="bad"] .rm-step-ring {
+  border-color: currentColor;
+  background: radial-gradient(circle, currentColor 0 4px, var(--base) 4.5px);
+}
+.rm-step[data-state="current"] .rm-step-ring {
+  color: var(--mauve);
+}
+.rm-step[data-state="attention"] .rm-step-ring {
+  color: var(--peach);
+}
+.rm-step[data-state="bad"] .rm-step-ring {
+  color: var(--red);
+}
+.rm-step-label {
+  font-size: 13px;
+  color: var(--overlay2);
+  white-space: nowrap;
+}
+.rm-step[data-state="done"] .rm-step-label {
+  color: var(--subtext1);
+}
+.rm-step[data-state="current"] .rm-step-label {
+  color: var(--mauve);
+  font-weight: 600;
+}
+.rm-step[data-state="attention"] .rm-step-label {
+  color: var(--peach);
+  font-weight: 600;
+}
+.rm-step[data-state="bad"] .rm-step-label {
+  color: var(--red);
+  font-weight: 600;
+}
+
+/* Tabs. */
+.rm-tabs {
+  flex: none;
+  display: flex;
+  gap: 24px;
+  margin-top: 10px;
+  padding: 0 22px;
+  border-bottom: 1px solid var(--hairline);
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.rm-tab {
+  all: unset;
+  position: relative;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  height: 40px;
+  font-size: 14px;
+  color: var(--subtext0);
+  white-space: nowrap;
+  transition: color 0.15s;
+}
+.rm-tab:hover {
+  color: var(--text);
+}
+.rm-tab:focus-visible {
+  outline: 2px solid var(--mauve);
+  outline-offset: -2px;
+  border-radius: 6px;
+}
+.rm-tab[aria-selected="true"] {
+  color: var(--mauve);
+  font-weight: 600;
+}
+.rm-tab[aria-selected="true"]::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: -1px;
+  height: 2px;
+  border-radius: 999px;
+  background: var(--mauve);
+}
+.rm-tab-badge {
+  font-size: 11px;
+  font-weight: 400;
+  padding: 1px 6px;
+  border-radius: 6px;
+  background: var(--surface0);
+  color: var(--subtext0);
+}
+.rm-tab-live {
+  width: 6px;
+  height: 6px;
+}
+
+/* Body: the focused tile of the run's tree. */
+.rm-pane-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.rm-pane-tile {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  outline: none;
+}
+.rm-empty-pane {
+  margin: auto;
+  font-size: 13px;
+  color: var(--subtext0);
+}
+
+/* A plan node before execution. */
+.rm-brief {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  padding: 18px 22px 24px;
+  overflow-y: auto;
+  font-size: 14px;
+  line-height: 1.55;
+}
+.rm-brief h3 {
+  margin: 0 0 6px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--subtext1);
+}
+.rm-brief-note,
+.rm-brief-facts {
+  margin: 0;
+  color: var(--subtext0);
+  font-size: 13px;
+}
+.rm-brief-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.rm-brief-list.mono {
+  font-size: 12px;
+}
+.rm-brief-deps {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 0;
+}
+
+/* The selected task's dependencies, named in the pane header in the map's own link styles. */
+.rm-pane-links {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 14px;
+  margin: 8px 0 0;
+  font-size: 13px;
+  color: var(--subtext0);
+}
+.rm-pane-links > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.rm-link-glyph {
+  width: 16px;
+  height: 0;
+  border-top: 1.5px solid var(--lavender);
+}
+.rm-link-glyph[data-kind="down"] {
+  border-top-style: dashed;
+}
+.rm-dep {
+  all: unset;
+  cursor: pointer;
+  font-family: var(--font-code);
+  font-size: 12px;
+  color: var(--subtext1);
+  border-radius: 4px;
+}
+.rm-dep:hover {
+  color: var(--lavender);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.rm-dep:focus-visible {
+  outline: 2px solid var(--mauve);
+  outline-offset: 2px;
+}
+/* A tile hosted in the pane: its own section title would repeat the pane's heading. */
+.rm-pane-tile .lg-sec-title {
+  display: none;
+}

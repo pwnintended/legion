@@ -13,7 +13,7 @@ import { useData, useLatestPlan, useRun } from '../../app/hooks';
 import { ChipList, chipOfRef } from '../../attachments/Attachments';
 import { Bar, Chip, EngineChip, Kbd } from '../../chrome/ui';
 import { ENGINE_LABEL, formatClock } from '../../layout/describe';
-import type { TileCardProps, TileProps } from '../../layout/types';
+import type { TileProps } from '../../layout/types';
 import { approvePlan, registerPlanCommands, requestRevision, useSignoff } from './actions';
 import { discardEdits, editPlan, keepMine, type PlanDraft, undoEdit, useAnalysis, usePlanDraft } from './draft';
 import { InlineComposer, Markdown, Segmented, useTileKeys } from './kit';
@@ -435,26 +435,3 @@ function PlanFooter({
 // ---------------------------------------------------------------------------------------------
 // Overview card
 // ---------------------------------------------------------------------------------------------
-
-export function Card({ runId }: TileCardProps<'plan'>) {
-  const plan = useLatestPlan(runId);
-  const analysis = useAnalysis(plan?.dag ?? null);
-  const merged = useData((s) => tasksOfRun(s.tasks, runId).filter((t) => t.status === 'merged').length);
-  if (!plan || !analysis) return <div>planner is drafting the DAG</div>;
-  const est = analysis.estimate;
-  const overlap = analysis.overlaps[0];
-  return (
-    <>
-      <div>
-        {plan.dag.nodes.length} tasks{est ? ` · max ${est.maxParallel} parallel` : ''}
-        {plan.approvedAt ? ` · ${merged} merged` : ''}
-      </div>
-      <div>{est ? `est. ${formatCostRange([est.costLow, est.costHigh])} · ~${est.minutes} min` : ''}</div>
-      <div>
-        {overlap
-          ? `overlap: ${overlap.to} now runs after ${overlap.from}`
-          : `critical path ${(est?.criticalPath ?? []).join(' → ')}`}
-      </div>
-    </>
-  );
-}

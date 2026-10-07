@@ -1,8 +1,8 @@
 /**
- * The run's conversation: the app's home for a run. One column of the human's messages, the assistant's replies
- * (with what its agents told it folded underneath), the decisions waiting on the human as cards, what agents
- * presented, and the run's milestones; the progress strip above and the reply box below. The agents themselves
- * stay in the Agents view (⌘E).
+ * A run's conversation, the body of its tile on the project board: one column of the human's messages, the
+ * assistant's replies (with what its agents told it folded underneath), the decisions waiting on the human as
+ * cards, what agents presented, and the run's milestones; the progress strip above and the reply box below.
+ * The tile's head carries the run's title. The agents themselves stay in the Agents view (⌘E).
  */
 import type { Attempt, Run } from '@shared/domain';
 import { AnimatePresence, motion } from 'motion/react';
@@ -19,9 +19,9 @@ import {
   tasksOfRun,
   transcriptEntries,
 } from '../app/data';
-import { useData, useRun, useTranscript, useUi } from '../app/hooks';
+import { useData, useTranscript, useUi } from '../app/hooks';
 import { useReducedMotionPref } from '../app/prefs';
-import { actions, jumpToNextDecision } from '../app/store';
+import { actions } from '../app/store';
 import { ChipList, chipOfRef } from '../attachments/Attachments';
 import { Icon } from '../chrome/icons';
 import { Chip } from '../chrome/ui';
@@ -121,13 +121,8 @@ function closedReason(run: Run, live: Attempt | null, hadAssistant: boolean): st
   return null;
 }
 
-export function ChatView({ runId }: { runId: string }) {
-  const run = useRun(runId);
-  if (!run) return null;
-  return <Conversation run={run} />;
-}
-
-function Conversation({ run }: { run: Run }) {
+/** `focused`: the board's focused tile (the active run); its conversation is the one tests and ⌘U address. */
+export function Conversation({ run, focused }: { run: Run; focused: boolean }) {
   const { thread, busy, live, assistants, loading } = useThreadOf(run);
   const scrollRef = useRef<HTMLDivElement>(null);
   const feedRef = useRef<HTMLDivElement>(null);
@@ -179,7 +174,10 @@ function Conversation({ run }: { run: Run }) {
   // thread may still be loading around it, so it is kept in view while the feed settles (see the observer).
   // biome-ignore lint/correctness/useExhaustiveDependencies: re-run when the thread renders the target
   useEffect(() => {
-    if (!chatFocus || chatFocus.nonce === consumedFocus) return;
+    if (!chatFocus) return;
+    // Another item is being shown now (maybe in another tile): only one card on the board is marked at a time.
+    setHighlight((current) => (current && current !== chatFocus.itemId ? null : current));
+    if (chatFocus.nonce === consumedFocus) return;
     const target = scrollRef.current?.querySelector<HTMLElement>(`[data-thread-key="${CSS.escape(chatFocus.itemId)}"]`);
     if (!target) return;
     consumedFocus = chatFocus.nonce;
@@ -197,7 +195,7 @@ function Conversation({ run }: { run: Run }) {
   }, [highlight]);
 
   return (
-    <div className="ch" data-testid="chat" data-run={run.id}>
+    <div className="ch" data-testid={focused ? 'chat' : 'chat-tile'} data-run={run.id}>
       {assistants.map((a) => (
         <KeepTranscript key={a.id} attemptId={a.id} />
       ))}
@@ -234,14 +232,6 @@ function Conversation({ run }: { run: Run }) {
         }}
       >
         <div className="ch-feed" ref={feedRef}>
-          <header className="ch-head">
-            <h1 className="ch-title">{run.title}</h1>
-            <p className="ch-sub">
-              <span className="mono">{run.repoPath.split('/').filter(Boolean).at(-1)}</span> ·{' '}
-              <span className="mono">{run.baseRef}</span> · started{' '}
-              <span className="mono">{formatStamp(run.createdAt)}</span>
-            </p>
-          </header>
           {loading && thread.length === 0 ? (
             <div className="ch-skeleton" aria-hidden="true">
               <div style={{ width: '46%' }} />
@@ -562,42 +552,25 @@ function Update({ item }: { item: Extract<ThreadItem, { kind: 'update' }> }) {
   );
 }
 
+/** What waits on the human in this conversation; the title bar counts the rest. */
 function NeedsYou({ runId, open }: { runId: string; open: ReturnType<typeof openDecisionItems> }) {
-  const elsewhere = useData(
-    (s) => Object.values(s.inbox).filter((i) => i.resolvedAt === null && i.runId !== runId).length,
-  );
   const tasks = useData((s) => s.tasks);
-  if (open.length === 0 && elsewhere === 0) return null;
+  if (open.length === 0) return null;
   return (
     <div className="ch-needs-bar" data-testid="chat-needs-you">
-      {open.length ? (
-        <>
-          <span className="ch-needs-count">
-            <span className="ch-needs-dot" aria-hidden="true" />
-            {open.length} waiting for you
-          </span>
-          <span className="ch-needs-items">
-            {open.slice(0, 4).map(({ item, key }) => (
-              <button
-                key={key}
-                type="button"
-                className="ch-needs-chip"
-                onClick={() => actions.focusChatItem(runId, key)}
-              >
-                {DECISION_TITLE[item.kind]}
-                {item.taskId && tasks[item.taskId] ? <span className="mono"> {tasks[item.taskId]?.nodeId}</span> : null}
-              </button>
-            ))}
-            {open.length > 4 ? <span className="ch-needs-more">+{open.length - 4} more</span> : null}
-          </span>
-        </>
-      ) : null}
-      {elsewhere ? (
-        <button type="button" className="ch-needs-other" onClick={() => jumpToNextDecision()}>
-          {open.length ? `${elsewhere} in other runs` : `${elsewhere} waiting for you in other runs`}
-          <Icon name="arrowRight" size={11} />
-        </button>
-      ) : null}
+      <span className="ch-needs-count">
+        <span className="ch-needs-dot" aria-hidden="true" />
+        {open.length} waiting for you
+      </span>
+      <span className="ch-needs-items">
+        {open.slice(0, 4).map(({ item, key }) => (
+          <button key={key} type="button" className="ch-needs-chip" onClick={() => actions.focusChatItem(runId, key)}>
+            {DECISION_TITLE[item.kind]}
+            {item.taskId && tasks[item.taskId] ? <span className="mono"> {tasks[item.taskId]?.nodeId}</span> : null}
+          </button>
+        ))}
+        {open.length > 4 ? <span className="ch-needs-more">+{open.length - 4} more</span> : null}
+      </span>
     </div>
   );
 }

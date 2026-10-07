@@ -15,8 +15,8 @@
  */
 import { useSyncExternalStore } from 'react';
 import { useStore } from 'zustand';
+import { boardCommands } from '../board/commands';
 import {
-  allocateId,
   collapse,
   cycleColumnMode,
   cycleWidth,
@@ -25,8 +25,6 @@ import {
   focusDir,
   focusedColumn,
   focusedTile,
-  insertColumn,
-  makeColumn,
   maximize,
   moveDir,
   remove,
@@ -161,8 +159,9 @@ function context(): CommandContext {
     ui,
     data: dataStore.getState(),
     activeRunId: ui.activeRunId,
-    // The workspace's layout commands only act on what is on screen: the agents view.
-    layout: key && ui.view === 'agents' ? (ui.layouts[key] ?? null) : null,
+    // Layout commands only act on what is on screen: the run's tree behind the route map (agents view), or the
+    // project's strip (code view). The conversation has none.
+    layout: key && ui.view !== 'chat' ? (ui.layouts[key] ?? null) : null,
   };
 }
 
@@ -342,10 +341,10 @@ export function installKeybindings(target: Window = window): () => void {
 // Built-in commands
 // ---------------------------------------------------------------------------------------------
 
-const hasLayout = (ctx: CommandContext) => ctx.layout !== null && ctx.layout.strip.columns.length > 0;
-const noOverlay = (ctx: CommandContext) => ctx.ui.overlay === null;
+/** The code view's strip is on screen: column, focus and key-mode commands act on it. */
+const hasLayout = (ctx: CommandContext) =>
+  ctx.ui.view === 'code' && ctx.layout !== null && ctx.layout.strip.columns.length > 0;
 const activeRun = (ctx: CommandContext) => (ctx.activeRunId ? (ctx.data.runs[ctx.activeRunId] ?? null) : null);
-const inStripish = (ctx: CommandContext) => ctx.ui.layoutMode === 'strip' || ctx.ui.layoutMode === 'focus';
 
 function layoutOp(op: (layout: Workspace) => Workspace) {
   return () => actions.layout(op);
@@ -369,27 +368,20 @@ const projectInView = (ctx: CommandContext) => activeProjectOf(ctx.ui, ctx.data)
 /** The project home is on screen (no run focused). */
 const onProjectHome = (ctx: CommandContext) => ctx.activeRunId === null && projectInView(ctx) !== null;
 
+/** A terminal in the Code view: in the worktree of the task on the route map, else the repository root. */
 function openTerminal(ctx: CommandContext): void {
   const run = activeRun(ctx);
-  const project = run ? null : projectInView(ctx);
+  const project = projectInView(ctx);
   const root = run?.repoPath ?? project?.path;
   if (!root) return;
-  actions.layout((layout) => {
-    const tile = focusedTile(layout);
-    const taskId =
-      tile && (tile.kind === 'session' || tile.kind === 'review')
-        ? (tile.params as { taskId: string | null }).taskId
-        : null;
-    const cwd = (taskId && ctx.data.tasks[taskId]?.worktreePath) || root;
-    const [id, next] = allocateId(layout, 'terminal');
-    const column = makeColumn({
-      id: `col:${id}`,
-      width: '1/2',
-      tiles: [{ id, kind: 'terminal', params: { terminalId: null, cwd, attemptId: null }, auto: false }],
-    });
-    return insertColumn(next, column, layout.focus?.column ?? null, true);
-  });
-  actions.setLayoutMode('strip');
+  const runLayout = run ? ctx.ui.layouts[run.id] : undefined;
+  const tile = runLayout ? focusedTile(runLayout) : null;
+  const taskId =
+    tile && (tile.kind === 'session' || tile.kind === 'review')
+      ? (tile.params as { taskId: string | null }).taskId
+      : null;
+  const cwd = (taskId && ctx.data.tasks[taskId]?.worktreePath) || root;
+  actions.openInCode({ kind: 'terminal', params: { terminalId: null, cwd, attemptId: null } });
 }
 
 export function builtinCommands(): Command[] {
@@ -496,8 +488,16 @@ export function builtinCommands(): Command[] {
       id: 'view.agents',
       title: 'Show the agents',
       category: 'Layout',
-      when: (ctx) => ctx.ui.view !== 'agents' && (activeRun(ctx) !== null || projectInView(ctx) !== null),
+      when: (ctx) => ctx.ui.view !== 'agents' && activeRun(ctx) !== null,
       run: () => actions.setView('agents'),
+    },
+    {
+      id: 'view.code',
+      title: "Show the project's code",
+      category: 'Layout',
+      keybinding: 'Mod+Shift+E',
+      when: (ctx) => ctx.ui.view !== 'code' && projectInView(ctx) !== null,
+      run: () => actions.setView('code'),
     },
     {
       id: 'view.toggle',
@@ -534,51 +534,6 @@ export function builtinCommands(): Command[] {
       hidden: true,
       when: (ctx) => ctx.ui.overlay !== null,
       run: () => actions.closeOverlay(),
-    },
-
-    // Layout modes ---------------------------------------------------------------------------------
-    { id: 'layout.strip', title: 'Layout: Strip', category: 'Layout', run: () => actions.setLayoutMode('strip') },
-    {
-      id: 'layout.back',
-      title: 'Back to Strip',
-      category: 'Layout',
-      keybinding: 'Escape',
-      hidden: true,
-      when: (ctx) =>
-        noOverlay(ctx) && ctx.ui.view === 'agents' && ctx.ui.keyMode === 'normal' && ctx.ui.layoutMode !== 'strip',
-      run: () => actions.setLayoutMode('strip'),
-    },
-    {
-      id: 'layout.focus',
-      title: 'Layout: Focus',
-      category: 'Layout',
-      keybinding: 'Mod+Enter',
-      inInput: false,
-      when: (ctx) => ctx.ui.view === 'agents',
-      run: () => actions.toggleLayoutMode('focus'),
-    },
-    {
-      // Layout: Focus from the conversation. The agents-view command owns ⌘⏎, which the conversation leaves to
-      // its cards, so this twin carries no binding and only lists outside the agents view.
-      id: 'layout.focus.open',
-      title: 'Layout: Focus',
-      category: 'Layout',
-      when: (ctx) => ctx.ui.view !== 'agents' && activeRun(ctx) !== null,
-      run: () => actions.setLayoutMode('focus'),
-    },
-    {
-      id: 'layout.overview',
-      title: 'Layout: Overview',
-      category: 'Layout',
-      keybinding: ['Mod+Tab', 'Mod+Shift+O'],
-      run: () => actions.toggleLayoutMode('overview'),
-    },
-    {
-      id: 'layout.pipeline',
-      title: 'Layout: Pipeline',
-      category: 'Layout',
-      keybinding: 'Mod+G',
-      run: () => actions.toggleLayoutMode('pipeline'),
     },
 
     // Focus & move -----------------------------------------------------------------------------------
@@ -628,14 +583,14 @@ export function builtinCommands(): Command[] {
       title: 'Resize mode',
       category: 'Mode',
       keybinding: 'Mod+R',
-      when: (ctx) => hasLayout(ctx) && inStripish(ctx),
+      when: hasLayout,
       run: (ctx) => actions.setKeyMode(ctx.ui.keyMode === 'resize' ? 'normal' : 'resize'),
     },
     {
       id: 'mode.move',
       title: 'Move mode',
       category: 'Mode',
-      when: (ctx) => hasLayout(ctx) && inStripish(ctx),
+      when: hasLayout,
       run: (ctx) => actions.setKeyMode(ctx.ui.keyMode === 'move' ? 'normal' : 'move'),
     },
     {
@@ -805,6 +760,8 @@ export function builtinCommands(): Command[] {
       },
     },
   ];
+
+  commands.push(...boardCommands());
 
   // Workspaces ⌘1–9: runs in rail order (grouped by project).
   for (let n = 1; n <= 9; n++) {

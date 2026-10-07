@@ -1,25 +1,38 @@
 /**
  * The renderer's two Zustand stores:
  * - `dataStore`: the client mirror of engine state (see data.ts), written only by sync.ts / demo mode.
- * - `uiStore`: what the user is looking at — active project and run, the view (the run's conversation, or its
- *   agents: the tiling workspace), overlays, layout mode, key mode, and the layouts of run workspaces (keyed by
- *   run id) and project homes (keyed `project:<id>`, see projects.ts). With an active project and no active
- *   run, the project's page is on screen: a new conversation (chat view) or the repository (agents view).
+ * - `uiStore`: what the user is looking at — active project and run, the view (the project's board of
+ *   conversations, the run's route map of agents, or the project's code), overlays, key mode, and the layouts
+ *   of run workspaces (keyed by run id) and project homes (keyed `project:<id>`, see projects.ts).
  *
- * Layout trees are kept in sync with run data here (outside React), so the strip is correct before render.
+ * A run's layout tree is the model behind its route map: the focused tile is the pane on screen, and tile ids
+ * stay stable for commands and jumps. A project's layout tree is the Code view's strip. Both are kept in sync
+ * with their data here (outside React), so they are correct before render.
  */
 import { createStore } from 'zustand/vanilla';
 import { describeTile, itemTargetsTile, tileTaskId } from '../layout/describe';
 import { clearLayout, loadLayout, saveLayout } from '../layout/persist';
 import { defaultProjectLayout, isUsableProjectLayout } from '../layout/project';
 import { type RunLayoutInput, syncWithRun } from '../layout/sync';
-import { allTiles, focusTile, type LayoutMode, type Workspace } from '../layout/tree';
+import {
+  allocateId,
+  allTiles,
+  focusTile,
+  insertColumn,
+  type LayoutTile,
+  makeColumn,
+  type Workspace,
+} from '../layout/tree';
 import { attemptsOfRun, type DataState, initialData, latestPlan, openInbox, selectRunList, tasksOfRun } from './data';
 import { projectOfRun, projectWorkspaceKey, selectProjects } from './projects';
 
 export type Overlay = 'composer' | 'palette' | 'settings' | 'addProject' | 'goto';
-/** `chat`: the run's conversation (home of the app). `agents`: the tiling workspace of its agents. */
-export type View = 'chat' | 'agents';
+/**
+ * `chat`: the project's board of conversations (home of the app). `agents`: the active run's route map, one
+ * station (task, plan, integration, pull request, crew) at a time. `code`: the project's files, editor, search
+ * and terminals, a tiling strip.
+ */
+export type View = 'chat' | 'agents' | 'code';
 export type SettingsSection = 'engines' | 'agents' | 'access' | 'runs' | 'appearance';
 export type KeyMode = 'normal' | 'resize' | 'move';
 
@@ -31,9 +44,11 @@ export interface UiState {
   view: View;
   /** A thread item the conversation should scroll to and highlight (`nonce` re-triggers the same item). */
   chatFocus: { itemId: string; nonce: number } | null;
-  layoutMode: LayoutMode;
-  /** Mode to return to when toggling Overview/Pipeline/Focus off. */
-  previousMode: LayoutMode;
+  /**
+   * A plan node selected on a run's route map that has no task yet (before execution): it has no tile, so the
+   * pane shows its brief. Cleared when a tile is focused from the map.
+   */
+  mapNode: Record<string, string | null>;
   keyMode: KeyMode;
   /** DOM focus is inside a terminal: plain keys pass through, only ⌘-chords are intercepted. */
   terminalLocked: boolean;
@@ -50,7 +65,7 @@ export interface UiState {
 
 const UI_PREFS_KEY = 'legion.ui';
 
-type UiPrefs = Partial<Pick<UiState, 'activeRunId' | 'activeProjectId' | 'layoutMode' | 'view'>>;
+type UiPrefs = Partial<Pick<UiState, 'activeRunId' | 'activeProjectId' | 'view'>>;
 
 function loadPrefs(): UiPrefs {
   try {
@@ -68,7 +83,6 @@ function savePrefs(state: UiState): void {
       JSON.stringify({
         activeRunId: state.activeRunId,
         activeProjectId: state.activeProjectId,
-        layoutMode: state.layoutMode,
         view: state.view,
       }),
     );
@@ -79,18 +93,13 @@ function savePrefs(state: UiState): void {
 
 export function initialUi(): UiState {
   const prefs = loadPrefs();
-  const mode =
-    prefs.layoutMode && ['strip', 'focus', 'overview', 'pipeline'].includes(prefs.layoutMode)
-      ? prefs.layoutMode
-      : 'strip';
   return {
     activeRunId: typeof prefs.activeRunId === 'string' ? prefs.activeRunId : null,
     activeProjectId: typeof prefs.activeProjectId === 'string' ? prefs.activeProjectId : null,
     overlay: null,
-    view: prefs.view === 'agents' ? 'agents' : 'chat',
+    view: prefs.view === 'agents' || prefs.view === 'code' ? prefs.view : 'chat',
     chatFocus: null,
-    layoutMode: mode,
-    previousMode: 'strip',
+    mapNode: {},
     keyMode: 'normal',
     terminalLocked: false,
     layouts: {},
@@ -104,9 +113,13 @@ export function initialUi(): UiState {
 export const dataStore = createStore<DataState>(() => initialData());
 export const uiStore = createStore<UiState>(() => initialUi());
 
-/** The workspace on screen: the active run's, else the active project's home (`project:<id>`), else none. */
-export function activeWorkspaceKey(ui: Pick<UiState, 'activeRunId' | 'activeProjectId'>): string | null {
-  return ui.activeRunId ?? (ui.activeProjectId ? projectWorkspaceKey(ui.activeProjectId) : null);
+/**
+ * The workspace on screen: the project's (`project:<id>`) in the Code view or with no run active, else the
+ * active run's; none without a project or run.
+ */
+export function activeWorkspaceKey(ui: Pick<UiState, 'activeRunId' | 'activeProjectId' | 'view'>): string | null {
+  if (ui.view === 'code' || !ui.activeRunId) return ui.activeProjectId ? projectWorkspaceKey(ui.activeProjectId) : null;
+  return ui.activeRunId;
 }
 
 /** The project of whatever is on screen (a project home, or the active run's project). */
@@ -170,11 +183,10 @@ function scheduleSave(runId: string): void {
  * must never throw: a layout the ops can't handle is discarded and re-derived from the run.
  */
 export function syncActiveLayout(): void {
-  const { activeRunId, activeProjectId, layouts } = uiStore.getState();
-  if (!activeRunId) {
-    if (activeProjectId) syncProjectLayout(activeProjectId);
-    return;
-  }
+  const { activeRunId, activeProjectId, layouts, view } = uiStore.getState();
+  // The project's strip backs the Code view, of a run's project too.
+  if (activeProjectId && (view === 'code' || !activeRunId)) syncProjectLayout(activeProjectId);
+  if (!activeRunId) return;
   try {
     const input = runLayoutInput(dataStore.getState(), activeRunId);
     if (!input) return;
@@ -297,13 +309,18 @@ export const actions = {
       uiStore.setState({ overlay: null, focusRequest: uiStore.getState().focusRequest + 1 });
   },
 
+  /** Switch view. A run's agents need a run: without one, the project's code is what there is to show. */
   setView(view: View): void {
-    if (uiStore.getState().view === view) return;
-    uiStore.setState({ view, keyMode: 'normal' });
+    const next = view === 'agents' && uiStore.getState().activeRunId === null ? 'code' : view;
+    if (uiStore.getState().view === next) return;
+    uiStore.setState({ view: next, keyMode: 'normal' });
     savePrefs(uiStore.getState());
+    syncActiveLayout();
   },
+  /** ⌘E: the conversation and the run's agents (the project's code when no run is active). */
   toggleView(): void {
-    actions.setView(uiStore.getState().view === 'chat' ? 'agents' : 'chat');
+    const { view, activeRunId } = uiStore.getState();
+    actions.setView(view !== 'chat' ? 'chat' : activeRunId ? 'agents' : 'code');
   },
 
   /** Show a thread item of a run's conversation (a decision card, a presentation). */
@@ -313,26 +330,39 @@ export const actions = {
     uiStore.setState({ chatFocus: { itemId, nonce: (uiStore.getState().chatFocus?.nonce ?? 0) + 1 } });
   },
 
-  /** A layout mode of the agents view (switching to it). */
-  setLayoutMode(mode: LayoutMode): void {
-    const { layoutMode, view } = uiStore.getState();
-    if (view !== 'agents') uiStore.setState({ view: 'agents' });
-    if (layoutMode === mode) {
-      if (view !== 'agents') savePrefs(uiStore.getState());
-      return;
-    }
-    uiStore.setState({ layoutMode: mode, previousMode: layoutMode, overlay: null });
-    savePrefs(uiStore.getState());
+  /**
+   * Open a tile in the project's Code strip (a terminal, a file, a search), in a new column right of the focused
+   * one, and show the Code view. Returns the tile id, or null without a project in view.
+   */
+  openInCode(tile: Omit<LayoutTile, 'id' | 'auto'>): string | null {
+    const projectId = uiStore.getState().activeProjectId;
+    if (!projectId) return null;
+    actions.setView('code');
+    syncActiveLayout();
+    const key = projectWorkspaceKey(projectId);
+    let opened: string | null = null;
+    actions.updateLayout(
+      key,
+      (layout) => {
+        const [id, next] = allocateId(layout, tile.kind);
+        opened = id;
+        const column = makeColumn({
+          id: `col:${id}`,
+          width: '1/2',
+          tiles: [{ ...tile, id, auto: false } as LayoutTile],
+        });
+        return insertColumn(next, column, layout.focus?.column ?? null, true);
+      },
+      true,
+    );
+    return opened;
   },
-  /** Switch to `mode`, or back to the previous mode when already there. */
-  toggleLayoutMode(mode: LayoutMode): void {
-    const { layoutMode, previousMode, view } = uiStore.getState();
-    // From the conversation, asking for a layout opens the agents in it; toggling back is for when it is showing.
-    if (view !== 'agents') {
-      actions.setLayoutMode(mode);
-      return;
-    }
-    actions.setLayoutMode(layoutMode === mode ? (previousMode === mode ? 'strip' : previousMode) : mode);
+
+  /** Select a plan node with no task yet on a run's route map (null clears it). */
+  selectMapNode(runId: string, nodeId: string | null): void {
+    const { mapNode } = uiStore.getState();
+    if ((mapNode[runId] ?? null) === nodeId) return;
+    uiStore.setState({ mapNode: { ...mapNode, [runId]: nodeId } });
   },
 
   setKeyMode(keyMode: KeyMode): void {
@@ -350,8 +380,11 @@ export const actions = {
     const next = op(current);
     if (next === current) return;
     const acknowledged = acknowledgeFocused(next, state.acknowledged);
+    // Focusing a tile leaves a selected task-less plan node behind.
+    const refocused = next.focus?.tile !== current.focus?.tile && state.mapNode[runId];
     uiStore.setState({
       layouts: { ...state.layouts, [runId]: next },
+      mapNode: refocused ? { ...state.mapNode, [runId]: null } : state.mapNode,
       acknowledged,
       focusRequest: keyboard ? state.focusRequest + 1 : state.focusRequest,
     });
@@ -364,12 +397,11 @@ export const actions = {
     if (key) actions.updateLayout(key, op, keyboard);
   },
 
-  /** Focus a tile in a run (switching run, to the agents view, and to Strip mode when needed). */
-  revealTile(runId: string, tileId: string, mode: LayoutMode | null = 'strip'): void {
+  /** Focus a tile in a run: switch to the run and its agents, and show the tile's station on the route map. */
+  revealTile(runId: string, tileId: string): void {
     actions.setActiveRun(runId);
     actions.setView('agents');
-    if (mode && uiStore.getState().layoutMode !== mode && uiStore.getState().layoutMode !== 'focus')
-      actions.setLayoutMode(mode);
+    actions.selectMapNode(runId, null);
     actions.updateLayout(runId, (layout) => focusTile(layout, tileId), true);
   },
 

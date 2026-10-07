@@ -199,7 +199,11 @@ function taskStatusChip(
     }
     case 'fixing':
       // The engine already has its chip beside the status; the status says what is happening, in the run tone.
-      return { label: `${TASK_SHORT.fixing} ${task.fixRounds}/2`, tone: 'run', live: true };
+      return {
+        label: `${TASK_SHORT.fixing} ${task.fixRounds}/${state.settings?.limits.maxFixRounds ?? 2}`,
+        tone: 'run',
+        live: true,
+      };
     case 'approved':
       return { label: 'approved', tone: 'ok', live: false };
     case 'awaiting_human':

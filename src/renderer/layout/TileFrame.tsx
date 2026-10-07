@@ -85,8 +85,46 @@ function BodySkeleton() {
 }
 
 /**
+ * A tile kind's body with what the frame gives it: the header actions slot (`<TileActions>` portals into
+ * `actionsSlot`), an error boundary and a skeleton while the kind's code loads. Used by the frame and by the
+ * route map's pane.
+ */
+export function TileBody({
+  runId,
+  tile,
+  focused,
+  visible,
+  actionsSlot,
+}: {
+  runId: string;
+  tile: LayoutTile;
+  focused: boolean;
+  visible: boolean;
+  actionsSlot: HTMLElement | null;
+}) {
+  const Body = tileDefinition(tile.kind).component as React.ComponentType<TileProps>;
+  return (
+    <ActionsSlot.Provider value={actionsSlot}>
+      <TileErrorBoundary kind={tile.kind}>
+        <Suspense fallback={<BodySkeleton />}>
+          <Body
+            tileId={tile.id}
+            kind={tile.kind}
+            runId={runId}
+            params={tile.params}
+            focused={focused}
+            visible={visible}
+          />
+        </Suspense>
+      </TileErrorBoundary>
+    </ActionsSlot.Provider>
+  );
+}
+
+/**
  * Keyboard navigation (or closing an overlay) moved layout focus to this element: take DOM focus, unless
- * something inside already has it or focus lives outside the workspace (an overlay, the rail).
+ * something inside already has it, focus lives outside the workspace (an overlay, the rail), or it sits in a
+ * place that keeps it (`data-keeps-focus`: the route map, where ↑↓ walk the stations).
  */
 export function useTakeFocus(ref: React.RefObject<HTMLElement | null>, focused: boolean): void {
   const focusRequest = useUi((s) => s.focusRequest);
@@ -97,6 +135,7 @@ export function useTakeFocus(ref: React.RefObject<HTMLElement | null>, focused: 
     const el = ref.current;
     const active = document.activeElement;
     if (!el || el.contains(active)) return;
+    if (active?.closest('[data-keeps-focus]')) return;
     if (!active || active === document.body || active.closest('[data-workspace]')) el.focus({ preventScroll: true });
   }, [focused, focusRequest, ref]);
 }
@@ -135,8 +174,7 @@ export function TileFrame({
 }: TileFrameProps) {
   const ref = useRef<HTMLElement>(null);
   const [slot, setSlot] = useState<HTMLElement | null>(null);
-  const live = useUi((s) => s.layoutMode !== 'overview');
-  const now = useNow(15_000, live && visible);
+  const now = useNow(15_000, visible);
   const meta = useTileMeta(runId, tile, now);
   const urgentIds = meta.urgent.map((i) => i.id);
   const acknowledged = useAcknowledged(urgentIds);
@@ -148,10 +186,6 @@ export function TileFrame({
   const claimFocus = () => {
     if (!focused) actions.updateLayout(runId, (l) => focusTile(l, tile.id));
   };
-
-  const def = tileDefinition(tile.kind);
-  const Body = def.component as React.ComponentType<TileProps>;
-  const props: TileProps = { tileId: tile.id, kind: tile.kind, runId, params: tile.params, focused, visible };
 
   return (
     <section
@@ -237,13 +271,7 @@ export function TileFrame({
       </header>
       {collapsed ? null : (
         <div className="tile-body" data-tile-body>
-          <ActionsSlot.Provider value={slot}>
-            <TileErrorBoundary kind={tile.kind}>
-              <Suspense fallback={<BodySkeleton />}>
-                <Body {...props} />
-              </Suspense>
-            </TileErrorBoundary>
-          </ActionsSlot.Provider>
+          <TileBody runId={runId} tile={tile} focused={focused} visible={visible} actionsSlot={slot} />
         </div>
       )}
     </section>

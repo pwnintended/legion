@@ -61,11 +61,11 @@ export async function setPinned(project: Project, pinned: boolean): Promise<void
   }
 }
 
-/** Make sure the project home is on screen (switching to it from a run when needed); returns its key. */
+/** Make sure the project's code is on screen (switching to it from a run when needed); returns its key. */
 function showHome(projectId: string): string {
   const ui = uiStore.getState();
-  if (ui.activeRunId !== null || ui.activeProjectId !== projectId) actions.openProjectHome(projectId);
-  actions.setView('agents');
+  if (ui.activeProjectId !== projectId) actions.openProjectHome(projectId);
+  actions.setView('code');
   syncActiveLayout();
   return projectWorkspaceKey(projectId);
 }

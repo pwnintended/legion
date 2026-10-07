@@ -30,7 +30,7 @@ import { actions, dataStore } from '../../app/store';
 import { Chip, Kbd, StatusChipView } from '../../chrome/ui';
 import { describeTile, type StatusChip } from '../../layout/describe';
 import type { LayoutTile } from '../../layout/tree';
-import type { TileCardProps, TileProps } from '../../layout/types';
+import type { TileProps } from '../../layout/types';
 import { registerPlanCommands } from '../plan/actions';
 import { editPlan, useAnalysis, usePlanDraft } from '../plan/draft';
 import { useTileKeys } from '../plan/kit';
@@ -272,7 +272,7 @@ function DagEditor({ runId, focused, visible }: TileProps<'dag'>) {
     }
     if (e.key === 'Backspace' || e.key === 'Delete') return removeSelected();
     if (e.key === 'Enter' && selected && !editable) {
-      actions.revealTile(runId, `session:${selected}`, null);
+      actions.revealTile(runId, `session:${selected}`);
       return true;
     }
     if (e.key === 'Escape' && (selected || selectedEdge)) {
@@ -352,7 +352,7 @@ function DagEditor({ runId, focused, visible }: TileProps<'dag'>) {
             setSelectedEdge(null);
           }}
           onNodeDoubleClick={(_, node) => {
-            if (!editable) actions.revealTile(runId, `session:${node.id}`, null);
+            if (!editable) actions.revealTile(runId, `session:${node.id}`);
             else inspectorTitle.current?.focus();
           }}
           onEdgeClick={(_, edge) => setSelectedEdge(edge.id)}
@@ -694,25 +694,3 @@ function OverlapCallout({
 // ---------------------------------------------------------------------------------------------
 // Overview card
 // ---------------------------------------------------------------------------------------------
-
-export function Card({ runId }: TileCardProps<'dag'>) {
-  const plan = useLatestPlan(runId);
-  const analysis = useAnalysis(plan?.dag ?? null);
-  if (!plan || !analysis) return <div>no plan yet</div>;
-  const layers = analysis.validation.layers?.length ?? 0;
-  return (
-    <>
-      <div>
-        {plan.dag.nodes.length} tasks · {layers} layers
-      </div>
-      <div>critical path {(analysis.estimate?.criticalPath ?? []).join(' → ')}</div>
-      <div>
-        {analysis.overlaps.length
-          ? `${analysis.overlaps.length} edge${analysis.overlaps.length === 1 ? '' : 's'} added for overlaps`
-          : analysis.validation.ok
-            ? 'valid · no overlaps'
-            : `${analysis.validation.errors.length} problems`}
-      </div>
-    </>
-  );
-}

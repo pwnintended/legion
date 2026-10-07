@@ -1,7 +1,7 @@
 /**
  * Title bar (hiddenInset window): drag region with room for the traffic lights, project / run breadcrumb (the
- * project opens its home), the Chat | Agents switch (a project: Chat | Repository), the agents' layout modes
- * while they are on screen, and the Commands / needs-you / New run buttons.
+ * project opens its home), the Chat | Agents | Code switch (Agents only with a run), and the Commands /
+ * needs-you / New run buttons.
  */
 import { motion } from 'motion/react';
 import { commandTooltip, executeCommand } from '../app/commands';
@@ -9,21 +9,14 @@ import { useActiveRun, useData, useInbox, useUi } from '../app/hooks';
 import { useReducedMotionPref } from '../app/prefs';
 import { openProject } from '../app/project-actions';
 import { actions, activeProjectOf, type View } from '../app/store';
-import type { LayoutMode } from '../layout/tree';
 import { SPRING } from '../theme/motion';
 import { Icon, type IconName, LegionMark } from './icons';
 import { CommandKbd } from './ui';
 
-const VIEWS: { view: View; label: string; projectLabel: string; icon: IconName }[] = [
-  { view: 'chat', label: 'Chat', projectLabel: 'Chat', icon: 'chat' },
-  { view: 'agents', label: 'Agents', projectLabel: 'Repository', icon: 'agents' },
-];
-
-const MODES: { mode: LayoutMode; label: string; icon: IconName; command: string }[] = [
-  { mode: 'strip', label: 'Strip', icon: 'strip', command: 'layout.strip' },
-  { mode: 'focus', label: 'Focus', icon: 'focus', command: 'layout.focus' },
-  { mode: 'overview', label: 'Overview', icon: 'overview', command: 'layout.overview' },
-  { mode: 'pipeline', label: 'Pipeline', icon: 'pipeline', command: 'layout.pipeline' },
+const VIEWS: { view: View; label: string; icon: IconName; command: string; tip: string; needsRun?: true }[] = [
+  { view: 'chat', label: 'Chat', icon: 'chat', command: 'view.chat', tip: 'The conversations' },
+  { view: 'agents', label: 'Agents', icon: 'agents', command: 'view.agents', tip: "The run's agents", needsRun: true },
+  { view: 'code', label: 'Code', icon: 'fileCode', command: 'view.code', tip: "The project's code and terminals" },
 ];
 
 export function repoLabel(path: string): string {
@@ -32,7 +25,6 @@ export function repoLabel(path: string): string {
 
 export function TitleBar() {
   const run = useActiveRun();
-  const mode = useUi((s) => s.layoutMode);
   const view = useUi((s) => s.view);
   const inbox = useInbox(null);
   const reduced = useReducedMotionPref();
@@ -41,6 +33,8 @@ export function TitleBar() {
   const activeProjectId = useUi((s) => s.activeProjectId);
   const project = useData((s) => activeProjectOf({ activeRunId, activeProjectId }, s));
   const branch = useData((s) => (project ? (s.projectStatus[project.id]?.branch ?? null) : null));
+  // On a project's board, New splits a conversation tile in; elsewhere it opens the full composer.
+  const onBoard = view === 'chat' && project !== null;
   return (
     <header
       className="drag flex h-11 flex-none items-center gap-3 border-b border-[var(--chrome-line)] bg-mantle pr-2.5"
@@ -91,13 +85,13 @@ export function TitleBar() {
       {run || project ? (
         <div className="no-drag flex flex-none items-center gap-2">
           <nav aria-label="View" className="segs tb-views isolate flex-none">
-            {VIEWS.map((v) => (
+            {VIEWS.filter((v) => run || !v.needsRun).map((v) => (
               <button
                 key={v.view}
                 type="button"
                 className="seg"
                 aria-pressed={view === v.view}
-                title={commandTooltip('view.toggle', `${run ? v.label : v.projectLabel}`)}
+                title={commandTooltip(v.command, v.tip)}
                 onClick={() => actions.setView(v.view)}
                 data-testid={`view-${v.view}`}
               >
@@ -109,7 +103,7 @@ export function TitleBar() {
                   />
                 ) : null}
                 <Icon name={v.icon} />
-                <span>{run ? v.label : v.projectLabel}</span>
+                <span>{v.label}</span>
               </button>
             ))}
           </nav>
@@ -117,31 +111,6 @@ export function TitleBar() {
       ) : null}
 
       <div className="no-drag flex flex-1 items-center justify-end gap-1.5">
-        {run && view === 'agents' ? (
-          <nav aria-label="Layout" className="segs tb-modes isolate mr-1.5 flex-none">
-            {MODES.map((m) => (
-              <button
-                key={m.mode}
-                type="button"
-                className="seg"
-                aria-pressed={mode === m.mode}
-                aria-label={`${m.label} layout`}
-                title={commandTooltip(m.command, `${m.label} layout`)}
-                onClick={() => void executeCommand(m.command)}
-                data-testid={`layout-${m.mode}`}
-              >
-                {mode === m.mode ? (
-                  <motion.span
-                    layoutId="seg-pill"
-                    className="seg-pill"
-                    transition={reduced ? { duration: 0 } : SPRING}
-                  />
-                ) : null}
-                <Icon name={m.icon} />
-              </button>
-            ))}
-          </nav>
-        ) : null}
         <button
           type="button"
           className="btn btn-ghost"
@@ -168,12 +137,12 @@ export function TitleBar() {
         <button
           type="button"
           className="btn btn-primary"
-          onClick={() => void executeCommand('composer.open')}
-          title={commandTooltip('composer.open')}
+          onClick={() => void executeCommand(onBoard ? 'board.new' : 'composer.open')}
+          title={commandTooltip(onBoard ? 'board.new' : 'composer.open')}
         >
           <Icon name="plus" strokeWidth={2.4} />
-          New run
-          <CommandKbd id="composer.open" />
+          {onBoard ? 'New conversation' : 'New run'}
+          <CommandKbd id={onBoard ? 'board.new' : 'composer.open'} />
         </button>
       </div>
     </header>

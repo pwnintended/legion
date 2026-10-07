@@ -8,9 +8,8 @@ import type { Attempt, InboxItem, Role, TaskNode } from '@shared/domain';
 import { useCallback, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useShallow } from 'zustand/react/shallow';
 import { type CommandContext, registerCommands } from '../../app/commands';
-import { taskReport } from '../../app/compat';
 import { type DataState, openInbox } from '../../app/data';
-import { useActivity, useData, useNow, useTask, useTaskNode, useTranscript } from '../../app/hooks';
+import { useData, useNow, useTask, useTaskNode, useTranscript } from '../../app/hooks';
 import { prefersReducedMotion } from '../../app/prefs';
 import { dataStore } from '../../app/store';
 import { getSync } from '../../app/sync';
@@ -31,7 +30,7 @@ import { Chip } from '../../chrome/ui';
 import { displayEngine, formatCost, formatTokens } from '../../layout/describe';
 import { TileActions } from '../../layout/TileFrame';
 import { focusedTile } from '../../layout/tree';
-import type { TileCardProps, TileProps } from '../../layout/types';
+import type { TileProps } from '../../layout/types';
 import {
   clearNotice,
   interrupt,
@@ -58,7 +57,6 @@ import { entryTs, type TimelineRow, timelineCursor, type Working } from './timel
 
 function focusedApproval(ctx: CommandContext) {
   if (ctx.ui.overlay || ctx.ui.keyMode !== 'normal' || !ctx.layout || !ctx.activeRunId) return null;
-  if (ctx.ui.layoutMode !== 'strip' && ctx.ui.layoutMode !== 'focus') return null;
   const tile = focusedTile(ctx.layout);
   if (tile?.kind !== 'session') return null;
   const params = tile.params as { attemptId: string | null; taskId: string | null };
@@ -75,7 +73,6 @@ function focusedApproval(ctx: CommandContext) {
 /** The open escalation / conflict of the focused session tile's task. */
 function focusedEscalation(ctx: CommandContext): EscalationItem | null {
   if (ctx.ui.overlay || ctx.ui.keyMode !== 'normal' || !ctx.layout || !ctx.activeRunId) return null;
-  if (ctx.ui.layoutMode !== 'strip' && ctx.ui.layoutMode !== 'focus') return null;
   const tile = focusedTile(ctx.layout);
   if (tile?.kind !== 'session') return null;
   const taskId = (tile.params as { taskId: string | null }).taskId;
@@ -349,7 +346,7 @@ export default function SessionTile({ tileId, runId, params, focused }: TileProp
           rows: Math.min(200, Math.max(24, Math.floor(el.clientHeight / 15))),
         }
       : undefined;
-    void takeOver(attempt, tileId, size);
+    void takeOver(attempt, size);
   };
 
   return (
@@ -718,55 +715,3 @@ function SteerBar({
 // ---------------------------------------------------------------------------------------------
 // Overview card: last three activity lines, live
 // ---------------------------------------------------------------------------------------------
-
-/** `mcp__legion__report_progress …` → `legion · report progress …` */
-function prettyLine(line: string): string {
-  return line.replace(
-    /mcp__([\w-]+?)__(\w+)/,
-    (_m, server: string, tool: string) => `${server} · ${tool.replace(/_/g, ' ')}`,
-  );
-}
-
-export function Card({ runId, params }: TileCardProps<'session'>) {
-  const attempt = useData((s) => resolveSessionAttempt(s, params));
-  const task = useTask(params.taskId);
-  const node = useTaskNode(runId, task?.nodeId);
-  const activity = useActivity(attempt?.id);
-  const pending = useData((s) => openApprovals(s, runId, attempt).length);
-  const lines = activity.slice(-3).map(prettyLine);
-  if (lines.length === 0) {
-    const facts = attempt
-      ? attempt.status === 'running' || attempt.status === 'pending'
-        ? ['waiting for the first event…']
-        : [taskReport(task)?.summary ?? `${attempt.role} ${attempt.status}`]
-      : node
-        ? [
-            node.dependsOn.length ? `after ${node.dependsOn.join(', ')}` : 'no dependencies',
-            node.touches.length ? `touches ${node.touches.map((t) => t.glob).join(', ')}` : node.goal,
-            node.verify.commands.length ? `verify: ${node.verify.commands.join(' && ')}` : '',
-          ]
-        : ['not started yet'];
-    return (
-      <>
-        {facts.filter(Boolean).map((line) => (
-          <div key={line}>{line}</div>
-        ))}
-      </>
-    );
-  }
-  return (
-    <>
-      {lines.map((line, i) => (
-        <div
-          // biome-ignore lint/suspicious/noArrayIndexKey: positional lines
-          key={i}
-          style={
-            pending && i === lines.length - 1 && line.startsWith('approval') ? { color: 'var(--peach)' } : undefined
-          }
-        >
-          {line}
-        </div>
-      ))}
-    </>
-  );
-}

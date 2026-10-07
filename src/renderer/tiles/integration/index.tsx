@@ -12,7 +12,7 @@ import { actions, dataStore } from '../../app/store';
 import { Icon } from '../../chrome/icons';
 import { Bar, Chip } from '../../chrome/ui';
 import { formatClock } from '../../layout/describe';
-import type { TileCardProps, TileProps } from '../../layout/types';
+import type { TileProps } from '../../layout/types';
 import { Check, openTile, shortSha } from '../plan/kit';
 import { commandLabel } from '../review/evidence';
 
@@ -223,7 +223,7 @@ export default function IntegrationTile({ runId }: TileProps<'integration'>) {
                   type="button"
                   className="lg-tag"
                   style={{ cursor: 'pointer', paddingRight: 7 }}
-                  onClick={() => actions.revealTile(runId, `session:${t.nodeId}`, null)}
+                  onClick={() => actions.revealTile(runId, `session:${t.nodeId}`)}
                 >
                   {t.nodeId} <span className="faint font-sans">{t.status}</span>
                 </button>
@@ -246,26 +246,5 @@ export default function IntegrationTile({ runId }: TileProps<'integration'>) {
         ) : null}
       </div>
     </div>
-  );
-}
-
-export function Card({ runId }: TileCardProps<'integration'>) {
-  const run = useRun(runId);
-  const data = useIntegration(runId);
-  return (
-    <>
-      <div>{run?.integrationBranch ?? 'integration branch not created yet'}</div>
-      <div>
-        merged {data.merged.map((m) => m.task?.nodeId).join(' → ') || 'none yet'}
-        {data.queue.length ? ` · queue ${data.queue.length}` : ''}
-      </div>
-      <div>
-        {data.waiting.length
-          ? `waiting for you: ${data.waiting.map((t) => t.nodeId).join(', ')}`
-          : data.final.length
-            ? `final verify ${data.final.every((v) => v.exitCode === 0) ? '✓' : '✕'}`
-            : `${data.inFlight.length} in flight`}
-      </div>
-    </>
   );
 }

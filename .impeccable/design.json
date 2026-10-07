@@ -1,6 +1,6 @@
 {
   "schemaVersion": 2,
-  "generatedAt": "2026-10-07T15:13:34.356281+00:00",
+  "generatedAt": "2026-10-07T21:53:05.235992+00:00",
   "title": "Design System: Legion",
   "extensions": {
     "flavours": {
@@ -64,7 +64,7 @@
         "displayName": "Needs-You Peach",
         "canonical": "#fab387",
         "latte": "#fe640b",
-        "purpose": "Human attention only: decisions, needs-you counts, urgent tiles, warn.",
+        "purpose": "Human attention only: decisions, needs-you counts, waiting route-map rings (no glow), urgent Code-strip tiles, warn.",
         "tonalRamp": [
           "oklch(15% 0.101 52.6)",
           "oklch(27% 0.101 52.6)",
@@ -98,7 +98,7 @@
         "displayName": "Lavender Accent",
         "canonical": "#b4befe",
         "latte": "#7287fd",
-        "purpose": "Semantic accent: link hover, critical path.",
+        "purpose": "Semantic accent: link hover, the followed task's dependency links and related-row wash on the route map, the remaining critical path.",
         "tonalRamp": [
           "oklch(15% 0.091 277.3)",
           "oklch(27% 0.091 277.3)",
@@ -201,7 +201,16 @@
         "canonical": "#cdd6f4",
         "latte": "#4c4f69",
         "purpose": "Tonal layer / text step.",
-        "tonalRamp": ["#11111b", "#181825", "#1e1e2e", "#313244", "#45475a", "#585b70", "#7f849c", "#bac2de"]
+        "tonalRamp": [
+          "#11111b",
+          "#181825",
+          "#1e1e2e",
+          "#313244",
+          "#45475a",
+          "#585b70",
+          "#7f849c",
+          "#bac2de"
+        ]
       },
       "subtext1": {
         "role": "neutral",
@@ -209,7 +218,16 @@
         "canonical": "#bac2de",
         "latte": "#4f5268",
         "purpose": "Tonal layer / text step.",
-        "tonalRamp": ["#11111b", "#181825", "#1e1e2e", "#313244", "#45475a", "#585b70", "#7f849c", "#bac2de"]
+        "tonalRamp": [
+          "#11111b",
+          "#181825",
+          "#1e1e2e",
+          "#313244",
+          "#45475a",
+          "#585b70",
+          "#7f849c",
+          "#bac2de"
+        ]
       },
       "subtext0": {
         "role": "neutral",
@@ -217,7 +235,16 @@
         "canonical": "#a6adc8",
         "latte": "#575a70",
         "purpose": "Tonal layer / text step.",
-        "tonalRamp": ["#11111b", "#181825", "#1e1e2e", "#313244", "#45475a", "#585b70", "#7f849c", "#bac2de"]
+        "tonalRamp": [
+          "#11111b",
+          "#181825",
+          "#1e1e2e",
+          "#313244",
+          "#45475a",
+          "#585b70",
+          "#7f849c",
+          "#bac2de"
+        ]
       },
       "overlay2": {
         "role": "neutral",
@@ -225,7 +252,16 @@
         "canonical": "#9399b2",
         "latte": "#5f6278",
         "purpose": "Tonal layer / text step.",
-        "tonalRamp": ["#11111b", "#181825", "#1e1e2e", "#313244", "#45475a", "#585b70", "#7f849c", "#bac2de"]
+        "tonalRamp": [
+          "#11111b",
+          "#181825",
+          "#1e1e2e",
+          "#313244",
+          "#45475a",
+          "#585b70",
+          "#7f849c",
+          "#bac2de"
+        ]
       },
       "overlay1": {
         "role": "neutral",
@@ -233,7 +269,16 @@
         "canonical": "#7f849c",
         "latte": "#74778c",
         "purpose": "Tonal layer / text step.",
-        "tonalRamp": ["#11111b", "#181825", "#1e1e2e", "#313244", "#45475a", "#585b70", "#7f849c", "#bac2de"]
+        "tonalRamp": [
+          "#11111b",
+          "#181825",
+          "#1e1e2e",
+          "#313244",
+          "#45475a",
+          "#585b70",
+          "#7f849c",
+          "#bac2de"
+        ]
       },
       "overlay0": {
         "role": "neutral",
@@ -241,7 +286,16 @@
         "canonical": "#6c7086",
         "latte": "#9ca0b0",
         "purpose": "Tonal layer / text step.",
-        "tonalRamp": ["#11111b", "#181825", "#1e1e2e", "#313244", "#45475a", "#585b70", "#7f849c", "#bac2de"]
+        "tonalRamp": [
+          "#11111b",
+          "#181825",
+          "#1e1e2e",
+          "#313244",
+          "#45475a",
+          "#585b70",
+          "#7f849c",
+          "#bac2de"
+        ]
       },
       "surface2": {
         "role": "neutral",
@@ -249,7 +303,16 @@
         "canonical": "#585b70",
         "latte": "#acb0be",
         "purpose": "Tonal layer / text step.",
-        "tonalRamp": ["#11111b", "#181825", "#1e1e2e", "#313244", "#45475a", "#585b70", "#7f849c", "#bac2de"]
+        "tonalRamp": [
+          "#11111b",
+          "#181825",
+          "#1e1e2e",
+          "#313244",
+          "#45475a",
+          "#585b70",
+          "#7f849c",
+          "#bac2de"
+        ]
       },
       "surface1": {
         "role": "neutral",
@@ -257,7 +320,16 @@
         "canonical": "#45475a",
         "latte": "#bcc0cc",
         "purpose": "Tonal layer / text step.",
-        "tonalRamp": ["#11111b", "#181825", "#1e1e2e", "#313244", "#45475a", "#585b70", "#7f849c", "#bac2de"]
+        "tonalRamp": [
+          "#11111b",
+          "#181825",
+          "#1e1e2e",
+          "#313244",
+          "#45475a",
+          "#585b70",
+          "#7f849c",
+          "#bac2de"
+        ]
       },
       "surface0": {
         "role": "neutral",
@@ -265,7 +337,16 @@
         "canonical": "#313244",
         "latte": "#ccd0da",
         "purpose": "Tonal layer / text step.",
-        "tonalRamp": ["#11111b", "#181825", "#1e1e2e", "#313244", "#45475a", "#585b70", "#7f849c", "#bac2de"]
+        "tonalRamp": [
+          "#11111b",
+          "#181825",
+          "#1e1e2e",
+          "#313244",
+          "#45475a",
+          "#585b70",
+          "#7f849c",
+          "#bac2de"
+        ]
       },
       "base": {
         "role": "neutral",
@@ -273,7 +354,16 @@
         "canonical": "#1e1e2e",
         "latte": "#eff1f5",
         "purpose": "Tonal layer / text step.",
-        "tonalRamp": ["#11111b", "#181825", "#1e1e2e", "#313244", "#45475a", "#585b70", "#7f849c", "#bac2de"]
+        "tonalRamp": [
+          "#11111b",
+          "#181825",
+          "#1e1e2e",
+          "#313244",
+          "#45475a",
+          "#585b70",
+          "#7f849c",
+          "#bac2de"
+        ]
       },
       "mantle": {
         "role": "neutral",
@@ -281,7 +371,16 @@
         "canonical": "#181825",
         "latte": "#e6e9ef",
         "purpose": "Tonal layer / text step.",
-        "tonalRamp": ["#11111b", "#181825", "#1e1e2e", "#313244", "#45475a", "#585b70", "#7f849c", "#bac2de"]
+        "tonalRamp": [
+          "#11111b",
+          "#181825",
+          "#1e1e2e",
+          "#313244",
+          "#45475a",
+          "#585b70",
+          "#7f849c",
+          "#bac2de"
+        ]
       },
       "crust": {
         "role": "neutral",
@@ -289,7 +388,16 @@
         "canonical": "#11111b",
         "latte": "#dce0e8",
         "purpose": "Tonal layer / text step.",
-        "tonalRamp": ["#11111b", "#181825", "#1e1e2e", "#313244", "#45475a", "#585b70", "#7f849c", "#bac2de"]
+        "tonalRamp": [
+          "#11111b",
+          "#181825",
+          "#1e1e2e",
+          "#313244",
+          "#45475a",
+          "#585b70",
+          "#7f849c",
+          "#bac2de"
+        ]
       },
       "hairline": {
         "role": "neutral",
@@ -297,7 +405,16 @@
         "canonical": "#2a2b3c",
         "latte": "#dfe2ea",
         "purpose": "Tonal layer / text step.",
-        "tonalRamp": ["#11111b", "#181825", "#1e1e2e", "#313244", "#45475a", "#585b70", "#7f849c", "#bac2de"]
+        "tonalRamp": [
+          "#11111b",
+          "#181825",
+          "#1e1e2e",
+          "#313244",
+          "#45475a",
+          "#585b70",
+          "#7f849c",
+          "#bac2de"
+        ]
       },
       "chrome-line": {
         "role": "neutral",
@@ -305,17 +422,26 @@
         "canonical": "#232336",
         "latte": "#d3d7e0",
         "purpose": "Tonal layer / text step.",
-        "tonalRamp": ["#11111b", "#181825", "#1e1e2e", "#313244", "#45475a", "#585b70", "#7f849c", "#bac2de"]
+        "tonalRamp": [
+          "#11111b",
+          "#181825",
+          "#1e1e2e",
+          "#313244",
+          "#45475a",
+          "#585b70",
+          "#7f849c",
+          "#bac2de"
+        ]
       }
     },
     "typographyMeta": {
       "display": {
         "displayName": "Display",
-        "purpose": "New-conversation page title only."
+        "purpose": "Project name on the new-conversation tile at conversation density (the project's page)."
       },
       "headline": {
         "displayName": "Headline",
-        "purpose": "Run title at the head of the thread."
+        "purpose": "New-conversation tile title at tile density; the run title lives in the tile head now."
       },
       "title": {
         "displayName": "Title",
@@ -323,11 +449,11 @@
       },
       "body-reading": {
         "displayName": "Reading body",
-        "purpose": "Assistant prose in the conversation column."
+        "purpose": "Assistant prose at conversation density, inside a wide tile's 720px measure."
       },
       "body": {
         "displayName": "Body",
-        "purpose": "App base size; tile markdown, fields, sources."
+        "purpose": "App base size; fields, sources, and every thread size under tile density."
       },
       "label": {
         "displayName": "Label",
@@ -369,17 +495,17 @@
       {
         "name": "overlay",
         "value": "0 24px 64px color-mix(in srgb, var(--shadow) 55%, transparent), 0 0 0 1px color-mix(in srgb, var(--shadow) 40%, transparent)",
-        "purpose": "Palette, overlay composer, dialogs."
+        "purpose": "Palette, overlay composer, dialogs; the folded route map's popover."
       },
       {
         "name": "glow-focus",
         "value": "0 0 0 1px color-mix(in srgb, var(--mauve) 30%, transparent), 0 0 18px color-mix(in srgb, var(--mauve) 20%, transparent)",
-        "purpose": "Focused tile or card."
+        "purpose": "Focused tile (board or Code strip) or card."
       },
       {
         "name": "glow-urgent",
         "value": "0 0 0 1.5px var(--peach), 0 0 24px color-mix(in srgb, var(--peach) 45%, transparent)",
-        "purpose": "Urgent tiles (pulsing) and a jumped-to decision card."
+        "purpose": "Urgent tiles on the Code strip (pulsing) and a jumped-to decision card; never on board tiles or route-map rings."
       },
       {
         "name": "composer-focus-ring",
@@ -390,6 +516,16 @@
         "name": "focus-outline",
         "value": "outline: 2px solid var(--mauve); outline-offset: 2px",
         "purpose": "Every interactive element."
+      },
+      {
+        "name": "board-tile-waiting",
+        "value": "border-color: color-mix(in srgb, var(--peach) 62%, var(--surface0))",
+        "purpose": "Static border of a waiting, unfocused board tile; no glow, no pulse."
+      },
+      {
+        "name": "selected-ring-halo",
+        "value": "0 0 0 3px color-mix(in srgb, var(--mauve) 30%, transparent)",
+        "purpose": "The selected station's ring on the route map."
       }
     ],
     "motion": [
@@ -401,7 +537,7 @@
       {
         "name": "spring",
         "value": "spring stiffness 800, damping 2*sqrt(800), mass 1",
-        "purpose": "Critically damped; segmented pills and layout."
+        "purpose": "Critically damped; segmented and tab pills, board tiles gliding to new rects (x, y, width, height), the route map's selection outline gliding between stations."
       },
       {
         "name": "spring-attention",
@@ -431,17 +567,22 @@
       {
         "name": "breathe",
         "value": "opacity 0.45 <-> 1, 1.4s ease-in-out infinite",
-        "purpose": "Live dots, skeletons."
+        "purpose": "Live dots, live ring cores on the route map, skeletons."
       },
       {
         "name": "urgency-pulse",
         "value": "opacity 0.2 <-> 1, 1.6s ease-in-out infinite",
-        "purpose": "Urgent tiles in agents mode."
+        "purpose": "Urgent tiles on the Code strip only; the board and the route map never pulse."
       },
       {
-        "name": "needs-ping",
-        "value": "ring scale 0.5 -> 1.4, opacity 0.7 -> 0, 2.4s ease-out infinite",
-        "purpose": "The one live signal in conversation mode: the dock needs-you dot."
+        "name": "tile-enter",
+        "value": "opacity 0 + scale 0.985 -> 1, 200ms ease-out",
+        "purpose": "A new board tile."
+      },
+      {
+        "name": "tile-exit",
+        "value": "opacity 0 + scale 0.985, 150ms ease-out",
+        "purpose": "A hidden board tile; the rest close the gap on the spring."
       },
       {
         "name": "reduced-motion",
@@ -451,8 +592,34 @@
     ],
     "breakpoints": [
       {
-        "name": "narrow",
-        "value": "720px"
+        "name": "map-fold",
+        "value": "900px",
+        "note": "Main-area width below which the route map folds into a bar above the station pane and opens as a popover."
+      },
+      {
+        "name": "map-dense",
+        "value": "15 rows",
+        "note": "A wave of more than 15 tasks reads its rows at 26px / 12.5px."
+      },
+      {
+        "name": "board-split",
+        "value": "720px",
+        "note": "Board inner width below which the board is forced into monocle."
+      },
+      {
+        "name": "tile-narrow",
+        "value": "720px",
+        "note": "@container tile: plan meta, composer hint and working count drop out."
+      },
+      {
+        "name": "tile-dense",
+        "value": "620px",
+        "note": "@container tile: tile density (thread 13px, smaller bubble, progress strip trimmed to the current step)."
+      },
+      {
+        "name": "tile-head-chip",
+        "value": "440px",
+        "note": "@container tile: the head's engine chip hides."
       },
       {
         "name": "tailwind-md",
@@ -493,8 +660,8 @@
       "name": "Segmented Switch",
       "kind": "nav",
       "refersTo": "segmented",
-      "description": "Chat | Agents mode switch and layout modes in the title bar.",
-      "html": "<nav class=\"ds-segs\"><button class=\"ds-seg\" aria-pressed=\"true\">Chat</button><button class=\"ds-seg\" aria-pressed=\"false\">Agents</button></nav>",
+      "description": "Chat | Agents | Code mode switch in the title bar (Agents only with a run open).",
+      "html": "<nav class=\"ds-segs\"><button class=\"ds-seg\" aria-pressed=\"false\">Chat</button><button class=\"ds-seg\" aria-pressed=\"true\">Agents</button><button class=\"ds-seg\" aria-pressed=\"false\">Code</button></nav>",
       "css": ".ds-segs{display:inline-flex;gap:2px;padding:3px;background:var(--crust,#11111b);border:1px solid var(--surface0,#313244);border-radius:9px}.ds-seg{all:unset;cursor:pointer;height:26px;padding:0 12px;border-radius:6px;font-family: var(--font-ui, 'Geist Variable', ui-sans-serif, system-ui, sans-serif);font-size:12px;color:var(--subtext0,#a6adc8);transition:color .15s}.ds-seg:hover{color:var(--text,#cdd6f4)}.ds-seg[aria-pressed=true]{background:var(--surface0,#313244);color:var(--text,#cdd6f4)}.ds-seg:focus-visible{outline:2px solid var(--mauve,#cba6f7);outline-offset:1px}"
     },
     {
@@ -514,6 +681,22 @@
       "css": ".ds-composer{display:flex;flex-direction:column;gap:6px;padding:10px 10px 8px 14px;border-radius:14px;background:var(--mantle,#181825);border:1px solid var(--surface0,#313244);box-shadow:0 14px 34px -24px color-mix(in srgb,var(--shadow,#000) 90%,transparent);transition:border-color .15s,box-shadow .2s;font-family: var(--font-ui, 'Geist Variable', ui-sans-serif, system-ui, sans-serif);}.ds-composer:focus-within{border-color:color-mix(in srgb,var(--mauve,#cba6f7) 50%,var(--surface0,#313244));box-shadow:0 0 0 3px color-mix(in srgb,var(--mauve,#cba6f7) 11%,transparent),0 14px 34px -24px color-mix(in srgb,var(--shadow,#000) 90%,transparent)}.ds-input{all:unset;display:block;width:100%;min-height:24px;font-size:14px;line-height:1.5;color:var(--text,#cdd6f4);caret-color:var(--mauve,#cba6f7)}.ds-input::placeholder{color:var(--overlay1,#7f849c)}.ds-row{display:flex;align-items:center;gap:8px}.ds-hint{margin-left:auto;font-size:11.5px;color:var(--overlay1,#7f849c)}.ds-send{all:unset;cursor:pointer;width:30px;height:30px;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;background:var(--mauve,#cba6f7);color:var(--crust,#11111b);transition:background-color .15s,transform .15s cubic-bezier(.16,1,.3,1)}.ds-send:hover{background:var(--mauve-hover,#d7b9f9)}.ds-send:active{transform:scale(.94)}.ds-send:focus-visible{outline:2px solid var(--mauve,#cba6f7);outline-offset:2px}"
     },
     {
+      "name": "Board Tile",
+      "kind": "card",
+      "refersTo": "tile",
+      "description": "A conversation tile on the crust board: engine mark, title, waiting pill, engine chip, ghost actions. Focused = mauve; waiting unfocused = static peach-tinted border.",
+      "html": "<div class=\"ds-board\"><section class=\"ds-tile\" data-focused><header class=\"ds-tile-head\"><span class=\"ds-tile-mark\"><svg width=\"12\" height=\"12\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\"><path d=\"M12 3v4M12 17v4M3 12h4M17 12h4M6 6l2.5 2.5M15.5 15.5L18 18M6 18l2.5-2.5M15.5 8.5L18 6\"/></svg></span><h2 class=\"ds-tile-title\">Rewrite the onboarding emails</h2><span class=\"ds-grow\"></span><span class=\"ds-chip\">claude</span><button class=\"ds-tile-act\" aria-label=\"Hide\"><svg width=\"13\" height=\"13\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\"><path d=\"M6 6l12 12M18 6L6 18\"/></svg></button></header><div class=\"ds-tile-body\">Conversation</div></section><section class=\"ds-tile\" data-waiting><header class=\"ds-tile-head\"><span class=\"ds-tile-mark\" data-engine=\"codex\"><svg width=\"12\" height=\"12\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\"><path d=\"M12 3v4M12 17v4M3 12h4M17 12h4\"/></svg></span><h2 class=\"ds-tile-title\">Move cron jobs onto the queue</h2><button class=\"ds-waiting\"><span class=\"ds-dot\"></span>1 waiting</button><span class=\"ds-grow\"></span></header><div class=\"ds-tile-body\">Conversation</div></section></div>",
+      "css": ".ds-board{display:grid;grid-template-columns:1fr 1fr;gap:10px;padding:10px;background:var(--crust,#11111b)}.ds-tile{display:flex;flex-direction:column;background:var(--base,#1e1e2e);border:1.5px solid var(--surface0,#313244);border-radius:12px;overflow:hidden;transition:border-color .25s,box-shadow .25s;font-family:var(--font-ui,'Geist Variable',ui-sans-serif,system-ui,sans-serif);}.ds-tile[data-focused]{border-color:var(--mauve,#cba6f7);box-shadow:0 0 0 1px color-mix(in srgb,var(--mauve,#cba6f7) 30%,transparent),0 0 18px color-mix(in srgb,var(--mauve,#cba6f7) 20%,transparent)}.ds-tile[data-waiting]{border-color:color-mix(in srgb,var(--peach,#fab387) 62%,var(--surface0,#313244))}.ds-tile-head{display:flex;align-items:center;gap:8px;height:38px;padding:0 6px 0 10px;border-bottom:1px solid var(--hairline,#2a2b3c)}.ds-tile-mark{flex:none;width:20px;height:20px;border-radius:6px;display:inline-flex;align-items:center;justify-content:center;color:var(--mauve,#cba6f7);background:color-mix(in srgb,var(--mauve,#cba6f7) 15%,transparent)}.ds-tile-mark[data-engine=codex]{color:var(--teal,#94e2d5);background:color-mix(in srgb,var(--teal,#94e2d5) 15%,transparent)}.ds-tile-title{margin:0;font-size:13px;font-weight:600;color:var(--subtext1,#bac2de);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.ds-tile[data-focused] .ds-tile-title{color:var(--text,#cdd6f4)}.ds-grow{flex:1}.ds-chip{display:inline-flex;align-items:center;height:20px;padding:0 7px;border-radius:999px;font-size:11px;font-weight:500;color:var(--mauve,#cba6f7);background:color-mix(in srgb,var(--mauve,#cba6f7) 14%,transparent)}.ds-waiting{all:unset;cursor:pointer;display:inline-flex;align-items:center;gap:6px;height:20px;padding:0 8px;border-radius:999px;font-size:11px;font-weight:500;color:var(--peach,#fab387);background:color-mix(in srgb,var(--peach,#fab387) 10%,transparent);border:1px solid color-mix(in srgb,var(--peach,#fab387) 28%,transparent);transition:background-color .15s}.ds-waiting:hover{background:color-mix(in srgb,var(--peach,#fab387) 18%,transparent)}.ds-waiting:focus-visible{outline:2px solid var(--peach,#fab387);outline-offset:2px}.ds-dot{width:6px;height:6px;border-radius:50%;background:var(--peach,#fab387)}.ds-tile-act{all:unset;cursor:pointer;width:26px;height:26px;display:inline-flex;align-items:center;justify-content:center;border-radius:6px;color:var(--overlay2,#9399b2)}.ds-tile-act:hover{color:var(--text,#cdd6f4);background:var(--surface0,#313244)}.ds-tile-act:focus-visible{outline:2px solid var(--mauve,#cba6f7);outline-offset:2px}.ds-tile-body{padding:16px;min-height:80px;font-size:13px;color:var(--subtext0,#a6adc8)}"
+    },
+    {
+      "name": "Board Tabs",
+      "kind": "nav",
+      "refersTo": "tab-track",
+      "description": "The tab row for the stack's overflow and for monocle: mantle track, surface0 pill on the spring, peach dot on waiting tabs.",
+      "html": "<div class=\"ds-tabs\" role=\"tablist\"><button class=\"ds-tab\" role=\"tab\" aria-selected=\"true\" data-focused>Rate-limit the public API</button><button class=\"ds-tab\" role=\"tab\" aria-selected=\"false\"><span class=\"ds-tab-dot\"></span>Move cron jobs onto the queue</button><button class=\"ds-tab\" role=\"tab\" aria-selected=\"false\">Why do sessions expire early</button></div>",
+      "css": ".ds-tabs{display:flex;align-items:center;gap:2px;height:30px;box-sizing:border-box;padding:2px;border-radius:9px;background:var(--mantle,#181825);border:1px solid var(--surface0,#313244);overflow:hidden;font-family:var(--font-ui,'Geist Variable',ui-sans-serif,system-ui,sans-serif);}.ds-tab{all:unset;box-sizing:border-box;cursor:pointer;flex:0 1 220px;min-width:0;height:24px;display:inline-flex;align-items:center;gap:6px;padding:0 10px;border-radius:6px;font-size:12px;color:var(--subtext0,#a6adc8);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;transition:color .15s,background-color .15s}.ds-tab:hover{color:var(--text,#cdd6f4)}.ds-tab[aria-selected=true]{color:var(--text,#cdd6f4);background:var(--surface0,#313244)}.ds-tab[data-focused]{box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--mauve,#cba6f7) 45%,transparent)}.ds-tab:focus-visible{outline:2px solid var(--mauve,#cba6f7);outline-offset:-2px}.ds-tab-dot{flex:none;width:6px;height:6px;border-radius:50%;background:var(--peach,#fab387)}"
+    },
+    {
       "name": "Human Bubble and Assistant Turn",
       "kind": "custom",
       "refersTo": "human-bubble",
@@ -528,23 +711,40 @@
       "description": "Signature: phase steps and one dot per task, tinted by state; hover reveals the latest line.",
       "html": "<div class=\"ds-strip\"><span class=\"ds-step ds-done\">✓ Plan</span><span class=\"ds-step ds-cur\">Execute 1/6</span><span class=\"ds-step\">Integrate</span><span class=\"ds-dots\"><button class=\"ds-dot\" data-tone=\"done\"><i></i></button><button class=\"ds-dot\" data-tone=\"live\"><i></i></button><button class=\"ds-dot\" data-tone=\"attention\"><i></i></button><button class=\"ds-dot\" data-tone=\"idle\"><i></i></button></span><span class=\"ds-count\">3 working</span></div>",
       "css": ".ds-strip{display:flex;align-items:center;gap:12px;height:42px;border-bottom:1px solid var(--hairline,#2a2b3c);font-family: var(--font-ui, 'Geist Variable', ui-sans-serif, system-ui, sans-serif);font-size:12px;color:var(--overlay1,#7f849c)}.ds-done{color:var(--subtext0,#a6adc8)}.ds-cur{color:var(--text,#cdd6f4);font-weight:600}.ds-dots{display:flex;gap:2px}.ds-dot{all:unset;cursor:pointer;width:18px;height:22px;border-radius:5px;display:inline-flex;align-items:center;justify-content:center}.ds-dot:hover{background:var(--surface0,#313244)}.ds-dot:focus-visible{outline:2px solid var(--mauve,#cba6f7)}.ds-dot i{width:8px;height:8px;border-radius:50%;background:var(--surface2,#585b70)}.ds-dot[data-tone=done] i{background:var(--green,#a6e3a1)}.ds-dot[data-tone=live] i{background:var(--blue,#89b4fa)}.ds-dot[data-tone=attention] i{background:var(--peach,#fab387)}.ds-dot[data-tone=idle] i{background:transparent;box-shadow:inset 0 0 0 1.5px var(--surface2,#585b70)}.ds-count{margin-left:auto;color:var(--subtext0,#a6adc8)}"
+    },
+    {
+      "name": "Route Map",
+      "kind": "custom",
+      "refersTo": "map-row",
+      "description": "The run's plan as a straight-line tree: a 2px surface1 trunk, a wave head stop, rows on straight branches with state rings, the selection wrapping the text right of the ring.",
+      "html": "<nav class=\"ds-rm\"><div class=\"ds-rm-stop\"><span class=\"ds-ring ds-stop\" data-s=\"done\"><svg width=\"11\" height=\"11\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"3\"><path d=\"M5 12l5 5L20 7\"/></svg></span><span><b>Wave 2</b> <i>3 in parallel</i></span></div><button class=\"ds-rm-row\"><span class=\"ds-ring\" data-s=\"live\"><span class=\"ds-core\"></span></span><span class=\"ds-id\">T7</span><span class=\"ds-name\">Proration engine</span><span class=\"ds-stage\" data-s=\"live\">coding</span><span class=\"ds-edot\"></span></button><button class=\"ds-rm-row\" aria-current=\"true\"><span class=\"ds-ring\" data-s=\"live\"><span class=\"ds-core\"></span></span><span class=\"ds-id\">T9</span><span class=\"ds-name\">Tax rates sync</span><span class=\"ds-stage\" data-s=\"live\">fix 1/2</span><span class=\"ds-edot\" data-e=\"codex\"></span></button><button class=\"ds-rm-row\"><span class=\"ds-ring\" data-s=\"waiting\"></span><span class=\"ds-id\">T10</span><span class=\"ds-name\">Customer portal links</span><span class=\"ds-stage\" data-s=\"waiting\">waiting</span><span class=\"ds-edot\"></span></button><button class=\"ds-rm-row\"><span class=\"ds-ring\" data-s=\"pending\"></span><span class=\"ds-id\">T14</span><span class=\"ds-name\">Plan catalog seed</span><span class=\"ds-stage\">pending</span><span class=\"ds-edot\"></span></button></nav>",
+      "css": ".ds-rm{position:relative;width:380px;padding:10px 8px 10px 4px;background:var(--base,#1e1e2e);border:1.5px solid var(--surface0,#313244);border-radius:12px;font-family:var(--font-ui, 'Geist Variable', ui-sans-serif, system-ui, sans-serif);color:var(--text,#cdd6f4)}.ds-rm::before{content:'';position:absolute;left:30px;top:30px;bottom:24px;width:2px;border-radius:999px;background:var(--surface1,#45475a)}.ds-rm-stop{position:relative;display:flex;align-items:center;gap:22px;min-height:46px;padding:0 10px 0 16px;font-size:14.5px}.ds-rm-stop b{font-weight:500}.ds-rm-stop i{font-style:normal;font-size:13.5px;color:var(--subtext0,#a6adc8);margin-left:6px}.ds-rm-row{all:unset;position:relative;box-sizing:border-box;cursor:pointer;display:grid;grid-template-columns:16px 36px minmax(0,1fr) auto 18px;align-items:center;column-gap:10px;width:100%;height:34px;padding:0 8px 0 43px;font-size:13.5px}.ds-rm-row::before{content:'';position:absolute;left:27px;top:calc(50% - 1px);width:16px;height:2px;background:var(--surface1,#45475a)}.ds-rm-row::after{content:'';position:absolute;z-index:-1;top:0;bottom:0;right:0;left:67px;border-radius:10px;transition:background-color .15s}.ds-rm-row:hover::after{background:color-mix(in srgb,var(--surface0,#313244) 45%,transparent)}.ds-rm-row:focus-visible{outline:none}.ds-rm-row:focus-visible::after{outline:2px solid var(--mauve,#cba6f7);outline-offset:-2px}.ds-rm-row[aria-current=true]::after{border:1.5px solid var(--mauve,#cba6f7);background:color-mix(in srgb,var(--mauve,#cba6f7) 7%,transparent)}.ds-rm-row[aria-current=true] .ds-ring{box-shadow:0 0 0 3px color-mix(in srgb,var(--mauve,#cba6f7) 30%,transparent)}.ds-ring{position:relative;z-index:2;box-sizing:border-box;display:grid;place-items:center;width:16px;height:16px;border-radius:50%;border:2px solid var(--surface2,#585b70);background:var(--base,#1e1e2e);color:var(--crust,#11111b)}.ds-ring.ds-stop{width:22px;height:22px;border-width:2.5px}.ds-ring[data-s=live]{border-color:var(--blue,#89b4fa)}.ds-core{width:6px;height:6px;border-radius:50%;background:var(--blue,#89b4fa);animation:ds-breathe 1.4s ease-in-out infinite}.ds-ring[data-s=done]{border-color:var(--green,#a6e3a1);background:var(--green,#a6e3a1)}.ds-ring[data-s=waiting]{border-color:var(--peach,#fab387)}.ds-ring[data-s=pending]{border-style:dashed}.ds-id{margin-left:10px;font-family:var(--font-code, 'Geist Mono Variable', ui-monospace, monospace);font-size:12.5px;color:var(--subtext1,#bac2de)}.ds-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.ds-stage{font-size:12.5px;color:var(--overlay1,#82879f)}.ds-stage[data-s=live]{color:var(--blue,#89b4fa)}.ds-stage[data-s=waiting]{color:var(--peach,#fab387)}.ds-edot{width:6px;height:6px;border-radius:50%;background:var(--mauve,#cba6f7)}.ds-edot[data-e=codex]{background:var(--teal,#94e2d5)}@keyframes ds-breathe{50%{opacity:.45}}@media (prefers-reduced-motion:reduce){.ds-core{animation:none}}"
+    },
+    {
+      "name": "Station Pane Header",
+      "kind": "custom",
+      "refersTo": "station-id-chip",
+      "description": "The deep pane's head: mono id chip, 21px title, engine chips, goal caption, dependency line, stage track of rings and underline tabs.",
+      "html": "<header class=\"ds-sp\"><div class=\"ds-sp-row\"><span class=\"ds-idchip\">T9</span><h2 class=\"ds-sp-title\">Tax rates sync</h2><span class=\"ds-grow\"></span><span class=\"ds-chip\">claude <span class=\"ds-role\">coder</span></span><span class=\"ds-chip\" data-e=\"codex\">codex <span class=\"ds-role\">reviewer</span></span></div><p class=\"ds-sp-cap\">Implement tax rates synchronization with Stripe Tax.</p><p class=\"ds-sp-links\"><span><i class=\"ds-glyph\"></i>Waits on <code>T1</code></span><span><i class=\"ds-glyph\" data-down></i>Unblocks <code>T17</code></span></p><ol class=\"ds-track\"><li data-s=\"done\"><span class=\"ds-sring\"></span>Code</li><li data-s=\"done\"><span class=\"ds-sring\"></span>Review</li><li data-s=\"current\"><span class=\"ds-sring\"></span>Fix 1/2</li><li><span class=\"ds-sring\"></span>Re-review</li><li><span class=\"ds-sring\"></span>Merge</li></ol><div class=\"ds-tabs\" role=\"tablist\"><button role=\"tab\" aria-selected=\"true\">Transcript</button><button role=\"tab\">Changes <span class=\"ds-badge\">+54 −15</span></button><button role=\"tab\">Review <span class=\"ds-badge\">1</span></button></div></header>",
+      "css": ".ds-sp{width:640px;padding:18px 22px 0;background:var(--base,#1e1e2e);border:1.5px solid var(--surface0,#313244);border-radius:12px;font-family:var(--font-ui, 'Geist Variable', ui-sans-serif, system-ui, sans-serif);color:var(--text,#cdd6f4)}.ds-sp-row{display:flex;align-items:center;gap:12px}.ds-grow{flex:1}.ds-idchip{display:inline-flex;align-items:center;justify-content:center;min-width:34px;height:30px;padding:0 8px;box-sizing:border-box;border-radius:8px;background:color-mix(in srgb,var(--mauve,#cba6f7) 14%,transparent);color:var(--mauve,#cba6f7);font-family:var(--font-code, 'Geist Mono Variable', ui-monospace, monospace);font-size:13px;font-weight:600}.ds-sp-title{margin:0;font-size:21px;font-weight:600;line-height:1.3;letter-spacing:-.012em}.ds-chip{display:inline-flex;align-items:center;gap:4px;height:20px;padding:0 7px;border-radius:999px;font-size:11px;font-weight:500;color:var(--mauve,#cba6f7);background:color-mix(in srgb,var(--mauve,#cba6f7) 14%,transparent)}.ds-chip[data-e=codex]{color:var(--teal,#94e2d5);background:color-mix(in srgb,var(--teal,#94e2d5) 13%,transparent)}.ds-role{opacity:.72}.ds-sp-cap{margin:8px 0 0;font-size:14px;line-height:1.5;color:var(--subtext0,#a6adc8)}.ds-sp-links{display:flex;gap:14px;margin:8px 0 0;font-size:13px;color:var(--subtext0,#a6adc8)}.ds-sp-links span{display:inline-flex;align-items:center;gap:6px}.ds-sp-links code{font-family:var(--font-code, 'Geist Mono Variable', ui-monospace, monospace);font-size:12px;color:var(--subtext1,#bac2de);cursor:pointer}.ds-sp-links code:hover{color:var(--lavender,#b4befe);text-decoration:underline}.ds-glyph{width:16px;border-top:1.5px solid var(--lavender,#b4befe)}.ds-glyph[data-down]{border-top-style:dashed}.ds-track{display:flex;margin:0;padding:16px 0 6px;list-style:none}.ds-track li{position:relative;flex:1;display:flex;flex-direction:column;align-items:center;gap:8px;font-size:13px;color:var(--overlay2,#9399b2)}.ds-track li+li::before{content:'';position:absolute;top:10px;right:calc(50% + 15px);left:calc(-50% + 15px);height:2px;border-radius:999px;background:var(--surface1,#45475a)}.ds-sring{box-sizing:border-box;width:22px;height:22px;border-radius:50%;border:2px solid var(--surface2,#585b70);background:var(--base,#1e1e2e)}.ds-track li[data-s=done]{color:var(--subtext1,#bac2de)}.ds-track li[data-s=done] .ds-sring{border-color:var(--green,#a6e3a1);background:var(--green,#a6e3a1)}.ds-track li[data-s=done]::before{background:var(--green,#a6e3a1)}.ds-track li[data-s=current]{color:var(--mauve,#cba6f7);font-weight:600}.ds-track li[data-s=current] .ds-sring{border-color:var(--mauve,#cba6f7);background:radial-gradient(circle,var(--mauve,#cba6f7) 0 4px,var(--base,#1e1e2e) 4.5px)}.ds-track li[data-s=current]::before{background:linear-gradient(to right,var(--green,#a6e3a1),var(--mauve,#cba6f7))}.ds-tabs{display:flex;gap:24px;margin-top:10px;border-bottom:1px solid var(--hairline,#2a2b3c)}.ds-tabs button{all:unset;position:relative;cursor:pointer;display:inline-flex;align-items:center;gap:7px;height:40px;font-size:14px;color:var(--subtext0,#a6adc8);transition:color .15s}.ds-tabs button:hover{color:var(--text,#cdd6f4)}.ds-tabs button:focus-visible{outline:2px solid var(--mauve,#cba6f7);outline-offset:-2px;border-radius:6px}.ds-tabs button[aria-selected=true]{color:var(--mauve,#cba6f7);font-weight:600}.ds-tabs button[aria-selected=true]::after{content:'';position:absolute;left:0;right:0;bottom:-1px;height:2px;border-radius:999px;background:var(--mauve,#cba6f7)}.ds-badge{font-family:var(--font-code, 'Geist Mono Variable', ui-monospace, monospace);font-size:11px;font-weight:400;padding:1px 6px;border-radius:6px;background:var(--surface0,#313244);color:var(--subtext0,#a6adc8)}"
     }
   ],
   "narrative": {
     "northStar": "The Quiet Control Room",
-    "overview": "Legion is a dark, dense desktop instrument built on Catppuccin (Mocha by default, Latte as the light flavour) with Geist for everything a person reads and Geist Mono for everything a machine produced. It has two modes over one window. **Conversation** is the home: a single 720px reading column on the base ground, edge to edge, where the run is told as a thread and the user answers what waits in place. **Agents** is the audit room: the incumbent tiling workspace on the crust gutter, bordered tiles in columns, every agent live. The modes share the title bar, rail, status bar, tokens and chips; they differ in ground (base vs crust) and in how much moves, so a glance tells you which one you are in.\n\nColour is semantic before it is decorative. Mauve is Claude and the primary action; teal is Codex; peach is \"needs you\" and nothing else; blue is running; green is done; red is failure; lavender is the quiet accent for links on hover and the critical path. Surfaces are tonal steps of the palette (crust, mantle, base, surface0..2) separated by hairlines, not by shadow. The palette, the sans body with mono metadata and the component kit are a brand commitment: restructure surfaces freely, keep the look.",
+    "overview": "Legion is a dark, dense desktop instrument built on Catppuccin (Mocha by default, Latte as the light flavour) with Geist for everything a person reads and Geist Mono for everything a machine produced. It has three modes over one window, all on the crust gutter. **Chat** is the home: the project's board, a window manager of conversations, where every conversation still going or holding a decision is a tile that tells its run as a thread and lets the user answer what waits in place. **Agents** is the audit room of one run: a route map of the run's plan (one trunk from Plan to Pull request, tasks hanging off it in waves) beside one deep station pane that shows the station picked on the map. **Code** is the project's tiling strip: overview, activity, files, code, search, terminals and commit diffs in bordered columns. The modes share the title bar, rail, status bar, tokens, chips and the base-on-crust frame; what tells them apart at a glance is the title bar's Chat | Agents | Code switch and what the ground holds: answerable conversations, a map and one pane, or a strip of tiles.\n\nColour is semantic before it is decorative. Mauve is Claude and the primary action; teal is Codex; peach is \"needs you\" and nothing else; blue is running; green is done; red is failure; lavender is the quiet accent for links on hover, the followed task's dependency links and the remaining critical path. Surfaces are tonal steps of the palette (crust, mantle, base, surface0..2) separated by hairlines, not by shadow. The palette, the sans body with mono metadata and the component kit are a brand commitment: restructure surfaces freely, keep the look.",
     "keyCharacteristics": [
       "Catppuccin Mocha/Latte tokens only; components never hard-code a hex, so the flavour swap is a variable swap.",
       "Engine identity by colour: mauve = Claude, teal = Codex, everywhere (chips, status bar meters, plan rows).",
       "Peach is reserved for human attention; the needs-you count, decision cards, the dock and the title bar counter.",
-      "Small UI type (13px base) in the chrome, reading sizes (14 to 14.5px) in the conversation.",
+      "Small UI type (13px base) in the chrome, reading sizes (14 to 14.5px) in a wide conversation tile; a narrow tile steps down to tile density by its own width.",
       "Tonal layering with hairlines; shadows only as soft lift under floating or pinned objects.",
-      "Critically damped motion; one live signal per screen in conversation mode."
+      "Lines are straight: the route map is a tree of 2px lines with right angles and 6px corners, never curves.",
+      "Critically damped motion; tiles glide to their places, and waiting is told by static peach, never by an ambient loop on the board."
     ],
     "rules": [
       {
         "name": "The Engine Colour Rule",
-        "body": "Mauve means Claude, teal means Codex, in every surface and both modes. An agent is named in text followed by its engine as a chip (`chip-claude` / `chip-codex`); never swap or reuse these hues for anything else.",
+        "body": "Mauve means Claude, teal means Codex, in every surface and every mode. An agent is named in text followed by its engine as a chip (`chip-claude` / `chip-codex`); never swap or reuse these hues for anything else.",
         "section": "colors"
       },
       {
@@ -564,21 +764,34 @@
       },
       {
         "name": "The Two Densities Rule",
-        "body": "Chrome and agents mode read at 11 to 13px; the conversation reads at 14 to 14.5px. Don't bring tile density into the thread or thread sizes into tiles.",
+        "body": "Chrome and the Code strip read at 11 to 13px; the route map reads at 12.5 to 14.5px (rows 13.5px, stops 14.5px/500) and the station pane at 13 to 14px under its 21px title; a conversation reads at 14 to 14.5px inside a 720px measure. On the board, density is chosen per tile by the tile's own width (a container query), never by the window or the mode: a tile narrower than 620px reads at tile density (thread 13px, a smaller bubble, the progress strip trimmed to the current step); a wider tile keeps conversation density.",
         "section": "typography"
+      },
+      {
+        "name": "The Steady Board Rule",
+        "body": "Order is never rearranged by attention. Newcomers (a run started elsewhere, a hidden tile coming back because it needs you) join the end of the stack, oldest first; a conversation started from the new tile takes that tile's place as master; otherwise only the user moves the master (⌘⇧⏎).",
+        "section": "layout"
       },
       {
         "name": "The Flat Ground Rule",
         "body": "Things that sit in the flow are flat; only what floats over the scroll or is pinned gets a lift, and glows only ever mean focus (mauve) or urgency (peach).",
         "section": "elevation"
+      },
+      {
+        "name": "The Straight Tree Rule",
+        "body": "The route map is a tree view in straight lines: vertical trunk, horizontal branches, right-angle links with 6px corners. No curves and no diagonals.",
+        "section": "shapes"
       }
     ],
     "dos": [
       "**Do** use only palette variables and color-mix washes of them, so Latte works without a second stylesheet.",
       "**Do** name an agent in text and follow it with its engine chip: mauve `chip-claude`, teal `chip-codex`.",
-      "**Do** keep peach for the human: the needs-you counter, decision cards, the dock and urgent tiles.",
+      "**Do** keep peach for the human: the needs-you counter, decision cards, the dock, waiting route-map rings, urgent Code-strip tiles and waiting board tiles.",
       "**Do** set code, paths, ids, branches, versions, timestamps and numbers in Geist Mono, and everything else in Geist.",
-      "**Do** keep conversation surfaces on base inside the 720px column, and agents mode on the crust gutter.",
+      "**Do** put conversations on base inside their tile, tiles, the map and the station pane on the crust gutter, and a wide tile's thread inside the 720px measure.",
+      "**Do** grow the route map downward: parallel tasks are rows in a wave, folded when finished, never columns.",
+      "**Do** start every route-map highlight right of the ring, so lines and rings never cross it.",
+      "**Do** choose a conversation's density by its tile's width (620px), never by the window or the mode.",
       "**Do** frame only what needs framing in the thread: decision cards, the composer and presentation media.",
       "**Do** give every interactive element the 2px mauve focus outline (peach on needs-you chips).",
       "**Do** animate with transform and opacity on the house ease-out, and honour reduced motion with instant transitions."
@@ -588,7 +801,9 @@
       "**Don't** put peach on anything that doesn't need the user.",
       "**Don't** set names, statuses or prose in mono.",
       "**Don't** box assistant prose or presentations; the human bubble and decision cards are the only containers for messages.",
-      "**Don't** add a second live animation to conversation mode; the dock's needs-you ping is the only one.",
+      "**Don't** pulse, glow or dim board tiles for attention; a waiting tile is a static peach-tinted border and the title bar's counter is the live signal.",
+      "**Don't** reorder the board or the route map by attention; newcomers join the end of the stack.",
+      "**Don't** draw curved or diagonal lines on the route map; links turn at right angles with 6px corners.",
       "**Don't** use the uppercase section label as a kicker or eyebrow above a heading; it is for rail and tile group headers only.",
       "**Don't** use hard or offset shadows; lifts are soft, negative-spread and tinted with `--shadow`.",
       "**Don't** hard-code hex values in components."

@@ -23,7 +23,7 @@ import {
 import type { AttachmentDraft } from '../../attachments/model';
 import { Icon } from '../../chrome/icons';
 import { Chip, Kbd } from '../../chrome/ui';
-import type { TileCardProps, TileProps } from '../../layout/types';
+import type { TileProps } from '../../layout/types';
 import { errorMessage } from '../session/actions';
 import './clarify.css';
 
@@ -242,19 +242,5 @@ function Answered({ item }: { item: InboxItemOf<'question'> }) {
         </div>
       ) : null}
     </div>
-  );
-}
-
-export function Card({ params }: TileCardProps<'clarify'>) {
-  const item = useInboxItem(params.inboxItemId);
-  if (item?.kind !== 'question') return <div>no open questions</div>;
-  return (
-    <>
-      {item.payload.questions.slice(0, 3).map((q, n) => (
-        <div key={q.id}>
-          {n + 1}. {q.question}
-        </div>
-      ))}
-    </>
   );
 }

@@ -25,7 +25,7 @@ import {
   taskEngine,
 } from '../../layout/describe';
 import { focusedTile } from '../../layout/tree';
-import type { TileCardProps, TileProps } from '../../layout/types';
+import type { TileProps } from '../../layout/types';
 import { focusDiff } from '../diff/data';
 import { Check, errorText, InlineComposer, Markdown, openTile, shortSha, useAction, useTileKeys } from '../plan/kit';
 import { type Gate, gateReasons, gatesFor, isBlocking, latestVerifications, trackFindings } from './evidence';
@@ -64,7 +64,7 @@ export async function approveMerge(taskId: string): Promise<void> {
 }
 
 function focusedReviewTask(ctx: CommandContext): Task | null {
-  if (ctx.ui.overlay !== null || ctx.ui.layoutMode === 'overview' || ctx.ui.layoutMode === 'pipeline') return null;
+  if (ctx.ui.overlay !== null) return null;
   const tile = ctx.layout ? focusedTile(ctx.layout) : null;
   if (!tile || (tile.kind !== 'review' && tile.kind !== 'diff')) return null;
   const params = tile.params as { taskId?: string | null; target?: { kind: string; taskId?: string } };
@@ -577,7 +577,7 @@ function Actions({
           <button
             type="button"
             className="btn btn-ghost btn-sm ml-auto"
-            onClick={() => actions.revealTile(runId, `session:${task.nodeId}`, null)}
+            onClick={() => actions.revealTile(runId, `session:${task.nodeId}`)}
           >
             Session →
           </button>
@@ -590,24 +590,3 @@ function Actions({
 // ---------------------------------------------------------------------------------------------
 // Overview card
 // ---------------------------------------------------------------------------------------------
-
-export function Card({ runId, params }: TileCardProps<'review'>) {
-  const pack = usePack(runId, params.taskId);
-  const review = pack.reviews.at(-1);
-  if (!review) return <div>waiting for the reviewer</div>;
-  const met = review.criteria.filter((c) => c.status === 'met').length;
-  const findings = trackFindings(pack.reviews);
-  const open = findings.filter((f) => f.state === 'open');
-  const green = pack.gates.filter((g) => g.ok).length;
-  return (
-    <>
-      <div>
-        round {pack.reviews.length} · {review.verdict.replace('_', ' ')} · criteria {met}/{review.criteria.length}
-      </div>
-      <div>
-        gates {green}/{pack.gates.length} green · {findings.filter((f) => f.state === 'resolved').length} resolved
-      </div>
-      <div>{open[0] ? `${open[0].finding.severity}: ${open[0].finding.title}` : 'no open findings'}</div>
-    </>
-  );
-}

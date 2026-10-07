@@ -83,7 +83,7 @@ export async function requestRevision(runId: string, feedback: string): Promise<
 }
 
 function focusedPlanTile(ctx: CommandContext): boolean {
-  if (ctx.ui.overlay !== null || ctx.ui.layoutMode === 'overview' || ctx.ui.layoutMode === 'pipeline') return false;
+  if (ctx.ui.overlay !== null) return false;
   const tile = ctx.layout ? focusedTile(ctx.layout) : null;
   return !!tile && (tile.kind === 'plan' || tile.kind === 'dag');
 }

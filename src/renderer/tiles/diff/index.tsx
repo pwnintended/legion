@@ -13,7 +13,7 @@ import { attemptsOfRun, reviewsOfRun, tasksOfRun } from '../../app/data';
 import { useData, useLatestPlan, useRun, useSettings } from '../../app/hooks';
 import { Chip } from '../../chrome/ui';
 import { otherEngine } from '../../layout/describe';
-import type { TileCardProps, TileProps } from '../../layout/types';
+import type { TileProps } from '../../layout/types';
 import { Segmented, useTileKeys } from '../plan/kit';
 import { filesChangedSince, type TrackedFinding, trackFindings } from '../review/evidence';
 import { FindingCard } from '../review/findings';
@@ -666,21 +666,3 @@ function LineView({ file, row, range }: { file: DiffFile; row: Extract<Row, { ki
 // ---------------------------------------------------------------------------------------------
 // Overview card
 // ---------------------------------------------------------------------------------------------
-
-export function Card({ runId, params }: TileCardProps<'diff'>) {
-  const ctx = useDiffContext(runId, params.target);
-  const open = ctx.findings.filter((f) => f.state === 'open');
-  return (
-    <>
-      <div>{ctx.title}</div>
-      <div>
-        {ctx.reviews.length
-          ? `${ctx.reviews.length} review round${ctx.reviews.length === 1 ? '' : 's'}`
-          : 'not reviewed yet'}
-      </div>
-      <div>
-        {open.length ? `${open.length} open finding${open.length === 1 ? '' : 's'} inline` : 'no open findings'}
-      </div>
-    </>
-  );
-}

@@ -1,8 +1,8 @@
 /**
  * The conversation (demo mode): the passkeys run opens on its chat with the assistant's relayed updates, the
  * lead's status folded under a reply, a coder's screenshots and the lead's document, the open approval as a card
- * (answered in place, it becomes a receipt), the progress strip, ⌘E to the agents and back, and a project's
- * new-conversation page. Screenshots of each go to test-results/chat/.
+ * (answered in place, it becomes a receipt), the progress strip, a task dot to the agents' route map and ⌘E back,
+ * the project's board with a new conversation, and its code. Screenshots of each go to test-results/chat/.
  */
 import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -67,7 +67,7 @@ test('the run is a conversation: updates, presentations, decisions, the agents o
     await expect(chat.getByTestId('chat-progress')).toContainText('Execute 1/6');
     await expect(chat.getByTestId('chat-task-dot')).toHaveCount(6);
     await window.waitForTimeout(500);
-    await expect(window.getByTestId('chat-jump')).toHaveCount(0);
+    await expect(chat.getByTestId('chat-jump')).toHaveCount(0);
     await shot(window, 'conversation');
 
     // The lead's status update sits under the reply it led to.
@@ -102,13 +102,17 @@ test('the run is a conversation: updates, presentations, decisions, the agents o
     await shot(window, 'task-dot');
     await dot.click();
     await expect(window.getByTestId('view-agents')).toHaveAttribute('aria-pressed', 'true');
+    await expect(window.getByTestId('route-map')).toBeVisible();
+    await expect(window.getByTestId('station-pane')).toHaveAttribute('data-station', 'task:T2');
+    await expect(window.getByTestId('route-row-T2')).toHaveAttribute('aria-current', 'true');
     await expect(window.locator('[data-tile-id="session:T2"]')).toBeVisible();
-    await shot(window, 'agents');
+    await window.waitForTimeout(400);
+    await shot(window, 'agents-route-map');
 
     // ⌘E back to the conversation; a reply goes to the assistant and shows at once.
     await window.keyboard.press('Meta+e');
     await expect(chat).toBeVisible();
-    await window.getByTestId('chat-input').fill('Ship it behind a feature flag, please.');
+    await chat.getByTestId('chat-input').fill('Ship it behind a feature flag, please.');
     await window.keyboard.press('Enter');
     await expect(chat.locator('.ch-you-text').last()).toHaveText('Ship it behind a feature flag, please.');
     await expect(chat.locator('.ch-as-body').last()).toContainText('passed that to the lead', { timeout: 10_000 });
@@ -118,14 +122,22 @@ test('the run is a conversation: updates, presentations, decisions, the agents o
     await shot(window, 'conversation-1000x700');
     await setSize(app, window, [1440, 900]);
 
-    // A project's page: start a conversation, or pick an earlier one.
+    // The project's board: every conversation going in the project as a tile; ⌘N splits a new one in.
     await window.getByTestId('titlebar-project').click();
+    const board = window.getByTestId('board');
+    await expect(board.getByTestId('board-tile')).toHaveCount(2);
+    await shot(window, 'board');
+    await window.keyboard.press('Meta+n');
     const page = window.getByTestId('new-conversation');
     await expect(page).toBeVisible();
-    await expect(page).toContainText('Conversations');
+    await expect(page.getByTestId('new-conversation-input')).toBeFocused();
     await shot(window, 'new-conversation');
-    await window.getByTestId('view-agents').click();
-    await expect(window.getByTestId('view-agents')).toContainText('Repository');
+    // The project's code is the third view.
+    await expect(window.getByTestId('view-code')).toHaveText('Code');
+    await window.getByTestId('view-code').click();
+    await expect(window.getByTestId('view-code')).toHaveAttribute('aria-pressed', 'true');
+    await expect(window.getByTestId('project-overview')).toBeVisible();
+    await shot(window, 'code');
   } finally {
     await app.close();
     rmSync(home, { recursive: true, force: true });

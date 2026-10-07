@@ -14,7 +14,7 @@ import { dataStore } from '../../app/store';
 import { Icon } from '../../chrome/icons';
 import { Chip, EngineChip } from '../../chrome/ui';
 import { displayEngine, ENGINE_LABEL, formatCost, formatDuration } from '../../layout/describe';
-import type { TileCardProps, TileProps } from '../../layout/types';
+import type { TileProps } from '../../layout/types';
 import { useIntegration } from '../integration';
 import { AutoTextarea, Check, Markdown, openTile, Segmented, useAction } from '../plan/kit';
 import { trackFindings } from '../review/evidence';
@@ -163,7 +163,7 @@ function Ready({ run }: { run: Run }) {
         >
           <section className="min-w-0" aria-label="Pull request draft">
             <div className="lg-sec flex-wrap gap-y-1.5">
-              Pull request
+              <span className="lg-sec-title">Pull request</span>
               <span className="lg-sec-aside flex items-center gap-2">
                 {edited ? <span style={{ color: 'var(--peach)' }}>edited</span> : <span>generated</span>}
                 <Segmented
@@ -451,34 +451,3 @@ function Stat({ label, value }: { label: string; value: string }) {
 // ---------------------------------------------------------------------------------------------
 // Overview card
 // ---------------------------------------------------------------------------------------------
-
-export function Card({ runId }: TileCardProps<'pr'>) {
-  const run = useRun(runId);
-  const item = usePrReady(runId);
-  const review = useFinalReview(runId);
-  const merged = useData((s) => tasksOfRun(s.tasks, runId).filter((t) => t.status === 'merged').length);
-  const total = useData((s) => tasksOfRun(s.tasks, runId).length);
-  const pr = runPr(run);
-  if (pr)
-    return (
-      <>
-        <div>
-          {pr.state === 'open' && pr.isDraft ? 'draft PR' : 'PR'} {pr.number ? `#${pr.number}` : ''}{' '}
-          {pr.state === 'open' ? 'open' : pr.state}
-        </div>
-        <div>{pr.url}</div>
-        <div>
-          {merged}/{total} tasks merged
-        </div>
-      </>
-    );
-  return (
-    <>
-      <div>{item ? item.payload.title : 'draft PR not opened yet'}</div>
-      <div>
-        {merged}/{total} tasks merged
-      </div>
-      <div>{review ? `final review: ${review.verdict.replace('_', ' ')}` : 'final review pending'}</div>
-    </>
-  );
-}

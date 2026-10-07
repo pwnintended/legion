@@ -33,3 +33,14 @@ export function demoLive(): boolean {
     return true;
   }
 }
+
+/** `?scale=1` adds a big run (22 tasks, 11 in parallel) to the demo world, for the route map at scale. */
+export function demoScale(): boolean {
+  try {
+    return (
+      new URLSearchParams(location.search).get('scale') === '1' || localStorage.getItem('legion.demo.scale') === '1'
+    );
+  } catch {
+    return false;
+  }
+}

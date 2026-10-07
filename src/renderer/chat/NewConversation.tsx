@@ -1,15 +1,13 @@
 /**
- * A project's page in the chat view: start a conversation about it (the assistant answers, researches, and turns
- * it into a run when you want the work done), and pick up an earlier one. Branch and engine options live in the
- * full composer (⌘N); the repository itself is one click away (Repository, ⌘E).
+ * The new-conversation tile of a project's board: start a conversation about the project (the assistant answers,
+ * researches, and turns it into a run when you want the work done). Alone on the board it is the project's
+ * page; with conversations beside it, it splits in as the master (⌘N) and the conversation it starts takes its
+ * place. Branch and engine options live in the full composer; the repository is one click away (⌘E).
  */
-import type { Project, Run } from '@shared/domain';
-import { useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { useShallow } from 'zustand/react/shallow';
+import type { Project } from '@shared/domain';
+import { type ReactNode, useLayoutEffect, useRef, useState } from 'react';
 import { openComposer } from '../app/composer-seed';
-import { selectRunList, tasksOfRun } from '../app/data';
-import { rpc, useData, useNow, useSettings } from '../app/hooks';
-import { projectOfRun } from '../app/projects';
+import { rpc, useData, useSettings } from '../app/hooks';
 import { adoptRun } from '../app/run-actions';
 import { actions } from '../app/store';
 import {
@@ -23,10 +21,9 @@ import {
   useFileDrop,
 } from '../attachments/Attachments';
 import type { AttachmentDraft } from '../attachments/model';
+import { boardActions } from '../board/state';
 import { Icon } from '../chrome/icons';
-import { runStatusLine } from '../chrome/run-status';
 import { Kbd } from '../chrome/ui';
-import { formatDuration } from '../layout/describe';
 import { errorMessage } from '../tiles/session/actions';
 import './chat.css';
 
@@ -40,17 +37,21 @@ function promptDraft(projectId: string) {
   return entry;
 }
 
-export function NewConversation({ projectId }: { projectId: string }) {
-  const project = useData((s) => s.projects[projectId] ?? null);
-  if (!project) return null;
-  return <Page project={project} />;
-}
-
-function Page({ project }: { project: Project }) {
+export function NewConversation({
+  project,
+  alone,
+  focused,
+  children,
+}: {
+  project: Project;
+  alone: boolean;
+  focused: boolean;
+  /** Below the composer (the board's note about hidden conversations that wait). */
+  children?: ReactNode;
+}) {
   const entry = promptDraft(project.id);
   const settings = useSettings();
   const branch = useData((s) => s.projectStatus[project.id]?.branch ?? null);
-  const runs = useData(useShallow((s) => selectRunList(s).filter((r) => projectOfRun(s, r)?.id === project.id)));
   const [text, setText] = useState(entry.text);
   const [state, setState] = useState<{ status: 'idle' | 'sending' } | { status: 'error'; message: string }>({
     status: 'idle',
@@ -108,6 +109,7 @@ function Page({ project }: { project: Project }) {
       entry.draft.clear();
       update('');
       setState({ status: 'idle' });
+      boardActions.started(project.id, run.id);
       adoptRun(run);
       actions.setActiveRun(run.id);
       actions.setView('chat');
@@ -150,12 +152,18 @@ function Page({ project }: { project: Project }) {
               }
               aria-label={`Start a conversation about ${project.name}`}
               data-testid="new-conversation-input"
-              // biome-ignore lint/a11y/noAutofocus: the page exists to write this
-              autoFocus
+              // biome-ignore lint/a11y/noAutofocus: the tile exists to write this (only when it has the focus)
+              autoFocus={focused}
               onChange={(event) => update(event.target.value)}
               onPaste={(event) => void pasteInto(entry.draft, event)}
               onKeyDown={(event) => {
                 if (attachShortcut(entry.draft, event)) return;
+                // Nothing written yet: Esc takes the tile off the board again (it is the page when alone).
+                if (event.key === 'Escape' && !alone && !text.trim() && items.length === 0) {
+                  event.preventDefault();
+                  boardActions.closeNew();
+                  return;
+                }
                 if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) {
                   event.preventDefault();
                   if (!event.repeat) void start();
@@ -196,62 +204,9 @@ function Page({ project }: { project: Project }) {
               Couldn't start: {state.message}
             </p>
           ) : null}
-          {runs.length ? <Recent runs={runs} /> : null}
+          {children}
         </div>
       </div>
     </div>
-  );
-}
-
-function Recent({ runs }: { runs: Run[] }) {
-  const now = useNow(60_000);
-  return (
-    <section className="ch-recent" aria-label="Conversations">
-      <h2 className="ch-recent-title">Conversations</h2>
-      <ul>
-        {runs.slice(0, 12).map((run) => (
-          <RecentRow key={run.id} run={run} now={now} />
-        ))}
-      </ul>
-    </section>
-  );
-}
-
-function RecentRow({ run, now }: { run: Run; now: number }) {
-  const counts = useData(
-    useShallow((s) => {
-      const tasks = tasksOfRun(s.tasks, run.id);
-      const agents = Object.values(s.attempts).filter((a) => a.runId === run.id && a.status === 'running').length;
-      const urgent = Object.values(s.inbox).filter((i) => i.runId === run.id && i.resolvedAt === null).length;
-      return {
-        merged: tasks.filter((t) => t.status === 'merged').length,
-        total: tasks.length,
-        agents,
-        urgent: urgent || (s.summaries[run.id]?.openInbox ?? 0),
-      };
-    }),
-  );
-  const status = useMemo(
-    () => runStatusLine(run, counts.agents, counts.merged, counts.total, counts.urgent),
-    [run, counts],
-  );
-  return (
-    <li>
-      <button
-        type="button"
-        className="ch-recent-row"
-        onClick={() => {
-          actions.setActiveRun(run.id);
-          actions.setView('chat');
-        }}
-      >
-        <span className="ch-recent-name">{run.title}</span>
-        <span className="ch-recent-status" data-tone={status.tone}>
-          {status.live ? <span className="dot live" aria-hidden="true" /> : null}
-          {status.text}
-        </span>
-        <span className="ch-recent-when">{formatDuration(now - run.updatedAt)} ago</span>
-      </button>
-    </li>
   );
 }

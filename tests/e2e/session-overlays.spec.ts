@@ -20,7 +20,7 @@ async function launchDemo(): Promise<{ app: ElectronApplication; window: Page; h
     localStorage.clear();
     localStorage.setItem('legion.demo', '1');
     localStorage.setItem('legion.demo.live', '0');
-    // The tiling workspace (the agents view); a run opens in its chat otherwise.
+    // The agents view (the run's route map); a run opens in its chat otherwise.
     localStorage.setItem('legion.ui', JSON.stringify({ view: 'agents' }));
   });
   await window.reload();
@@ -32,8 +32,11 @@ async function launchDemo(): Promise<{ app: ElectronApplication; window: Page; h
   return { app, window, home };
 }
 
+/** The tile shown in the route map's station pane. */
 const focusedTile = (window: Page) =>
   window.locator('[data-workspace] [data-focused="true"]').first().getAttribute('data-tile-id');
+
+const station = (window: Page) => window.getByTestId('station-pane').getAttribute('data-station');
 
 test('session tiles, approvals, composer, decisions, palette, clarify', async () => {
   mkdirSync(shots, { recursive: true });
@@ -42,13 +45,20 @@ test('session tiles, approvals, composer, decisions, palette, clarify', async ()
     await expect(window.getByTestId('titlebar')).toContainText('Add passkey (WebAuthn) login', { timeout: 30_000 });
     const t2 = window.locator('[data-tile-id="session:T2"]');
     const t3 = window.locator('[data-tile-id="session:T3"]');
+    // The run lands on T2's session; one station at a time, so T3's is not on screen.
+    await expect.poll(() => station(window)).toBe('task:T2');
     await expect(t2.getByText('Read 3 files')).toBeVisible();
-    await expect(t3.getByTestId('approval-card')).toBeVisible();
-    // Bring T2 and T3 side by side.
-    await window.keyboard.press('Meta+Alt+l');
+    await expect(t3).toHaveCount(0);
+    await window.waitForTimeout(500);
+    await window.screenshot({ path: join(shots, 'station-T2.png') });
+    // T3, the next station down the map (⌘⌥J), waits on an approval.
+    await window.keyboard.press('Meta+Alt+j');
+    await expect.poll(() => station(window)).toBe('task:T3');
     await expect.poll(() => focusedTile(window)).toBe('session:T3');
+    await expect(t3.getByTestId('approval-card')).toBeVisible();
+    await expect(t2).toHaveCount(0);
     await window.waitForTimeout(700);
-    await window.screenshot({ path: join(shots, 'strip-sessions.png') });
+    await window.screenshot({ path: join(shots, 'station-T3.png') });
 
     // Six decisions wait across runs (the title bar's count). ⌘U shows the first one in the run on screen as a card
     // in its chat: T3's approval; ⌘E goes back to the agents and gives focus back to the tile.
@@ -64,6 +74,7 @@ test('session tiles, approvals, composer, decisions, palette, clarify', async ()
     await window.screenshot({ path: join(shots, 'decision.png') });
     await window.keyboard.press('Meta+e');
     await expect(chat).toHaveCount(0);
+    await expect.poll(() => station(window)).toBe('task:T3');
     await expect.poll(() => focusedTile(window)).toBe('session:T3');
     await expect
       .poll(() => window.evaluate(() => document.activeElement?.getAttribute('data-tile-id') ?? null))
@@ -90,8 +101,8 @@ test('session tiles, approvals, composer, decisions, palette, clarify', async ()
     await expect(composer.getByTestId('composer-link')).toContainText('erudiet/app#512');
     await window.waitForTimeout(400);
     await window.screenshot({ path: join(shots, 'composer.png') });
-    // Overlays own their keys: ⌘⏎ with focus on a button inside the composer submits it (it is not the global
-    // ⌘⏎ Focus layout binding).
+    // Overlays own their keys: ⌘⏎ with focus on a button inside the composer submits it (it does not reach the
+    // tile behind it).
     await composer.locator('[data-engine="codex"]').focus();
     await window.keyboard.press('Meta+Enter');
     await expect(composer).toHaveCount(0);
@@ -143,15 +154,17 @@ test('session tiles, approvals, composer, decisions, palette, clarify', async ()
     await window.keyboard.press('Enter');
     await expect(palette).toHaveCount(0);
     await expect(window.getByTestId('view-agents')).toHaveAttribute('aria-pressed', 'true');
+    await expect.poll(() => station(window)).toBe('task:T4');
     await expect.poll(() => focusedTile(window)).toBe('session:T4');
+    await expect(window.getByTestId('route-row-T4')).toHaveAttribute('aria-current', 'true');
 
-    // Focus mode on a busy session.
-    await window.keyboard.press('Meta+Alt+h');
-    await window.keyboard.press('Meta+Alt+h');
+    // A busy session, two stations up the map (⌘⌥K twice): T2, the whole pane.
+    await window.keyboard.press('Meta+Alt+k');
+    await window.keyboard.press('Meta+Alt+k');
+    await expect.poll(() => station(window)).toBe('task:T2');
     await expect.poll(() => focusedTile(window)).toBe('session:T2');
-    await window.keyboard.press('Meta+Enter');
     await window.waitForTimeout(500);
-    await window.screenshot({ path: join(shots, 'session-focus.png') });
+    await window.screenshot({ path: join(shots, 'session-busy.png') });
 
     // Steer: ⏎ queues a note for the next turn; the agent picks it up after the current one.
     await t2.getByPlaceholder('Steer T2…').fill('Keep the error codes in SCREAMING_SNAKE_CASE');

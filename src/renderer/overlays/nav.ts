@@ -23,10 +23,18 @@ export function revealInRun(runId: string, tileId: string | null): void {
   if (tileId) actions.revealTile(runId, tileId);
 }
 
-/** Open a user tile in a new column right of `anchorTileId` (or the focused column) and focus it. */
+/**
+ * Open a user tile of a run and focus it: a terminal in the Code view, anything else as the run's pane on the
+ * route map (a new column in the run's tree, right of `anchorTileId` or the focused column).
+ */
 export function openTileColumn(runId: string, tile: Omit<LayoutTile, 'id' | 'auto'>, anchorTileId: string | null) {
   actions.setActiveRun(runId);
+  if (tile.kind === 'terminal') {
+    actions.openInCode(tile);
+    return;
+  }
   syncActiveLayout();
+  actions.setView('agents');
   actions.updateLayout(
     runId,
     (layout) => {
@@ -37,7 +45,6 @@ export function openTileColumn(runId: string, tile: Omit<LayoutTile, 'id' | 'aut
     },
     true,
   );
-  actions.setLayoutMode('strip');
 }
 
 // ---------------------------------------------------------------------------------------------

@@ -37,9 +37,14 @@ function openItemsOf(inbox: Record<string, InboxItem>, runId: string): InboxItem
   return Object.values(inbox).filter((i) => i.runId === runId && i.resolvedAt === null);
 }
 
-type StepState = 'done' | 'current' | 'attention' | 'todo';
+export type StepState = 'done' | 'current' | 'attention' | 'todo';
 
-function steps(run: Run, merged: number, total: number, waiting: boolean): { label: string; state: StepState }[] {
+export function steps(
+  run: Run,
+  merged: number,
+  total: number,
+  waiting: boolean,
+): { label: string; state: StepState }[] {
   const order = ['Plan', `Execute${total ? ` ${merged}/${total}` : ''}`, 'Integrate', 'Pull request'];
   const at = (index: number, attention = false) =>
     order.map((label, i) => ({

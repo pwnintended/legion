@@ -251,9 +251,15 @@ test('attachments: paste, drop, dialog, preview, remove, then the planner receiv
     const clarify = chat.locator('[data-testid="chat-decision"][data-kind="question"]').getByTestId('clarify');
     await expect(clarify).toBeVisible({ timeout: 30_000 });
     await expect(chat.locator('.ch-you-files').first().getByTestId('attachment-chip')).toHaveCount(3);
-    // Among the agents (⌘E and back), the plan-to-be lists them as the issue's attachments.
+    // Among the agents (⌘E and back): the route map's Plan station shows the plan-to-be, which lists them as the
+    // issue's attachments.
     await window.keyboard.press('Meta+e');
-    await expect(window.getByTestId('run-attachments').getByTestId('attachment-chip')).toHaveCount(3);
+    await expect(window.getByTestId('route-map')).toBeVisible();
+    await expect(window.getByTestId('station-pane')).toHaveAttribute('data-station', 'plan');
+    await expect(
+      window.locator('[data-tile-kind="plan"]').getByTestId('run-attachments').getByTestId('attachment-chip'),
+    ).toHaveCount(3);
+    await shot(window, 'plan-attachments');
     await window.keyboard.press('Meta+e');
     await expect(clarify).toBeVisible();
     await clarify.getByRole('radio', { name: 'Yes, add docs' }).click();
@@ -327,13 +333,14 @@ test('attachments in demo mode: a screenshot pasted into the steer bar travels w
       localStorage.clear();
       localStorage.setItem('legion.demo', '1');
       localStorage.setItem('legion.demo.live', '0');
-      // The agents view (the tiling workspace), where T2's session tile has its steer bar.
+      // The agents view (the route map), which opens on T2's station: its session tile has the steer bar.
       localStorage.setItem('legion.ui', JSON.stringify({ view: 'agents' }));
     });
     await window.reload();
     await setSize(app, window, [1440, 900]);
     const t2 = window.locator('[data-tile-id="session:T2"]');
     await expect(t2.getByText('Read 3 files')).toBeVisible({ timeout: 30_000 });
+    await expect(window.getByTestId('station-pane')).toHaveAttribute('data-station', 'task:T2');
     const input = t2.locator('.ss-input');
     await input.click();
     await input.fill('The button should look like this');

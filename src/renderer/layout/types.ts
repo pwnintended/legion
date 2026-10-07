@@ -83,15 +83,3 @@ export interface TileDefinition<K extends TileKind = TileKind> {
   title: string;
   component: ComponentType<TileProps<K>>;
 }
-
-/**
- * Props of an optional overview card body. A tile module may export it as a named `Card` from
- * `tiles/<kind>/index.tsx`; the overview renders the card chrome (header, status, footer) and puts the
- * Card in the ~62px "mini" area. Without a `Card` export, a generic body built from run data is shown.
- */
-export interface TileCardProps<K extends TileKind = TileKind> {
-  tileId: string;
-  kind: K;
-  runId: string;
-  params: TileParamsByKind[K];
-}

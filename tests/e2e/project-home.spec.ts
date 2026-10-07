@@ -1,7 +1,7 @@
 /**
  * Projects as the home, against the real engine (no demo data): a fresh install shows onboarding that leads with
  * "Add a project"; adding one (Browse… answered by `LEGION_E2E_PICK_DIR`) lands on its page (a new conversation),
- * not the composer; its Repository view is the project's home. Then: browse the tree, open a file, ⌘P go to file,
+ * not the composer; its Code view is the project's home. Then: browse the tree, open a file, ⌘P go to file,
  * ⌘⇧F search and open a hit at its line, open a commit's diff from the history, select lines and "Start a run about
  * this…" (composer with the project and a `path:lines` reference). Screenshots at 1280×800 and 1728×1117 go to test-results/project-home/.
  */
@@ -224,14 +224,17 @@ test('project home: add a project, browse, go to file, search, a commit, start a
     await add.getByTestId('add-project-browse').click();
     await expect(add).toHaveCount(0);
     await expect(window.getByTestId('composer')).toHaveCount(0);
-    // The project's page opens on a new conversation; its Repository view is the project's home.
+    // The project's page opens on a new conversation; its Code view is the project's home.
     await expect(window.getByTestId('new-conversation')).toBeVisible();
     await expect(window.getByTestId('new-conversation-input')).toBeVisible();
-    await expect(window.getByTestId('view-agents')).toHaveText(/Repository/);
+    await expect(window.getByTestId('view-code')).toHaveText(/Code/);
+    // No run yet: no agents to show.
+    await expect(window.getByTestId('view-agents')).toHaveCount(0);
     await window.waitForTimeout(300);
     await window.screenshot({ path: join(shots, '02b-new-conversation-1280x800.png') });
-    await window.getByTestId('view-agents').click();
-    await expect(window.getByTestId('view-agents')).toHaveAttribute('aria-pressed', 'true');
+    await window.getByTestId('view-code').click();
+    await expect(window.getByTestId('view-code')).toHaveAttribute('aria-pressed', 'true');
+    await expect(window.getByTestId('mode-pill')).toHaveText('NORMAL');
     const overview = window.getByTestId('project-overview');
     await expect(overview).toBeVisible();
     await expect(overview).toContainText('widgets');
@@ -356,12 +359,12 @@ test('project home: add a project, browse, go to file, search, a commit, start a
     await expect(composer).toHaveCount(0);
     await expect(window.getByTestId('rail-run')).toHaveCount(1);
     await expect(window.getByTestId('titlebar')).toContainText('widgets');
-    // The run opens on its chat; the project's page lists it under its conversations, its Repository view under
-    // the activity.
+    // The run opens on its chat, a tile of the project's board; the Code view lists it under the activity.
     await expect(window.getByTestId('chat')).toBeVisible();
     await window.getByTestId('titlebar-project').click();
-    await expect(window.getByTestId('new-conversation')).toContainText('Make truncate count graphemes');
-    await window.getByTestId('view-agents').click();
+    await expect(window.getByTestId('board-tile')).toContainText('Make truncate count graphemes');
+    await window.getByTestId('view-code').click();
+    await expect(window.getByTestId('view-code')).toHaveAttribute('aria-pressed', 'true');
     await expect(window.getByTestId('project-overview')).toBeVisible();
     await expect(activity.getByTestId('activity-run')).toHaveCount(1);
     // ⌘⌥H walks focus back to the activity column (the strip scrolls with it).
@@ -397,10 +400,11 @@ test('project home in demo mode: a project with runs, PRs and history', async ()
     await expect(window.getByTestId('titlebar')).toContainText('demo', { timeout: 30_000 });
     // Three projects, the runs grouped under them.
     await expect(window.getByTestId('rail-project')).toHaveCount(3);
-    await expect(window.getByTestId('rail-run')).toHaveCount(6);
+    await expect(window.getByTestId('rail-run')).toHaveCount(8);
     await window.getByTestId('rail-project').first().click();
-    await expect(window.getByTestId('new-conversation')).toBeVisible();
-    await window.getByTestId('view-agents').click();
+    await expect(window.getByTestId('board').getByTestId('board-tile')).toHaveCount(2);
+    await window.getByTestId('view-code').click();
+    await expect(window.getByTestId('view-code')).toHaveAttribute('aria-pressed', 'true');
     await expect(window.getByTestId('project-overview')).toContainText('app');
     const activity = window.getByTestId('project-activity');
     await expect(activity.getByTestId('activity-run')).toHaveCount(2);

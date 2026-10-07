@@ -607,7 +607,7 @@ function LiveStatus({ runId, node }: { runId: string; node: TaskNode }) {
       <button
         type="button"
         className="btn btn-ghost btn-sm"
-        onClick={() => actions.revealTile(runId, `session:${node.id}`, null)}
+        onClick={() => actions.revealTile(runId, `session:${node.id}`)}
       >
         Session →
       </button>

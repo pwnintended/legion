@@ -313,9 +313,7 @@ body {
     0 0 18px color-mix(in srgb, var(--peach) 25%, transparent);
 }
 /* Urgency pulse: opacity-only on a pseudo-element; stops once acknowledged. */
-.tile[data-pulse="true"]::after,
-.card[data-pulse="true"]::after,
-.pnode[data-pulse="true"]::after {
+.tile[data-pulse="true"]::after {
   content: "";
   position: absolute;
   inset: -1.5px;
@@ -454,103 +452,7 @@ body {
   color: var(--text);
 }
 
-/* Overview cards & pipeline nodes ------------------------------------------------------------------ */
-.card {
-  all: unset;
-  box-sizing: border-box;
-  cursor: pointer;
-  position: relative;
-  background: var(--base);
-  border: var(--border-w) solid var(--surface0);
-  border-radius: var(--radius);
-  padding: 12px 14px;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  min-width: 0;
-  transition:
-    border-color 0.2s,
-    transform 0.2s var(--ease-out);
-}
-.card:hover {
-  border-color: var(--surface2);
-  transform: translateY(-2px);
-}
-.card:focus-visible {
-  outline: 2px solid var(--mauve);
-  outline-offset: 2px;
-}
-.card[data-urgent="true"] {
-  border-color: var(--peach);
-}
-.card[data-focused="true"] {
-  border-color: var(--mauve);
-  box-shadow: var(--glow-focus);
-}
-.card[data-quiet="true"] {
-  opacity: 0.75;
-}
-.mini {
-  font-family: var(--font-code);
-  font-size: 10.5px;
-  line-height: 1.6;
-  color: var(--overlay2);
-  background: var(--mantle);
-  border-radius: var(--radius-sm);
-  padding: 7px 9px;
-  height: 62px;
-  overflow: hidden;
-}
-.mini > div {
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.pnode {
-  all: unset;
-  box-sizing: border-box;
-  cursor: pointer;
-  position: absolute;
-  width: 220px;
-  height: 84px;
-  background: var(--base);
-  border: var(--border-w) solid var(--surface0);
-  border-radius: var(--radius);
-  padding: 10px 12px;
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  transition:
-    border-color 0.2s,
-    transform 0.2s var(--ease-out),
-    opacity 0.2s;
-}
-.pnode:hover {
-  transform: translateY(-2px);
-  border-color: var(--surface2);
-}
-.pnode:focus-visible {
-  outline: 2px solid var(--mauve);
-  outline-offset: 2px;
-}
-.pnode[data-tone="ok"] {
-  border-color: color-mix(in srgb, var(--green) 45%, transparent);
-}
-.pnode[data-tone="run"] {
-  border-color: var(--blue);
-}
-.pnode[data-crit="true"] {
-  border-color: var(--lavender);
-}
-.pnode[data-urgent="true"] {
-  border-color: var(--peach);
-  box-shadow: 0 0 22px color-mix(in srgb, var(--peach) 30%, transparent);
-}
-.pnode[data-quiet="true"] {
-  color: var(--subtext0);
-  border-style: dashed;
-}
+/* DAG edges ---------------------------------------------------------------------------------- */
 .flow {
   stroke-dasharray: 4 6;
   animation: lg-dash 1s linear infinite;
@@ -1040,15 +942,11 @@ body {
 @media (prefers-reduced-motion: reduce) {
   .live,
   .flow,
-  .tile[data-pulse="true"]::after,
-  .card[data-pulse="true"]::after,
-  .pnode[data-pulse="true"]::after {
+  .tile[data-pulse="true"]::after {
     /* biome-ignore lint/complexity/noImportantStyles: reduced motion must override component styles */
     animation: none !important;
   }
-  .tile[data-pulse="true"]::after,
-  .card[data-pulse="true"]::after,
-  .pnode[data-pulse="true"]::after {
+  .tile[data-pulse="true"]::after {
     opacity: 0.7;
   }
 }

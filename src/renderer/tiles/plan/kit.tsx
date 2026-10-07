@@ -297,7 +297,7 @@ export function openTile<K extends TileKind>(
   if (!layout) return;
   const existing = allTiles(layout).find(({ tile }) => tile.kind === kind && sameParams(tile.params, params));
   if (existing) {
-    actions.revealTile(runId, existing.tile.id, null);
+    actions.revealTile(runId, existing.tile.id);
     return;
   }
   actions.updateLayout(

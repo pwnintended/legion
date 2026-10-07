@@ -2,31 +2,31 @@
 version: 1
 slug: "src-renderer-chat-chatview-tsx"
 primary_target: "src/renderer/chat/ChatView.tsx"
-related_targets: ["src/renderer/chrome/TitleBar.tsx"]
+related_targets: ["src/renderer/board/Board.tsx","src/renderer/chrome/TitleBar.tsx"]
 ---
 
-# Surface: the run conversation (Chat mode)
+# Surface: the project board (Chat mode)
 
-Mode: Operate. Inherits Legion's established world (Catppuccin Mocha/Latte tokens, Geist + Geist Mono, chip vocabulary, mauve = Claude, teal = Codex, peach = needs you). Extension, not a new world: DESIGN.md is not rewritten.
+Mode: Operate. Inherits Legion's established world (Catppuccin Mocha/Latte tokens, Geist + Geist Mono, chip vocabulary, mauve = Claude, teal = Codex, peach = needs you). Extension, not a new world. Supersedes the single-column run page: the conversation (ChatView) is now the body of a board tile.
 
-Audience and job: a developer who started a run and mostly looks away. On return they need three answers fast: what changed, what needs me, what is there to look at. Background agents stay inspectable in Agents mode (the old tiling workspace), never in the user's face.
+Audience and job: a developer with one to three assistant conversations going in a project (rarely more than five). On return: see every conversation at once, see which wait on them, answer in place without navigating. Background agents stay offstage in Agents mode.
 
-Content: assistant conversation (human + assistant turns, persisted), lead status updates the assistant relays (provenance folded under its reply), decision cards from the inbox (approval, question, plan sign-off, escalation, conflict, PR ready, budget) that collapse to receipts once answered, things agents present (images, markdown, PDFs, files), quiet run event lines. Runs without an assistant still get the thread (events, cards, presentations).
+Content: per tile, the whole conversation (turns, relayed updates, decision cards folding to receipts, presentations, events, progress strip, needs-you chips, composer). Board members: the project's runs that are not archived and either still going or holding an open decision (PR ready). A run that finishes on screen stays until hidden or the board is left. A run opened from the rail that is not a member shows as a temporary tile in monocle.
 
-Decisions settled in shape (confirmed by the user): one thread per run; Agents mode is a separate full-window mode; decisions move into the chat and the Inbox overlay goes away; keep the look. Project home becomes a new-conversation page; "Plan directly" goes away.
+Decisions settled in shape (confirmed by the user, 2026-10-07): tiles are live, answerable chats; scope is one project; auto-tiling, keyboard-driven (i3/dwm "tall"); new conversation is a tile that splits in, and alone it is the project's page; monocle in place; the board replaces the separate run page; the "Conversations" history list goes (the rail keeps history); waiting tiles get a static peach border, no pulse.
 
 ## Direction contract
 
-THESIS: The run is a conversation; agents work offstage. The chat column owns the window. Refuses the category default for agent orchestrators: a dashboard of live transcript tiles as the home screen.
+THESIS: The project is a window manager of conversations. Every live conversation is a tile you can answer in place; layout is automatic and deterministic, never rearranged by attention. Refuses both the inbox list of conversations and the dashboard of agent transcripts.
 
-OWN-WORLD: Legion's Mocha base ground edge to edge (crust stays the agents view's gutter, so the two modes read differently at a glance; a crust field behind a base band would draw two vertical edges the calm column does not need), Geist at reading sizes, Geist Mono only for paths, ids and numbers. Human turns sit in a quiet surface0 bubble on the right; assistant prose sits unboxed on the ground with a small engine-tinted mark. Decision cards are the only bordered objects: mantle fill, hairline, peach rule-free attention via a peach label and focus glow. Presentations sit unboxed on the ground; only their media is framed: thumbnails with a 1px hairline, the document preview as one framed object. Agents are named in text with their engine as the world's chip (mauve claude, teal codex); decision kinds are chips too.
+OWN-WORLD: Agents-mode tile frame on the crust gutter: base tiles, 1.5px surface0 border, 12px radius, 10px gaps, 38px head on a hairline. Head: engine-tinted 20px mark, run title 13/600, peach "n waiting" pill when something waits, engine chip, ghost icon actions (agents, monocle, hide). Focused tile: mauve border and focus glow. Waiting, unfocused: static peach-tinted border. Tabs (overflow and monocle): a mantle track with surface0 pills, peach dot on waiting tabs. Inside tiles the conversation keeps its own look; density steps down by container width.
 
-STORY: Open a run, read the last few lines, answer what is waiting in place, glance at what was shown to you, and leave. Drop into Agents only to audit.
+STORY: Open the project, scan the tiles, answer what waits right in its tile, split in a new conversation with ⌘N, blow one up with ⌘F when it needs room, hide what is done with ⌘W.
 
-FIRST VIEWPORT: Title bar: crumb, a two-way Chat | Agents switch centered, Commands, a peach "needs you" counter, New run. Rail left as today. Center: a single column, 720px measure, centered in the free width. A sticky progress strip at the column top: phase steps (plan, execute n/m, integrate, PR) and one dot per task, tinted by state. The thread fills the column; the needs-you dock and the composer are pinned at the bottom of the column. The composer is the primary action.
+FIRST VIEWPORT: Title bar as before, its primary button reads "New conversation ⌘N" on a board. Rail left. Main area: crust field; master tile left (56% of the width, full height); up to three stacked tiles right, overflow sharing the last slot as tabs. Zero conversations: one new-conversation tile fills the board (project name, path, large composer). Too narrow to split (<720px inner): monocle with tabs.
 
-FORM: chat thread with inline decision cards and agent presentations, first of the structures considered in shape. Seed: none rolled. The structure was decided by the user in the shape interview, in their own answers: "One thread per run", "Separate 'Agents' mode", "Into the chat as cards", "Restructure, keep the look"; this is an extension of the established world, not an open surface. The strip also counts agents at work ("3 working"): the one-word answer to "is anything happening".
+FORM: tall tiling layout (dwm/xmonad), decided by the user in shape; extension of the established world. Seed: none rolled.
 
-SIGNATURE: the progress strip's task dots. Hover reveals the task's latest progress line; click flies into Agents mode focused on that task's tile. Motion grammar: new thread items rise 6px from opacity 0 with the house ease-out (0.16, 1, 0.3, 1) over 200ms; an answered decision card collapses into its one-line receipt with a height animation (260ms). One live signal only: the needs-you dot in the dock pings while something waits. Reduced motion: instant.
+SIGNATURE: a new conversation splits in as the master and the other tiles glide to their new places on a critically damped spring (transform x/y plus size); a hidden tile fades out 150ms and the rest close the gap. Unfocused tiles rest their composer as one quiet line that opens on click. Keyboard: ⌘⌥ HJKL/arrows focus (returns to the tile focused last), ⌘F monocle, Esc leaves it, ⌘⇧⏎ make master, ⌘W hide until it needs you, ⌘N new. Reduced motion: instant.
 
 FINISH: unreviewed and undocumented is unfinished; this build ends with the finish review, the verdict, DESIGN.md, and every shipping raster carrying its provenance

@@ -1,6 +1,6 @@
 /**
- * Status bar: usage. The run's spend and each engine's rate-limit windows; in the agents view also the key
- * mode pill (NORMAL / RESIZE / MOVE) and its hints. Where the run stands and what needs the human live in the
+ * Status bar: usage. The run's spend and each engine's rate-limit windows; in the code view also the key mode
+ * pill (NORMAL / RESIZE / MOVE) and its hints, in the agents view the route map's keys. Where the run stands and what needs the human live in the
  * conversation (progress strip, needs-you bar) and the title bar.
  */
 import { useActiveRun, useRateLimits, useRunCost, useUi } from '../app/hooks';
@@ -23,7 +23,6 @@ export function StatusBar() {
   const run = useActiveRun();
   const keyMode = useUi((s) => s.keyMode);
   const locked = useUi((s) => s.terminalLocked);
-  const layoutMode = useUi((s) => s.layoutMode);
   const view = useUi((s) => s.view);
   const cost = useRunCost(run?.id);
   const limits = useRateLimits();
@@ -35,6 +34,11 @@ export function StatusBar() {
       data-testid="statusbar"
     >
       {view === 'agents' ? (
+        <span className="faint" data-testid="map-hint">
+          ⌘⌥J/K stations · ⌘⌥H/L tabs
+        </span>
+      ) : null}
+      {view === 'code' ? (
         <>
           <span
             className="rounded px-1.5 py-px font-semibold tracking-[0.04em] text-on-fill transition-colors"
@@ -43,7 +47,7 @@ export function StatusBar() {
           >
             {pill.label}
           </span>
-          <span className="faint">{keyMode !== 'normal' ? HINTS[keyMode] : layoutMode}</span>
+          <span className="faint">{keyMode !== 'normal' ? HINTS[keyMode] : 'strip'}</span>
         </>
       ) : null}
 

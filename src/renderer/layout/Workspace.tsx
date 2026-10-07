@@ -1,47 +1,27 @@
 /**
- * The workspace on screen in the current layout mode: a run's, or a project's home (`project:<id>`, always a
- * strip: the run-centric Focus / Overview / Pipeline views don't apply to it).
+ * A tiling workspace on screen: the project's Code view (`project:<id>`), a strip of columns. A run's own
+ * layout tree is not drawn as a strip: the route map (agents/RouteMap.tsx) shows its focused tile.
  */
-import { AnimatePresence, motion } from 'motion/react';
-import { useLayout, useUi } from '../app/hooks';
+import { motion } from 'motion/react';
+import { useLayout } from '../app/hooks';
 import { useReducedMotionPref } from '../app/prefs';
-import { isProjectKey } from '../app/projects';
-import { FocusView } from './FocusView';
-import { OverviewView } from './OverviewView';
-import { PipelineView } from './PipelineView';
 import { StripView } from './StripView';
 
-export function Workspace({ runId }: { runId: string }) {
-  const layout = useLayout(runId);
-  const layoutMode = useUi((s) => s.layoutMode);
-  const mode = isProjectKey(runId) ? 'strip' : layoutMode;
+export function Workspace({ workspaceKey }: { workspaceKey: string }) {
+  const layout = useLayout(workspaceKey);
   const reduced = useReducedMotionPref();
   if (!layout) return <WorkspaceSkeleton />;
-  const view =
-    mode === 'focus' ? (
-      <FocusView layout={layout} />
-    ) : mode === 'overview' ? (
-      <OverviewView layout={layout} />
-    ) : mode === 'pipeline' ? (
-      <PipelineView layout={layout} />
-    ) : (
-      <StripView layout={layout} />
-    );
   return (
-    <AnimatePresence mode="wait" initial={false}>
-      <motion.div
-        key={`${runId}:${mode}`}
-        data-workspace={runId}
-        data-layout-mode={mode}
-        className="flex min-h-0 min-w-0 flex-1 flex-col"
-        initial={reduced ? false : { opacity: 0, scale: mode === 'overview' || mode === 'pipeline' ? 1.015 : 0.985 }}
-        animate={{ opacity: 1, scale: 1 }}
-        exit={reduced ? { opacity: 0, transition: { duration: 0 } } : { opacity: 0, transition: { duration: 0.08 } }}
-        transition={{ duration: reduced ? 0 : 0.15, ease: [0.16, 1, 0.3, 1] }}
-      >
-        {view}
-      </motion.div>
-    </AnimatePresence>
+    <motion.div
+      data-workspace={workspaceKey}
+      data-layout-mode="strip"
+      className="flex min-h-0 min-w-0 flex-1 flex-col"
+      initial={reduced ? false : { opacity: 0, scale: 0.985 }}
+      animate={{ opacity: 1, scale: 1 }}
+      transition={{ duration: reduced ? 0 : 0.15, ease: [0.16, 1, 0.3, 1] }}
+    >
+      <StripView layout={layout} />
+    </motion.div>
   );
 }
 

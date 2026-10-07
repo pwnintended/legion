@@ -158,11 +158,24 @@ test('full run, chat first: composer → assistant → clarify → plan → appr
     });
     await shot(window, 'pr-ready');
 
-    // Among the agents (⌘E): T2's column (collapsed once merged) shows its review's round trip.
+    // Among the agents (⌘E): the route map, every task merged; T2's Review tab shows its review's round trip.
     await window.keyboard.press('Meta+e');
-    await window.locator('section[aria-label^="T2 "][aria-label$="(collapsed)"] button').first().click();
-    await window.waitForTimeout(600);
-    await shot(window, 't2-expanded');
+    const map = window.getByTestId('route-panel');
+    await expect(map).toBeVisible();
+    await expect(map.locator('.rm-counts')).toContainText('all merged');
+    await expect(window.getByTestId('route-pr')).toContainText('Ready for you');
+    const station = window.getByTestId('station-pane');
+    // Up to the top of the map (⌘⌥K), then down (⌘⌥J) to T2, wherever its wave folded it.
+    for (let i = 0; i < 8; i++) await window.keyboard.press('Meta+Alt+k');
+    for (let i = 0; i < 6 && (await station.getAttribute('data-station')) !== 'task:T2'; i++) {
+      await window.keyboard.press('Meta+Alt+j');
+      await window.waitForTimeout(150);
+    }
+    await expect(station).toHaveAttribute('data-station', 'task:T2');
+    await window.getByTestId('station-tab-review').click();
+    const rounds = window.getByTestId('review-tile').getByRole('tablist', { name: 'Review rounds' });
+    await expect(rounds.getByRole('tab')).toHaveText([/Round 1/, /Round 2/]);
+    await shot(window, 't2-review');
     await window.keyboard.press('Meta+e');
     await expect(chat).toBeVisible();
 

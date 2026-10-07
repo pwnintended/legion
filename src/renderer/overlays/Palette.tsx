@@ -78,7 +78,7 @@ function taskEntries(
       value: `take over ${id} terminal ${title}`,
       keywords: [id],
       icon: 'terminal',
-      run: closeThen(() => takeOver(coder, layoutTile)),
+      run: closeThen(() => takeOver(coder)),
     });
     out.push({
       id: `interrupt:${task.id}`,

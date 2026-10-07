@@ -1,0 +1,320 @@
+/*
+ * The project board: conversation tiles on the crust gutter, framed like the agents view's tiles (theme
+ * components.css: .tile, .tile-head). Each tile is a size container, so the conversation inside reads at
+ * conversation density when the tile is wide and steps down to tile density when it is narrow. Peach on a tile
+ * only while something in it waits for you; it never pulses here (the title bar's counter is the live signal).
+ * Tokens only.
+ */
+
+.bd {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  background: var(--crust);
+}
+.bd-slot {
+  position: absolute;
+  left: 0;
+  top: 0;
+  display: flex;
+  will-change: transform;
+}
+
+/* Tile ------------------------------------------------------------------------------------------- */
+.bd-tile {
+  flex: 1;
+  container: tile / size;
+}
+.bd-tile[data-waiting] {
+  border-color: color-mix(in srgb, var(--peach) 62%, var(--surface0));
+}
+.bd-head {
+  gap: 8px;
+  padding: 0 6px 0 10px;
+}
+.bd-mark {
+  --engine: var(--mauve);
+  flex: none;
+  width: 20px;
+  height: 20px;
+  border-radius: 6px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--engine);
+  background: color-mix(in srgb, var(--engine) 15%, transparent);
+}
+.bd-mark[data-engine="codex"] {
+  --engine: var(--teal);
+}
+.bd-mark[data-new] {
+  color: var(--subtext0);
+  background: var(--surface0);
+}
+.bd-title {
+  margin: 0;
+  flex: 0 1 auto;
+  color: var(--text);
+}
+.bd-tile:not([data-focused]) .bd-title {
+  color: var(--subtext1);
+}
+.bd-grow {
+  flex: 1;
+}
+.bd-head .chip {
+  flex: none;
+}
+.bd-needs {
+  all: unset;
+  cursor: pointer;
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 20px;
+  padding: 0 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 1;
+  white-space: nowrap;
+  color: var(--peach);
+  background: color-mix(in srgb, var(--peach) 10%, transparent);
+  border: 1px solid color-mix(in srgb, var(--peach) 28%, transparent);
+  transition: background-color 0.15s;
+}
+.bd-needs:hover {
+  background: color-mix(in srgb, var(--peach) 18%, transparent);
+}
+.bd-needs:focus-visible {
+  outline: 2px solid var(--peach);
+  outline-offset: 2px;
+}
+.bd-needs-dot {
+  flex: none;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--peach);
+}
+.bd-actions .btn-icon {
+  width: 26px;
+  height: 26px;
+  color: var(--overlay2);
+}
+.bd-actions .btn-icon:hover {
+  color: var(--text);
+}
+
+/* The conversation inside a tile: a tighter gutter, a smaller dock. */
+.bd-tile .ch {
+  --ch-col: min(720px, calc(100% - 48px));
+}
+.bd-tile .ch-dock {
+  padding-bottom: 12px;
+}
+
+/* A tile without the focus: its reply box rests as one quiet line until you click into it. */
+.bd-tile[data-quiet] .ch-composer {
+  gap: 0;
+  padding: 7px 12px;
+  box-shadow: none;
+}
+.bd-tile[data-quiet] .ch-composer-row,
+.bd-tile[data-quiet] .ch-composer .at-list {
+  display: none;
+}
+.bd-tile[data-quiet] .ch-input {
+  max-height: 22px;
+  overflow: hidden;
+  font-size: 13px;
+}
+.bd-tile[data-quiet] .ch-composer-closed {
+  padding: 9px 12px;
+  font-size: 12px;
+}
+.bd-tile[data-quiet] .ch-composer-closed > span {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+/* The head's pill counts and jumps to what waits; a quiet tile does not repeat it in its dock. */
+.bd-tile[data-quiet] .ch-needs-bar {
+  display: none;
+}
+
+/* The new-conversation tile: the project's page when alone; compact when it splits in. */
+.bd-tile .ch-new-col {
+  padding: max(28px, 12cqh) 0 32px;
+}
+
+/* Tile density: below this width the conversation reads at tile sizes (DESIGN.md: Two Densities). */
+@container tile (max-width: 620px) {
+  .ch {
+    --ch-col: calc(100% - 32px);
+  }
+  .ch-feed {
+    padding: 18px 0 24px;
+  }
+  .ch-thread {
+    gap: 14px;
+  }
+  .ch-item[data-continued] {
+    margin-top: -6px;
+  }
+  .ch .md {
+    font-size: 13px;
+    line-height: 1.55;
+  }
+  .ch-you-bubble {
+    max-width: 88%;
+    padding: 8px 12px;
+    font-size: 13px;
+    border-radius: 14px 14px 5px 14px;
+  }
+  .ch-as-body {
+    padding-left: 0;
+  }
+  .ch-card {
+    padding: 11px 13px 13px;
+    gap: 10px;
+  }
+  .ch-progress-inner {
+    height: 34px;
+    gap: 12px;
+  }
+  .ch-step:not([data-state="current"], [data-state="attention"]),
+  .ch-step-sep {
+    display: none;
+  }
+  .ch-input {
+    font-size: 13px;
+  }
+  .ch-new-title {
+    font-size: 21px;
+    letter-spacing: -0.012em;
+  }
+  .ch-new-sub {
+    margin-bottom: 16px;
+  }
+  .ch-new-col {
+    width: calc(100% - 32px);
+  }
+}
+@container tile (max-width: 440px) {
+  .bd-head .chip {
+    display: none;
+  }
+}
+
+/* Tabs: the overflow of the stack, and every tile in monocle -------------------------------------- */
+.bd-tabs {
+  position: absolute;
+  left: 0;
+  top: 0;
+  height: 30px;
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 2px;
+  border-radius: 9px;
+  background: var(--mantle);
+  border: 1px solid var(--surface0);
+  overflow: hidden;
+  isolation: isolate;
+}
+.bd-tab {
+  all: unset;
+  box-sizing: border-box;
+  cursor: pointer;
+  position: relative;
+  flex: 0 1 220px;
+  min-width: 0;
+  height: 24px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 10px;
+  border-radius: 6px;
+  font-size: 12px;
+  color: var(--subtext0);
+  transition: color 0.15s;
+}
+.bd-tab:hover,
+.bd-tab[aria-selected="true"] {
+  color: var(--text);
+}
+.bd-tab:focus-visible {
+  outline: 2px solid var(--mauve);
+  outline-offset: -2px;
+}
+.bd-tab-pill {
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  border-radius: 6px;
+  background: var(--surface0);
+}
+.bd-tab[data-focused] .bd-tab-pill {
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--mauve) 45%, transparent);
+}
+.bd-tab-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* The head already counts what waits; the dock keeps only the chips that jump to each item. */
+.bd-tile .ch-needs-count {
+  display: none;
+}
+
+/* An empty board still names the hidden conversations that wait on you. */
+.bd-hidden {
+  margin: 28px 0 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.bd-hidden-row {
+  all: unset;
+  box-sizing: border-box;
+  cursor: pointer;
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  margin: 0 -10px;
+  border-radius: 8px;
+  font-size: 12.5px;
+  color: var(--subtext1);
+  transition: background-color 0.15s;
+}
+.bd-hidden-row:hover {
+  background: color-mix(in srgb, var(--surface0) 60%, transparent);
+}
+.bd-hidden-row:focus-visible {
+  outline: 2px solid var(--peach);
+  outline-offset: 2px;
+}
+.bd-hidden-title {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  color: var(--text);
+}
+.bd-hidden-note {
+  flex: none;
+  margin-left: auto;
+  color: var(--peach);
+}

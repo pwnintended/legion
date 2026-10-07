@@ -13,9 +13,6 @@ export type ExpandedWidth = Exclude<WidthPreset, 'thin'>;
 export const WIDTH_CYCLE: readonly ExpandedWidth[] = ['1/3', '1/2', '2/3', 'full'];
 export const COLUMN_MODES: readonly ColumnMode[] = ['split', 'tabbed', 'stacked'];
 
-export type LayoutMode = 'strip' | 'focus' | 'overview' | 'pipeline';
-export const LAYOUT_MODES: readonly LayoutMode[] = ['strip', 'focus', 'overview', 'pipeline'];
-
 /** h = left, j = down, k = up, l = right. */
 export type Dir = 'h' | 'j' | 'k' | 'l';
 
