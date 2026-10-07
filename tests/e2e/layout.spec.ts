@@ -19,6 +19,8 @@ async function launchDemo(): Promise<{ app: ElectronApplication; window: Page; h
   await window.evaluate(() => {
     localStorage.setItem('legion.demo', '1');
     localStorage.setItem('legion.demo.live', '0');
+    // The tiling workspace (the agents view); a run opens in its chat otherwise.
+    localStorage.setItem('legion.ui', JSON.stringify({ view: 'agents' }));
   });
   await window.reload();
   await app.evaluate(({ BrowserWindow }) => {
@@ -45,10 +47,17 @@ test('demo workspace: strip, keyboard focus/move, layout modes', async () => {
     await expect(window.getByTestId('titlebar')).toContainText('Add passkey (WebAuthn) login');
     await expect(window.locator('[data-tile-id="session:T2"]')).toBeVisible();
     await expect(window.getByTestId('mode-pill')).toHaveText('NORMAL');
-    await expect(window.getByTestId('needs-you')).toContainText('needs you 6');
+    await expect(window.getByTestId('needs-you').locator('.tb-needs-count')).toHaveText('6');
 
-    // Initial layout: plan, thin T1, then live tasks; T3 (approval pending) pulses.
-    expect((await columnOrder(window)).slice(0, 4)).toEqual(['col:plan', 'col:task:T1', 'col:task:T2', 'col:task:T3']);
+    // Initial layout: plan, the coordinating agents (lead and messages), thin T1, then live tasks; T3 (approval
+    // pending) pulses.
+    expect((await columnOrder(window)).slice(0, 5)).toEqual([
+      'col:plan',
+      'col:agents',
+      'col:task:T1',
+      'col:task:T2',
+      'col:task:T3',
+    ]);
     await expect(window.locator('[data-tile-id="session:T3"]')).toHaveAttribute('data-pulse', 'true');
     await expect(window.locator('[data-tile-id="review:T4"]')).toBeVisible();
     await window.waitForTimeout(600);
@@ -66,9 +75,9 @@ test('demo workspace: strip, keyboard focus/move, layout modes', async () => {
 
     // Move: ⌘⌥⇧L swaps T2's column with T3's, ⌘⌥⇧H swaps it back.
     await window.keyboard.press('Meta+Alt+Shift+l');
-    await expect.poll(async () => (await columnOrder(window)).slice(2, 4)).toEqual(['col:task:T3', 'col:task:T2']);
+    await expect.poll(async () => (await columnOrder(window)).slice(3, 5)).toEqual(['col:task:T3', 'col:task:T2']);
     await window.keyboard.press('Meta+Alt+Shift+h');
-    await expect.poll(async () => (await columnOrder(window)).slice(2, 4)).toEqual(['col:task:T2', 'col:task:T3']);
+    await expect.poll(async () => (await columnOrder(window)).slice(3, 5)).toEqual(['col:task:T2', 'col:task:T3']);
 
     // Resize mode: ⌘R, l widens the focused column, esc leaves the mode.
     const widthBefore = await window.locator('[data-column="col:task:T2"]').evaluate((el) => el.clientWidth);
@@ -88,16 +97,42 @@ test('demo workspace: strip, keyboard focus/move, layout modes', async () => {
     await window.keyboard.press('Meta+Alt+c');
     await expect(window.locator('[data-column="col:task:T1"] [data-tile-body]')).toHaveCount(0);
 
-    // ⌘U cycles urgent tiles across runs, oldest first: the PDF run's PR, the i18n plan, then T3's approval.
+    // ⌘U shows the decisions waiting for you as cards in the chat: the run on screen first (T3's approval, then
+    // its budget stop), then the other runs, oldest first (the PDF run's PR, ...). The card shown is highlighted.
+    const chat = window.getByTestId('chat');
+    const card = (kind: string) => chat.locator(`[data-testid="chat-decision"][data-kind="${kind}"]`);
+    const highlighted = () => window.locator('[data-highlight]').getAttribute('data-thread-key', { timeout: 2000 });
+    await window.keyboard.press('Meta+u');
+    await expect(chat).toBeVisible();
+    await expect(window.getByTestId('view-chat')).toHaveAttribute('aria-pressed', 'true');
+    await expect(window.getByTestId('titlebar')).toContainText('Add passkey (WebAuthn) login');
+    await expect(card('approval')).toContainText('@simplewebauthn/browser');
+    await expect(card('approval')).toBeInViewport();
+    await expect.poll(highlighted).toBe('inbox:inb_authv2appr01');
+    await window.keyboard.press('Meta+u');
+    await expect.poll(highlighted).toBe('inbox:inb_authv2budg01');
+    await expect(card('budget')).toBeInViewport();
+    await expect(window.getByTestId('titlebar')).toContainText('Add passkey (WebAuthn) login');
     await window.keyboard.press('Meta+u');
     await expect(window.getByTestId('titlebar')).toContainText('Invoice PDF export');
-    await expect.poll(() => focusedTile(window)).toBe('pr');
-    await window.keyboard.press('Meta+u');
-    await expect(window.getByTestId('titlebar')).toContainText('Extract UI strings for i18n');
-    await expect.poll(() => focusedTile(window)).toBe('plan');
-    await window.keyboard.press('Meta+u');
+    await expect.poll(highlighted).toBe('inbox:inb_pdfexportpr1');
+    await expect(card('pr_ready')).toBeInViewport();
+    // ...and on through all six (the title bar's count) before it comes back round.
+    const shown = ['inbox:inb_authv2appr01', 'inbox:inb_authv2budg01', 'inbox:inb_pdfexportpr1'];
+    for (let i = 0; i < 3; i++) {
+      const previous = shown.at(-1);
+      await window.keyboard.press('Meta+u');
+      await expect.poll(highlighted).not.toBe(previous);
+      shown.push((await highlighted()) ?? '');
+    }
+    expect(new Set(shown).size).toBe(6);
+
+    // Back on the passkeys run, ⌘E returns to its agents.
+    await window.keyboard.press('Meta+1');
     await expect(window.getByTestId('titlebar')).toContainText('Add passkey (WebAuthn) login');
-    await expect.poll(() => focusedTile(window)).toBe('session:T3');
+    await window.keyboard.press('Meta+e');
+    await expect(window.getByTestId('view-agents')).toHaveAttribute('aria-pressed', 'true');
+    await expect(window.locator('[data-tile-id="session:T2"]')).toBeVisible();
 
     // Focus mode (⌘⏎): master + stack.
     await window.keyboard.press('Meta+Alt+h');
@@ -106,10 +141,10 @@ test('demo workspace: strip, keyboard focus/move, layout modes', async () => {
     await window.waitForTimeout(400);
     await window.screenshot({ path: join(shots, 'focus.png') });
 
-    // Overview (⌘⇧O; ⌘⇥ is taken by macOS): one card per tile.
+    // Overview (⌘⇧O; ⌘⇥ is taken by macOS): one card per tile (the agents and messages tiles included).
     await window.keyboard.press('Meta+Shift+o');
     await expect(window.getByTestId('overview')).toBeVisible();
-    await expect(window.locator('[data-testid="overview"] .card')).toHaveCount(9);
+    await expect(window.locator('[data-testid="overview"] .card')).toHaveCount(11);
     await window.waitForTimeout(700);
     await window.screenshot({ path: join(shots, 'overview.png') });
 

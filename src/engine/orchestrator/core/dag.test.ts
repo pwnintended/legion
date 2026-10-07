@@ -100,13 +100,12 @@ describe('validatePlan: per-node checks', () => {
     expect(codes(result.warnings)).toEqual(['no_write_touches', 'touch_warning']);
   });
 
-  it('warns about disabled engines, redundant deps and integration tasks with dependents', () => {
-    const nodes = [
-      makeNode('T1', [], { kind: 'integration', agent: { engine: 'codex', model: null, effort: null } }),
-      makeNode('T2', ['T1']),
-      makeNode('T3', ['T1', 'T2']),
-    ];
-    const result = validatePlan({ nodes }, { enabled: { claude: true, codex: false }, estimate: false });
+  it('warns about a disabled coder engine, redundant deps and integration tasks with dependents', () => {
+    const nodes = [makeNode('T1', [], { kind: 'integration' }), makeNode('T2', ['T1']), makeNode('T3', ['T1', 'T2'])];
+    const result = validatePlan(
+      { nodes },
+      { enabled: { claude: true, codex: false }, coderEngine: 'codex', estimate: false },
+    );
     expect(codes(result.warnings)).toEqual(['engine_disabled', 'redundant_dependency', 'integration_not_last']);
     expect(result.ok).toBe(true);
   });

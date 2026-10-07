@@ -41,7 +41,6 @@ function node(spec: {
   kind: TaskNode['kind'];
   dependsOn: string[];
   size: TaskNode['size'];
-  engine: 'claude' | 'codex';
   touches: [TaskNode['touches'][number]['mode'], string][];
   criteria: string[];
   verify: string[];
@@ -58,7 +57,7 @@ function node(spec: {
     size: spec.size,
     verify: { commands: spec.verify },
     contextHints: { files: [], notes: '' },
-    agent: { engine: spec.engine, model: null, effort: spec.engine === 'codex' ? 'high' : 'high' },
+    agent: { effort: 'high' },
     risk: spec.risk ?? 'low',
   };
 }
@@ -102,7 +101,6 @@ function i18nNodes(): TaskNode[] {
       kind: 'contracts',
       dependsOn: [],
       size: 'M',
-      engine: 'claude',
       touches: [
         ['create', 'tools/i18n/**'],
         ['modify', 'package.json'],
@@ -117,7 +115,6 @@ function i18nNodes(): TaskNode[] {
       kind: 'refactor',
       dependsOn: ['T1'],
       size: 'M',
-      engine: 'codex',
       touches: [
         ['modify', 'web/src/pages/settings/**'],
         ['create', 'web/src/i18n/en/settings.json'],
@@ -133,7 +130,6 @@ function i18nNodes(): TaskNode[] {
       kind: 'refactor',
       dependsOn: ['T1'],
       size: 'M',
-      engine: 'claude',
       touches: [
         ['modify', 'web/src/pages/dashboard/**'],
         ['modify', 'web/src/i18n/index.ts'],
@@ -149,7 +145,6 @@ function i18nNodes(): TaskNode[] {
       kind: 'refactor',
       dependsOn: ['T1'],
       size: 'S',
-      engine: 'codex',
       touches: [
         ['modify', 'web/src/pages/auth/**'],
         ['modify', 'web/src/i18n/index.ts'],
@@ -169,7 +164,6 @@ function i18nNodes(): TaskNode[] {
       kind: 'feature',
       dependsOn: ['T2', 'T3', 'T4'],
       size: 'S',
-      engine: 'claude',
       touches: [['create', 'web/src/i18n/nl/**']],
       criteria: ['Every en key has an nl translation', 'Plurals keep their ICU branches'],
       verify: ['pnpm i18n:check --locale nl'],
@@ -181,7 +175,6 @@ function i18nNodes(): TaskNode[] {
       kind: 'feature',
       dependsOn: ['T2', 'T3', 'T4'],
       size: 'S',
-      engine: 'codex',
       touches: [['create', 'web/src/i18n/de/**']],
       criteria: ['Every en key has a de translation', 'Plurals keep their ICU branches'],
       verify: ['pnpm i18n:check --locale de'],
@@ -193,7 +186,6 @@ function i18nNodes(): TaskNode[] {
       kind: 'integration',
       dependsOn: ['T5', 'T6'],
       size: 'S',
-      engine: 'claude',
       touches: [
         ['modify', '.github/workflows/ci.yml'],
         ['modify', 'biome.json'],

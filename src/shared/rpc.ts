@@ -15,13 +15,15 @@ import { AttachmentRefSchema } from './attachments';
 import {
   AgentMessageSchema,
   AttemptSchema,
-  EffortSchema,
   EngineKindSchema,
   InboxItemSchema,
   InboxResolutionSchema,
+  McpServerNameSchema,
+  McpServerSchema,
   MergeSchema,
   PlanAnnotationSchema,
   PlanSchema,
+  PresentationSchema,
   ProjectSchema,
   QuestionAnswerSchema,
   ReviewSchema,
@@ -119,6 +121,21 @@ export const RecentRepoSchema = z.object({
 });
 export type RecentRepo = z.infer<typeof RecentRepoSchema>;
 
+export const AvailableSkillSchema = z.object({
+  name: z.string(),
+  description: z.string(),
+  scope: z.enum(['user', 'project']),
+});
+export type AvailableSkill = z.infer<typeof AvailableSkillSchema>;
+
+export const DiscoveredMcpServerSchema = z.object({
+  name: McpServerNameSchema,
+  server: McpServerSchema,
+  /** Where it was found (`~/.claude.json`, `.mcp.json`). */
+  source: z.string(),
+});
+export type DiscoveredMcpServer = z.infer<typeof DiscoveredMcpServerSchema>;
+
 /** A checkout found by `repos.discover`. */
 export const DiscoveredRepoSchema = z.object({
   path: z.string(),
@@ -164,6 +181,8 @@ export const RunSnapshotSchema = z.object({
   merges: z.array(MergeSchema),
   /** Agent-to-agent messages of the run (§7), oldest first. Optional for older clients' fixtures. */
   messages: z.array(AgentMessageSchema).optional(),
+  /** What agents presented to the human (`present`), oldest first. Optional for older clients' fixtures. */
+  presentations: z.array(PresentationSchema).optional(),
 });
 export type RunSnapshot = z.infer<typeof RunSnapshotSchema>;
 
@@ -411,8 +430,6 @@ const ByProject = z.object({ projectId: IdSchema });
 
 const TerminalSize = { cols: z.number().int().min(1).max(1000), rows: z.number().int().min(1).max(1000) };
 
-const NullableModel = { model: z.string().nullable(), effort: EffortSchema.nullable() };
-
 /** What `runs.archive` left in place (and why), and cleanup steps that failed. */
 export const ArchiveReportSchema = z.object({
   kept: z.array(
@@ -461,6 +478,21 @@ export const rpcContract = {
   'settings.get': { input: Empty, output: SettingsSchema },
   /** Deep-merges the patch, validates, persists, emits `settings.updated`. */
   'settings.set': { input: SettingsPatchSchema, output: SettingsSchema },
+
+  // agent access --------------------------------------------------------------------------------
+  /**
+   * Skills that can go on a role's allowlist: the user's (`~/.claude/skills`, `~/.agents/skills`) and, with a
+   * project, the repo's (`.claude/skills`, `.agents/skills`). A repo skill hides a user skill of the same name.
+   */
+  'skills.list': {
+    input: z.object({ projectId: IdSchema.nullable() }),
+    output: z.array(AvailableSkillSchema),
+  },
+  /** MCP servers already configured for Claude Code (`~/.claude.json`, the project's `.mcp.json`), to import. */
+  'mcpServers.discover': {
+    input: z.object({ projectId: IdSchema.nullable() }),
+    output: z.array(DiscoveredMcpServerSchema),
+  },
 
   // repos ---------------------------------------------------------------------------------------
   /** Read-only inspection; a valid repo is also recorded in recent repos. */
@@ -663,10 +695,6 @@ export const rpcContract = {
     output: TaskSchema,
   },
   'tasks.skip': { input: ByTask, output: TaskSchema },
-  'tasks.setEngine': {
-    input: z.object({ taskId: IdSchema, engine: EngineKindSchema, ...NullableModel }),
-    output: TaskSchema,
-  },
   /** For `awaiting_human` tasks (high risk / escalations): approve for the merge queue. */
   'tasks.approveMerge': { input: ByTask, output: TaskSchema },
   /** Send human feedback to the coder session (→ fixing). */

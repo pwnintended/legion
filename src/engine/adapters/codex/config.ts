@@ -6,7 +6,7 @@ import { constants } from 'node:fs';
 import { access, lstat, mkdir, readlink, rm, symlink } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { delimiter, isAbsolute, join, resolve } from 'node:path';
-import type { SessionAttachment, SessionOptions } from '@shared/engine';
+import { type SessionAttachment, type SessionOptions, sessionExtras } from '@shared/engine';
 import { CODEX_TOOL_TIMEOUT_SEC } from '../../mcp/config';
 import { isAllowedCommand } from '../../util/shell';
 import { messageText, type ReadFile } from '../attachments';
@@ -37,9 +37,21 @@ export const DISABLED_FEATURES = [
   'image_generation',
 ] as const;
 
-/** `codex app-server` arguments. */
-export function appServerArgs(): string[] {
-  return ['app-server', ...DISABLED_FEATURES.flatMap((feature) => ['-c', `features.${feature}=false`])];
+/**
+ * `codex app-server` arguments. `disabledSkills` are turned off by name (`skills.config`): Codex has no "only
+ * these skills" switch, so a session's allowlist disables every skill it finds that is not on it.
+ */
+export function appServerArgs(disabledSkills: readonly string[] = []): string[] {
+  const features = DISABLED_FEATURES.flatMap((feature) => ['-c', `features.${feature}=false`]);
+  // TOML inline table entries; a JSON string is a valid TOML basic string.
+  const skills =
+    disabledSkills.length > 0
+      ? [
+          '-c',
+          `skills.config=[${disabledSkills.map((name) => `{name=${JSON.stringify(name)},enabled=false}`).join(',')}]`,
+        ]
+      : [];
+  return ['app-server', ...features, ...skills];
 }
 
 /** Resolve an executable from the PATH in `env` (GUI apps don't inherit the login shell's PATH). */
@@ -125,17 +137,24 @@ export function childEnv(opts: Pick<SessionOptions, 'env' | 'mcp'>, codexHome: s
 /** Thread-level config overrides (`config` map on thread/start and thread/resume, same keys as config.toml). */
 export function threadConfig(opts: SessionOptions): Record<string, JsonValue> {
   const config: Record<string, JsonValue> = {};
+  const servers: Record<string, JsonValue> = {};
   if (opts.mcp) {
-    config.mcp_servers = {
-      legion: {
-        url: opts.mcp.url,
-        bearer_token_env_var: MCP_TOKEN_ENV,
-        default_tools_approval_mode: 'approve',
-        // request_human_input blocks until a human answers in the inbox (the server never times out).
-        tool_timeout_sec: CODEX_TOOL_TIMEOUT_SEC,
-      },
+    servers.legion = {
+      url: opts.mcp.url,
+      bearer_token_env_var: MCP_TOKEN_ENV,
+      default_tools_approval_mode: 'approve',
+      // request_human_input blocks until a human answers in the inbox (the server never times out).
+      tool_timeout_sec: CODEX_TOOL_TIMEOUT_SEC,
     };
   }
+  // The project's own servers, pre-approved like Legion's (the grant in settings is the approval).
+  for (const [name, server] of Object.entries(sessionExtras(opts).extraMcp)) {
+    servers[name] =
+      server.type === 'http'
+        ? { url: server.url, http_headers: server.headers, default_tools_approval_mode: 'approve' }
+        : { command: server.command, args: server.args, env: server.env, default_tools_approval_mode: 'approve' };
+  }
+  if (Object.keys(servers).length > 0) config.mcp_servers = servers;
   // Agent-written worktree (reviewer, finalizer): ignore its AGENTS.md. Project `.codex/config.toml` is only
   // read for trusted projects, and the Legion CODEX_HOME trusts none; hooks are off for every session.
   if (opts.untrustedWorkdir) config.project_doc_max_bytes = 0;

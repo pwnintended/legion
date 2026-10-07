@@ -6,7 +6,7 @@
  * `serializing_edge` annotations they left behind, and overlaps the user accepted (by undoing an auto
  * edge with `undoAutoEdge`) are remembered as `note` annotations tagged `[overlap_accepted]`.
  */
-import type { PlanAnnotation, PlanDag, TaskNode, Touch } from '@shared/domain';
+import type { EngineKind, PlanAnnotation, PlanDag, TaskNode, Touch } from '@shared/domain';
 import { NodeIdSchema } from '@shared/ids';
 import type { EnabledEngines } from './engines';
 import { type EstimateOptions, estimatePlan, type PlanEstimate } from './estimate';
@@ -102,8 +102,9 @@ export interface ValidateOptions {
   readonly highRiskGlobs?: readonly string[] | null;
   /** Extra node pairs whose overlap is accepted (besides `[overlap_accepted]` annotations). */
   readonly acceptedOverlaps?: ReadonlyArray<readonly [string, string]>;
-  /** Warn about nodes assigned to a disabled engine. */
+  /** Warn when the coder engine (the coder role in settings) is disabled: every node would run on it. */
   readonly enabled?: EnabledEngines;
+  readonly coderEngine?: EngineKind;
   /** Estimate options; `false` skips the estimate. */
   readonly estimate?: EstimateOptions | false;
 }
@@ -277,6 +278,18 @@ export function validatePlan(input: PlanDagInput, options: ValidateOptions = {})
     structural = true;
   }
 
+  if (nodes.length > 0 && options.enabled && options.coderEngine && options.coderEngine !== 'fake') {
+    if (!options.enabled[options.coderEngine]) {
+      const ids = nodes.map((n) => n.id);
+      issue(
+        'warning',
+        'engine_disabled',
+        ids,
+        `Every task runs on ${options.coderEngine} (the coder setting), which is disabled.`,
+      );
+    }
+  }
+
   const seen = new Set<string>();
   for (const node of nodes) {
     if (!NodeIdSchema.safeParse(node.id).success) {
@@ -339,14 +352,6 @@ export function validatePlan(input: PlanDagInput, options: ValidateOptions = {})
         'no_write_touches',
         [node.id],
         `${node.id} declares no create/modify touches; scope checks cannot work.`,
-      );
-    }
-    if (options.enabled && node.agent.engine !== 'fake' && !options.enabled[node.agent.engine]) {
-      issue(
-        'warning',
-        'engine_disabled',
-        [node.id],
-        `${node.id} is assigned to ${node.agent.engine}, which is disabled.`,
       );
     }
   }

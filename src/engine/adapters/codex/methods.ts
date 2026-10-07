@@ -8,6 +8,8 @@ import type {
   GetAccountResponse,
   ModelListParams,
   ModelListResponse,
+  SkillsExtraRootsSetParams,
+  SkillsExtraRootsSetResponse,
   ThreadResumeParams,
   ThreadResumeResponse,
   ThreadStartParams,
@@ -29,6 +31,7 @@ export interface ClientMethods {
   'turn/interrupt': [TurnInterruptParams, TurnInterruptResponse];
   'account/read': [GetAccountParams, GetAccountResponse];
   'model/list': [ModelListParams, ModelListResponse];
+  'skills/extraRoots/set': [SkillsExtraRootsSetParams, SkillsExtraRootsSetResponse];
 }
 export type ClientMethod = keyof ClientMethods;
 

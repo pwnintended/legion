@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { Workspace } from '../layout/tree';
 import { applyEvents, applyRunList, applyRunRow, applySnapshot, initialData } from './data';
 import { createDemoWorld, snapshotOf } from './demo/fixtures';
-import { actions, dataStore, initialUi, syncActiveLayout, uiStore } from './store';
+import { actions, dataStore, initialUi, jumpToNextDecision, syncActiveLayout, uiStore } from './store';
 
 const RUN = 'run_authv2demo01';
 
@@ -78,5 +78,42 @@ describe('activating a just-created run', () => {
     actions.setActiveRun(created.id);
     dataStore.setState({ seq: 150 });
     expect(uiStore.getState().activeRunId).toBe(RUN);
+  });
+});
+
+describe('⌘U: the next decision', () => {
+  afterEach(() => {
+    uiStore.setState(initialUi(), true);
+    dataStore.setState(initialData(), true);
+  });
+
+  it('starts with the run on screen, then reaches every open decision once per cycle', () => {
+    const world = createDemoWorld(1_000_000_000);
+    let state = applyRunList(
+      initialData(),
+      world.runs.map((run) => ({ run, taskCounts: {}, openInbox: 0, costUsd: 0 })),
+      100,
+    );
+    for (const run of world.runs) {
+      const snapshot = snapshotOf(world, run.id, 100);
+      if (snapshot) state = applySnapshot(state, snapshot);
+    }
+    dataStore.setState(state, true);
+    const open = world.inbox.filter((i) => i.resolvedAt === null);
+    expect(new Set(open.map((i) => i.runId)).size).toBeGreaterThan(1);
+    const later = open.find((i) => i.runId !== open[0]?.runId) as (typeof open)[number];
+    actions.setActiveRun(later.runId);
+    actions.setView('agents');
+
+    const seen: string[] = [];
+    for (let i = 0; i < open.length; i++) {
+      expect(jumpToNextDecision()).toBe(true);
+      seen.push(uiStore.getState().chatFocus?.itemId ?? '');
+    }
+    expect(uiStore.getState().view).toBe('chat');
+    expect(seen[0]).toBe(`inbox:${open.find((i) => i.runId === later.runId)?.id}`);
+    expect(new Set(seen)).toEqual(new Set(open.map((i) => `inbox:${i.id}`)));
+    const focused = open.find((i) => `inbox:${i.id}` === seen.at(-1));
+    expect(uiStore.getState().activeRunId).toBe(focused?.runId);
   });
 });

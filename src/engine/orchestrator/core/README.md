@@ -48,7 +48,7 @@ L=4, or any weight function), `compareNodeIds` (T2 < T10). Ordering functions th
 
 ## Estimates — `estimate.ts`
 
-`estimateNode(node, opts)` and `estimatePlan(nodes, {concurrency, maxFixRounds, enabled, engineOverrides,
+`estimateNode(node, opts)` and `estimatePlan(nodes, {concurrency, maxFixRounds, enabled, coderEngine,
 constants})` → per-node minutes/cost (coder + verify + reviewer on the other engine + expected fix rounds by
 risk and size + retry overhead), serial and critical-path minutes, and a simulated list schedule (scheduler
 priority, global and per-engine caps, FIFO merge queue) giving `executionMinutes` and `wallClockMinutes`

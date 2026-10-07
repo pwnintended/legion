@@ -266,6 +266,19 @@ const PATHS = {
     </>
   ),
   quote: <path d="M5 8h14M5 12h14M5 16h9" />,
+  chat: (
+    <path d="M5 5.5h14a1.5 1.5 0 011.5 1.5v8.5a1.5 1.5 0 01-1.5 1.5h-7.5L7 20.5V17H5a1.5 1.5 0 01-1.5-1.5V7A1.5 1.5 0 015 5.5z" />
+  ),
+  agents: (
+    <>
+      <rect x="3.5" y="4" width="7" height="7" rx="1.6" />
+      <rect x="13.5" y="4" width="7" height="7" rx="1.6" />
+      <rect x="3.5" y="14" width="7" height="6" rx="1.6" />
+      <rect x="13.5" y="14" width="7" height="6" rx="1.6" />
+    </>
+  ),
+  arrowUp: <path d="M12 19V5M6 11l6-6 6 6" />,
+  arrowDown: <path d="M12 5v14M6 13l6 6 6-6" />,
 } as const;
 
 export type IconName = keyof typeof PATHS;

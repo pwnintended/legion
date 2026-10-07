@@ -34,7 +34,6 @@ import {
   buildFixerPrompt,
   buildReviewerPrompt,
   checkScope,
-  coderEngineFor,
   decideAfterCoderTurn,
   decideAfterFailure,
   decideAfterReview,
@@ -194,12 +193,12 @@ function attemptNumber(o: Orchestrator, task: Task): number {
 }
 
 /** The model the task's coder actually ran (latest coder attempt), else the configured one. */
-export function coderModelOf(o: Orchestrator, task: Task, node: TaskNode): string | null {
+export function coderModelOf(o: Orchestrator, task: Task): string | null {
   const attempt = o.store
     .listAttempts(task.runId)
     .filter((a) => a.taskId === task.id && a.role === 'coder')
     .at(-1);
-  return attempt?.model ?? task.modelOverride ?? node.agent.model ?? null;
+  return attempt?.model ?? o.modelFor('coder', o.coderEngine());
 }
 
 function lastCoderAttemptId(o: Orchestrator, task: Task): string | null {
@@ -279,7 +278,7 @@ export async function coderTurn(o: Orchestrator, session: AgentRun): Promise<Tas
 
 async function code(o: Orchestrator, run: Run, task: Task, mode: 'coder' | 'fixer'): Promise<Step> {
   const node = o.nodeOf(task);
-  const engine = coderEngineFor(node, task);
+  const engine = o.coderEngine();
   const gate = o.gate(run.id, engine);
   if (gate) return park(o, task, gate);
   const worktree = task.worktreePath;
@@ -370,8 +369,8 @@ async function code(o: Orchestrator, run: Run, task: Task, mode: 'coder' | 'fixe
       taskId: task.id,
       role: 'coder',
       engine,
-      model: task.modelOverride ?? node.agent.model ?? o.modelFor('coder', engine),
-      effort: task.effortOverride ?? node.agent.effort ?? settings.roles.coder.effort,
+      model: o.modelFor('coder', engine),
+      effort: node.agent.effort ?? settings.roles.coder.effort,
       prompt: p,
       outputSchema: taskReportJsonSchema,
       cwd: worktree,
@@ -504,7 +503,7 @@ async function sensitiveChanges(worktree: string, base: string, changed: readonl
 async function review(o: Orchestrator, run: Run, task: Task): Promise<Step> {
   const node = o.nodeOf(task);
   const settings = o.settings();
-  const coderEngine = coderEngineFor(node, task);
+  const coderEngine = o.coderEngine();
   const engine = reviewerEngineFor(coderEngine, o.availableEngines());
   const gate = o.gate(run.id, engine);
   if (gate) return park(o, task, gate);
@@ -538,7 +537,7 @@ async function review(o: Orchestrator, run: Run, task: Task): Promise<Step> {
       taskId: task.id,
       role: 'reviewer',
       engine,
-      model: o.reviewModel('reviewer', engine, coderEngine, coderModelOf(o, task, node)),
+      model: o.reviewModel('reviewer', engine, coderEngine, coderModelOf(o, task)),
       effort: settings.roles.reviewer.effort,
       prompt,
       outputSchema: reviewOutputJsonSchema,

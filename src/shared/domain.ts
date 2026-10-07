@@ -187,9 +187,8 @@ export const TouchSchema = z.object({
 });
 export type Touch = z.infer<typeof TouchSchema>;
 
+/** What a plan decides about the agent of a node. The engine and model are never the plan's: they come from the coder role in settings. */
 export const NodeAgentSchema = z.object({
-  engine: EngineKindSchema,
-  model: z.string().nullable(),
   effort: EffortSchema.nullable(),
 });
 export type NodeAgent = z.infer<typeof NodeAgentSchema>;
@@ -330,10 +329,6 @@ export const TaskSchema = z.object({
   attemptCount: z.number().int().nonnegative(),
   fixRounds: z.number().int().nonnegative(),
   mergedSha: z.string().nullable(),
-  /** User override of the plan's `agent` (tasks.setEngine). */
-  engineOverride: EngineKindSchema.nullable(),
-  modelOverride: z.string().nullable(),
-  effortOverride: EffortSchema.nullable(),
   /** Latest one-line status from the agent (`report_progress`). */
   progress: z.string().nullable(),
   /**
@@ -400,6 +395,28 @@ export const AgentMessageSchema = z.object({
   deliveredAt: TimestampSchema.nullable(),
 });
 export type AgentMessage = z.infer<typeof AgentMessageSchema>;
+
+// ---------------------------------------------------------------------------------------------
+// Presentations (what an agent puts in front of the human: screenshots, documents, files)
+// ---------------------------------------------------------------------------------------------
+
+/**
+ * Files an agent shows the human with the `present` tool (architecture §8.7): copied into the attachment store
+ * when presented, so they outlive the worktree they came from. Shown in the run's conversation as they are.
+ */
+export const PresentationSchema = z.object({
+  id: IdSchema,
+  runId: IdSchema,
+  /** The presenting agent's task (null for run-level agents: lead, planner, assistant, research). */
+  taskId: IdSchema.nullable(),
+  attemptId: IdSchema,
+  title: z.string().min(1),
+  /** Markdown: what the human is looking at and why it matters. */
+  caption: z.string().nullable(),
+  attachments: z.array(AttachmentRefSchema),
+  createdAt: TimestampSchema,
+});
+export type Presentation = z.infer<typeof PresentationSchema>;
 
 export const CriterionStatusSchema = z.enum(['met', 'unmet', 'unclear']);
 export const FindingSeveritySchema = z.enum(['blocker', 'major', 'minor', 'nit']);
@@ -672,6 +689,41 @@ export const RoleDefaultsSchema = z.object({
 });
 export type RoleDefaults = z.infer<typeof RoleDefaultsSchema>;
 
+/** Name of an MCP server in the registry: becomes the tool prefix (`mcp__<name>__*`), so no `__` and never `legion`. */
+export const McpServerNameSchema = z
+  .string()
+  .regex(/^[A-Za-z][A-Za-z0-9-]{0,39}$/, 'letters, digits and "-", starting with a letter')
+  .refine((name) => name.toLowerCase() !== 'legion', "reserved for Legion's own server");
+
+/**
+ * An MCP server a user made available to agents (settings.mcpServers). Defined once; which project's roles
+ * get it is `settings.access`. Header and env values are stored as typed (they may hold tokens).
+ */
+export const McpServerSchema = z.discriminatedUnion('type', [
+  z.object({
+    type: z.literal('http'),
+    url: z.string().url(),
+    headers: z.record(z.string(), z.string()).default({}),
+  }),
+  z.object({
+    type: z.literal('stdio'),
+    command: z.string().min(1),
+    args: z.array(z.string()).default([]),
+    env: z.record(z.string(), z.string()).default({}),
+  }),
+]);
+export type McpServer = z.infer<typeof McpServerSchema>;
+
+/**
+ * What one role may use in one project beyond its built-in tools. `mcp`: names of registry servers (none by
+ * default). `skills`: skill names the agent may use, or null = the CLI's own default set.
+ */
+export const AgentAccessSchema = z.object({
+  mcp: z.array(McpServerNameSchema),
+  skills: z.array(z.string().min(1)).nullable(),
+});
+export type AgentAccess = z.infer<typeof AgentAccessSchema>;
+
 export const EngineSettingsSchema = z.object({
   enabled: z.boolean(),
   /** Binary path; null = resolve from PATH. Changes take effect for new sessions without a restart. */
@@ -739,6 +791,10 @@ export const SettingsSchema = z.object({
     claude: EngineSettingsSchema,
     codex: EngineSettingsSchema,
   }),
+  /** MCP servers agents can be given (name → server). Nothing uses one until `access` grants it. */
+  mcpServers: z.record(McpServerNameSchema, McpServerSchema),
+  /** Per project id, per role: the MCP servers and skills that role gets in that project. */
+  access: z.record(IdSchema, z.partialRecord(RoleSchema, AgentAccessSchema)),
 });
 export type Settings = z.infer<typeof SettingsSchema>;
 
@@ -770,6 +826,8 @@ export const DEFAULT_SETTINGS: Settings = {
     claude: { enabled: true, path: null, fallbackReviewModel: 'opus' },
     codex: { enabled: true, path: null, fallbackReviewModel: null },
   },
+  mcpServers: {},
+  access: {},
 };
 
 const RoleDefaultsPatchSchema = z
@@ -813,6 +871,10 @@ export const SettingsPatchSchema = z
         codex: SettingsSchema.shape.engines.shape.codex.partial(),
       })
       .partial(),
+    /** A server replaces the one of that name; `null` removes it (and every grant of it). */
+    mcpServers: z.record(McpServerNameSchema, McpServerSchema.nullable()),
+    /** A role's access replaces the previous one; `null` clears it. */
+    access: z.record(IdSchema, z.partialRecord(RoleSchema, AgentAccessSchema.nullable())),
   })
   .partial();
 export type SettingsPatch = z.infer<typeof SettingsPatchSchema>;
@@ -833,7 +895,41 @@ function deepMerge(base: unknown, patch: unknown): unknown {
 
 /** Apply a patch and re-validate. Throws a ZodError if the result is invalid. */
 export function applySettingsPatch(base: Settings, patch: SettingsPatch): Settings {
-  return SettingsSchema.parse(deepMerge(base, patch));
+  const { mcpServers, access, ...rest } = patch;
+  const merged = SettingsSchema.parse(deepMerge(base, rest));
+  return mergeAccess(merged, mcpServers, access);
+}
+
+/**
+ * `mcpServers` and `access` patch by entry: a value replaces, `null` removes. Removing a server also removes it
+ * from every grant, and empty entries are dropped so the stored object stays small.
+ */
+function mergeAccess(base: Settings, servers: SettingsPatch['mcpServers'], access: SettingsPatch['access']): Settings {
+  if (!servers && !access) return base;
+  const mcpServers = { ...base.mcpServers };
+  for (const [name, server] of Object.entries(servers ?? {})) {
+    if (server === null) delete mcpServers[name];
+    else mcpServers[name] = server;
+  }
+  const grants: Settings['access'] = {};
+  const entries = new Map(Object.entries(base.access));
+  for (const [projectId, roles] of Object.entries(access ?? {})) {
+    const current = { ...(entries.get(projectId) ?? {}) } as Record<string, AgentAccess>;
+    for (const [role, value] of Object.entries(roles)) {
+      if (value === null) delete current[role];
+      else current[role] = value;
+    }
+    entries.set(projectId, current);
+  }
+  for (const [projectId, roles] of entries) {
+    const kept: Record<string, AgentAccess> = {};
+    for (const [role, value] of Object.entries(roles)) {
+      const mcp = value.mcp.filter((name) => name in mcpServers);
+      if (mcp.length > 0 || value.skills !== null) kept[role] = { mcp, skills: value.skills };
+    }
+    if (Object.keys(kept).length > 0) grants[projectId] = kept as Settings['access'][string];
+  }
+  return SettingsSchema.parse({ ...base, mcpServers, access: grants });
 }
 
 /** Fill gaps in stored settings (e.g. after an upgrade added a field) from the defaults. */

@@ -13,6 +13,7 @@ import type { ServerEvent } from '@shared/events';
 import type { EngineToMainMessage, MainToEngineMessage } from '@shared/host-protocol';
 import { ENGINE_ENV } from '@shared/host-protocol';
 import type { MessageEndpoint, PortLike, RpcConnection } from '@shared/rpc-transport';
+import { registerAccessHandlers } from './access';
 import { AttachmentService, registerAttachmentHandlers } from './attachments';
 import { consoleLogger, type EngineContext, type Logger } from './context';
 import { openStore, type Store } from './db';
@@ -105,6 +106,7 @@ export async function startEngine(options: StartEngineOptions): Promise<EngineHa
   const server = createEngineRpcServer(ctx);
   registerCoreHandlers(server, ctx);
   registerProjectHandlers(server, ctx);
+  registerAccessHandlers(server, ctx);
 
   const fake = options.fakeEngines ?? env[FAKE_ENGINES_ENV] === '1';
   const registry = new EngineRegistry({

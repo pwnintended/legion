@@ -80,7 +80,6 @@ describe('run lifecycle (fake engines, real git)', () => {
             }),
             node('T2', {
               title: 'Feature',
-              engine: 'codex',
               dependsOn: ['T1'],
               writes: ['src/feature.txt', 'shared/registry.txt'],
               verify: { commands: ['grep -q feature shared/registry.txt', 'test -f src/feature.txt'] },
@@ -93,7 +92,6 @@ describe('run lifecycle (fake engines, real git)', () => {
             node('T4', {
               title: 'Docs',
               kind: 'docs',
-              engine: 'codex',
               writes: ['docs/**'],
               verify: { commands: ['test -f docs/notes.md'] },
             }),
@@ -219,8 +217,8 @@ describe('run lifecycle (fake engines, real git)', () => {
     expect(tasks.get('T3')).toMatchObject({ fixRounds: 1, attemptCount: 1 });
     expect(tasks.get('T4')).toMatchObject({ fixRounds: 0, attemptCount: 2 });
 
-    // Cross-engine review: Codex reviewed Claude's tasks and vice versa.
-    expect(reviewedBy).toEqual({ T1: ['codex'], T2: ['claude'], T3: ['codex', 'codex'], T4: ['claude'] });
+    // Every coder ran on the coder role's engine (Claude); Codex reviewed them all.
+    expect(reviewedBy).toEqual({ T1: ['codex'], T2: ['codex'], T3: ['codex', 'codex'], T4: ['codex'] });
     const snapshot = await harness.client.call('runs.get', { runId: run.id });
     const t3Reviews = snapshot.reviews.filter((r) => r.taskId === tasks.get('T3')?.id);
     expect(t3Reviews.map((r) => r.verdict)).toEqual(['request_changes', 'approve']);

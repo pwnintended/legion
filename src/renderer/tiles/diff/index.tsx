@@ -10,7 +10,7 @@ import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useStat
 import { useStore } from 'zustand';
 import { useShallow } from 'zustand/react/shallow';
 import { attemptsOfRun, reviewsOfRun, tasksOfRun } from '../../app/data';
-import { useData, useLatestPlan, useRun } from '../../app/hooks';
+import { useData, useLatestPlan, useRun, useSettings } from '../../app/hooks';
 import { Chip } from '../../chrome/ui';
 import { otherEngine } from '../../layout/describe';
 import type { TileCardProps, TileProps } from '../../layout/types';
@@ -39,6 +39,7 @@ interface Context {
 function useDiffContext(runId: string, target: DiffTarget): Context {
   const plan = useLatestPlan(runId);
   const run = useRun(runId);
+  const coderEngine = useSettings()?.roles.coder.engine ?? 'claude';
   const deps = useData(useShallow((s) => [s.tasks, s.reviews, s.attempts, s.diffstats, s.merges]));
   // biome-ignore lint/correctness/useExhaustiveDependencies: derived from the collections above.
   return useMemo(() => {
@@ -54,7 +55,7 @@ function useDiffContext(runId: string, target: DiffTarget): Context {
       const node = task ? plan?.dag.nodes.find((n) => n.id === task.nodeId) : null;
       const mine = reviewsOfRun(reviews, runId).filter((r) => r.taskId === target.taskId);
       const coder = attemptsOfRun(attempts, runId).filter((a) => a.taskId === target.taskId && a.role === 'coder');
-      const engine = coder.at(-1)?.engine ?? node?.agent.engine ?? 'claude';
+      const engine = coder.at(-1)?.engine ?? coderEngine;
       const first = mine[0];
       const since = first ? filesChangedSince(coder, diffstats, target.taskId, first.createdAt) : [];
       return {
@@ -85,7 +86,7 @@ function useDiffContext(runId: string, target: DiffTarget): Context {
       sinceFiles: null,
       sinceRound: 1,
     };
-  }, [runId, targetKey(target), plan, run, ...deps]);
+  }, [runId, targetKey(target), plan, run, coderEngine, ...deps]);
 }
 
 export default function DiffTile({ runId, params, focused, visible }: TileProps<'diff'>) {

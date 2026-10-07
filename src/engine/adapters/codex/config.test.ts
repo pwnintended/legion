@@ -272,3 +272,31 @@ describe('CODEX_HOME isolation', () => {
     });
   });
 });
+
+describe('project MCP servers and skills', () => {
+  const linear = { type: 'http' as const, url: 'https://mcp.linear.app/mcp', headers: { Authorization: 'Bearer x' } };
+  const local = { type: 'stdio' as const, command: 'npx', args: ['-y', 'thing'], env: { A: 'b' } };
+
+  it('adds the servers to the thread config, pre-approved', () => {
+    expect(threadConfig(opts({ extraMcp: { linear, local } })).mcp_servers).toMatchObject({
+      legion: { url: 'http://127.0.0.1:4000/mcp' },
+      linear: { url: linear.url, http_headers: linear.headers, default_tools_approval_mode: 'approve' },
+      local: { command: 'npx', args: ['-y', 'thing'], env: { A: 'b' }, default_tools_approval_mode: 'approve' },
+    });
+    expect(threadConfig(opts({ mcp: null, extraMcp: { linear } })).mcp_servers).toEqual({
+      linear: { url: linear.url, http_headers: linear.headers, default_tools_approval_mode: 'approve' },
+    });
+  });
+
+  it('gives a coordinating session none of them', () => {
+    const lead = opts({ role: 'lead', permission: permissionProfileFor('lead'), mcp: null, extraMcp: { linear } });
+    expect(threadConfig(lead)).toEqual({});
+  });
+
+  it('turns skills off by name with skills.config', () => {
+    expect(appServerArgs().some((a) => a.startsWith('skills.config'))).toBe(false);
+    const args = appServerArgs(['imagegen', 'repo "x"']);
+    expect(args.at(-2)).toBe('-c');
+    expect(args.at(-1)).toBe('skills.config=[{name="imagegen",enabled=false},{name="repo \\"x\\"",enabled=false}]');
+  });
+});

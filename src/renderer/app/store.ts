@@ -1,9 +1,10 @@
 /**
  * The renderer's two Zustand stores:
  * - `dataStore`: the client mirror of engine state (see data.ts), written only by sync.ts / demo mode.
- * - `uiStore`: what the user is looking at — active project and run, overlays, layout mode, key mode, and the
- *   layouts of run workspaces (keyed by run id) and project homes (keyed `project:<id>`, see projects.ts).
- *   With an active project and no active run, the project's home is on screen.
+ * - `uiStore`: what the user is looking at — active project and run, the view (the run's conversation, or its
+ *   agents: the tiling workspace), overlays, layout mode, key mode, and the layouts of run workspaces (keyed by
+ *   run id) and project homes (keyed `project:<id>`, see projects.ts). With an active project and no active
+ *   run, the project's page is on screen: a new conversation (chat view) or the repository (agents view).
  *
  * Layout trees are kept in sync with run data here (outside React), so the strip is correct before render.
  */
@@ -16,8 +17,10 @@ import { allTiles, focusTile, type LayoutMode, type Workspace } from '../layout/
 import { attemptsOfRun, type DataState, initialData, latestPlan, openInbox, selectRunList, tasksOfRun } from './data';
 import { projectOfRun, projectWorkspaceKey, selectProjects } from './projects';
 
-export type Overlay = 'composer' | 'inbox' | 'palette' | 'settings' | 'addProject' | 'goto';
-export type SettingsSection = 'engines' | 'agents' | 'runs' | 'appearance';
+export type Overlay = 'composer' | 'palette' | 'settings' | 'addProject' | 'goto';
+/** `chat`: the run's conversation (home of the app). `agents`: the tiling workspace of its agents. */
+export type View = 'chat' | 'agents';
+export type SettingsSection = 'engines' | 'agents' | 'access' | 'runs' | 'appearance';
 export type KeyMode = 'normal' | 'resize' | 'move';
 
 export interface UiState {
@@ -25,6 +28,9 @@ export interface UiState {
   /** The project in view: its home when `activeRunId` is null, else the active run's project. */
   activeProjectId: string | null;
   overlay: Overlay | null;
+  view: View;
+  /** A thread item the conversation should scroll to and highlight (`nonce` re-triggers the same item). */
+  chatFocus: { itemId: string; nonce: number } | null;
   layoutMode: LayoutMode;
   /** Mode to return to when toggling Overview/Pipeline/Focus off. */
   previousMode: LayoutMode;
@@ -44,7 +50,7 @@ export interface UiState {
 
 const UI_PREFS_KEY = 'legion.ui';
 
-type UiPrefs = Partial<Pick<UiState, 'activeRunId' | 'activeProjectId' | 'layoutMode'>>;
+type UiPrefs = Partial<Pick<UiState, 'activeRunId' | 'activeProjectId' | 'layoutMode' | 'view'>>;
 
 function loadPrefs(): UiPrefs {
   try {
@@ -63,6 +69,7 @@ function savePrefs(state: UiState): void {
         activeRunId: state.activeRunId,
         activeProjectId: state.activeProjectId,
         layoutMode: state.layoutMode,
+        view: state.view,
       }),
     );
   } catch {
@@ -80,6 +87,8 @@ export function initialUi(): UiState {
     activeRunId: typeof prefs.activeRunId === 'string' ? prefs.activeRunId : null,
     activeProjectId: typeof prefs.activeProjectId === 'string' ? prefs.activeProjectId : null,
     overlay: null,
+    view: prefs.view === 'agents' ? 'agents' : 'chat',
+    chatFocus: null,
     layoutMode: mode,
     previousMode: 'strip',
     keyMode: 'normal',
@@ -115,15 +124,12 @@ export function runLayoutInput(data: DataState, runId: string): RunLayoutInput |
   if (!run || data.loadedRuns[runId] === undefined) return null;
   const clarify = openInbox(data.inbox, runId).find((i) => i.kind === 'question' && i.payload.source === 'clarify');
   const attempts = attemptsOfRun(data.attempts, runId);
-  const assistants = attempts.filter((a) => a.role === 'assistant');
-  const assistant = assistants.find((a) => a.status === 'running' || a.status === 'interrupted') ?? assistants.at(-1);
   return {
     runId,
     status: run.status,
     nodes: latestPlan(data, runId)?.dag.nodes ?? [],
     tasks: tasksOfRun(data.tasks, runId).map((t) => ({ id: t.id, nodeId: t.nodeId, status: t.status })),
     clarifyItemId: clarify?.id ?? null,
-    assistantAttemptId: assistant?.id ?? null,
     hierarchy: attempts.some((a) => a.role === 'assistant' || a.role === 'lead'),
   };
 }
@@ -291,9 +297,30 @@ export const actions = {
       uiStore.setState({ overlay: null, focusRequest: uiStore.getState().focusRequest + 1 });
   },
 
+  setView(view: View): void {
+    if (uiStore.getState().view === view) return;
+    uiStore.setState({ view, keyMode: 'normal' });
+    savePrefs(uiStore.getState());
+  },
+  toggleView(): void {
+    actions.setView(uiStore.getState().view === 'chat' ? 'agents' : 'chat');
+  },
+
+  /** Show a thread item of a run's conversation (a decision card, a presentation). */
+  focusChatItem(runId: string, itemId: string): void {
+    actions.setActiveRun(runId);
+    actions.setView('chat');
+    uiStore.setState({ chatFocus: { itemId, nonce: (uiStore.getState().chatFocus?.nonce ?? 0) + 1 } });
+  },
+
+  /** A layout mode of the agents view (switching to it). */
   setLayoutMode(mode: LayoutMode): void {
-    const { layoutMode } = uiStore.getState();
-    if (layoutMode === mode) return;
+    const { layoutMode, view } = uiStore.getState();
+    if (view !== 'agents') uiStore.setState({ view: 'agents' });
+    if (layoutMode === mode) {
+      if (view !== 'agents') savePrefs(uiStore.getState());
+      return;
+    }
     uiStore.setState({ layoutMode: mode, previousMode: layoutMode, overlay: null });
     savePrefs(uiStore.getState());
   },
@@ -332,9 +359,10 @@ export const actions = {
     if (key) actions.updateLayout(key, op, keyboard);
   },
 
-  /** Focus a tile in a run (switching run and to Strip mode when needed). */
+  /** Focus a tile in a run (switching run, to the agents view, and to Strip mode when needed). */
   revealTile(runId: string, tileId: string, mode: LayoutMode | null = 'strip'): void {
     actions.setActiveRun(runId);
+    actions.setView('agents');
     if (mode && uiStore.getState().layoutMode !== mode && uiStore.getState().layoutMode !== 'focus')
       actions.setLayoutMode(mode);
     actions.updateLayout(runId, (layout) => focusTile(layout, tileId), true);
@@ -349,42 +377,34 @@ export const actions = {
   },
 };
 
-/** Urgent tiles across all runs, oldest inbox item first: what ⌘U cycles through. */
-export function urgentTargets(): { runId: string; tileId: string; itemId: string }[] {
-  const data = dataStore.getState();
-  const { layouts } = uiStore.getState();
-  const out: { runId: string; tileId: string; itemId: string }[] = [];
-  for (const item of openInbox(data.inbox, '*')) {
-    const layout = layouts[item.runId] ?? loadLayout(item.runId);
-    const target = layout && allTiles(layout).find(({ tile }) => itemTargetsTile(item, tile, tileTaskId(tile)));
-    if (target) out.push({ runId: item.runId, tileId: target.tile.id, itemId: item.id });
-    else {
-      // Layout not built yet (run never opened): fall back to its plan / first matching tile once opened.
-      out.push({ runId: item.runId, tileId: '', itemId: item.id });
-    }
-  }
-  return out;
+/** The run a ⌘U cycle started from: its decisions come first for the whole cycle (a stable order). */
+let cycleAnchor: string | null = null;
+
+/** Open decisions in ⌘U order: `firstRun`'s, then every other run's, each oldest first. */
+export function openDecisions(firstRun: string | null = null): { runId: string; itemId: string }[] {
+  const items = openInbox(dataStore.getState().inbox, '*');
+  return [...items.filter((i) => i.runId === firstRun), ...items.filter((i) => i.runId !== firstRun)].map((item) => ({
+    runId: item.runId,
+    itemId: item.id,
+  }));
 }
 
-/** Jump to the next urgent tile after the current focus (wrapping). Returns false when nothing is urgent. */
-export function jumpToNextUrgent(): boolean {
-  const targets = urgentTargets();
+/**
+ * Show the next open decision as its card in the run's conversation. A cycle starts with the run on screen and
+ * keeps that order while it lasts (the shown card stays the reference), so every open decision is reached once
+ * per round. Returns false when nothing waits.
+ */
+export function jumpToNextDecision(): boolean {
+  const { activeRunId, chatFocus } = uiStore.getState();
+  const focused = chatFocus?.itemId.startsWith('inbox:') ? chatFocus.itemId.slice('inbox:'.length) : null;
+  const continuing = focused !== null && dataStore.getState().inbox[focused]?.resolvedAt === null;
+  if (!continuing || cycleAnchor === null) cycleAnchor = activeRunId;
+  const targets = openDecisions(cycleAnchor);
   if (targets.length === 0) return false;
-  const { activeRunId, layouts } = uiStore.getState();
-  const current = activeRunId ? layouts[activeRunId]?.focus?.tile : undefined;
-  const index = targets.findIndex((t) => t.runId === activeRunId && t.tileId === current);
+  const index = continuing ? targets.findIndex((t) => t.itemId === focused) : -1;
   const target = targets[(index + 1) % targets.length] ?? targets[0];
   if (!target) return false;
-  actions.setActiveRun(target.runId);
-  syncActiveLayout();
-  let tileId = target.tileId;
-  if (!tileId) {
-    const layout = uiStore.getState().layouts[target.runId];
-    const item = dataStore.getState().inbox[target.itemId];
-    const found = layout && item && allTiles(layout).find(({ tile }) => itemTargetsTile(item, tile, tileTaskId(tile)));
-    tileId = found ? found.tile.id : '';
-  }
-  if (tileId) actions.revealTile(target.runId, tileId);
+  actions.focusChatItem(target.runId, `inbox:${target.itemId}`);
   return true;
 }
 

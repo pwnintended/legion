@@ -123,6 +123,11 @@ export class AgentRun {
     await this.session.send(text, priority, attachments);
   }
 
+  /** Record an event that did not come from the engine (the human's own messages) in the transcript. */
+  record(event: AgentEvent): void {
+    this.hooks.onEvent(this, event);
+  }
+
   async close(): Promise<void> {
     this.closing = true;
     this.takeover?.resolve();

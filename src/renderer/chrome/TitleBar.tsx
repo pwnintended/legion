@@ -1,18 +1,23 @@
 /**
  * Title bar (hiddenInset window): drag region with room for the traffic lights, project / run breadcrumb (the
- * project opens its home), layout switcher (runs only: a project home is always a strip), and the Commands /
- * Inbox / New run buttons.
+ * project opens its home), the Chat | Agents switch (a project: Chat | Repository), the agents' layout modes
+ * while they are on screen, and the Commands / needs-you / New run buttons.
  */
 import { motion } from 'motion/react';
 import { commandTooltip, executeCommand } from '../app/commands';
 import { useActiveRun, useData, useInbox, useUi } from '../app/hooks';
 import { useReducedMotionPref } from '../app/prefs';
 import { openProject } from '../app/project-actions';
-import { activeProjectOf } from '../app/store';
+import { actions, activeProjectOf, type View } from '../app/store';
 import type { LayoutMode } from '../layout/tree';
 import { SPRING } from '../theme/motion';
 import { Icon, type IconName, LegionMark } from './icons';
 import { CommandKbd } from './ui';
+
+const VIEWS: { view: View; label: string; projectLabel: string; icon: IconName }[] = [
+  { view: 'chat', label: 'Chat', projectLabel: 'Chat', icon: 'chat' },
+  { view: 'agents', label: 'Agents', projectLabel: 'Repository', icon: 'agents' },
+];
 
 const MODES: { mode: LayoutMode; label: string; icon: IconName; command: string }[] = [
   { mode: 'strip', label: 'Strip', icon: 'strip', command: 'layout.strip' },
@@ -28,6 +33,7 @@ export function repoLabel(path: string): string {
 export function TitleBar() {
   const run = useActiveRun();
   const mode = useUi((s) => s.layoutMode);
+  const view = useUi((s) => s.view);
   const inbox = useInbox(null);
   const reduced = useReducedMotionPref();
   const demo = useUi((s) => s.demo);
@@ -68,7 +74,7 @@ export function TitleBar() {
         ) : null}
         {run ? (
           <>
-            {project ? <span className="faint">/</span> : null}
+            {project ? <span className="faint hidden lg:inline">/</span> : null}
             <span className="muted hidden truncate text-[13px] lg:inline" title={run.title}>
               {run.title}
             </span>
@@ -82,29 +88,60 @@ export function TitleBar() {
         ) : null}
       </div>
 
-      {run ? (
-        <nav aria-label="Layout" className="segs no-drag isolate flex-none">
-          {MODES.map((m) => (
-            <button
-              key={m.mode}
-              type="button"
-              className="seg"
-              aria-pressed={mode === m.mode}
-              title={commandTooltip(m.command, `${m.label} layout`)}
-              onClick={() => void executeCommand(m.command)}
-              data-testid={`layout-${m.mode}`}
-            >
-              {mode === m.mode ? (
-                <motion.span layoutId="seg-pill" className="seg-pill" transition={reduced ? { duration: 0 } : SPRING} />
-              ) : null}
-              <Icon name={m.icon} />
-              <span className="hidden xl:inline">{m.label}</span>
-            </button>
-          ))}
-        </nav>
+      {run || project ? (
+        <div className="no-drag flex flex-none items-center gap-2">
+          <nav aria-label="View" className="segs tb-views isolate flex-none">
+            {VIEWS.map((v) => (
+              <button
+                key={v.view}
+                type="button"
+                className="seg"
+                aria-pressed={view === v.view}
+                title={commandTooltip('view.toggle', `${run ? v.label : v.projectLabel}`)}
+                onClick={() => actions.setView(v.view)}
+                data-testid={`view-${v.view}`}
+              >
+                {view === v.view ? (
+                  <motion.span
+                    layoutId="view-pill"
+                    className="seg-pill"
+                    transition={reduced ? { duration: 0 } : SPRING}
+                  />
+                ) : null}
+                <Icon name={v.icon} />
+                <span>{run ? v.label : v.projectLabel}</span>
+              </button>
+            ))}
+          </nav>
+        </div>
       ) : null}
 
       <div className="no-drag flex flex-1 items-center justify-end gap-1.5">
+        {run && view === 'agents' ? (
+          <nav aria-label="Layout" className="segs tb-modes isolate mr-1.5 flex-none">
+            {MODES.map((m) => (
+              <button
+                key={m.mode}
+                type="button"
+                className="seg"
+                aria-pressed={mode === m.mode}
+                aria-label={`${m.label} layout`}
+                title={commandTooltip(m.command, `${m.label} layout`)}
+                onClick={() => void executeCommand(m.command)}
+                data-testid={`layout-${m.mode}`}
+              >
+                {mode === m.mode ? (
+                  <motion.span
+                    layoutId="seg-pill"
+                    className="seg-pill"
+                    transition={reduced ? { duration: 0 } : SPRING}
+                  />
+                ) : null}
+                <Icon name={m.icon} />
+              </button>
+            ))}
+          </nav>
+        ) : null}
         <button
           type="button"
           className="btn btn-ghost"
@@ -117,20 +154,16 @@ export function TitleBar() {
         </button>
         <button
           type="button"
-          className="btn btn-ghost"
-          onClick={() => void executeCommand('inbox.open')}
-          title={commandTooltip('inbox.open')}
-          data-testid="inbox-button"
+          className="btn btn-ghost tb-needs"
+          data-waiting={inbox.length > 0 || undefined}
+          onClick={() => void executeCommand('decision.next')}
+          title={commandTooltip('decision.next')}
+          aria-label={inbox.length ? `${inbox.length} waiting for you` : 'Nothing is waiting for you'}
+          data-testid="needs-you"
         >
-          <Icon name="inbox" />
-          <span className="hidden lg:inline">Inbox</span>
-          {inbox.length > 0 ? (
-            <span className="mono inline-flex h-[18px] min-w-[18px] items-center justify-center rounded-[9px] bg-peach px-[5px] text-[11px] font-semibold text-crust">
-              {inbox.length}
-            </span>
-          ) : (
-            <CommandKbd id="inbox.open" />
-          )}
+          <span className="tb-needs-dot" aria-hidden="true" />
+          <span className="hidden lg:inline">{inbox.length ? 'Needs you' : 'All clear'}</span>
+          {inbox.length > 0 ? <span className="tb-needs-count mono">{inbox.length}</span> : null}
         </button>
         <button
           type="button"

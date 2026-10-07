@@ -55,7 +55,7 @@ import {
   activeProjectOf,
   activeWorkspaceKey,
   dataStore,
-  jumpToNextUrgent,
+  jumpToNextDecision,
   type KeyMode,
   type UiState,
   uiStore,
@@ -161,7 +161,8 @@ function context(): CommandContext {
     ui,
     data: dataStore.getState(),
     activeRunId: ui.activeRunId,
-    layout: key ? (ui.layouts[key] ?? null) : null,
+    // The workspace's layout commands only act on what is on screen: the agents view.
+    layout: key && ui.view === 'agents' ? (ui.layouts[key] ?? null) : null,
   };
 }
 
@@ -483,13 +484,29 @@ export function builtinCommands(): Command[] {
         if (project) return removeProject(project);
       },
     },
+    // Views -------------------------------------------------------------------------------------------
     {
-      id: 'inbox.open',
-      inOverlay: true,
-      title: 'Open inbox',
-      category: 'Overlay',
-      keybinding: 'Mod+I',
-      run: () => actions.toggleOverlay('inbox'),
+      id: 'view.chat',
+      title: 'Show the conversation',
+      category: 'Layout',
+      when: (ctx) => ctx.ui.view !== 'chat' && (activeRun(ctx) !== null || projectInView(ctx) !== null),
+      run: () => actions.setView('chat'),
+    },
+    {
+      id: 'view.agents',
+      title: 'Show the agents',
+      category: 'Layout',
+      when: (ctx) => ctx.ui.view !== 'agents' && (activeRun(ctx) !== null || projectInView(ctx) !== null),
+      run: () => actions.setView('agents'),
+    },
+    {
+      id: 'view.toggle',
+      title: 'Switch between the conversation and the agents',
+      category: 'Layout',
+      keybinding: 'Mod+E',
+      hidden: true,
+      when: (ctx) => activeRun(ctx) !== null || projectInView(ctx) !== null,
+      run: () => actions.toggleView(),
     },
     {
       id: 'palette.open',
@@ -527,7 +544,8 @@ export function builtinCommands(): Command[] {
       category: 'Layout',
       keybinding: 'Escape',
       hidden: true,
-      when: (ctx) => noOverlay(ctx) && ctx.ui.keyMode === 'normal' && ctx.ui.layoutMode !== 'strip',
+      when: (ctx) =>
+        noOverlay(ctx) && ctx.ui.view === 'agents' && ctx.ui.keyMode === 'normal' && ctx.ui.layoutMode !== 'strip',
       run: () => actions.setLayoutMode('strip'),
     },
     {
@@ -536,6 +554,7 @@ export function builtinCommands(): Command[] {
       category: 'Layout',
       keybinding: 'Mod+Enter',
       inInput: false,
+      when: (ctx) => ctx.ui.view === 'agents',
       run: () => actions.toggleLayoutMode('focus'),
     },
     {
@@ -583,13 +602,14 @@ export function builtinCommands(): Command[] {
       run: layoutOp((l) => moveDir(l, dir)),
     })),
     {
-      id: 'focus.nextUrgent',
+      id: 'decision.next',
       inOverlay: true,
-      title: 'Jump to next tile that needs you',
+      title: 'Next decision waiting for you',
       category: 'Focus',
-      keybinding: 'Mod+U',
+      keybinding: ['Mod+U', 'Mod+I'],
       run: () => {
-        if (jumpToNextUrgent()) actions.closeOverlay();
+        if (jumpToNextDecision()) actions.closeOverlay();
+        else toast('Nothing is waiting for you.', 'info');
       },
     },
 

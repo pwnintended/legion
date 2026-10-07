@@ -25,7 +25,7 @@ import {
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useShallow } from 'zustand/react/shallow';
 import { openInbox, tasksOfRun } from '../../app/data';
-import { useData, useLatestPlan, useNow, useRun, useUi } from '../../app/hooks';
+import { useData, useLatestPlan, useNow, useRun, useSettings, useUi } from '../../app/hooks';
 import { actions, dataStore } from '../../app/store';
 import { Chip, Kbd, StatusChipView } from '../../chrome/ui';
 import { describeTile, type StatusChip } from '../../layout/describe';
@@ -298,7 +298,7 @@ function DagEditor({ runId, focused, visible }: TileProps<'dag'>) {
         editable={editable}
         focused={focused}
         onAdd={() => {
-          const result = addNode(dag, { agent: { engine: 'codex', model: null, effort: null } });
+          const result = addNode(dag, { agent: { effort: null } });
           edit(`add ${result.id}`, () => result.dag);
           setSelected(result.id);
           setTimeout(() => inspectorTitle.current?.focus(), 60);
@@ -437,6 +437,7 @@ function useLiveState(runId: string, nodes: readonly TaskNode[], editable: boole
 
 const TaskCard = memo(function TaskCard({ data, selected }: NodeProps<FlowNode>) {
   const { node, status, tone, urgent, pulse, error, editable } = data;
+  const coderEngine = useSettings()?.roles.coder.engine ?? 'claude';
   return (
     <div
       className="lg-node"
@@ -453,8 +454,8 @@ const TaskCard = memo(function TaskCard({ data, selected }: NodeProps<FlowNode>)
         <span className="tile-id">{node.id}</span>
         <span
           className="dot"
-          style={{ background: node.agent.engine === 'codex' ? 'var(--teal)' : 'var(--mauve)' }}
-          title={node.agent.engine}
+          style={{ background: coderEngine === 'codex' ? 'var(--teal)' : 'var(--mauve)' }}
+          title={coderEngine}
         />
         {node.risk === 'high' ? (
           <span className="text-[10.5px]" style={{ color: 'var(--peach)' }} title="high risk: waits for you">

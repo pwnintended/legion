@@ -97,6 +97,16 @@ export interface SpawnResearchRequest {
   mode: 'single' | 'team';
 }
 
+/** `present`: files and/or a markdown document to put in front of the human. */
+export interface PresentRequest {
+  title: string;
+  caption: string | null;
+  /** Paths of files to show (relative to the agent's working directory, or absolute inside it or the temp dir). */
+  files: string[];
+  /** A markdown document to show (stored as `<title>.md`). */
+  markdown: string | null;
+}
+
 export type ApproveResult =
   | { behavior: 'allow'; updatedInput?: Record<string, unknown> }
   | { behavior: 'deny'; message: string };
@@ -141,6 +151,8 @@ export interface McpHost {
     request: StartImplementationRequest,
   ): { runId: string; status: string } | Promise<{ runId: string; status: string }>;
   runStatus(binding: McpBinding): AssistantRunStatus | Promise<AssistantRunStatus>;
+  /** Show files / a document to the human in the run's conversation. */
+  present(binding: McpBinding, request: PresentRequest): Promise<{ id: string; files: number }>;
   /** Open a research agent as the caller's child; its report arrives later as a `report` message. */
   spawnResearch(
     binding: McpBinding,
@@ -275,6 +287,8 @@ function buildServer(binding: McpBinding, host: McpHost, log: Log): McpServer {
     ),
   );
 
+  registerPresent(server, binding, host, guard);
+
   // Planners and reviewers have a parent only to be steered: messages reach them in their turn, no mailbox.
   if (
     (binding.parentAttemptId !== null && !STEERED_ONLY_ROLES.has(binding.role)) ||
@@ -404,6 +418,65 @@ function registerMessaging(server: McpServer, binding: McpBinding, host: McpHost
       if (!reply) throw new Error('no answer arrived');
       return { answer: reply.body, message_id: reply.id };
     }),
+  );
+}
+
+/** Most files one `present` call shows. */
+const MAX_PRESENT_FILES = 10;
+
+/** `present` for every agent; coordinators have no files, so they present documents only. */
+function registerPresent(server: McpServer, binding: McpBinding, host: McpHost, guard: Guard): void {
+  const coordinator = COORDINATOR_ROLES.has(binding.role);
+  server.registerTool(
+    'present',
+    {
+      description:
+        'Show the human something worth looking at, in their conversation with Legion: a screenshot of the UI you ' +
+        'built, a rendered document, a report, a diagram. ' +
+        (coordinator
+          ? 'You have no files, so pass a markdown document. '
+          : 'Pass files (PNG/JPEG/GIF/WebP images up to 10 MB; text, markdown, code or PDF up to 2 MB) by path ' +
+            'relative to your working directory, or absolute inside it or the system temp dir: save screenshots and ' +
+            'scratch output to the temp dir, never into the repository. Or pass a markdown document. ') +
+        'Present results, not progress: one call per thing the human should see, with a caption that says what ' +
+        'they are looking at and what to notice. Does not block. Returns {"id", "files"}.',
+      inputSchema: {
+        title: z.string().min(1).max(120).describe('What this is, e.g. "Settings page with the passkey list".'),
+        caption: z.string().max(2000).optional().describe('Markdown: what to look at and why it matters.'),
+        ...(coordinator
+          ? {}
+          : {
+              files: z
+                .array(z.string().min(1))
+                .max(MAX_PRESENT_FILES)
+                .optional()
+                .describe('Paths of the files to show.'),
+            }),
+        markdown: z.string().min(1).max(200_000).optional().describe('A markdown document to show.'),
+      },
+    },
+    guard(
+      'present',
+      async ({
+        title,
+        caption,
+        files,
+        markdown,
+      }: {
+        title: string;
+        caption?: string;
+        files?: string[];
+        markdown?: string;
+      }) => {
+        if (!files?.length && !markdown) throw new Error('pass files or markdown: there is nothing to show');
+        return host.present(binding, {
+          title,
+          caption: caption?.trim() || null,
+          files: coordinator ? [] : (files ?? []),
+          markdown: markdown ?? null,
+        });
+      },
+    ),
   );
 }
 

@@ -285,7 +285,7 @@ export function addNode(dag: PlanDag, partial: Partial<TaskNode> = {}): { dag: P
     size: 'S',
     verify: { commands: [] },
     contextHints: { files: [], notes: '' },
-    agent: { engine: 'claude', model: null, effort: null },
+    agent: { effort: null },
     risk: 'low',
     ...partial,
   };

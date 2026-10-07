@@ -17,7 +17,7 @@ document disagree, fix one of them in the same change.
 | Claude Code | Spawn the user's installed `claude` CLI: `claude -p --input-format stream-json --output-format stream-json --verbose --include-partial-messages`. No Agent SDK. Auth = the user's own login (never touch tokens). |
 | Codex | Spawn `codex app-server` (JSON-RPC 2.0 over stdio). Types generated with `codex app-server generate-ts --experimental` and committed. Auth = the user's own `codex login`. |
 | Approvals | In-band for both engines, surfaced as `approval_request` events → inbox → `session.respond()`. Claude: `--permission-prompt-tool stdio` → `can_use_tool` control requests on stdout, answered with a `control_response` on stdin. Codex: `item/*/requestApproval` server requests. |
-| Engine per role | Planner: user choice per run (default Claude). Coder: per task from the plan (`agent.engine`), overridable. Reviewer: always the *other* engine than the task's coder (fallback: same engine, different model). |
+| Engine per role | Planner: user choice per run (default Claude). Coder: always the coder role in settings (engine and model). Plans carry only an effort per task; the planner and the lead never choose an engine or a model, and there is no per-task override. Reviewer: always the *other* engine than the task's coder (fallback: same engine, different model). |
 | Commits | Legion commits, never the agent (Codex's sandbox makes `.git` read-only anyway). |
 | Integration | One integration branch per run; each approved task is squash-merged into it via a serialized merge queue; post-merge verification after every merge. |
 | PR | One draft PR per run via `gh pr create --draft`. GitHub only in v1. |
@@ -155,6 +155,8 @@ Review     id, taskId (null = final review), attemptId, verdict (approve|request
            file?, line?, title, body, suggestedFix?}], summary
 InboxItem  id, runId, taskId?, kind (approval|question|plan_signoff|escalation|pr_ready|conflict|budget),
            payload, createdAt, resolvedAt?, resolution?
+Presentation id, runId, taskId?, attemptId, title, caption?, attachments[]  — what an agent showed the human
+           (`present`, §8.7; migration 006)
 Merge      id, runId, taskId, preSha, postSha?, status (pending|merged|conflict|verify_failed|reverted), error?
 Verification id, runId, taskId?, attemptId?, phase (setup|task|post_merge|final), command, exitCode?, outputTail,
            durationMs
@@ -244,6 +246,25 @@ Legion-owned `CODEX_HOME` (`<dataDir>/codex-home`) containing only a **symlink**
 plus `-c features.hooks=false` etc. Codex threads live in that home, so resume/takeover must use it.
 Details: `src/engine/adapters/codex/README.md`.
 
+Agent access (MCP servers and skills). Isolation means a session has no MCP servers or skills of the user's by
+default. `settings.mcpServers` is a registry (name → `http` URL + headers, or `stdio` command + args + env; the name
+becomes the tool prefix, `legion` is reserved) and `settings.access[projectId][role] = { mcp: string[], skills:
+string[] | null }` says what a role gets in that project (`skills: null` = the CLI's default set; `[]` = none). Both
+go through `settings.set` (`null` removes a server or clears a role; removing a server or a project drops its
+grants). The orchestrator resolves the grant when it opens a session (`engine/access/resolve.ts` →
+`SessionOptions.extraMcp` / `.skills`); `coordinate` roles never get any, and running sessions are not changed.
+- Claude: the servers join `--mcp-config` (still `--strict-mcp-config`) and are pre-approved as `mcp__<name>`. A skill
+  allowlist sets `disableBundledSkills`, turns off by name (`skillOverrides`) the repo's `.claude/skills` that are not
+  listed, and exposes the user's listed skills through a per-session plugin (`--plugin-dir`, symlinks; they appear as
+  `legion-skills:<name>`). Skill calls need no permission rule. Verified against claude 2.1.292.
+- Codex: the servers join the thread's `mcp_servers` (`default_tools_approval_mode: approve`). A skill allowlist disables
+  by name (`-c skills.config=[{name,enabled=false}]` on the session's own app-server) every repo (`.agents/skills`),
+  user and system skill that is not listed, and registers the listed user skills as an extra root
+  (`skills/extraRoots/set`). Verified against codex-cli 0.160.0.
+- Discovery: `skills.list` (user: `~/.claude/skills`, `~/.agents/skills`; repo: `.claude/skills`, `.agents/skills`)
+  and `mcpServers.discover` (`~/.claude.json`, the project's `.mcp.json`) feed Settings → Access. A granted server is
+  approved up front, so it can use all of its tools (there is no per-tool allowlist).
+
 Trust boundary. Reviewer and finalizer sessions read worktrees that coders wrote, so they load **no**
 configuration from them (`SessionOptions.untrustedWorkdir`): Claude runs with `--setting-sources=` (no project or
 local `.claude/settings*.json`, hence no planted hooks or permission rules), Codex with `project_doc_max_bytes=0`
@@ -286,6 +307,9 @@ tools are in §8.4:
 - `spawn_research({title, brief, mode})` (coordinators) — open a researcher (`single`) or a research lead (`team`) as
   the caller's child; its report comes back as a `report` message (§8.5)
 - `start_implementation({title, brief, clarify})`, `run_status()` (assistant only, §8.6)
+
+Every agent also has `present({title, caption?, files?, markdown?})` (§8.7): files and/or a markdown document to
+show the human in the run's conversation. Coordinators have no files, so their schema offers `markdown` only.
 
 Delivery: a message resolves a blocked `wait_for_reply` / `ask_lead` of its recipient at once; otherwise it stays
 queued (`deliveredAt: null`) and is prepended to the prompt the next time the orchestrator resumes that recipient's
@@ -529,6 +553,26 @@ through `sessions.send` on the assistant attempt: its process stays alive and id
   parent (kind `question`) instead of `request_human_input` when it has one.
 - **Failures**: resumed as a new attempt with its children re-parented; after `MAX_ASSISTANT_FAILURES` (3) without
   a completed turn it is given up (`RunMeta.assistantDisabled`), and a run still `chatting` fails.
+- **Status updates**: the lead, when it has the assistant as its parent, sends it a `status` message at milestones
+  (a task merged, a review sent work back, a task stuck or failed, a plan change, the last merge): one per wake at
+  most, a one-line headline and two lines of context (`core/prompts/lead.ts`). They wake the assistant like any
+  message; its prompt tells it to relay what matters in a sentence or two, fold several into one message, and stay
+  quiet about routine progress. The UI folds those messages under the reply they led to (§11).
+- **The record of the conversation**: the human's messages are recorded in the assistant's transcript as
+  `user_message` agent events (the first prompt by `openSession({humanMessage})`, later ones by `sessions.send`,
+  which records them for every session). Legion's own wake prompts are never recorded as one, so the transcript
+  alone tells the human's words from Legion's.
+
+### 8.7 Presentations (`orchestrator/present.ts`)
+
+`present` puts something in front of the human: screenshots, a rendered report, a document. Files are resolved
+against the agent's working directory and must lie inside it or the system temp dir (symlinks resolved; coders are
+told to save screenshots to the temp dir so nothing lands in the commit). Each file, and the markdown document
+(`<title>.md`), is copied into the attachment store and claimed by the run, so a presentation outlives the worktree
+(and `runs.archive({discard})`). One `presentations` row per call, a `presentation.created` event, and
+`RunSnapshot.presentations`. Files that cannot be read are skipped with an error naming them; with nothing left the
+call fails. The assistant hears of a presentation on its next wake (who showed what, and the caption) so it can
+refer to it, but the presentation reaches the human as the agent made it, not paraphrased.
 
 ## 9. Git & filesystem conventions
 
@@ -603,14 +647,29 @@ re-attaches the transferred port to a live terminal (a detached shell, or the te
 
 ## 11. UI
 
-- Concept: projects are the top level; workspace = run; strip of columns = tasks (plus plan/DAG/PR tiles); tile = a
-  view; layout modes Strip / Focus / Overview / Pipeline; urgency borders; overlays: composer (⌘N), inbox (⌘I),
-  palette (⌘K), add a project (⌘⇧N), go to file (⌘P); waybar-style status bar. See `docs/research/tiling-ux.md`.
+- Concept: projects are the top level; a run is a **conversation** (chat view, the default) whose agents work
+  offstage in the **agents view** (⌘E toggles; the title bar's Chat | Agents switch). The agents view is the tiling
+  workspace: strip of columns = tasks (plus plan/DAG/PR tiles); tile = a view; layout modes Strip / Focus /
+  Overview / Pipeline (switching to one shows the agents). Overlays: composer (⌘N), palette (⌘K), add a project
+  (⌘⇧N), go to file (⌘P). The status bar carries usage only (run spend, rate limits; the key mode in the agents view).
+  See `docs/research/tiling-ux.md`.
+- Conversation (`renderer/chat/`): `thread.ts` folds the assistant attempts' transcripts (`user_message` = the
+  human; final `message`s replace their streamed deltas), the agents' messages to the assistant (under the reply
+  they led to, or as a quiet line when it said nothing), every inbox item of the run (open: a decision card answered
+  in place, with the same resolutions as the tiles; answered: a one-line receipt), presentations (images shown,
+  markdown read inline, other files as chips; all open in the shared preview), and a few events (PR opened, run
+  stopped/failed; merges only when no assistant narrates). A run without an assistant still gets its request,
+  decisions and events. Above it a progress strip (plan › execute n/m › integrate › PR, one dot per task: hover =
+  what its agent does, click = its tile in the agents view); below it the needs-you bar and the reply box
+  (`sessions.send` to the live assistant; ⌘⏎ interrupts). There is no inbox overlay: ⌘U (or ⌘I) shows the next open
+  decision as its card, the run on screen first; the title bar counts them across runs.
 - Rail: projects (name, branch, uncommitted-changes dot, active runs / needs-you), each expandable to its runs.
   Workspace numbers (⌘1–9) follow the rail: runs grouped by project (pinned first, then in the order added).
   Runs whose project was removed are grouped by repository. Archived runs stay hidden unless asked for.
-- Project home: with an active project and no active run (`uiStore.activeProjectId`, `activeRunId: null`), the
-  project's own workspace is on screen: a layout tree stored under `project:<id>` (always Strip). Default columns:
+- Project page: with an active project and no active run (`uiStore.activeProjectId`, `activeRunId: null`), the chat
+  view shows a new conversation (a prompt that starts `runs.chat`, or `runs.create` with the assistant off; branch and
+  engine in the full composer) and the project's earlier conversations. The agents view, labelled Repository, is the
+  project's own workspace: a layout tree stored under `project:<id>` (always Strip). Default columns:
   Overview (README rendered with repo-relative links/images, facts, languages, New run / Go to file / Search /
   Terminal / Finder), Activity (runs, open PRs, git history), Files (lazy tree, filter, keyboard). Files, commits and
   search hits open in a *preview* column right of their source (`layout/project.ts`, reused per kind; ⌘⏎/⌘-click =
@@ -619,12 +678,11 @@ re-attaches the transferred port to a live terminal (a detached shell, or the te
   this…" (⌘⏎) opens the composer with the project and a `path:lines` reference. Adding a project opens its home,
   never the composer; ⌘N preselects the project on screen (`app/composer-seed.ts`); ⌘⇧H returns to the home. The
   empty state leads with adding a project (and lists checkouts found on this Mac).
-- Coordination (§8.4-8.6): the composer's prompt starts a conversation with the assistant (`runs.chat`) unless
-  "Plan directly" is ticked (`runs.create`). A run with an assistant gets a first `assistant` column holding its
-  session tile (the transcript is the conversation, the steer bar the reply box; focus lands there while
-  `chatting`). A run with an assistant or a lead also gets an `agents` column (stacked `agents` tile = the attempt
-  tree by `parentAttemptId` with status and queued-message counts, click opens the agent's session; `messages` tile
-  = every agent-to-agent message), open while executing. Settings → Runs → Coordination switches both off.
+- Coordination (§8.4-8.6): the composer's prompt starts a conversation with the assistant (`runs.chat`); with the
+  assistant switched off (Settings → Runs → Coordination) it goes to the planner (`runs.create`). A run with an
+  assistant or a lead gets an `agents` column in the agents view (stacked `agents` tile = the attempt tree by
+  `parentAttemptId` with status and queued-message counts, click opens the agent's session; `messages` tile = every
+  agent-to-agent message), open while executing.
 - Layout engine is a pure TS tree (Workspace → Strip → Column(split|stacked|tabbed) → Tile) with ops
   (insertAfter, remove, focusDir, moveDir, setWidthPreset, collapse, toggleStacked) and full unit tests.
   The run's DAG drives insertion; the user's manual changes persist per run.

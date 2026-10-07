@@ -207,9 +207,11 @@ test('attachments: paste, drop, dialog, preview, remove, then the planner receiv
     await expect(preview).toHaveCount(0);
     await expect(composer).toBeVisible();
 
-    // Preview of the text file.
+    // Preview of the text file: Markdown is rendered, not shown as source.
     await chips.nth(1).click();
-    await expect(window.getByTestId('attachment-preview-text')).toContainText('Save button bottom-right.');
+    const markdown = window.getByTestId('attachment-preview-markdown');
+    await expect(markdown.getByRole('heading', { name: 'Notes' })).toBeVisible();
+    await expect(markdown.getByRole('listitem')).toHaveText(['Header: 36px, red.', 'Save button bottom-right.']);
     await shot(window, 'preview-text');
     await window.keyboard.press('Escape');
     await expect(preview).toHaveCount(0);
@@ -238,15 +240,22 @@ test('attachments: paste, drop, dialog, preview, remove, then the planner receiv
     await shot(window, 'tray-1000x700');
     await setSize(app, window, [1280, 800]);
 
-    // Create the run (planner-first path: skip the assistant).
-    await composer.getByTestId('composer-direct').check();
+    // Create the run: the assistant takes the request (and its attachments) and hands it to the planner.
     await textarea.press('Meta+Enter');
     await expect(composer).toBeHidden({ timeout: 15_000 });
 
-    // Clarify: the issue's attachments are listed; a screenshot pasted into an answer travels with it.
-    const clarify = window.getByTestId('clarify');
+    // Clarify, as a card in the chat: the issue's attachments are listed; a screenshot pasted into an answer
+    // travels with it.
+    const chat = window.getByTestId('chat');
+    await expect(chat).toBeVisible();
+    const clarify = chat.locator('[data-testid="chat-decision"][data-kind="question"]').getByTestId('clarify');
     await expect(clarify).toBeVisible({ timeout: 30_000 });
+    await expect(chat.locator('.ch-you-files').first().getByTestId('attachment-chip')).toHaveCount(3);
+    // Among the agents (⌘E and back), the plan-to-be lists them as the issue's attachments.
+    await window.keyboard.press('Meta+e');
     await expect(window.getByTestId('run-attachments').getByTestId('attachment-chip')).toHaveCount(3);
+    await window.keyboard.press('Meta+e');
+    await expect(clarify).toBeVisible();
     await clarify.getByRole('radio', { name: 'Yes, add docs' }).click();
     const note = clarify.locator('.cl-note').first();
     await note.fill('Match the mockup exactly');
@@ -255,8 +264,8 @@ test('attachments: paste, drop, dialog, preview, remove, then the planner receiv
     await expect(clarify.locator('.at-chip[data-busy]')).toHaveCount(0, { timeout: 15_000 });
     await shot(window, 'clarify');
     await clarify.getByTestId('clarify-submit').click();
-    const plan = window.getByTestId('plan-tile');
-    await expect(plan.getByTestId('plan-signoff')).toContainText('3 tasks', { timeout: 30_000 });
+    const plan = chat.locator('[data-testid="chat-decision"][data-kind="plan_signoff"]');
+    await expect(plan).toContainText('3 tasks', { timeout: 30_000 });
     await shot(window, 'planned');
 
     // What the planner received (the demo agent says so in its transcript), and what is stored.
@@ -318,6 +327,8 @@ test('attachments in demo mode: a screenshot pasted into the steer bar travels w
       localStorage.clear();
       localStorage.setItem('legion.demo', '1');
       localStorage.setItem('legion.demo.live', '0');
+      // The agents view (the tiling workspace), where T2's session tile has its steer bar.
+      localStorage.setItem('legion.ui', JSON.stringify({ view: 'agents' }));
     });
     await window.reload();
     await setSize(app, window, [1440, 900]);

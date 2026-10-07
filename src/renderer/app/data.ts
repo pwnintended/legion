@@ -16,6 +16,7 @@ import type {
   InboxItem,
   Merge,
   Plan,
+  Presentation,
   Project,
   Review,
   Run,
@@ -39,7 +40,8 @@ export type EntityKind =
   | 'verification'
   | 'merge'
   | 'project'
-  | 'message';
+  | 'message'
+  | 'presentation';
 
 export interface Transcript {
   status: 'loading' | 'ready' | 'error';
@@ -122,6 +124,8 @@ export interface DataState {
   merges: Record<string, Merge>;
   /** Agent-to-agent messages (`message.updated`, `RunSnapshot.messages`). */
   messages: Record<string, AgentMessage>;
+  /** What agents showed the human (`presentation.created`, `RunSnapshot.presentations`). */
+  presentations: Record<string, Presentation>;
   /** `${kind}:${id}` → seq the stored row reflects. */
   versions: Record<string, number>;
   transcripts: Record<string, Transcript>;
@@ -155,6 +159,7 @@ export function initialData(): DataState {
     verifications: {},
     merges: {},
     messages: {},
+    presentations: {},
     versions: {},
     transcripts: {},
     activity: {},
@@ -172,7 +177,17 @@ export function initialData(): DataState {
 
 type Collections = Pick<
   DataState,
-  'runs' | 'plans' | 'tasks' | 'attempts' | 'reviews' | 'inbox' | 'verifications' | 'merges' | 'projects' | 'messages'
+  | 'runs'
+  | 'plans'
+  | 'tasks'
+  | 'attempts'
+  | 'reviews'
+  | 'inbox'
+  | 'verifications'
+  | 'merges'
+  | 'projects'
+  | 'messages'
+  | 'presentations'
 >;
 const COLLECTION: { [K in EntityKind]: keyof Collections } = {
   run: 'runs',
@@ -185,6 +200,7 @@ const COLLECTION: { [K in EntityKind]: keyof Collections } = {
   merge: 'merges',
   project: 'projects',
   message: 'messages',
+  presentation: 'presentations',
 };
 
 type MutableKeys =
@@ -498,6 +514,9 @@ export function applyEvents(state: DataState, events: readonly ServerEvent[]): D
       case 'message.updated':
         draft.put('message', event.message, event.seq);
         break;
+      case 'presentation.created':
+        draft.put('presentation', event.presentation, event.seq);
+        break;
       case 'agent.event':
         applyAgentEvent(draft, event);
         break;
@@ -529,6 +548,7 @@ export function applySnapshot(state: DataState, snapshot: RunSnapshot): DataStat
     ['verification', snapshot.verifications],
     ['merge', snapshot.merges],
     ['message', snapshot.messages ?? []],
+    ['presentation', snapshot.presentations ?? []],
   ];
   for (const [kind, rows] of lists) {
     const ids = new Set(rows.map((r) => r.id));
@@ -809,6 +829,12 @@ export const attemptsOfRun = memoByRun((attempts: Record<string, Attempt>, runId
 export const messagesOfRun = memoByRun((messages: Record<string, AgentMessage>, runId: string) =>
   Object.values(messages)
     .filter((m) => m.runId === runId)
+    .sort((a, b) => a.createdAt - b.createdAt || a.id.localeCompare(b.id)),
+);
+
+export const presentationsOfRun = memoByRun((presentations: Record<string, Presentation>, runId: string) =>
+  Object.values(presentations)
+    .filter((p) => p.runId === runId)
     .sort((a, b) => a.createdAt - b.createdAt || a.id.localeCompare(b.id)),
 );
 

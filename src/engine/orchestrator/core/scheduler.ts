@@ -9,7 +9,7 @@
  * tasks (review, fix, resolver) never wait for a slot; only new starts are gated.
  */
 import type { EngineKind, Settings, TaskNode, TaskStatus } from '@shared/domain';
-import { coderEngineFor } from './engines';
+import { coderEngine } from './engines';
 import { compareNodeIds, fanOut, indexGraph, longestRemainingPath } from './graph';
 import { comparePriority } from './priority';
 
@@ -31,7 +31,6 @@ export const TERMINAL_STATUSES: ReadonlySet<TaskStatus> = new Set(['merged', 'sk
 export interface SchedulerTask {
   readonly nodeId: string;
   readonly status: TaskStatus;
-  readonly engineOverride?: EngineKind | null;
 }
 
 export interface RateLimit {
@@ -44,7 +43,7 @@ export interface SchedulerInput {
   readonly nodes: readonly TaskNode[];
   /** One row per node; nodes without a row are treated as `blocked`. */
   readonly tasks: readonly SchedulerTask[];
-  readonly settings: Pick<Settings, 'concurrency'>;
+  readonly settings: Pick<Settings, 'concurrency' | 'roles'>;
   /** Slot-holding tasks of *other* runs per coder engine (the global cap spans all runs). */
   readonly otherRunsInFlight?: Partial<Record<EngineKind, number>>;
   readonly paused: boolean;
@@ -112,7 +111,8 @@ export function planDispatch(input: SchedulerInput): DispatchPlan {
     taskOf.set(task.nodeId, task);
   }
   const status = (id: string) => statusOf.get(id) as TaskStatus;
-  const engineOf = (id: string) => coderEngineFor(index.byId.get(id) as TaskNode, taskOf.get(id));
+  const coder = coderEngine(input.settings);
+  const engineOf = (_id: string) => coder;
   const depsSatisfied = (id: string) => (index.deps.get(id) ?? []).every((d) => SATISFIED_STATUSES.has(status(d)));
 
   // Failure propagation: nodes that cannot start because a (transitive) dependency failed or was cancelled.

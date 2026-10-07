@@ -23,6 +23,7 @@ export const CLAUDE_TOOL_NAMES = {
   spawnResearch: 'mcp__legion__spawn_research',
   startImplementation: 'mcp__legion__start_implementation',
   runStatus: 'mcp__legion__run_status',
+  present: 'mcp__legion__present',
 } as const;
 
 /**

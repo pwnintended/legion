@@ -9,6 +9,7 @@
  *   is idempotent: a client keeps an entity unless the event's seq is newer than what it has.
  */
 import { z } from 'zod';
+import { AttachmentRefSchema } from './attachments';
 import {
   AgentMessageSchema,
   AttemptSchema,
@@ -17,6 +18,7 @@ import {
   InboxItemSchema,
   MergeSchema,
   PlanSchema,
+  PresentationSchema,
   ProjectSchema,
   ReviewSchema,
   RunSchema,
@@ -117,6 +119,16 @@ export const AgentEventSchema = z.discriminatedUnion('type', [
     reason: z.string().nullable(),
   }),
   z.object({ type: z.literal('error'), message: z.string(), retryable: z.boolean() }),
+  /**
+   * A message the human sent into the session (its first prompt or `sessions.send`). Recorded by the
+   * orchestrator, not by adapters: Legion's own prompts and wakes are never recorded as this.
+   */
+  z.object({
+    type: z.literal('user_message'),
+    text: z.string(),
+    attachments: z.array(AttachmentRefSchema),
+    priority: z.enum(['now', 'next']).nullable(),
+  }),
   /** Always the last event of a session's stream. */
   z.object({ type: z.literal('exited'), code: z.number().int().nullable() }),
 ]);
@@ -143,6 +155,8 @@ export const ServerEventBodySchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('merge.updated'), merge: MergeSchema }),
   /** A message between two attempts was queued or delivered (`deliveredAt` set). */
   z.object({ type: z.literal('message.updated'), message: AgentMessageSchema }),
+  /** An agent presented files to the human (`present`). */
+  z.object({ type: z.literal('presentation.created'), presentation: PresentationSchema }),
   z.object({
     type: z.literal('agent.event'),
     runId: IdSchema,
@@ -195,6 +209,12 @@ export function eventRefs(body: ServerEventBody): {
       return { runId: body.merge.runId, taskId: body.merge.taskId, attemptId: null };
     case 'message.updated':
       return { runId: body.message.runId, taskId: null, attemptId: null };
+    case 'presentation.created':
+      return {
+        runId: body.presentation.runId,
+        taskId: body.presentation.taskId,
+        attemptId: body.presentation.attemptId,
+      };
     case 'agent.event':
       return { runId: body.runId, taskId: body.taskId, attemptId: body.attemptId };
     case 'settings.updated':

@@ -80,8 +80,8 @@ async function setSize(app: ElectronApplication, window: Page, [w, h]: readonly 
   await expect.poll(() => window.evaluate(() => [innerWidth, innerHeight].join('x'))).toBe(`${w}x${h}`);
 }
 
-/** The panel is fully inside the window (and horizontally centred unless docked right). */
-async function expectCentred(window: Page, panel: Locator, docked = false) {
+/** The panel is fully inside the window and horizontally centred. */
+async function expectCentred(window: Page, panel: Locator) {
   await window.waitForTimeout(450);
   const box = await panel.boundingBox();
   const [vw, vh] = await window.evaluate(() => [innerWidth, innerHeight]);
@@ -91,7 +91,7 @@ async function expectCentred(window: Page, panel: Locator, docked = false) {
   expect(box.y).toBeGreaterThanOrEqual(0);
   expect(box.x + box.width).toBeLessThanOrEqual(vw);
   expect(box.y + box.height).toBeLessThanOrEqual(vh);
-  if (!docked) expect(Math.abs(box.x + box.width / 2 - vw / 2)).toBeLessThanOrEqual(1);
+  expect(Math.abs(box.x + box.width / 2 - vw / 2)).toBeLessThanOrEqual(1);
   return box;
 }
 
@@ -306,16 +306,15 @@ test('composer: repository picker, status line, base branch, at three sizes', as
       await window.keyboard.press('Escape');
       await expect(composer).toHaveCount(0);
 
-      // The other overlays: centred (or docked right) and fully on screen.
+      // The other overlays: centred and fully on screen.
       for (const [key, id] of [
         ['Meta+k', 'palette'],
-        ['Meta+i', 'inbox'],
         ['Meta+,', 'settings'],
       ] as const) {
         await window.keyboard.press(key);
         const panel = window.getByTestId(id);
         await expect(panel).toBeVisible();
-        await expectCentred(window, panel, id === 'inbox');
+        await expectCentred(window, panel);
         await window.screenshot({ path: join(shots, `${id}-${tag}.png`) });
         await window.keyboard.press('Escape');
         await expect(panel).toHaveCount(0);

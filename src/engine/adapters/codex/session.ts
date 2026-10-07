@@ -22,6 +22,10 @@ export interface CodexProcessSpec {
   clientVersion: string;
   /** stderr lines of the child (codex logs warnings/errors there). */
   onStderr?: (line: string) => void;
+  /** Extra skills root to register after the handshake (`skills/extraRoots/set`). */
+  skillsRoot?: string | null;
+  /** The process is gone (also after a failed start): drop whatever the spec created. */
+  onExit?: () => void;
 }
 
 export type OpenMode = { kind: 'start' } | { kind: 'resume'; threadId: string };
@@ -118,6 +122,9 @@ export class CodexSession implements AgentSession {
     );
     this.version = /^[^/\s]+\/(\S+)/.exec(init.userAgent)?.[1] ?? null;
     this.rpc.notify('initialized');
+    if (this.spec.skillsRoot) {
+      await this.call('skills/extraRoots/set', { extraRoots: [this.spec.skillsRoot] }, { timeoutMs: INIT_TIMEOUT_MS });
+    }
     const opened =
       mode.kind === 'start'
         ? await this.call('thread/start', threadStartParams(this.opts), { timeoutMs: THREAD_TIMEOUT_MS })
@@ -343,6 +350,7 @@ export class CodexSession implements AgentSession {
   private onExit(code: number | null, spawnError: string | null): void {
     if (this.hasExited) return;
     this.hasExited = true;
+    this.spec.onExit?.();
     this.exitCode = code;
     this.rpc.close(new Error(spawnError ?? `codex app-server exited (code ${code ?? 'null'})`));
     this.approvals.clear();

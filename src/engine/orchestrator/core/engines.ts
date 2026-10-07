@@ -1,5 +1,5 @@
 /** Engine choice per role (architecture §1 "Engine per role"). */
-import type { EngineKind, Settings, Task, TaskNode } from '@shared/domain';
+import type { EngineKind, Settings } from '@shared/domain';
 
 export type EnabledEngines = { readonly claude: boolean; readonly codex: boolean };
 
@@ -7,12 +7,9 @@ export function enabledEngines(settings: Pick<Settings, 'engines'>): EnabledEngi
   return { claude: settings.engines.claude.enabled, codex: settings.engines.codex.enabled };
 }
 
-/** The coder engine of a task: the user's override, else the plan's assignment. */
-export function coderEngineFor(
-  node: Pick<TaskNode, 'agent'>,
-  task?: { readonly engineOverride?: Task['engineOverride'] | undefined } | null,
-): EngineKind {
-  return task?.engineOverride ?? node.agent.engine;
+/** The engine every coder runs on: the coder role in settings. Neither the plan nor a task chooses one. */
+export function coderEngine(settings: Pick<Settings, 'roles'>): EngineKind {
+  return settings.roles.coder.engine;
 }
 
 /**

@@ -39,6 +39,11 @@ function workspaceRules(tools: ToolNames, extra: readonly string[] = []): string
   ]);
 }
 
+/** Coders (not resolvers): show the human what they built. */
+function presentRule(tools: ToolNames): string {
+  return `When your work produces something the human should see rather than read about (a screenshot of UI you changed, a generated report or diagram), show it with \`${tools.present}\` before you finish: save it under the system temp dir (never in the worktree), one call per thing, with a caption saying what to look at. Skip it when there is nothing visual or nothing new to show.`;
+}
+
 /** Coders with an implementation lead: where to take questions the plan leaves open. */
 function leadRule(tools: ToolNames): string {
   return `You report to an implementation lead that knows the whole plan and the other tasks. When the task brief leaves open something that affects other tasks (a shared name, shape, interface or behaviour) or that the plan decided, ask the lead with \`${tools.askLead}\` instead of guessing; it answers from the plan. Small local decisions are yours: make them and note them in your summary.`;
@@ -72,7 +77,10 @@ export function buildCoderPrompt(input: CoderPromptInput): AgentPrompt {
           ),
         )
       : null;
-  const systemPrompt = join(CODER_SYSTEM, section('Rules', workspaceRules(tools, input.lead ? [leadRule(tools)] : [])));
+  const systemPrompt = join(
+    CODER_SYSTEM,
+    section('Rules', workspaceRules(tools, [presentRule(tools), ...(input.lead ? [leadRule(tools)] : [])])),
+  );
   const prompt = join(
     `Implement task ${node.id}: ${node.title}.`,
     section(
@@ -116,7 +124,7 @@ export function buildCoderPrompt(input: CoderPromptInput): AgentPrompt {
 export function buildFixerPrompt(input: FixerPromptInput): AgentPrompt {
   const tools = input.tools ?? DEFAULT_TOOL_NAMES;
   const node = input.node;
-  const systemPrompt = join(CODER_SYSTEM, section('Rules', workspaceRules(tools)));
+  const systemPrompt = join(CODER_SYSTEM, section('Rules', workspaceRules(tools, [presentRule(tools)])));
   const merged = input.mergedIntegrationRef
     ? `Your task passed review, but verification failed after merging it into the integration branch. Legion has merged \`${input.mergedIntegrationRef}\` into your branch, so your worktree now contains the other tasks' merged work. The failure is most likely an interaction between your change and theirs: fix it on your side and keep their behavior intact.`
     : null;

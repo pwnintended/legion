@@ -18,7 +18,7 @@ export const FAKE_PLAN_OUTPUT: PlanOutput = {
         size: 'S',
         verify: { commands: ['test -f FAKE_CHANGE.md'] },
         contextHints: { files: [], notes: '' },
-        agent: { engine: 'claude', model: null, effort: null },
+        agent: { effort: null },
         risk: 'low',
       },
       {
@@ -32,7 +32,7 @@ export const FAKE_PLAN_OUTPUT: PlanOutput = {
         size: 'S',
         verify: { commands: ['test -f FAKE_TEST.md'] },
         contextHints: { files: ['FAKE_CHANGE.md'], notes: '' },
-        agent: { engine: 'codex', model: null, effort: null },
+        agent: { effort: null },
         risk: 'low',
       },
     ],

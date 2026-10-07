@@ -29,14 +29,7 @@ import {
   squashMergeIntoIntegration,
   touchedPaths,
 } from '../git';
-import {
-  buildResolverPrompt,
-  coderEngineFor,
-  decideAfterMerge,
-  globMatchesPath,
-  taskStatusPath,
-  writeGlobs,
-} from './core';
+import { buildResolverPrompt, decideAfterMerge, globMatchesPath, taskStatusPath, writeGlobs } from './core';
 import type { AgentRun } from './live-session';
 import { patchTaskMeta, taskMeta } from './meta';
 import { AgentFailure, Closed, type Orchestrator, type ParkReason } from './orchestrator';
@@ -286,7 +279,7 @@ async function resolveConflicts(
     }
     // A resolver session will be needed (the forecast has non-lockfile conflicts) but cannot start now:
     // park before touching git, and let the tick wake the queue when the gate opens.
-    const engine = coderEngineFor(node, task);
+    const engine = o.coderEngine();
     const forecastFiles = await conflictFilesOf(run, task);
     if (forecastFiles.some((f) => !isLockfilePath(f))) {
       const gate = o.gate(run.id, engine);
@@ -314,8 +307,8 @@ async function resolveConflicts(
           taskId,
           role: 'resolver',
           engine,
-          model: task.modelOverride ?? node.agent.model ?? o.modelFor('resolver', engine),
-          effort: task.effortOverride ?? node.agent.effort ?? o.settings().roles.resolver.effort,
+          model: o.modelFor('resolver', engine),
+          effort: node.agent.effort ?? o.settings().roles.resolver.effort,
           prompt: buildResolverPrompt({
             node,
             otherNodes: collidingNodes(o, run, locks.remaining, node.id),

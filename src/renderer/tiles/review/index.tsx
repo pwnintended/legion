@@ -16,7 +16,14 @@ import { rpc, useData, useLatestPlan, useNow, useSettings, useTranscript } from 
 import { whenData } from '../../app/pending';
 import { actions, dataStore } from '../../app/store';
 import { Chip, EngineChip, Kbd } from '../../chrome/ui';
-import { displayEngine, ENGINE_LABEL, ENGINE_NAME, formatDuration, otherEngine } from '../../layout/describe';
+import {
+  displayEngine,
+  ENGINE_LABEL,
+  ENGINE_NAME,
+  formatDuration,
+  otherEngine,
+  taskEngine,
+} from '../../layout/describe';
 import { focusedTile } from '../../layout/tree';
 import type { TileCardProps, TileProps } from '../../layout/types';
 import { focusDiff } from '../diff/data';
@@ -190,8 +197,7 @@ export default function ReviewTile({ runId, params }: TileProps<'review'>) {
   const shownRound = round ?? reviews.length;
   const review = reviews[shownRound - 1] ?? null;
   const findings = trackFindings(reviews);
-  const reviewerEngine =
-    pack.reviewer?.engine ?? otherEngine(pack.coder?.engine ?? pack.node?.agent.engine ?? 'claude');
+  const reviewerEngine = pack.reviewer?.engine ?? otherEngine(taskEngine(dataStore.getState(), pack.coder));
 
   return (
     <div ref={root} className="lg-col" data-testid="review-tile">
@@ -329,7 +335,7 @@ function IntentOutcome({ pack }: { pack: Pack }) {
   const fromTranscript = useAgentReport(structured ? [] : pack.coderAttempts);
   const report = structured ? { text: structured.summary, attempt: pack.coderAttempts.at(-1) ?? null } : fromTranscript;
   const shown = report.attempt ?? pack.coder;
-  const engine = shown ? displayEngine(dataStore.getState(), shown) : (pack.node?.agent.engine ?? 'claude');
+  const engine = shown ? displayEngine(dataStore.getState(), shown) : taskEngine(dataStore.getState(), null);
   const running = report.attempt?.status === 'running';
   return (
     <>

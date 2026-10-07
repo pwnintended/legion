@@ -1,6 +1,6 @@
 import { permissionProfileFor, type SessionOptions } from '@shared/engine';
 import { describe, expect, it } from 'vitest';
-import { bashRules, buildClaudeArgs, childEnv, permissionArgs } from './args';
+import { bashRules, buildClaudeArgs, childEnv, flagSettings, mcpConfig, permissionArgs } from './args';
 
 const base = (overrides: Partial<SessionOptions> = {}): SessionOptions => ({
   role: 'reviewer',
@@ -185,5 +185,93 @@ describe('web research profiles', () => {
     expect(perms.disallowedTools).toEqual(expect.arrayContaining(['Read', 'Bash', 'Task']));
     expect(perms.disallowedTools).not.toContain('WebSearch');
     expect(permissionArgs(permissionProfileFor('lead'), null).disallowedTools).toContain('WebSearch');
+  });
+});
+
+describe('project MCP servers', () => {
+  const linear = { type: 'http' as const, url: 'https://mcp.linear.app/mcp', headers: { Authorization: 'Bearer x' } };
+  const local = { type: 'stdio' as const, command: 'npx', args: ['-y', 'thing'], env: { A: 'b' } };
+
+  it('adds the servers next to Legion and pre-approves them by name', () => {
+    const args = buildClaudeArgs({
+      opts: base({
+        role: 'coder',
+        permission: permissionProfileFor('coder'),
+        mcp: { url: 'http://h/mcp', token: 'tok' },
+        extraMcp: { linear, local },
+      }),
+      sessionId: 's',
+    });
+    expect(JSON.parse(flag(args, '--mcp-config') as string)).toEqual({
+      mcpServers: {
+        legion: { type: 'http', url: 'http://h/mcp', headers: { Authorization: 'Bearer tok' } },
+        linear: { type: 'http', url: linear.url, headers: linear.headers },
+        local: { type: 'stdio', command: 'npx', args: ['-y', 'thing'], env: { A: 'b' } },
+      },
+    });
+    expect((flag(args, '--allowedTools') as string).split(',')).toEqual(['mcp__legion', 'mcp__linear', 'mcp__local']);
+    expect(args).toContain('--strict-mcp-config');
+  });
+
+  it('passes the servers even without a Legion connection', () => {
+    const args = buildClaudeArgs({ opts: base({ extraMcp: { linear } }), sessionId: 's' });
+    expect(Object.keys(JSON.parse(flag(args, '--mcp-config') as string).mcpServers)).toEqual(['linear']);
+    expect(flag(args, '--allowedTools')).toBe('mcp__linear');
+  });
+
+  it('gives a coordinating session none of them', () => {
+    const args = buildClaudeArgs({
+      opts: base({
+        role: 'lead',
+        permission: permissionProfileFor('lead'),
+        extraMcp: { linear },
+        skills: { allow: ['x'], user: [] },
+      }),
+      sessionId: 's',
+    });
+    expect(args).not.toContain('--mcp-config');
+    expect(args).not.toContain('--allowedTools');
+    expect(JSON.parse(flag(args, '--settings') as string)).toEqual({ autoMemoryEnabled: false });
+  });
+
+  it('builds an mcpConfig without Legion', () => {
+    expect(mcpConfig(null, { linear }).mcpServers).toEqual({
+      linear: { type: 'http', url: linear.url, headers: linear.headers },
+    });
+  });
+});
+
+describe('skill allowlist', () => {
+  it('leaves the CLI default alone without one', () => {
+    const args = buildClaudeArgs({ opts: base(), sessionId: 's' });
+    expect(JSON.parse(flag(args, '--settings') as string)).toEqual({ autoMemoryEnabled: false });
+    expect(args).not.toContain('--plugin-dir');
+  });
+
+  it('switches bundled skills off and turns off repo skills that are not allowed', () => {
+    const skills = { allow: ['keep', 'zebra'], user: [{ name: 'zebra', dir: '/home/u/.claude/skills/zebra' }] };
+    expect(flagSettings(skills, ['keep', 'drop'])).toEqual({
+      autoMemoryEnabled: false,
+      disableBundledSkills: true,
+      skillOverrides: { 'plugin-authoring': 'off', drop: 'off' },
+    });
+    const args = buildClaudeArgs({
+      opts: base({ role: 'coder', permission: permissionProfileFor('coder'), skills }),
+      sessionId: 's',
+      skillsPluginDir: '/tmp/x/skills-plugin',
+      disabledSkills: ['keep', 'drop'],
+    });
+    expect(flag(args, '--plugin-dir')).toBe('/tmp/x/skills-plugin');
+    expect(JSON.parse(flag(args, '--settings') as string).skillOverrides).toEqual({
+      'plugin-authoring': 'off',
+      drop: 'off',
+    });
+  });
+
+  it('with an empty allowlist turns everything off', () => {
+    expect(flagSettings({ allow: [], user: [] }, ['repo-skill'])).toMatchObject({
+      disableBundledSkills: true,
+      skillOverrides: { 'repo-skill': 'off', 'plugin-authoring': 'off' },
+    });
   });
 });

@@ -101,6 +101,56 @@ describe('settings', () => {
   });
 });
 
+describe('settings: MCP servers and agent access', () => {
+  const linear = { type: 'http' as const, url: 'https://mcp.linear.app/mcp', headers: {} };
+  const local = { type: 'stdio' as const, command: 'npx', args: ['-y', 'x'], env: {} };
+
+  it('adds servers and grants them per project and role', () => {
+    const next = applySettingsPatch(DEFAULT_SETTINGS, {
+      mcpServers: { linear, local },
+      access: { p1: { coder: { mcp: ['linear'], skills: ['zebra'] }, reviewer: { mcp: [], skills: null } } },
+    });
+    expect(Object.keys(next.mcpServers)).toEqual(['linear', 'local']);
+    // A role with nothing granted and the default skills is not stored.
+    expect(next.access).toEqual({ p1: { coder: { mcp: ['linear'], skills: ['zebra'] } } });
+  });
+
+  it('replaces a role entry and clears it with null', () => {
+    const base = applySettingsPatch(DEFAULT_SETTINGS, {
+      mcpServers: { linear, local },
+      access: { p1: { coder: { mcp: ['linear', 'local'], skills: null } } },
+    });
+    const replaced = applySettingsPatch(base, { access: { p1: { coder: { mcp: ['local'], skills: null } } } });
+    expect(replaced.access.p1?.coder?.mcp).toEqual(['local']);
+    const cleared = applySettingsPatch(replaced, { access: { p1: { coder: null } } });
+    expect(cleared.access).toEqual({});
+  });
+
+  it('removing a server removes its grants', () => {
+    const base = applySettingsPatch(DEFAULT_SETTINGS, {
+      mcpServers: { linear, local },
+      access: {
+        p1: { coder: { mcp: ['linear', 'local'], skills: null }, resolver: { mcp: ['linear'], skills: null } },
+      },
+    });
+    const next = applySettingsPatch(base, { mcpServers: { linear: null } });
+    expect(Object.keys(next.mcpServers)).toEqual(['local']);
+    expect(next.access).toEqual({ p1: { coder: { mcp: ['local'], skills: null } } });
+  });
+
+  it('refuses a reserved or malformed server name and a grant of an unknown server', () => {
+    expect(() => applySettingsPatch(DEFAULT_SETTINGS, { mcpServers: { legion: linear } })).toThrow();
+    expect(() => applySettingsPatch(DEFAULT_SETTINGS, { mcpServers: { a__b: linear } })).toThrow();
+    const next = applySettingsPatch(DEFAULT_SETTINGS, { access: { p1: { coder: { mcp: ['ghost'], skills: null } } } });
+    expect(next.access).toEqual({});
+  });
+
+  it('keeps settings stored before these fields existed valid', () => {
+    const { mcpServers: _m, access: _a, ...old } = DEFAULT_SETTINGS;
+    expect(normalizeSettings(old)).toEqual(DEFAULT_SETTINGS);
+  });
+});
+
 describe('domain helpers', () => {
   it('reviewPasses requires all criteria met and no blocker/major', () => {
     const met = [{ id: 'AC1', status: 'met' as const, evidence: '' }];

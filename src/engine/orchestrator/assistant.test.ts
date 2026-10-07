@@ -2,7 +2,11 @@
  * The assistant through the lifecycle service: a conversation run, the human's messages, research, starting
  * the work, the lead reporting to it, status news, and the off switch.
  */
+import { mkdtemp, symlink, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import type { Attempt } from '@shared/domain';
+import type { AgentEvent } from '@shared/events';
 import { afterEach, describe, expect, it } from 'vitest';
 import type { FakeTurnContext } from '../adapters/fake';
 import type { McpBinding } from '../mcp';
@@ -69,6 +73,107 @@ async function chat(harness: Harness, prompt = 'How is auth done here?') {
   }, 'assistant attempt');
   return { run, assistant };
 }
+
+const humanMessages = (harness: Harness, attemptId: string) =>
+  harness.events
+    .filter((e) => e.type === 'agent.event' && e.attemptId === attemptId && e.event.type === 'user_message')
+    .map((e) => (e as { event: Extract<AgentEvent, { type: 'user_message' }> }).event);
+
+describe('the conversation record', () => {
+  it("records the human's messages in the assistant's transcript, never Legion's wakes", async () => {
+    const rec = recorder();
+    h = await startHarness({ script, assistant: rec.assistant });
+    const harness = h;
+    const { run, assistant } = await chat(harness, 'Tidy the logging.');
+    await harness.waitFor(() => rec.turns.length === 1, 'first turn');
+    await harness.client.call('sessions.send', {
+      attemptId: assistant.id,
+      text: 'Only the server side.',
+      priority: 'next',
+      attachmentIds: null,
+    });
+    await harness.waitFor(() => rec.turns.length === 2, 'second turn');
+    // A wake (status news) is not the human's.
+    harness.engine.orchestrator.mcpHost.startImplementation(binding(assistant), {
+      title: 'Logging',
+      brief: 'Tidy server logging.',
+      clarify: false,
+    });
+    await harness.waitFor(() => rec.messages().some((m) => m.startsWith('Update from Legion')), 'wake');
+    await harness.waitFor(() => humanMessages(harness, assistant.id).length === 2, 'recorded');
+    expect(humanMessages(harness, assistant.id)).toEqual([
+      { type: 'user_message', text: 'Tidy the logging.', attachments: [], priority: null },
+      { type: 'user_message', text: 'Only the server side.', attachments: [], priority: 'next' },
+    ]);
+    const transcript = await harness.client.call('attempts.transcript', {
+      attemptId: assistant.id,
+      sinceSeq: 0,
+      limit: 500,
+    });
+    expect(transcript.entries.filter((e) => e.event.type === 'user_message')).toHaveLength(2);
+    expect(run.issueText).toBe('Tidy the logging.');
+  }, 60_000);
+});
+
+describe('present', () => {
+  it('copies files and documents into the store, confines paths, and tells the assistant', async () => {
+    const rec = recorder();
+    h = await startHarness({ script, assistant: rec.assistant });
+    const harness = h;
+    const { orchestrator, store } = harness.engine;
+    const { run, assistant } = await chat(harness, 'Show me the settings page.');
+    await harness.waitFor(() => rec.turns.length === 1, 'first turn');
+    const host = orchestrator.mcpHost;
+    // A run-level researcher under the assistant stands in for any agent with files.
+    const spawned = await host.spawnResearch(binding(store.requireAttempt(assistant.id)), {
+      title: 'Look',
+      brief: 'Look around.',
+      mode: 'single',
+    });
+    const agent = binding(store.requireAttempt(spawned.attemptId));
+
+    const dir = await mkdtemp(join(tmpdir(), 'legion-present-'));
+    const shot = join(dir, 'shot.png');
+    await writeFile(shot, Buffer.from('89504e470d0a1a0a0000000d49484452000000010000000108020000009077', 'hex'));
+    await writeFile(join(harness.repo.path, 'NOTES.md'), '# Notes\n');
+    const shown = await host.present(agent, {
+      title: 'Settings page',
+      caption: 'The new list.',
+      files: [shot, 'NOTES.md'],
+      markdown: '# Summary\n\nAll good.',
+    });
+    expect(shown.files).toBe(3);
+    const [presentation] = store.listPresentations(run.id);
+    expect(presentation).toMatchObject({
+      title: 'Settings page',
+      caption: 'The new list.',
+      attemptId: agent.attemptId,
+    });
+    expect(presentation?.attachments.map((a) => [a.name, a.kind])).toEqual([
+      ['shot.png', 'image'],
+      ['NOTES.md', 'text'],
+      ['settings-page.md', 'text'],
+    ]);
+    await harness.waitFor(() => harness.events.some((e) => e.type === 'presentation.created'), 'event');
+    expect((await harness.client.call('runs.get', { runId: run.id })).presentations).toHaveLength(1);
+    await harness.waitFor(() => rec.messages().some((m) => m.includes('showed the human "Settings page"')), 'told');
+
+    // Outside the working directory and the temp dir (the harness itself lives in the temp dir): refused, through
+    // symlinks too.
+    const outside = '/etc/hosts';
+    await expect(host.present(agent, { title: 'x', caption: null, files: [outside], markdown: null })).rejects.toThrow(
+      /outside your working directory/,
+    );
+    await symlink(outside, join(harness.repo.path, 'link.txt'));
+    await expect(
+      host.present(agent, { title: 'x', caption: null, files: ['link.txt'], markdown: null }),
+    ).rejects.toThrow(/outside your working directory/);
+    await expect(
+      host.present(agent, { title: 'x', caption: null, files: ['nope.png'], markdown: null }),
+    ).rejects.toThrow(/does not exist/);
+    expect(store.listPresentations(run.id)).toHaveLength(1);
+  }, 60_000);
+});
 
 describe('the assistant', () => {
   it("opens a conversation run, takes the human's messages, spawns research and relays the report", async () => {
@@ -149,7 +254,7 @@ describe('the assistant', () => {
     await harness.waitFor(() => store.requireRun(run.id).status === 'awaiting_approval', 'plan');
     await harness.waitFor(() => rec.messages().some((m) => m.includes('planning → awaiting_approval')), 'status news');
     const news = rec.messages().find((m) => m.includes('planning → awaiting_approval')) as string;
-    expect(news).toContain("plan v1 waits for the human's sign-off (inbox)");
+    expect(news).toContain("plan v1 waits for the human's sign-off (a card in your conversation)");
     const status = await host.runStatus(asAssistant);
     expect(status).toMatchObject({ status: 'awaiting_approval', plan: { version: 1, approved: false } });
     expect(status.waitingForHuman[0]).toContain('sign-off');

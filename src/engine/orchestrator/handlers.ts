@@ -10,7 +10,6 @@ import {
   restartTask,
   resumeRun,
   retryTask,
-  setTaskEngine,
   skipTask,
 } from './actions';
 import { createChat } from './assistant';
@@ -50,9 +49,6 @@ export function registerOrchestratorHandlers(server: EngineRpcServer, o: Orchest
   server.implement('tasks.retry', ({ taskId, note }) => retryTask(o, taskId, note));
   server.implement('tasks.restart', ({ taskId, note }) => restartTask(o, taskId, note ?? null));
   server.implement('tasks.skip', ({ taskId }) => skipTask(o, taskId));
-  server.implement('tasks.setEngine', ({ taskId, engine, model, effort }) =>
-    setTaskEngine(o, taskId, engine, model, effort),
-  );
   server.implement('tasks.approveMerge', ({ taskId }) => approveMerge(o, taskId));
   server.implement('tasks.requestChanges', ({ taskId, feedback }) => requestChanges(o, taskId, feedback));
 

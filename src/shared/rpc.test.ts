@@ -25,7 +25,6 @@ const REQUIRED = [
   'runs.createPr',
   'tasks.retry',
   'tasks.skip',
-  'tasks.setEngine',
   'tasks.approveMerge',
   'tasks.requestChanges',
   'inbox.list',

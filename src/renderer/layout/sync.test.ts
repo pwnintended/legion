@@ -36,7 +36,6 @@ function input(statuses: Partial<Record<string, TaskStatus>>, extra: Partial<Run
       status: status as TaskStatus,
     })),
     clarifyItemId: null,
-    assistantAttemptId: null,
     hierarchy: false,
     ...extra,
   };
@@ -212,16 +211,10 @@ describe('initial focus', () => {
 });
 
 describe('conversation and agents columns', () => {
-  it('puts the assistant conversation first, focused while chatting, and adds the agents column with a hierarchy', () => {
-    const ws = syncWithRun(
-      null,
-      input({}, { status: 'chatting', nodes: [], assistantAttemptId: 'att_as', hierarchy: true }),
-    );
-    expect(ws.strip.columns.map((c) => c.key)).toEqual(['assistant', 'plan', 'agents']);
-    const conversation = ws.strip.columns[0];
-    expect(conversation?.tiles[0]).toMatchObject({ kind: 'session', params: { attemptId: 'att_as', taskId: null } });
-    expect(ws.focus?.column).toBe(conversation?.id);
-    const agents = ws.strip.columns[2];
+  it('leaves the conversation to the chat view and adds the agents column with a hierarchy', () => {
+    const ws = syncWithRun(null, input({}, { status: 'chatting', nodes: [], hierarchy: true }));
+    expect(ws.strip.columns.map((c) => c.key)).toEqual(['plan', 'agents']);
+    const agents = ws.strip.columns[1];
     expect(agents?.tiles.map((t) => t.kind)).toEqual(['agents', 'messages']);
     expect(agents?.collapsed).toBe(true);
   });

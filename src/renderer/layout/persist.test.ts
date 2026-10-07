@@ -30,7 +30,6 @@ function layout(): Workspace {
       { id: 'task_2', nodeId: 'T2', status: 'blocked' },
     ],
     clarifyItemId: null,
-    assistantAttemptId: null,
     hierarchy: false,
   });
   const [id, next] = allocateId(ws, 'terminal');

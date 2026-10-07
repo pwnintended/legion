@@ -11,6 +11,8 @@ import {
   type Effort,
   type EngineKind,
   EngineKindSchema,
+  type McpServer,
+  ROLES,
   type Role,
 } from './domain';
 import type { AgentEvent } from './events';
@@ -104,11 +106,36 @@ export function permissionProfileFor(
  */
 export const COORDINATOR_ROLES: ReadonlySet<Role> = new Set<Role>(['lead', 'research_lead', 'assistant']);
 
+/** Roles that may be given MCP servers and skills: every one that is more than a talker (`coordinate`). */
+export const ACCESS_ROLES: readonly Role[] = ROLES.filter((role) => ROLE_PERMISSION_MODE[role] !== 'coordinate');
+
 export interface McpConnection {
   /** Legion MCP server URL, e.g. http://127.0.0.1:43123/mcp */
   url: string;
   /** Per-session bearer token (maps to run/task/attempt/role in the MCP server). */
   token: string;
+}
+
+/**
+ * The skills a session may use (`settings.access`, resolved by the orchestrator). Absent = the CLI's own
+ * default set. `allow` names every permitted skill; `user` is the part of it that lives in the user's skill
+ * folders, with the directory to expose (repo skills are found in the working directory by the adapter).
+ */
+export interface SessionSkills {
+  allow: readonly string[];
+  user: readonly { name: string; dir: string }[];
+}
+
+/**
+ * What a session gets besides the built-in tools: the project's MCP servers and skill allowlist. Only sessions
+ * that can do more than talk (not `coordinate`) get any.
+ */
+export function sessionExtras(opts: Pick<SessionOptions, 'permission' | 'extraMcp' | 'skills'>): {
+  extraMcp: Readonly<Record<string, McpServer>>;
+  skills: SessionSkills | null;
+} {
+  if (opts.permission.mode === 'coordinate') return { extraMcp: {}, skills: null };
+  return { extraMcp: opts.extraMcp ?? {}, skills: opts.skills ?? null };
 }
 
 /**
@@ -140,6 +167,10 @@ export interface SessionOptions {
   outputSchema?: JsonSchema | null;
   /** null = no Legion MCP tools (tests). */
   mcp: McpConnection | null;
+  /** MCP servers besides Legion's (name → server), from the project's access settings. Absent = none. */
+  extraMcp?: Readonly<Record<string, McpServer>> | null;
+  /** Skill allowlist; absent = the CLI's default set. Ignored for `coordinate` sessions. */
+  skills?: SessionSkills | null;
   /** Full environment for the child process (login-shell PATH already resolved by main). */
   env: Readonly<Record<string, string>>;
   /**

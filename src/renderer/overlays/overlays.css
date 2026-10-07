@@ -779,143 +779,6 @@
   color: var(--text);
 }
 
-/* Inbox ------------------------------------------------------------------------------------- */
-.ib-list {
-  flex: 1;
-  min-height: 0;
-  overflow-y: auto;
-  padding: 8px;
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  outline: none;
-}
-.ib-item {
-  position: relative;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  padding: 10px 12px;
-  border-radius: 10px;
-  background: var(--mantle);
-  border: 1px solid var(--surface0);
-  transition:
-    border-color 0.15s,
-    background-color 0.15s;
-}
-.ib-item[data-kind="approval"] {
-  border-color: color-mix(in srgb, var(--peach) 35%, transparent);
-}
-.ib-item[aria-selected="true"] {
-  border-color: var(--surface2);
-  background: var(--mantle);
-  box-shadow: inset 2px 0 0 var(--mauve);
-}
-.ib-item[data-kind="approval"][aria-selected="true"] {
-  border-color: color-mix(in srgb, var(--peach) 70%, transparent);
-  box-shadow: inset 2px 0 0 var(--peach);
-}
-.ib-meta {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  font-size: 12px;
-  min-width: 0;
-}
-.ib-context {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.ib-blocks {
-  margin-left: auto;
-  flex: none;
-  font-size: 11.5px;
-}
-.ib-text {
-  font-size: 13px;
-  line-height: 1.45;
-  color: var(--text);
-}
-.ib-sub {
-  margin-top: -4px;
-  font-size: 12px;
-}
-.ib-actions {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 6px;
-}
-.ib-actions .ap-actions {
-  gap: 6px;
-}
-.ib-jump {
-  margin-left: auto;
-}
-.ib-item .ap-subject {
-  font-size: 12px;
-  padding: 6px 9px;
-}
-.ib-options {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-}
-.ib-answer {
-  display: flex;
-  gap: 6px;
-}
-.ib-files {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  font-size: 11.5px;
-  color: var(--subtext0);
-}
-.ib-bar {
-  display: block;
-  height: 4px;
-  border-radius: 2px;
-  background: var(--surface0);
-  overflow: hidden;
-}
-.ib-bar > span {
-  display: block;
-  height: 100%;
-  border-radius: 2px;
-  background: var(--peach);
-}
-.ib-error {
-  font-size: 12px;
-  color: var(--red);
-}
-.ib-empty {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 6px;
-  padding: 36px 24px 40px;
-  text-align: center;
-  font-size: 12.5px;
-}
-.ib-empty-mark {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 40px;
-  height: 40px;
-  border-radius: 12px;
-  margin-bottom: 6px;
-  background: color-mix(in srgb, var(--green) 12%, transparent);
-  color: var(--green);
-}
-.ib-empty-title {
-  font-size: 14px;
-  font-weight: 600;
-}
-
 /* Palette ----------------------------------------------------------------------------------- */
 .pal {
   display: flex;
@@ -1297,7 +1160,7 @@
 .st-roles-head,
 .st-roles-row {
   display: grid;
-  grid-template-columns: minmax(0, 1.4fr) 92px minmax(0, 1fr) minmax(0, 1fr) 92px;
+  grid-template-columns: minmax(0, 1.4fr) 92px minmax(0, 1.2fr) 92px;
   gap: 8px;
   align-items: center;
 }
@@ -1367,4 +1230,183 @@
   to {
     transform: rotate(360deg);
   }
+}
+
+/* Settings → Access: MCP server registry and per-project role grants. */
+.ac-empty {
+  padding: 6px 0;
+}
+.ac-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+}
+.ac-server {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--hairline);
+}
+.ac-server:last-child {
+  border-bottom: none;
+}
+.ac-server-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.ac-server-name {
+  font-size: 12.5px;
+  font-weight: 500;
+  color: var(--text);
+}
+.ac-server-sum {
+  font-size: 11.5px;
+  color: var(--subtext0);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ac-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 10px;
+}
+.ac-found {
+  margin: 10px 0 0;
+  padding: 4px 12px;
+  min-width: 0;
+  border: 1px dashed var(--surface1);
+  border-radius: 10px;
+}
+.ac-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 10px;
+}
+.ac-editor-top {
+  display: flex;
+  align-items: flex-end;
+  gap: 12px;
+}
+.ac-editor-top .st-field {
+  flex: 1;
+}
+.ac-input {
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 32px;
+  padding: 0 9px;
+  font-size: 12px;
+  color: var(--text);
+  background: var(--base);
+  border: 1.5px solid var(--surface0);
+  border-radius: 8px;
+  user-select: text;
+}
+.ac-input:focus-visible {
+  outline: none;
+  border-color: var(--mauve);
+}
+.ac-input:disabled {
+  color: var(--subtext0);
+}
+.ac-area {
+  padding: 6px 9px;
+  resize: vertical;
+  line-height: 1.45;
+}
+.ac-roles {
+  display: flex;
+  flex-direction: column;
+}
+.ac-role {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px 0;
+  border-bottom: 1px solid var(--hairline);
+}
+.ac-role:last-child {
+  border-bottom: none;
+}
+.ac-role-head {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  min-width: 0;
+}
+.ac-role-name {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--text);
+}
+.ac-line {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px 10px;
+}
+.ac-key {
+  flex: none;
+  width: 44px;
+  font-size: 11.5px;
+  color: var(--overlay2);
+}
+.ac-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  border: none;
+  min-width: 0;
+}
+.ac-chips-skills {
+  padding-left: 54px;
+}
+.ac-chip {
+  all: unset;
+  box-sizing: border-box;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 24px;
+  padding: 0 10px;
+  font-size: 12px;
+  color: var(--subtext1);
+  background: var(--mantle);
+  border: 1px solid var(--surface1);
+  border-radius: 12px;
+  transition:
+    background 0.12s,
+    border-color 0.12s,
+    color 0.12s;
+}
+.ac-chip:hover {
+  border-color: var(--surface2);
+  color: var(--text);
+}
+.ac-chip[aria-pressed="true"] {
+  color: var(--text);
+  background: color-mix(in srgb, var(--mauve) 16%, var(--mantle));
+  border-color: var(--mauve);
+}
+.ac-chip:focus-visible {
+  outline: 2px solid var(--mauve);
+  outline-offset: 1px;
+}
+.ac-chip-tag {
+  font-size: 10px;
+  color: var(--overlay2);
+}
+.ac-foot {
+  margin-top: 8px;
 }

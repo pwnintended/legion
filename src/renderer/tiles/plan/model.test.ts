@@ -30,7 +30,7 @@ function node(id: string, dependsOn: string[], writes: string[] = [], extra: Par
     size: 'S',
     verify: { commands: ['pnpm test'] },
     contextHints: { files: [], notes: '' },
-    agent: { engine: 'claude', model: null, effort: null },
+    agent: { effort: null },
     risk: 'low',
     ...extra,
   };

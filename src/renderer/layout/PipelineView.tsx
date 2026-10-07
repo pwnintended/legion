@@ -6,7 +6,7 @@
 import type { TaskNode } from '@shared/domain';
 import { useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { mergesOfRun, tasksOfRun, verificationsOfRun } from '../app/data';
-import { useAcknowledged, useData, useLatestPlan, useRun, useTileMeta } from '../app/hooks';
+import { useAcknowledged, useData, useLatestPlan, useRun, useSettings, useTileMeta } from '../app/hooks';
 import { actions } from '../app/store';
 import { Icon } from '../chrome/icons';
 import { Chip, EngineChip, StatusChipView } from '../chrome/ui';
@@ -251,7 +251,8 @@ function PipelineNode({
   const meta = useTileMeta(runId, tile);
   const acknowledged = useAcknowledged(meta.urgent.map((i) => i.id));
   const urgent = meta.urgent.length > 0;
-  const engine = meta.engine?.kind ?? node.agent.engine;
+  const coderEngine = useSettings()?.roles.coder.engine ?? 'claude';
+  const engine = meta.engine?.kind ?? coderEngine;
   const tone = meta.task?.status === 'merged' ? 'ok' : meta.status?.tone === 'run' ? 'run' : undefined;
   return (
     <button

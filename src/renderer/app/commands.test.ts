@@ -53,7 +53,10 @@ describe('key dispatch', () => {
     uiStore.setState(initialUi());
   });
 
-  it('runs global layout bindings when no overlay is open', () => {
+  it('runs global layout bindings when no overlay is open, in the agents view only', () => {
+    expect(handleKeyDown(cmdEnter() as unknown as KeyboardEvent)).toBe(false);
+    expect(ran).toEqual([]);
+    uiStore.setState({ view: 'agents' });
     const event = cmdEnter();
     expect(handleKeyDown(event as unknown as KeyboardEvent)).toBe(true);
     expect(ran).toEqual(['layout.focus']);
@@ -109,7 +112,7 @@ describe('key dispatch', () => {
     try {
       handleKeyDown(cmdEnter() as unknown as KeyboardEvent);
       expect(ran).toEqual(['test.approve']);
-      uiStore.setState({ overlay: 'inbox' });
+      uiStore.setState({ overlay: 'palette' });
       handleKeyDown(cmdEnter() as unknown as KeyboardEvent);
       expect(ran).toEqual(['test.approve']);
     } finally {

@@ -36,10 +36,8 @@ interface Draft {
   base: string;
   engine: EngineKind | null;
   clarify: boolean;
-  /** Skip the assistant and hand the prompt to the planner at once. */
-  direct: boolean;
 }
-let saved: Draft = { text: '', repoPath: null, base: '', engine: null, clarify: true, direct: false };
+let saved: Draft = { text: '', repoPath: null, base: '', engine: null, clarify: true };
 /** The composer's attachments: kept (uploaded drafts) while the overlay is closed. */
 const savedAttachments = createDraft();
 
@@ -137,10 +135,8 @@ export function ComposerOverlay() {
   const [base, setBase] = useState(() => seededBase(saved.base, saved.repoPath, seed));
   const [engine, setEngine] = useState<EngineKind>(saved.engine ?? settings?.roles.planner.engine ?? 'claude');
   const [clarify, setClarify] = useState(saved.clarify);
-  // With the assistant on, the prompt starts a conversation; "Plan directly" keeps the planner-first path.
-  const assistantAvailable = settings?.assistant.enabled !== false;
-  const [direct, setDirect] = useState(saved.direct);
-  const viaAssistant = assistantAvailable && !direct;
+  // With the assistant on (Settings → Agents), the prompt starts a conversation; off, it goes to the planner.
+  const viaAssistant = settings?.assistant.enabled !== false;
   const [recent, setRecent] = useState<RecentRepo[]>([]);
   const [found, setFound] = useState<DiscoveredRepo[]>(lastFound ?? []);
   const [discovering, setDiscovering] = useState(lastFound === null);
@@ -164,8 +160,8 @@ export function ComposerOverlay() {
   });
 
   useEffect(() => {
-    saved = { text, repoPath, base, engine, clarify, direct };
-  }, [text, repoPath, base, engine, clarify, direct]);
+    saved = { text, repoPath, base, engine, clarify };
+  }, [text, repoPath, base, engine, clarify]);
 
   useEffect(() => {
     let cancelled = false;
@@ -339,13 +335,14 @@ export function ComposerOverlay() {
             skipClarify: !clarify,
             attachmentIds: savedAttachments.ids,
           });
-      saved = { text: '', repoPath, base: '', engine, clarify, direct };
+      saved = { text: '', repoPath, base: '', engine, clarify };
       savedAttachments.clear();
       actions.closeOverlay();
       // Into the store first: the run's `run.updated` may still be on its way, and an active run the store
       // doesn't know is replaced by the first run of the list on the next data event.
       adoptRun(run);
       actions.setActiveRun(run.id);
+      actions.setView('chat');
     } catch (error) {
       setSubmitError(errorMessage(error));
     } finally {
@@ -562,17 +559,6 @@ export function ComposerOverlay() {
           {engineError ? <span className="cmp-error">{engineError}</span> : null}
 
           <div className="cmp-foot">
-            {assistantAvailable ? (
-              <label className="cmp-check">
-                <input
-                  type="checkbox"
-                  checked={direct}
-                  data-testid="composer-direct"
-                  onChange={(event) => setDirect(event.target.checked)}
-                />
-                Plan directly, without the assistant
-              </label>
-            ) : null}
             {viaAssistant ? null : (
               <label className="cmp-check">
                 <input type="checkbox" checked={clarify} onChange={(event) => setClarify(event.target.checked)} />

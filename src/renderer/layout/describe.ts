@@ -93,9 +93,10 @@ export function prLabel(pr: PullRequestInfo): string {
   return `PR${n} ${pr.state}`;
 }
 
-export function taskEngine(task: Task, node: TaskNode | null, attempt: Attempt | null): EngineKind {
+/** The engine a task's coder runs on: what its latest attempt used, else the coder role in settings. */
+export function taskEngine(state: Pick<DataState, 'settings'>, attempt: Attempt | null): EngineKind {
   const real = (e: EngineKind | null | undefined) => (e && e !== 'fake' ? e : null);
-  return real(attempt?.engine) ?? real(task.engineOverride) ?? node?.agent.engine ?? 'claude';
+  return real(attempt?.engine) ?? real(state.settings?.roles.coder.engine) ?? 'claude';
 }
 
 /** Display engine of any attempt (see `taskEngine`): fake-mode attempts show the engine their role implies. */
@@ -106,9 +107,7 @@ export function displayEngine(
 ): EngineKind {
   if (!attempt) return fallback;
   if (attempt.engine !== 'fake') return attempt.engine;
-  const task = attempt.taskId ? state.tasks[attempt.taskId] : null;
-  const node = task ? (taskNode(latestPlan(state, attempt.runId), task.nodeId) ?? null) : null;
-  const planned = task ? taskEngine(task, node, null) : null;
+  const planned = attempt.taskId ? taskEngine(state, null) : null;
   const configured = (role: 'planner' | 'finalizer' | 'researcher' | 'research_lead', otherwise: EngineKind) => {
     const engine = state.settings?.roles[role].engine;
     return engine && engine !== 'fake' ? engine : otherwise;
@@ -180,11 +179,11 @@ function taskStatusChip(
     case 'verifying':
       return { label: 'verifying', tone: 'run', live: true };
     case 'reviewing': {
-      const engine = reviewer ? displayEngine(state, reviewer) : otherEngine(taskEngine(task, null, coder));
+      const engine = reviewer ? displayEngine(state, reviewer) : otherEngine(taskEngine(state, coder));
       return { label: `${ENGINE_LABEL[engine]} reviewing`, tone: engineTone(engine), live: true };
     }
     case 'fixing':
-      return { label: `fixing ${task.fixRounds}/2`, tone: engineTone(taskEngine(task, null, coder)), live: true };
+      return { label: `fixing ${task.fixRounds}/2`, tone: engineTone(taskEngine(state, coder)), live: true };
     case 'approved':
       return { label: 'approved', tone: 'ok', live: false };
     case 'awaiting_human':
@@ -271,7 +270,7 @@ export function describeTile(state: DataState, runId: string, tile: LayoutTile, 
       const node = taskNode(plan, task.nodeId);
       const coder = latestAttempt(state, task, 'coder');
       const reviewer = latestAttempt(state, task, 'reviewer');
-      const engine = taskEngine(task, node, coder);
+      const engine = taskEngine(state, coder);
       const tasks = tasksOfRun(state.tasks, runId);
       const pendingDeps = (node?.dependsOn ?? []).filter(
         (dep) => tasks.find((t) => t.nodeId === dep)?.status !== 'merged',
@@ -285,7 +284,7 @@ export function describeTile(state: DataState, runId: string, tile: LayoutTile, 
         note = stat ? `merged · +${stat.added} −${stat.removed}` : 'merged';
       } else if (task.status === 'blocked' && pendingDeps.length) note = `waits on ${pendingDeps.join(' ')}`;
       else if (task.progress) note = task.progress;
-      const effort = task.effortOverride ?? coder?.effort ?? node?.agent.effort ?? null;
+      const effort = coder?.effort ?? node?.agent.effort ?? null;
       if (tile.kind === 'review') {
         const review = latestReview(state, task.id, runId);
         const reviewerEngine = reviewer ? displayEngine(state, reviewer) : otherEngine(engine);

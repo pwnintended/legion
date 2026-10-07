@@ -1,5 +1,5 @@
 /**
- * Overlay host, mounted once by App: shows the composer (⌘N), inbox (⌘I) or palette (⌘K) from
+ * Overlay host, mounted once by App: shows the composer (⌘N), palette (⌘K), settings, ... from
  * `uiStore.overlay`, restores focus when it closes, and renders transient toasts.
  */
 import { AnimatePresence, motion } from 'motion/react';
@@ -11,7 +11,6 @@ import { AddProjectOverlay } from './AddProject';
 import { ComposerOverlay } from './Composer';
 import { ConfirmHost } from './Confirm';
 import { GoToFileOverlay } from './GoToFile';
-import { InboxOverlay } from './Inbox';
 import { useToasts } from './nav';
 import './overlays.css';
 import './projects.css';
@@ -20,7 +19,6 @@ import { SettingsOverlay } from './Settings';
 
 const VIEWS: Record<Overlay, () => React.JSX.Element> = {
   composer: ComposerOverlay,
-  inbox: InboxOverlay,
   palette: PaletteOverlay,
   settings: SettingsOverlay,
   addProject: AddProjectOverlay,

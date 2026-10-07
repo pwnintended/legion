@@ -67,8 +67,8 @@ export interface EstimateOptions {
   readonly concurrency?: { readonly global: number; readonly perEngine: Partial<ByEngine<number>> };
   readonly maxFixRounds?: number;
   readonly enabled?: EnabledEngines;
-  /** Coder engine overrides by node id (`Task.engineOverride`). */
-  readonly engineOverrides?: ReadonlyMap<string, EngineKind>;
+  /** The engine every coder runs on (the coder role in settings); default claude. */
+  readonly coderEngine?: EngineKind;
   readonly constants?: Partial<EstimateConstants>;
 }
 
@@ -116,11 +116,11 @@ function constantsWith(overrides?: Partial<EstimateConstants>): EstimateConstant
 }
 
 export function estimateNode(
-  node: Pick<TaskNode, 'id' | 'size' | 'risk' | 'agent'>,
+  node: Pick<TaskNode, 'id' | 'size' | 'risk'>,
   options: EstimateOptions = {},
 ): NodeEstimate {
   const k = constantsWith(options.constants);
-  const coderEngine = options.engineOverrides?.get(node.id) ?? node.agent.engine;
+  const coderEngine = options.coderEngine ?? 'claude';
   const reviewerEngine = reviewerEngineFor(coderEngine, options.enabled);
   const maxFix = options.maxFixRounds ?? 2;
   const fixRounds = Math.min(maxFix, k.expectedFixRounds[node.risk] + (node.size === 'L' ? k.largeExtraFixRounds : 0));

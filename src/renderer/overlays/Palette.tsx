@@ -1,21 +1,21 @@
 /**
  * Command palette (⌘K, cmdk): every registered command with its shortcut, plus entries derived from run data:
- * switch run, jump to a task by id ("T3"), take over / interrupt a session, swap a task's engine, open the diff,
+ * switch run, jump to a task by id ("T3"), take over / interrupt a session, open the diff,
  * reveal or copy a worktree, open a planner/reviewer session. With an empty query it leads with what the
  * focused task can do.
  */
-import type { Attempt, EngineKind, Task } from '@shared/domain';
+import type { Attempt, Task } from '@shared/domain';
 import { Command, defaultFilter } from 'cmdk';
 import { type ReactNode, useMemo, useState } from 'react';
 import { type CommandView, executeCommand, useCommands } from '../app/commands';
 import { attemptsOfRun, latestPlan, tasksOfRun } from '../app/data';
-import { rpc, useActiveRunId, useData, useLayout } from '../app/hooks';
+import { useActiveRunId, useData, useLayout } from '../app/hooks';
 import { formatChord } from '../app/keys';
 import { openProject } from '../app/project-actions';
 import { selectProjects, selectWorkspaceRuns } from '../app/projects';
 import { actions } from '../app/store';
 import { Icon, type IconName } from '../chrome/icons';
-import { displayEngine, ENGINE_NAME } from '../layout/describe';
+import { displayEngine } from '../layout/describe';
 import { focusedTile } from '../layout/tree';
 import { errorMessage, interrupt, openTaskDiff, sessionTileOf, takeOver } from '../tiles/session/actions';
 import { openTileColumn, revealInRun, toast } from './nav';
@@ -40,8 +40,6 @@ const SEP = '\u0001';
 const filter = (value: string, search: string, keywords?: string[]) =>
   defaultFilter(value.slice(value.indexOf(SEP) + 1), search, keywords);
 
-const DONE: readonly Task['status'][] = ['merged', 'skipped', 'cancelled'];
-
 function bridge() {
   return (window as Window & { legion?: { showItemInFolder?: (path: string) => void } }).legion;
 }
@@ -65,13 +63,11 @@ function taskEntries(
   runId: string,
   task: Task,
   title: string,
-  engine: EngineKind,
   coder: Attempt | null,
   layoutTile: string | null,
   group: string,
 ): Entry[] {
   const id = task.nodeId;
-  const other: EngineKind = engine === 'codex' ? 'claude' : 'codex';
   const out: Entry[] = [];
   if (coder?.status === 'running') {
     out.push({
@@ -91,23 +87,6 @@ function taskEntries(
       keywords: [id],
       icon: 'pause',
       run: closeThen(() => interrupt(coder.id)),
-    });
-  }
-  if (!DONE.includes(task.status)) {
-    out.push({
-      id: `engine:${task.id}`,
-      group,
-      title: `Swap ${id} engine to ${ENGINE_NAME[other]}`,
-      value: `swap ${id} engine ${other} ${title}`,
-      keywords: [id, other],
-      icon: 'spark',
-      hint: task.status === 'running' ? 'applies to the next attempt' : undefined,
-      run: closeThen(() =>
-        attempt(`Couldn't swap ${id}`, async () => {
-          await rpc('tasks.setEngine', { taskId: task.id, engine: other, model: null, effort: null });
-          toast(`${id} will use ${ENGINE_NAME[other]} from its next attempt.`);
-        }),
-      ),
     });
   }
   out.push({
@@ -217,7 +196,6 @@ function useEntries(): { contextual: Entry[]; data: Entry[] } {
       const coder = attempts
         .filter((a) => a.taskId === task.id && (a.role === 'coder' || a.role === 'resolver'))
         .at(-1);
-      const engine = task.engineOverride ?? coder?.engine ?? node?.agent.engine ?? 'claude';
       const tileId = sessionTileOf(layout, task.id);
       data.push({
         id: `task:${task.id}`,
@@ -234,7 +212,7 @@ function useEntries(): { contextual: Entry[]; data: Entry[] } {
         icon: 'session',
         run: () => revealInRun(activeRunId, tileId),
       });
-      const entries = taskEntries(activeRunId, task, title, engine, coder ?? null, tileId, 'Task actions');
+      const entries = taskEntries(activeRunId, task, title, coder ?? null, tileId, 'Task actions');
       if (task.id === focusedTaskId)
         contextual.push(...entries.map((e) => ({ ...e, group: `${task.nodeId} · ${title}` })));
       else data.push(...entries);
@@ -280,8 +258,9 @@ function CommandRow({ entry }: { entry: Entry }) {
 
 const COMMAND_ICON: Record<string, IconName> = {
   'composer.open': 'plus',
-  'inbox.open': 'inbox',
-  'focus.nextUrgent': 'alert',
+  'decision.next': 'alert',
+  'view.chat': 'session',
+  'view.agents': 'strip',
   'layout.strip': 'strip',
   'layout.focus': 'focus',
   'layout.overview': 'overview',
@@ -349,11 +328,12 @@ export function PaletteOverlay() {
     [commands],
   );
   const LEAD = [
-    'cmd:focus.nextUrgent',
+    'cmd:decision.next',
     'cmd:composer.open',
+    'cmd:view.agents',
+    'cmd:view.chat',
     'cmd:file.goto',
     'cmd:project.search',
-    'cmd:inbox.open',
     'cmd:project.add',
   ];
   const lead = LEAD.map((id) => commandEntries.find((e) => e.id === id)).filter((e): e is Entry => !!e);

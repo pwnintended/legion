@@ -7,7 +7,6 @@ import {
   EFFORTS,
   type Effort,
   type PlanDag,
-  type RealEngineKind,
   type Risk,
   TASK_KINDS,
   type TaskKind,
@@ -19,7 +18,7 @@ import {
 import { type RefObject, useEffect, useMemo, useState } from 'react';
 import { useShallow } from 'zustand/react/shallow';
 import { latestAttempt, latestReview, tasksOfRun } from '../../app/data';
-import { useData } from '../../app/hooks';
+import { useData, useSettings } from '../../app/hooks';
 import { actions, dataStore } from '../../app/store';
 import { EngineChip, StatusChipView } from '../../chrome/ui';
 import { describeTile, ENGINE_LABEL, ENGINE_NAME, otherEngine } from '../../layout/describe';
@@ -36,7 +35,6 @@ import {
   updateNode,
 } from '../plan/model';
 
-const ENGINES: readonly RealEngineKind[] = ['claude', 'codex'];
 const SIZES: readonly TaskSize[] = ['S', 'M', 'L'];
 const RISKS: readonly Risk[] = ['low', 'med', 'high'];
 const MODES: readonly TouchMode[] = ['modify', 'create', 'read'];
@@ -62,7 +60,8 @@ export function DagInspector({
     editPlan(runId, label, (d) => ({ dag: updateNode(d.dag, node.id, fn) }));
   const problems = analysis?.validation.errors.filter((e) => e.nodeIds.includes(node.id)) ?? [];
   const shared = useMemo(() => sharedWrites(dag, node.id), [dag, node.id]);
-  const reviewer = otherEngine(node.agent.engine);
+  const coderEngine = useSettings()?.roles.coder.engine ?? 'claude';
+  const reviewer = otherEngine(coderEngine);
 
   return (
     <div
@@ -128,59 +127,32 @@ export function DagInspector({
         ) : null}
         {!editable ? <LiveStatus runId={runId} node={node} /> : null}
         <div className="lg-kv">
-          <span className="lg-k">Engine</span>
+          <span className="lg-k">Agent</span>
           <span className="flex flex-wrap items-center gap-2">
+            <EngineChip
+              engine={coderEngine}
+              text={[ENGINE_LABEL[coderEngine], editable ? null : node.agent.effort].filter(Boolean).join(' · ')}
+            />
             {editable ? (
-              <>
-                <select
-                  className="lg-field"
-                  aria-label="Coder engine"
-                  value={node.agent.engine}
-                  onChange={(e) => {
-                    const engine = e.target.value as RealEngineKind;
-                    update('engine', (n) => ({ ...n, agent: { ...n.agent, engine, model: null } }));
-                  }}
-                >
-                  {ENGINES.map((e) => (
-                    <option key={e} value={e}>
-                      {ENGINE_NAME[e]}
-                    </option>
-                  ))}
-                </select>
-                <select
-                  className="lg-field"
-                  aria-label="Reasoning effort"
-                  value={node.agent.effort ?? ''}
-                  onChange={(e) => {
-                    const effort = (e.target.value || null) as Effort | null;
-                    update('effort', (n) => ({ ...n, agent: { ...n.agent, effort } }));
-                  }}
-                >
-                  <option value="">default effort</option>
-                  {EFFORTS.map((e) => (
-                    <option key={e} value={e}>
-                      {e}
-                    </option>
-                  ))}
-                </select>
-                <CommitInput
-                  className="lg-field mono w-[130px]"
-                  label="Model"
-                  placeholder="default model"
-                  value={node.agent.model ?? ''}
-                  onCommit={(model) => update('model', (n) => ({ ...n, agent: { ...n.agent, model: model || null } }))}
-                />
-              </>
-            ) : (
-              <EngineChip
-                engine={node.agent.engine}
-                text={[ENGINE_LABEL[node.agent.engine], node.agent.model, node.agent.effort]
-                  .filter(Boolean)
-                  .join(' · ')}
-              />
-            )}
+              <select
+                className="lg-field"
+                aria-label="Reasoning effort"
+                value={node.agent.effort ?? ''}
+                onChange={(e) => {
+                  const effort = (e.target.value || null) as Effort | null;
+                  update('effort', (n) => ({ ...n, agent: { ...n.agent, effort } }));
+                }}
+              >
+                <option value="">default effort</option>
+                {EFFORTS.map((e) => (
+                  <option key={e} value={e}>
+                    {e}
+                  </option>
+                ))}
+              </select>
+            ) : null}
             <span className="faint text-[12px]">
-              reviewer: {ENGINE_NAME[reviewer]} (the other engine, set automatically)
+              coder: set in Settings · reviewer: {ENGINE_NAME[reviewer]} (the other engine, set automatically)
             </span>
           </span>
 

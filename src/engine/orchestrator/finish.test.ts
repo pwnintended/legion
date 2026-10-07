@@ -349,6 +349,31 @@ describe('gc.auto bookkeeping', () => {
   });
 });
 
+describe('the coder role decides the coding agent', () => {
+  it('ignores an engine and model the planner wrote into the plan', async () => {
+    h = await startHarness({
+      realKinds: true,
+      settings: { roles: { coder: { engine: 'claude', models: { claude: 'opus', codex: null } } } },
+      script: basicScript([
+        { ...node('T1'), agent: { engine: 'codex', model: 'gpt-6.1-sol', effort: null } } as ReturnType<typeof node>,
+        node('T2'),
+      ]),
+    });
+    const harness = h;
+    const run = await toPrReady(harness);
+    const coders = harness.engine.store.listAttempts(run.id).filter((a) => a.role === 'coder');
+    expect(coders.map((a) => [a.engine, a.model])).toEqual([
+      ['claude', 'opus'],
+      ['claude', 'opus'],
+    ]);
+    expect(harness.codex.sessions.filter((s) => s.opts.role === 'coder')).toHaveLength(0);
+    expect(harness.engine.store.latestPlan(run.id)?.dag.nodes.map((n) => n.agent)).toEqual([
+      { effort: null },
+      { effort: null },
+    ]);
+  });
+});
+
 describe('same-engine review fallback', () => {
   it('reviews and finalizes with a different model of the coder engine when the other engine is off', async () => {
     h = await startHarness({
@@ -373,7 +398,7 @@ describe('same-engine review fallback', () => {
     h = await startHarness({
       realKinds: true,
       settings: { engines: { claude: { enabled: false } }, roles: { coder: { engine: 'codex' } } },
-      script: basicScript([node('T1', { engine: 'codex' })]),
+      script: basicScript([node('T1')]),
     });
     const harness = h;
     harness.engine.store.updateSettings({ engines: { codex: { fallbackReviewModel: 'gpt-review' } } });

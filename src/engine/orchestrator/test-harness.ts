@@ -228,9 +228,9 @@ export { criterionIds, taskIdIn };
 
 export function node(
   id: string,
-  overrides: Partial<TaskNode> & { engine?: 'claude' | 'codex'; writes?: string[] } = {},
+  overrides: Partial<TaskNode> & { writes?: string[] } = {},
 ): PlanOutput['dag']['nodes'][number] {
-  const { engine = 'claude', writes, ...rest } = overrides;
+  const { writes, ...rest } = overrides;
   return {
     id,
     title: `Task ${id}`,
@@ -242,7 +242,7 @@ export function node(
     size: 'S',
     verify: { commands: [`test -f src/${id.toLowerCase()}.txt`] },
     contextHints: { files: [], notes: '' },
-    agent: { engine, model: null, effort: null },
+    agent: { effort: null },
     risk: 'low',
     ...rest,
   } as PlanOutput['dag']['nodes'][number];

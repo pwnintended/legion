@@ -42,8 +42,19 @@ function leadSystem(tools: ToolNames, parent: boolean): string {
         parent
           ? `Decisions that are the human's (scope, product trade-offs, destructive choices): send them to your parent, the assistant that talks to the human, with \`${tools.sendMessage}\` kind \`question\`; its answer arrives on a later wake. Decide everything else from the plan and say so.`
           : `\`request_human_input\`: only for decisions that are the human's (scope, product trade-offs, destructive choices). Decide everything else from the plan and say so.`,
+        `\`${tools.present}\`: show the human a markdown document (a summary of what changed, a decision record) when words in a status update would not do. Coders present their own screenshots.`,
       ]),
     ),
+    parent
+      ? section(
+          'Status updates',
+          bullets([
+            `The human follows the run through the assistant, your parent, and never sees this conversation. Keep it informed with \`${tools.sendMessage}\` kind \`status\` at milestones: a task merged, a review sent work back, a task is stuck or failed, you changed the plan, the last task merged.`,
+            'One update per wake at most, and none when nothing happened that the human would care about. First line: the news in under 80 characters ("T2 merged: registration endpoints are in"). Then at most two short lines of why it matters or what is next. Name tasks by id and title.',
+            'Never report routine progress (a coder started, a test run passed mid-task) and never repeat what an earlier update said.',
+          ]),
+        )
+      : null,
     section(
       'Answering coders',
       bullets([
@@ -113,6 +124,11 @@ export function buildLeadWakePrompt(input: LeadWakeInput): AgentPrompt {
       numbered([
         `Answer every question above with \`${tools.sendMessage}\` (kind \`answer\`, \`reply_to\` = its id).`,
         'Add, amend or cancel tasks only if the news above calls for it.',
+        ...(input.parent
+          ? [
+              `If the news is a milestone the human would care about, send your parent one \`status\` update with \`${tools.sendMessage}\`.`,
+            ]
+          : []),
         'Then end your turn. No summary is needed.',
       ]),
     ),

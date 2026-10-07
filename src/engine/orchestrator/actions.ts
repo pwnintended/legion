@@ -1,10 +1,8 @@
 /**
  * Human actions behind the RPC procedures: run controls (pause/resume/cancel), task controls
- * (retry/skip/setEngine/approveMerge/requestChanges) and `inbox.resolve` (the effect of every kind).
+ * (retry/skip/approveMerge/requestChanges) and `inbox.resolve` (the effect of every kind).
  */
 import {
-  type Effort,
-  type EngineKind,
   type InboxItem,
   type InboxItemOf,
   type InboxResolution,
@@ -15,7 +13,7 @@ import {
   type Task,
 } from '@shared/domain';
 import { RpcError } from '@shared/rpc-transport';
-import { decideEscalation, decideHumanGate, SLOT_STATUSES, taskStatusPath } from './core';
+import { decideEscalation, decideHumanGate, taskStatusPath } from './core';
 import { createPr, enterPrReady } from './finalize';
 import { patchRunMeta, patchTaskMeta, taskMeta } from './meta';
 import { dismissal, type Orchestrator } from './orchestrator';
@@ -203,27 +201,6 @@ export async function skipTask(o: Orchestrator, taskId: string): Promise<Task> {
     o.scheduleTick();
     return next;
   });
-}
-
-export function setTaskEngine(
-  o: Orchestrator,
-  taskId: string,
-  engine: EngineKind,
-  model: string | null,
-  effort: Effort | null,
-): Task {
-  const task = o.store.requireTask(taskId);
-  if (isTerminal(TASK_TRANSITIONS, task.status))
-    throw new RpcError('conflict', `task ${task.nodeId} is ${task.status}`);
-  const usable = o.registry.usable(engine);
-  if (!usable.ok) throw new RpcError('failed_precondition', usable.reason);
-  const next = o.store.updateTask(taskId, { engineOverride: engine, modelOverride: model, effortOverride: effort });
-  // A new engine cannot resume the old engine's coder session.
-  if (o.nodeOf(task).agent.engine !== engine || task.engineOverride !== engine) {
-    if (!SLOT_STATUSES.has(task.status)) patchTaskMeta(o.store, taskId, { coderSessionId: null });
-  }
-  o.scheduleTick();
-  return next;
 }
 
 export function approveMerge(o: Orchestrator, taskId: string): Task {

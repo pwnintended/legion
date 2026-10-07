@@ -3,8 +3,11 @@ import { describe, expect, it } from 'vitest';
 import { planDispatch, previewEscalation, type SchedulerInput, type SchedulerTask } from './scheduler';
 import { makeNode } from './testing';
 
-const codex = { engine: 'codex' as const, model: null, effort: null };
-const settings = { concurrency: DEFAULT_SETTINGS.concurrency };
+const settings = { concurrency: DEFAULT_SETTINGS.concurrency, roles: DEFAULT_SETTINGS.roles };
+const onCodex = (concurrency = DEFAULT_SETTINGS.concurrency) => ({
+  concurrency,
+  roles: { ...DEFAULT_SETTINGS.roles, coder: { ...DEFAULT_SETTINGS.roles.coder, engine: 'codex' as const } },
+});
 
 function input(
   nodes: TaskNode[],
@@ -45,7 +48,9 @@ describe('planDispatch: readiness and priority', () => {
       makeNode('T4', ['T2']),
       makeNode('T5', ['T1']),
     ];
-    const plan = planDispatch(input(tie, {}, { settings: { concurrency: { ...settings.concurrency, global: 1 } } }));
+    const plan = planDispatch(
+      input(tie, {}, { settings: { ...settings, concurrency: { ...settings.concurrency, global: 1 } } }),
+    );
     expect(plan.dispatch.map((d) => d.nodeId)).toEqual(['T2']);
   });
 
@@ -68,9 +73,9 @@ describe('planDispatch: readiness and priority', () => {
     expect(plan.dispatch.map((d) => d.nodeId)).not.toContain('T2');
   });
 
-  it('dispatches already queued tasks and honours engine overrides', () => {
-    const tasks: SchedulerTask[] = [{ nodeId: 'T1', status: 'queued', engineOverride: 'codex' }];
-    const plan = planDispatch({ ...input([makeNode('T1')]), tasks });
+  it('dispatches already queued tasks on the coder role engine', () => {
+    const tasks: SchedulerTask[] = [{ nodeId: 'T1', status: 'queued' }];
+    const plan = planDispatch({ ...input([makeNode('T1')], {}, { settings: onCodex() }), tasks });
     expect(plan.enqueue).toEqual([]);
     expect(plan.dispatch).toEqual([{ nodeId: 'T1', engine: 'codex' }]);
   });
@@ -88,26 +93,23 @@ describe('planDispatch: capacity', () => {
     expect(busy.waiting.map((w) => w.reason)).toEqual(['global_cap', 'global_cap', 'global_cap']);
   });
 
-  it('applies per-engine caps but keeps dispatching other engines', () => {
-    const mixed = [
-      makeNode('T1', [], { size: 'L' }),
-      makeNode('T2', [], { size: 'M' }),
-      makeNode('T3', [], { size: 'S', agent: codex }),
-    ];
-    const capped = { concurrency: { global: 3, perEngine: { claude: 1, codex: 3, fake: 0 } } };
-    const plan = planDispatch(input(mixed, {}, { settings: capped }));
-    expect(plan.dispatch).toEqual([
-      { nodeId: 'T1', engine: 'claude' },
-      { nodeId: 'T3', engine: 'codex' },
+  it('applies the per-engine cap of the coder engine', () => {
+    const three = [makeNode('T1', [], { size: 'L' }), makeNode('T2', [], { size: 'M' }), makeNode('T3')];
+    const capped = { ...settings, concurrency: { global: 3, perEngine: { claude: 1, codex: 3, fake: 0 } } };
+    const plan = planDispatch(input(three, {}, { settings: capped }));
+    expect(plan.dispatch).toEqual([{ nodeId: 'T1', engine: 'claude' }]);
+    expect(plan.waiting.map((w) => [w.nodeId, w.engine, w.reason])).toEqual([
+      ['T2', 'claude', 'engine_cap'],
+      ['T3', 'claude', 'engine_cap'],
     ]);
-    expect(plan.waiting).toEqual([{ nodeId: 'T2', engine: 'claude', reason: 'engine_cap', until: null }]);
+    const onCodexToo = planDispatch(input(three, {}, { settings: onCodex(capped.concurrency) }));
+    expect(onCodexToo.dispatch.map((d) => d.engine)).toEqual(['codex', 'codex', 'codex']);
   });
 
-  it('waits for rate-limit resets and reports when to wake up', () => {
-    const mixed = [makeNode('T1'), makeNode('T2', [], { agent: codex })];
+  it('waits for the rate-limit reset of the coder engine and reports when to wake up', () => {
     const plan = planDispatch(
       input(
-        mixed,
+        [makeNode('T1')],
         {},
         {
           rateLimits: [
@@ -117,7 +119,7 @@ describe('planDispatch: capacity', () => {
         },
       ),
     );
-    expect(plan.dispatch).toEqual([{ nodeId: 'T2', engine: 'codex' }]);
+    expect(plan.dispatch).toEqual([]);
     expect(plan.waiting).toEqual([{ nodeId: 'T1', engine: 'claude', reason: 'rate_limited', until: 5_000 }]);
     expect(plan.nextWakeAt).toBe(5_000);
 

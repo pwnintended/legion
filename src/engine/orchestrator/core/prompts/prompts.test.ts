@@ -109,7 +109,6 @@ describe('planner prompts', () => {
       issue,
       repo,
       answers: [{ question: 'Include archived reports?', answer: 'No' }],
-      engines: { available: ['claude', 'codex'], defaultCoder: 'claude' },
     });
     expect(prompt).toMatchSnapshot();
     expectEngineNeutral(prompt);
@@ -121,7 +120,6 @@ describe('planner prompts', () => {
       issue,
       repo: { baseRef: 'main' },
       answers: [],
-      engines: { available: ['codex'], defaultCoder: 'codex' },
       maxTasks: 4,
       revision: { previousMarkdown: '# Old plan', previousNodes: [contracts], feedback: 'Merge T2 and T3.' },
       validationErrors: ['T3 has no verify command.'],

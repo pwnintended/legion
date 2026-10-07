@@ -7,10 +7,17 @@ import { randomUUID } from 'node:crypto';
 import { accessSync, constants, mkdtempSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { delimiter, isAbsolute, join } from 'node:path';
-import type { AgentEngine, AgentSession, EngineInfo, SessionOptions } from '@shared/engine';
+import {
+  type AgentEngine,
+  type AgentSession,
+  type EngineInfo,
+  type SessionOptions,
+  sessionExtras,
+} from '@shared/engine';
 import { type Logger, silentLogger } from '../../context';
 import { buildClaudeArgs, childEnv, mcpConfig } from './args';
 import { type ChildProcessLike, ClaudeSession, type SessionTiming } from './session';
+import { prepareSkills } from './skills';
 
 export type SpawnFn = (
   command: string,
@@ -153,23 +160,40 @@ export class ClaudeEngine implements AgentEngine {
     const binary = resolveClaudeBinary(opts.env, this.options.binaryPath);
     if (!binary) throw new Error('claude CLI not found on PATH');
 
+    const extras = sessionExtras(opts);
     let tempDir: string | null = null;
     let mcpConfigPath: string | null = null;
-    if (opts.mcp) {
-      tempDir = mkdtempSync(join(tmpdir(), 'legion-claude-'));
-      mcpConfigPath = join(tempDir, 'mcp.json');
-      writeFileSync(mcpConfigPath, JSON.stringify(mcpConfig(opts.mcp)), { mode: 0o600 });
-    }
     const cleanup = () => {
       if (tempDir) rmSync(tempDir, { recursive: true, force: true });
       tempDir = null;
     };
+    let skillsPluginDir: string | null = null;
+    let disabledSkills: string[] = [];
+    try {
+      if (opts.mcp || Object.keys(extras.extraMcp).length > 0 || extras.skills) {
+        tempDir = mkdtempSync(join(tmpdir(), 'legion-claude-'));
+      }
+      if (tempDir && (opts.mcp || Object.keys(extras.extraMcp).length > 0)) {
+        mcpConfigPath = join(tempDir, 'mcp.json');
+        writeFileSync(mcpConfigPath, JSON.stringify(mcpConfig(opts.mcp, extras.extraMcp)), { mode: 0o600 });
+      }
+      if (tempDir && extras.skills) {
+        const prepared = await prepareSkills(extras.skills, opts.cwd, tempDir);
+        skillsPluginDir = prepared.pluginDir;
+        disabledSkills = prepared.disabled;
+      }
+    } catch (error) {
+      cleanup();
+      throw error;
+    }
 
     const args = buildClaudeArgs({
       opts,
       sessionId: resumed ? null : sessionId,
       resume: resumed ? sessionId : null,
       mcpConfigPath,
+      skillsPluginDir,
+      disabledSkills,
     });
     let child: ChildProcessLike;
     try {

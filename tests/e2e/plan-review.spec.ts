@@ -23,6 +23,8 @@ async function launchDemo(
     localStorage.setItem('legion.demo', '1');
     localStorage.setItem('legion.demo.live', '0');
     localStorage.setItem('legion.demo.stage', s);
+    // The tiling workspace (the agents view); a run opens in its chat otherwise.
+    localStorage.setItem('legion.ui', JSON.stringify({ view: 'agents' }));
   }, stage);
   await window.reload();
   await app.evaluate(({ BrowserWindow }) => {

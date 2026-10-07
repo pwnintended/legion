@@ -27,7 +27,7 @@ export function currentProject(): Project | null {
   return activeProjectOf(uiStore.getState(), dataStore.getState());
 }
 
-/** Show a project's home and record that it was opened. */
+/** Show a project's page (a new conversation, or its repository in the agents view) and record the visit. */
 export function openProject(projectId: string): void {
   actions.closeOverlay();
   actions.openProjectHome(projectId);
@@ -65,6 +65,7 @@ export async function setPinned(project: Project, pinned: boolean): Promise<void
 function showHome(projectId: string): string {
   const ui = uiStore.getState();
   if (ui.activeRunId !== null || ui.activeProjectId !== projectId) actions.openProjectHome(projectId);
+  actions.setView('agents');
   syncActiveLayout();
   return projectWorkspaceKey(projectId);
 }

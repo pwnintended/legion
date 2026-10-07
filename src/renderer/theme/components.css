@@ -1070,3 +1070,40 @@ body {
   color: var(--overlay2);
   white-space: nowrap;
 }
+
+/* Title bar: view switch, layout modes (agents view), needs-you ------------------------------------- */
+.tb-views .seg {
+  padding: 0 12px;
+}
+.tb-modes .seg {
+  padding: 0 8px;
+}
+.tb-needs {
+  gap: 7px;
+}
+.tb-needs-dot {
+  position: relative;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--green) 70%, transparent);
+}
+.tb-needs[data-waiting] {
+  color: var(--peach);
+}
+.tb-needs[data-waiting] .tb-needs-dot {
+  background: var(--peach);
+}
+.tb-needs-count {
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: 9px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--crust);
+  background: var(--peach);
+}

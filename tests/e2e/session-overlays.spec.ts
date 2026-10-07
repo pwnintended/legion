@@ -20,6 +20,8 @@ async function launchDemo(): Promise<{ app: ElectronApplication; window: Page; h
     localStorage.clear();
     localStorage.setItem('legion.demo', '1');
     localStorage.setItem('legion.demo.live', '0');
+    // The tiling workspace (the agents view); a run opens in its chat otherwise.
+    localStorage.setItem('legion.ui', JSON.stringify({ view: 'agents' }));
   });
   await window.reload();
   await app.evaluate(({ BrowserWindow }) => {
@@ -33,7 +35,7 @@ async function launchDemo(): Promise<{ app: ElectronApplication; window: Page; h
 const focusedTile = (window: Page) =>
   window.locator('[data-workspace] [data-focused="true"]').first().getAttribute('data-tile-id');
 
-test('session tiles, approvals, composer, inbox, palette, clarify', async () => {
+test('session tiles, approvals, composer, decisions, palette, clarify', async () => {
   mkdirSync(shots, { recursive: true });
   const { app, window, home } = await launchDemo();
   try {
@@ -48,16 +50,21 @@ test('session tiles, approvals, composer, inbox, palette, clarify', async () => 
     await window.waitForTimeout(700);
     await window.screenshot({ path: join(shots, 'strip-sessions.png') });
 
-    // Inbox (⌘I) across runs, approvals first; Esc closes and gives focus back to the tile.
-    await window.keyboard.press('Meta+i');
-    const inbox = window.getByTestId('inbox');
-    await expect(inbox.getByTestId('inbox-item')).toHaveCount(6);
-    await expect(inbox.getByTestId('inbox-item').first()).toHaveAttribute('data-kind', 'approval');
-    await expect(inbox.getByTestId('inbox-item').first()).toContainText('blocks T5, T6');
+    // Six decisions wait across runs (the title bar's count). ⌘U shows the first one in the run on screen as a card
+    // in its chat: T3's approval; ⌘E goes back to the agents and gives focus back to the tile.
+    await expect(window.getByTestId('needs-you').locator('.tb-needs-count')).toHaveText('6');
+    await window.keyboard.press('Meta+u');
+    const chat = window.getByTestId('chat');
+    await expect(chat).toBeVisible();
+    const approvalCard = chat.locator('[data-testid="chat-decision"][data-kind="approval"]');
+    await expect(approvalCard).toContainText('@simplewebauthn/browser');
+    await expect(approvalCard.getByTestId('approval-accept')).toBeVisible();
+    await expect(window.locator('[data-highlight]')).toHaveAttribute('data-thread-key', 'inbox:inb_authv2appr01');
     await window.waitForTimeout(450);
-    await window.screenshot({ path: join(shots, 'inbox.png') });
-    await window.keyboard.press('Escape');
-    await expect(inbox).toHaveCount(0);
+    await window.screenshot({ path: join(shots, 'decision.png') });
+    await window.keyboard.press('Meta+e');
+    await expect(chat).toHaveCount(0);
+    await expect.poll(() => focusedTile(window)).toBe('session:T3');
     await expect
       .poll(() => window.evaluate(() => document.activeElement?.getAttribute('data-tile-id') ?? null))
       .toBe('session:T3');
@@ -89,22 +96,25 @@ test('session tiles, approvals, composer, inbox, palette, clarify', async () => 
     await window.keyboard.press('Meta+Enter');
     await expect(composer).toHaveCount(0);
     await expect(window.getByTestId('titlebar')).toContainText('Add audit logging to admin actions');
-    await expect(window.locator('[data-layout-mode="strip"]')).toBeVisible();
+    await expect(chat).toBeVisible();
+    await expect(window.getByTestId('view-chat')).toHaveAttribute('aria-pressed', 'true');
 
-    // Inbox again: the approval is gone; j/k move, ⏎ jumps to the item's tile.
-    await window.keyboard.press('Meta+i');
-    await expect(inbox.getByTestId('inbox-item')).toHaveCount(5);
-    await expect(inbox.getByTestId('inbox-item').first()).toHaveAttribute('data-kind', 'question');
-    await window.keyboard.press('j');
-    await expect(inbox.getByTestId('inbox-item').nth(1)).toHaveAttribute('aria-selected', 'true');
-    await window.keyboard.press('k');
-    await window.keyboard.press('Enter');
-    await expect(inbox).toHaveCount(0);
+    // The approval is answered: five decisions left. The rate-limit run (from the rail) opens on its chat, with its
+    // clarify questions as a card.
+    await expect(window.getByTestId('needs-you').locator('.tb-needs-count')).toHaveText('5');
+    await window.getByTestId('rail-run').filter({ hasText: 'Rate-limit the public API' }).click();
     await expect(window.getByTestId('titlebar')).toContainText('Rate-limit the public API');
-    await expect.poll(() => focusedTile(window)).toBe('clarify');
+    await expect(chat).toBeVisible();
+    const question = chat.locator('[data-testid="chat-decision"][data-kind="question"]');
+    await expect(question).toHaveCount(1);
+    await expect(chat.getByTestId('chat-needs-you')).toContainText('1 waiting for you');
+    // ⌘U answers what is in front of you first.
+    await window.keyboard.press('Meta+u');
+    await expect(window.locator('[data-highlight]')).toHaveAttribute('data-thread-key', 'inbox:inb_rlclarify001');
+    await expect(window.getByTestId('titlebar')).toContainText('Rate-limit the public API');
 
-    // Clarify: chips + free text, submit.
-    const clarify = window.getByTestId('clarify');
+    // Clarify, in the card: chips + free text, submit; the card becomes a receipt.
+    const clarify = question.getByTestId('clarify');
     await expect(clarify).toBeVisible();
     await clarify.getByRole('radio', { name: 'Per API key, falling back to IP' }).click();
     await clarify.getByRole('radio', { name: '429 with Retry-After' }).click();
@@ -115,9 +125,11 @@ test('session tiles, approvals, composer, inbox, palette, clarify', async () => 
     await window.waitForTimeout(300);
     await window.screenshot({ path: join(shots, 'clarify.png') });
     await clarify.getByTestId('clarify-submit').click();
-    await expect(window.locator('[data-tile-id="clarify"]')).toHaveCount(0);
+    await expect(question).toHaveCount(0);
+    await expect(chat.locator('[data-testid="chat-receipt"][data-kind="question"]')).toBeVisible();
+    await expect(window.getByTestId('needs-you').locator('.tb-needs-count')).toHaveText('4');
 
-    // Palette (⌘K): fuzzy task ids, jump.
+    // Palette (⌘K): fuzzy task ids, jump (to the agents view).
     await window.keyboard.press('Meta+1');
     await expect(window.getByTestId('titlebar')).toContainText('Add passkey (WebAuthn) login');
     await window.keyboard.press('Meta+k');
@@ -130,6 +142,7 @@ test('session tiles, approvals, composer, inbox, palette, clarify', async () => 
     await window.screenshot({ path: join(shots, 'palette-search.png') });
     await window.keyboard.press('Enter');
     await expect(palette).toHaveCount(0);
+    await expect(window.getByTestId('view-agents')).toHaveAttribute('aria-pressed', 'true');
     await expect.poll(() => focusedTile(window)).toBe('session:T4');
 
     // Focus mode on a busy session.

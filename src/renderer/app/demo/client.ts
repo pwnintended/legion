@@ -30,6 +30,7 @@ import { RpcError } from '@shared/rpc-transport';
 import { isArchived } from '../compat';
 import type { ConnectionState } from '../engine-connection';
 import type { EngineClient } from '../sync';
+import { DEMO_FILES, drawDemoShot, withConversationDemo } from './conversation';
 import { createDemoWorld, type DemoWorld, LIVE_SCRIPT, snapshotOf } from './fixtures';
 import { extra, withLifecycleDemo } from './lifecycle';
 import { type DemoRpcContext, extendDemoWorld, handlePlanReviewRpc, isHandled } from './plan-review';
@@ -72,16 +73,17 @@ export class DemoClient implements EngineClient {
     const now = options.now ?? Date.now();
     const world = createDemoWorld(now);
     extendDemoWorld(world, now);
-    this.world = withLifecycleDemo(world, now);
+    this.world = withConversationDemo(withLifecycleDemo(world, now), now);
     this.now = now;
     this.projects = createDemoProjects(this.world.runs, now);
     // Transcript history gets seqs below the snapshot seq (it happened before the snapshot was read).
     let seq = 100;
     for (const [attemptId, events] of Object.entries(this.world.transcripts)) {
       const span = events.length;
+      const times = this.world.transcriptTimes?.[attemptId];
       this.history[attemptId] = events.map((event, i) => ({
         seq: seq++,
-        ts: now - (span - i) * Math.min(40_000, (30 * 60_000) / span),
+        ts: times?.[i] ?? now - (span - i) * Math.min(40_000, (30 * 60_000) / span),
         event,
       }));
     }
@@ -183,6 +185,25 @@ export class DemoClient implements EngineClient {
         this.emit([{ type: 'settings.updated', settings: structuredClone(w.settings) }]);
         return structuredClone(w.settings);
       }
+      case 'skills.list':
+        return [
+          { name: 'tdd', description: 'Test-driven development, red-green-refactor.', scope: 'user' },
+          { name: 'code-review', description: 'Review the current diff for bugs.', scope: 'user' },
+          { name: 'release-notes', description: 'Draft release notes from merged PRs.', scope: 'project' },
+        ];
+      case 'mcpServers.discover':
+        return [
+          {
+            name: 'linear',
+            server: { type: 'http', url: 'https://mcp.linear.app/mcp', headers: {} },
+            source: '~/.claude.json',
+          },
+          {
+            name: 'docs',
+            server: { type: 'stdio', command: 'npx', args: ['-y', '@acme/docs-mcp'], env: {} },
+            source: '.mcp.json',
+          },
+        ];
       case 'subscribe':
         return { headSeq: this.headSeq, replayed: true };
       case 'runs.list':
@@ -372,11 +393,6 @@ export class DemoClient implements EngineClient {
         return this.interruptSession(input.attemptId as string);
       case 'sessions.takeover':
         throw new RpcError('not_implemented', 'Takeover needs the real engine; demo mode has no agent processes.');
-      case 'tasks.setEngine':
-        return this.updateTask(input.taskId as string, {
-          engineOverride: input.engine as Task['engineOverride'],
-          modelOverride: (input.model as string | null) ?? null,
-        });
       case 'tasks.retry':
       case 'tasks.restart':
         return this.updateTask(input.taskId as string, { status: 'queued', error: null });
@@ -564,6 +580,11 @@ export class DemoClient implements EngineClient {
   }
 
   private getAttachment(id: string): RpcOutput<'attachments.get'> {
+    const demo = DEMO_FILES[id];
+    if (demo) {
+      if ('text' in demo) return { attachment: demo.ref, dataBase64: null, text: demo.text, truncated: false };
+      return { attachment: demo.ref, dataBase64: drawDemoShot(demo.draw), text: null, truncated: false };
+    }
     const stored = this.attachments.get(id);
     if (!stored) throw new RpcError('not_found', `attachment ${id} not found`);
     const { ref, dataBase64 } = stored;
@@ -593,6 +614,20 @@ export class DemoClient implements EngineClient {
   ): { ok: true } {
     const attempt = this.world.attempts.find((a) => a.id === attemptId);
     if (attempt?.status !== 'running') throw new RpcError('conflict', 'session is not running');
+    // Like the engine: the human's message is in the transcript before the agent answers it.
+    this.emit([this.attemptEvent(attempt, { type: 'user_message', text, attachments, priority })]);
+    if (attempt.role === 'assistant') {
+      setTimeout(() => {
+        this.emit([
+          this.attemptEvent(attempt, {
+            type: 'message',
+            text: `Noted. I've passed that to the lead: “${text.replace(/[.!?]+$/, '')}”${attachments.length ? ', with your files' : ''}.`,
+          }),
+          this.attemptEvent(attempt, { type: 'turn_complete', structuredOutput: null, isError: false, reason: null }),
+        ]);
+      }, 1400);
+      return { ok: true };
+    }
     setTimeout(() => {
       const files = attachments.length
         ? ` I have ${attachments.map((a) => `\`${a.name}\``).join(', ')} open as well.`
@@ -723,9 +758,6 @@ export class DemoClient implements EngineClient {
         attemptCount: 0,
         fixRounds: 0,
         mergedSha: null,
-        engineOverride: null,
-        modelOverride: null,
-        effortOverride: null,
         progress: null,
         error: null,
         createdAt: now,

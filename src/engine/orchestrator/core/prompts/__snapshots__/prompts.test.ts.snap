@@ -149,7 +149,8 @@ TypeScript strict. Tests live next to the code as *.test.ts (vitest).
 - Do not install new dependencies unless the task requires it.
 - Report progress with \`report_progress\` at meaningful milestones (one short line each).
 - Finish by calling \`mark_task_done\`; until you do, Legion considers the work unfinished.
-- Do not wait for a human when you can decide yourself: when something is ambiguous, choose what is most consistent with the plan and the codebase, and record the decision in your summary. Call \`request_human_input\` only when you truly cannot proceed (contradictory requirements, missing access, a destructive choice only a human can make).",
+- Do not wait for a human when you can decide yourself: when something is ambiguous, choose what is most consistent with the plan and the codebase, and record the decision in your summary. Call \`request_human_input\` only when you truly cannot proceed (contradictory requirements, missing access, a destructive choice only a human can make).
+- When your work produces something the human should see rather than read about (a screenshot of UI you changed, a generated report or diagram), show it with \`present\` before you finish: save it under the system temp dir (never in the worktree), one call per thing, with a caption saying what to look at. Skip it when there is nothing visual or nothing new to show.",
 }
 `;
 
@@ -368,7 +369,7 @@ TypeScript strict. Tests live next to the code as *.test.ts (vitest).
 - **Real verify commands.** Each task needs at least one verify command that exists in this repository (or that the task itself adds), runs non-interactively from the repository root, and is as fast and scoped as the tooling allows. Never invent scripts or use placeholders. Legion also runs the repository-wide commands \`pnpm typecheck\`, \`pnpm lint\` on every task; do not repeat them.
 - **Integration last.** When there are three or more tasks, end with a task of kind \`integration\` that depends on the others, wires the pieces together (registrations, exports, configuration, docs) and runs the full test suite. A small issue may be a single task.
 - **Risk.** \`high\` for database migrations, authentication or authorization, deleting data, breaking public APIs, CI or release configuration (these wait for human approval before merging); \`med\` for cross-cutting changes; \`low\` otherwise.
-- **Engines.** Set \`agent.engine\` to one of \`claude\`, \`codex\` (default \`claude\`). Leave \`model\` null. Set \`effort\` only with a reason: \`high\` for subtle algorithms or concurrency, \`low\` for mechanical edits; otherwise null.
+- **Effort.** Set \`agent.effort\` only with a reason: \`high\` for subtle algorithms or concurrency, \`low\` for mechanical edits; otherwise null. Do not choose engines or models: the user configures the coding agent.
 - **Context hints.** In \`contextHints.files\` list the files the coder should read first; in \`contextHints.notes\` record pitfalls, conventions and the decisions from the contracts task the coder must follow.
 - Use ids \`T1\`, \`T2\`, … in dependency order. Use at most 12 tasks.
 
@@ -384,7 +385,7 @@ The \`markdown\` field is what the human approves and what every coder reads as 
 
 ## Output
 
-Respond with the structured output only: \`{"markdown": "...", "dag": {"nodes": [...]}}\`. Each node has \`id\`, \`title\`, \`goal\` (2–5 sentences: what and why), \`kind\` (contracts | feature | test | refactor | docs | integration), \`dependsOn\`, \`acceptanceCriteria\` (\`{id, text}\`), \`touches\` (\`{glob, mode}\`), \`size\` (S | M | L), \`verify\` (\`{commands}\`), \`contextHints\` (\`{files, notes}\`), \`agent\` (\`{engine, model, effort}\`) and \`risk\` (low | med | high).",
+Respond with the structured output only: \`{"markdown": "...", "dag": {"nodes": [...]}}\`. Each node has \`id\`, \`title\`, \`goal\` (2–5 sentences: what and why), \`kind\` (contracts | feature | test | refactor | docs | integration), \`dependsOn\`, \`acceptanceCriteria\` (\`{id, text}\`), \`touches\` (\`{glob, mode}\`), \`size\` (S | M | L), \`verify\` (\`{commands}\`), \`contextHints\` (\`{files, notes}\`), \`agent\` (\`{effort}\`) and \`risk\` (low | med | high).",
   "systemPrompt": "You are the planner in Legion, an orchestrator that turns an issue into a pull request using several coding agents (Claude Code and Codex) working in parallel.
 
 How your plan is executed:
@@ -467,8 +468,6 @@ Merge T2 and T3.
       "notes": ""
     },
     "agent": {
-      "engine": "claude",
-      "model": null,
       "effort": null
     },
     "risk": "low"
@@ -500,7 +499,7 @@ Legion's plan validator found these problems. Produce a corrected plan that fixe
 - **Real verify commands.** Each task needs at least one verify command that exists in this repository (or that the task itself adds), runs non-interactively from the repository root, and is as fast and scoped as the tooling allows. Never invent scripts or use placeholders. Legion also runs the repository-wide commands (none configured) on every task; do not repeat them.
 - **Integration last.** When there are three or more tasks, end with a task of kind \`integration\` that depends on the others, wires the pieces together (registrations, exports, configuration, docs) and runs the full test suite. A small issue may be a single task.
 - **Risk.** \`high\` for database migrations, authentication or authorization, deleting data, breaking public APIs, CI or release configuration (these wait for human approval before merging); \`med\` for cross-cutting changes; \`low\` otherwise.
-- **Engines.** Set \`agent.engine\` to one of \`codex\` (default \`codex\`). Leave \`model\` null. Set \`effort\` only with a reason: \`high\` for subtle algorithms or concurrency, \`low\` for mechanical edits; otherwise null.
+- **Effort.** Set \`agent.effort\` only with a reason: \`high\` for subtle algorithms or concurrency, \`low\` for mechanical edits; otherwise null. Do not choose engines or models: the user configures the coding agent.
 - **Context hints.** In \`contextHints.files\` list the files the coder should read first; in \`contextHints.notes\` record pitfalls, conventions and the decisions from the contracts task the coder must follow.
 - Use ids \`T1\`, \`T2\`, … in dependency order. Use at most 4 tasks.
 
@@ -516,7 +515,7 @@ The \`markdown\` field is what the human approves and what every coder reads as 
 
 ## Output
 
-Respond with the structured output only: \`{"markdown": "...", "dag": {"nodes": [...]}}\`. Each node has \`id\`, \`title\`, \`goal\` (2–5 sentences: what and why), \`kind\` (contracts | feature | test | refactor | docs | integration), \`dependsOn\`, \`acceptanceCriteria\` (\`{id, text}\`), \`touches\` (\`{glob, mode}\`), \`size\` (S | M | L), \`verify\` (\`{commands}\`), \`contextHints\` (\`{files, notes}\`), \`agent\` (\`{engine, model, effort}\`) and \`risk\` (low | med | high)."
+Respond with the structured output only: \`{"markdown": "...", "dag": {"nodes": [...]}}\`. Each node has \`id\`, \`title\`, \`goal\` (2–5 sentences: what and why), \`kind\` (contracts | feature | test | refactor | docs | integration), \`dependsOn\`, \`acceptanceCriteria\` (\`{id, text}\`), \`touches\` (\`{glob, mode}\`), \`size\` (S | M | L), \`verify\` (\`{commands}\`), \`contextHints\` (\`{files, notes}\`), \`agent\` (\`{effort}\`) and \`risk\` (low | med | high)."
 `;
 
 exports[`review prompts > finalizer 1`] = `

@@ -10,6 +10,7 @@ import { basename } from 'node:path';
 import {
   type InboxItem,
   isTerminal,
+  type Presentation,
   type QuestionAnswer,
   RUN_TRANSITIONS,
   type Run,
@@ -57,14 +58,17 @@ export async function createChat(o: Orchestrator, input: RpcInput<'runs.chat'>):
 const HUMAN_ITEM_LINES: Partial<Record<InboxItem['kind'], (item: InboxItem) => string>> = {
   question: (item) =>
     item.kind === 'question' && item.payload.source === 'clarify'
-      ? `the planner asks the human ${item.payload.questions.length} clarifying question(s) (inbox)`
-      : 'an agent asks the human a question (inbox)',
+      ? `the planner asks the human ${item.payload.questions.length} clarifying question(s) (a card in your conversation)`
+      : 'an agent asks the human a question (a card in your conversation)',
   plan_signoff: (item) =>
-    item.kind === 'plan_signoff' ? `plan v${item.payload.version} waits for the human's sign-off (inbox)` : '',
-  escalation: (item) => (item.kind === 'escalation' ? `needs the human: ${item.payload.summary} (inbox)` : ''),
-  pr_ready: () => 'the work is ready for a pull request; the human opens it from the inbox',
-  conflict: () => 'a merge conflict waits for the human (inbox)',
-  budget: () => 'the budget was reached; the human decides in the inbox',
+    item.kind === 'plan_signoff'
+      ? `plan v${item.payload.version} waits for the human's sign-off (a card in your conversation)`
+      : '',
+  escalation: (item) =>
+    item.kind === 'escalation' ? `needs the human: ${item.payload.summary} (a card in your conversation)` : '',
+  pr_ready: () => 'the work is ready for a pull request; the human opens it from the card in your conversation',
+  conflict: () => 'a merge conflict waits for the human (a card in your conversation)',
+  budget: () => 'the budget was reached; the human decides on the card in your conversation',
 };
 
 const STATUS_LINE: Partial<Record<RunStatus, string>> = {
@@ -102,11 +106,19 @@ export function resolvedItemLine(item: InboxItem): string | null {
   return null;
 }
 
+/** A presentation as the assistant hears of it (the human already sees it in the conversation). */
+export function presentationLine(presentation: Presentation, from: string): string {
+  const files = presentation.attachments.map((a) => a.name).join(', ');
+  const caption = presentation.caption ? `: ${clip(presentation.caption.replace(/\s+/g, ' '), 300)}` : '';
+  return `${from} showed the human "${presentation.title}" (${files}) in your conversation${caption}`;
+}
+
 function conversationChanges(
   previous: RunStatus,
   run: Run,
   newItems: readonly InboxItem[],
   resolvedItems: readonly InboxItem[] = [],
+  presented: readonly string[] = [],
 ): string[] {
   const lines: string[] = [];
   if (previous !== run.status) {
@@ -123,6 +135,7 @@ function conversationChanges(
     const line = HUMAN_ITEM_LINES[item.kind]?.(item);
     if (line) lines.push(line);
   }
+  lines.push(...presented);
   return lines;
 }
 
@@ -131,6 +144,7 @@ export async function runAssistant(o: Orchestrator, runId: string, loop: LeadLoo
   let session: AgentRun | null = null;
   let lastStatus = o.store.requireRun(runId).status;
   let seenItems = new Set(o.store.listInbox({ runId, includeResolved: false }).map((i) => i.id));
+  let seenPresentations = new Set(o.store.listPresentations(runId).map((p) => p.id));
   const tools = o.toolNames(o.store.requireRun(runId).plannerEngine);
   try {
     for (;;) {
@@ -142,11 +156,16 @@ export async function runAssistant(o: Orchestrator, runId: string, loop: LeadLoo
       const open = o.store.listInbox({ runId, includeResolved: false });
       const openIds = new Set(open.map((i) => i.id));
       const resolved = [...seenItems].filter((id) => !openIds.has(id)).flatMap((id) => o.store.getInboxItem(id) ?? []);
+      const presentations = o.store.listPresentations(runId);
+      const presented = presentations
+        .filter((p) => !seenPresentations.has(p.id) && p.attemptId !== session?.attempt.id)
+        .map((p) => presentationLine(p, o.agentName(p.attemptId)));
       const changes = conversationChanges(
         lastStatus,
         run,
         open.filter((i) => !seenItems.has(i.id)),
         resolved,
+        presented,
       );
       const queued = session ? o.store.queuedMessagesFor(session.attempt.id) : [];
 
@@ -171,6 +190,7 @@ export async function runAssistant(o: Orchestrator, runId: string, loop: LeadLoo
       }
       lastStatus = run.status;
       seenItems = openIds;
+      seenPresentations = new Set(presentations.map((p) => p.id));
 
       let turn = await session.nextTurn();
       o.assertOpen();
@@ -226,6 +246,11 @@ async function openAssistant(
       resumeSessionId,
       parentAttemptId: null,
       attachments: resumeSessionId ? null : o.runAttachments(run),
+      // The conversation's first message is the human's (later fresh sessions start from the brief).
+      humanMessage:
+        resumeSessionId || runMeta(o.store, run.id).assistantAttemptId
+          ? null
+          : { text: run.issueText, attachments: run.attachments ?? [] },
     });
     const previous = runMeta(o.store, run.id).assistantAttemptId;
     if (previous && previous !== session.attempt.id) o.store.reparentAttempts(previous, session.attempt.id);

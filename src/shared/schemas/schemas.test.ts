@@ -24,7 +24,7 @@ const VALID_PLAN: PlanOutput = {
         size: 'S',
         verify: { commands: ['pnpm test'] },
         contextHints: { files: [], notes: '' },
-        agent: { engine: 'codex', model: null, effort: 'low' },
+        agent: { effort: 'low' },
         risk: 'low',
       },
     ],
@@ -41,12 +41,22 @@ describe('agent output JSON schemas', () => {
     });
   }
 
-  it('plan schema exposes nullable model/effort as anyOf with null', () => {
+  it('plan schema exposes nullable effort as anyOf with null', () => {
     const json = JSON.stringify(AGENT_OUTPUT_JSON_SCHEMAS.plan);
     expect(json).toContain('"anyOf"');
     expect(json).not.toContain('"oneOf"');
     expect(json).not.toContain('"pattern"');
     expect(json).not.toContain('"maxItems"');
+  });
+
+  it('plan schema leaves the engine and the model to the settings', () => {
+    const json = JSON.stringify(AGENT_OUTPUT_JSON_SCHEMAS.plan);
+    expect(json).not.toContain('"engine"');
+    expect(json).not.toContain('"model"');
+    // A planner that still sends them is not rejected; they are dropped.
+    const sent = structuredClone(VALID_PLAN);
+    Object.assign(sent.dag.nodes[0]?.agent ?? {}, { engine: 'codex', model: 'gpt-6.1-sol' });
+    expect(PlanOutputSchema.parse(sent).dag.nodes[0]?.agent).toEqual({ effort: 'low' });
   });
 
   it('zod still enforces constraints that are stripped from the JSON schema', () => {
@@ -58,11 +68,6 @@ describe('agent output JSON schemas', () => {
     first.id = 'task-1';
     expect(PlanOutputSchema.safeParse(badId).success).toBe(false);
     expect(PlanOutputSchema.safeParse(VALID_PLAN).success).toBe(true);
-    const fakeEngine = structuredClone(VALID_PLAN);
-    const node = fakeEngine.dag.nodes[0];
-    if (!node) throw new Error('fixture has nodes');
-    (node.agent as { engine: string }).engine = 'fake';
-    expect(PlanOutputSchema.safeParse(fakeEngine).success).toBe(false);
   });
 });
 

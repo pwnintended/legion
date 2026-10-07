@@ -10,7 +10,6 @@ import { cleanWorktree, gitText } from '../git';
 import {
   buildFinalizerPrompt,
   buildPrBody,
-  coderEngineFor,
   finalizerEngineFor,
   maxAttempts,
   type PrText,
@@ -125,14 +124,14 @@ async function finalReview(o: Orchestrator, run: Run): Promise<Review | null> {
   const nodes = o.approvedNodes(run.id);
   const byNode = new Map(tasks.map((t) => [t.nodeId, t]));
   const merged = nodes.filter((n) => byNode.get(n.id)?.status === 'merged');
-  const coders = merged.map((n) => coderEngineFor(n, byNode.get(n.id)));
+  const coders = merged.map(() => o.coderEngine());
   const engine = finalizerEngineFor(coders, o.availableEngines());
   // Same engine as (some of) the coders when the other one is unavailable: review with a different model.
-  const sameEngineCoder = merged.find((n) => coderEngineFor(n, byNode.get(n.id)) === engine);
+  const sameEngineCoder = merged.find(() => o.coderEngine() === engine);
   const sameEngineTask = sameEngineCoder ? byNode.get(sameEngineCoder.id) : undefined;
   const model =
     sameEngineCoder && sameEngineTask
-      ? o.reviewModel('finalizer', engine, engine, coderModelOf(o, sameEngineTask, sameEngineCoder))
+      ? o.reviewModel('finalizer', engine, engine, coderModelOf(o, sameEngineTask))
       : o.modelFor('finalizer', engine);
   const integration = await ensureIntegrationWorktree(o, run);
   const base = runMeta(o.store, run.id).baseSha ?? run.baseRef;
@@ -246,7 +245,7 @@ export function prText(o: Orchestrator, run: Run): PrText {
     summary,
     tasks: nodes.map((node) => {
       const task = tasks.get(node.id);
-      const coder = coderEngineFor(node, task);
+      const coder = o.coderEngine();
       return {
         nodeId: node.id,
         title: node.title,

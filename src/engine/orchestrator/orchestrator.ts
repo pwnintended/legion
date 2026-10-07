@@ -7,6 +7,7 @@
  * Every decision comes from `core/` (pure); this layer applies them with CAS transitions through the
  * Store, runs git through `engine/git`, and drives agents through `AgentRun`s.
  */
+import { homedir } from 'node:os';
 import type { AttachmentRef } from '@shared/attachments';
 import type {
   AgentMessage,
@@ -36,6 +37,7 @@ import {
 import type { AgentEvent } from '@shared/events';
 import type { EngineToMainMessage } from '@shared/host-protocol';
 import type { z } from 'zod';
+import { resolveAccess } from '../access';
 import { AttachmentService } from '../attachments';
 import type { EngineContext, Logger } from '../context';
 import type { NewMessage, Store } from '../db';
@@ -50,6 +52,7 @@ import {
   type McpHost,
   type McpServerHandle,
   type PlanStatus,
+  type PresentRequest,
   type SpawnResearchRequest,
   type StartImplementationRequest,
   type TaskNodePatch,
@@ -59,6 +62,7 @@ import { deferred } from '../util/async-queue';
 import {
   type AgentPrompt,
   canMessage,
+  coderEngine,
   DEFAULT_TOOL_NAMES,
   type EnabledEngines,
   enabledEngines,
@@ -84,6 +88,7 @@ import {
 import { AgentRun, type AgentRunHooks, type TurnResult } from './live-session';
 import { freshAttemptMeta, patchTaskMeta, runMeta } from './meta';
 import type { PrHost } from './pr-host';
+import { present } from './present';
 import type { EngineRegistry } from './registry';
 
 /** `usedPct` at or above which a `rate_limit` event pauses new sessions on that engine until the reset. */
@@ -150,6 +155,8 @@ export interface OpenSessionParams {
    * session is resumed, else top level.
    */
   parentAttemptId?: string | null;
+  /** The prompt is (or starts with) this message of the human's: recorded in the transcript as theirs. */
+  humanMessage?: { text: string; attachments: readonly AttachmentRef[] } | null;
 }
 
 type Waiter = {
@@ -216,6 +223,7 @@ export const CLAUDE_PROMPT_TOOLS: ToolNames = {
   waitForReply: CLAUDE_TOOL_NAMES.waitForReply,
   startImplementation: CLAUDE_TOOL_NAMES.startImplementation,
   runStatus: CLAUDE_TOOL_NAMES.runStatus,
+  present: CLAUDE_TOOL_NAMES.present,
 };
 
 export const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms).unref?.());
@@ -384,6 +392,11 @@ export class Orchestrator {
     return this.registry.get(engine).kind === 'claude' ? CLAUDE_PROMPT_TOOLS : DEFAULT_TOOL_NAMES;
   }
 
+  /** The engine every coder runs on: the coder role in settings. */
+  coderEngine(): EngineKind {
+    return coderEngine(this.settings());
+  }
+
   modelFor(role: keyof Settings['roles'], engine: EngineKind): string | null {
     if (engine === 'fake') return null;
     return this.settings().roles[role].models[engine];
@@ -502,6 +515,14 @@ export class Orchestrator {
           sessionId: params.resumeSessionId ?? null,
           parentAttemptId,
         });
+    if (params.humanMessage) {
+      this.store.appendAgentEvent(attempt, {
+        type: 'user_message',
+        text: params.humanMessage.text,
+        attachments: [...params.humanMessage.attachments],
+        priority: null,
+      });
+    }
     const token =
       this.mcp?.issueToken({
         runId: params.run.id,
@@ -517,6 +538,16 @@ export class Orchestrator {
         ? [attempt, ...this.store.listAttempts(params.run.id).filter((a) => a.role === 'planner')]
         : [attempt, ...continued],
     );
+    // The project's MCP servers and skills for this role (settings.access); a failure here must not strand the attempt.
+    const access = await resolveAccess(
+      this.settings(),
+      params.run.projectId ?? null,
+      params.role,
+      this.ctx.env.HOME || homedir(),
+    ).catch((error: unknown) => {
+      this.log.warn(`could not resolve agent access for ${params.role}: ${(error as Error).message}`);
+      return { extraMcp: {}, skills: null };
+    });
     const opts: SessionOptions = {
       role: params.role,
       cwd: params.cwd,
@@ -533,6 +564,8 @@ export class Orchestrator {
       untrustedWorkdir: UNTRUSTED_WORKDIR_ROLES.has(params.role),
       outputSchema: params.outputSchema,
       mcp: token && this.mcp ? { url: this.mcp.url, token } : null,
+      ...(Object.keys(access.extraMcp).length > 0 ? { extraMcp: access.extraMcp } : {}),
+      ...(access.skills ? { skills: access.skills } : {}),
       env: this.sessionEnv(),
       attachments: params.attachments?.length ? params.attachments : null,
     };
@@ -1250,11 +1283,10 @@ export class Orchestrator {
   private slotsByRun(runs: readonly Run[]): Map<string, Partial<Record<EngineKind, number>>> {
     const out = new Map<string, Partial<Record<EngineKind, number>>>();
     for (const run of runs) {
-      const nodes = new Map(this.approvedNodes(run.id).map((n) => [n.id, n]));
       const counts: Partial<Record<EngineKind, number>> = {};
+      const engine = this.coderEngine();
       for (const task of this.store.listTasks(run.id)) {
         if (!SLOT_STATUSES.has(task.status)) continue;
-        const engine = task.engineOverride ?? nodes.get(task.nodeId)?.agent.engine ?? 'claude';
         counts[engine] = (counts[engine] ?? 0) + 1;
       }
       out.set(run.id, counts);
@@ -1483,6 +1515,10 @@ export class Orchestrator {
       this.assertOpen();
       if (!this.flows) throw new Error('the assistant is not wired');
       return this.flows.assistantTools.runStatus(binding);
+    },
+    present: (binding: McpBinding, request: PresentRequest) => {
+      this.assertOpen();
+      return present(this, binding, request);
     },
   };
 

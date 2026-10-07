@@ -7,11 +7,13 @@
  * Timestamps are relative to `now` so durations read naturally.
  */
 import {
+  type AgentMessage,
   type Attempt,
   DEFAULT_SETTINGS,
   type InboxItem,
   type Merge,
   type Plan,
+  type Presentation,
   type Review,
   type Run,
   type Settings,
@@ -37,12 +39,17 @@ export interface DemoWorld {
   merges: Merge[];
   /** Transcript history per attempt (seq assigned at load). */
   transcripts: Record<string, AgentEvent[]>;
+  /** When each transcript event happened, per attempt (default: spread over the last half hour). */
+  transcriptTimes?: Record<string, number[]>;
+  /** Agent-to-agent messages. */
+  messages?: AgentMessage[];
+  /** What agents presented to the human. */
+  presentations?: Presentation[];
   engines: EngineInfo[];
   settings: Settings;
 }
 
 type NodeSpec = Pick<TaskNode, 'id' | 'title' | 'goal' | 'kind' | 'dependsOn' | 'size' | 'risk'> & {
-  engine: 'claude' | 'codex';
   effort?: TaskNode['agent']['effort'];
   touches?: string[];
   verify?: string[];
@@ -64,7 +71,7 @@ function node(spec: NodeSpec): TaskNode {
     size: spec.size,
     verify: { commands: spec.verify ?? ['pnpm test'] },
     contextHints: { files: [], notes: '' },
-    agent: { engine: spec.engine, model: null, effort: spec.effort ?? 'high' },
+    agent: { effort: spec.effort ?? 'high' },
     risk: spec.risk,
   };
 }
@@ -82,9 +89,6 @@ function task(runId: string, nodeId: string, patch: Partial<Task>, now: number):
     attemptCount: 0,
     fixRounds: 0,
     mergedSha: null,
-    engineOverride: null,
-    modelOverride: null,
-    effortOverride: null,
     progress: null,
     error: null,
     createdAt: now - 40 * MIN,
@@ -146,7 +150,6 @@ export function createDemoWorld(now = Date.now()): DemoWorld {
       dependsOn: [],
       size: 'S',
       risk: 'low',
-      engine: 'claude',
       touches: ['auth/**'],
     }),
     node({
@@ -157,7 +160,6 @@ export function createDemoWorld(now = Date.now()): DemoWorld {
       dependsOn: ['T1'],
       size: 'M',
       risk: 'med',
-      engine: 'claude',
       touches: ['server/auth/**', 'server/routes/auth.ts'],
       verify: ['pnpm vitest run server/auth'],
     }),
@@ -169,7 +171,6 @@ export function createDemoWorld(now = Date.now()): DemoWorld {
       dependsOn: ['T1'],
       size: 'M',
       risk: 'low',
-      engine: 'codex',
       touches: ['web/src/settings/**'],
     }),
     node({
@@ -180,7 +181,6 @@ export function createDemoWorld(now = Date.now()): DemoWorld {
       dependsOn: ['T1'],
       size: 'S',
       risk: 'high',
-      engine: 'claude',
       touches: ['migrations/**', 'db/schema.ts'],
       criteria: ['Migration is reversible', 'Unique index on credential_id', 'Sign counter survives large values'],
     }),
@@ -192,7 +192,6 @@ export function createDemoWorld(now = Date.now()): DemoWorld {
       dependsOn: ['T2', 'T3'],
       size: 'M',
       risk: 'med',
-      engine: 'codex',
       touches: ['web/src/auth/**', 'server/auth/login.ts'],
     }),
     node({
@@ -203,7 +202,6 @@ export function createDemoWorld(now = Date.now()): DemoWorld {
       dependsOn: ['T4', 'T5'],
       size: 'M',
       risk: 'med',
-      engine: 'claude',
       touches: ['pnpm-lock.yaml', 'server/routes/index.ts'],
       verify: ['pnpm e2e auth'],
     }),
@@ -430,7 +428,6 @@ export function createDemoWorld(now = Date.now()): DemoWorld {
       dependsOn: [],
       size: 'S',
       risk: 'low',
-      engine: 'claude',
     }),
     node({
       id: 'T2',
@@ -440,7 +437,6 @@ export function createDemoWorld(now = Date.now()): DemoWorld {
       dependsOn: ['T1'],
       size: 'M',
       risk: 'med',
-      engine: 'codex',
     }),
     node({
       id: 'T3',
@@ -450,7 +446,6 @@ export function createDemoWorld(now = Date.now()): DemoWorld {
       dependsOn: ['T1'],
       size: 'S',
       risk: 'low',
-      engine: 'claude',
     }),
     node({
       id: 'T4',
@@ -460,7 +455,6 @@ export function createDemoWorld(now = Date.now()): DemoWorld {
       dependsOn: ['T3'],
       size: 'S',
       risk: 'low',
-      engine: 'codex',
     }),
     node({
       id: 'T5',
@@ -470,7 +464,6 @@ export function createDemoWorld(now = Date.now()): DemoWorld {
       dependsOn: ['T2', 'T4'],
       size: 'S',
       risk: 'low',
-      engine: 'claude',
     }),
   ];
   const planB: Plan = {
@@ -534,7 +527,6 @@ export function createDemoWorld(now = Date.now()): DemoWorld {
       dependsOn: [],
       size: 'S',
       risk: 'low',
-      engine: 'claude',
     }),
     node({
       id: 'T2',
@@ -544,7 +536,6 @@ export function createDemoWorld(now = Date.now()): DemoWorld {
       dependsOn: ['T1'],
       size: 'M',
       risk: 'low',
-      engine: 'codex',
     }),
     node({
       id: 'T3',
@@ -554,7 +545,6 @@ export function createDemoWorld(now = Date.now()): DemoWorld {
       dependsOn: ['T1'],
       size: 'M',
       risk: 'low',
-      engine: 'codex',
     }),
     node({
       id: 'T4',
@@ -564,7 +554,6 @@ export function createDemoWorld(now = Date.now()): DemoWorld {
       dependsOn: ['T1'],
       size: 'M',
       risk: 'low',
-      engine: 'claude',
     }),
     node({
       id: 'T5',
@@ -574,7 +563,6 @@ export function createDemoWorld(now = Date.now()): DemoWorld {
       dependsOn: ['T1'],
       size: 'S',
       risk: 'low',
-      engine: 'codex',
     }),
     node({
       id: 'T6',
@@ -584,7 +572,6 @@ export function createDemoWorld(now = Date.now()): DemoWorld {
       dependsOn: ['T2', 'T3', 'T4'],
       size: 'S',
       risk: 'low',
-      engine: 'claude',
     }),
     node({
       id: 'T7',
@@ -594,7 +581,6 @@ export function createDemoWorld(now = Date.now()): DemoWorld {
       dependsOn: ['T6'],
       size: 'S',
       risk: 'low',
-      engine: 'claude',
     }),
   ];
   const planC: Plan = {
@@ -795,6 +781,8 @@ export function snapshotOf(world: DemoWorld, runId: string, seq: number): RunSna
     inbox: of(world.inbox),
     verifications: of(world.verifications),
     merges: of(world.merges),
+    messages: of(world.messages ?? []),
+    presentations: of(world.presentations ?? []),
   };
 }
 

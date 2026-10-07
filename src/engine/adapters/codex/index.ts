@@ -3,11 +3,21 @@
  * process per session. See README.md for the verified protocol details and the config-isolation choice.
  */
 import { spawn } from 'node:child_process';
-import type { AgentEngine, AgentSession, EngineInfo, SessionOptions } from '@shared/engine';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import {
+  type AgentEngine,
+  type AgentSession,
+  type EngineInfo,
+  type SessionOptions,
+  sessionExtras,
+} from '@shared/engine';
 import { appServerArgs, prepareCodexHome, resolveBinary } from './config';
 import { JsonRpcPeer, LineSplitter } from './json-rpc';
 import type { ClientMethod, ClientMethods } from './methods';
 import { CodexSession, type OpenMode } from './session';
+import { prepareCodexSkills } from './skills';
 
 export { CodexSession } from './session';
 
@@ -48,13 +58,39 @@ export class CodexEngine implements AgentEngine {
     const command = await resolveBinary(binary, opts.env);
     if (!command) throw new Error(`${binary} not found on PATH`);
     const home = await prepareCodexHome(this.options.codexHome, opts.env);
-    return CodexSession.open(opts, mode, {
-      command,
-      args: appServerArgs(),
-      codexHome: home.path,
-      clientVersion: this.options.clientVersion ?? '0.0.0',
-      onStderr: this.options.onStderr,
-    });
+    const { skills } = sessionExtras(opts);
+    let tempDir: string | null = null;
+    let skillsRoot: string | null = null;
+    let disabledSkills: string[] = [];
+    const cleanup = () => {
+      if (tempDir) void rm(tempDir, { recursive: true, force: true });
+      tempDir = null;
+    };
+    if (skills) {
+      tempDir = await mkdtemp(join(tmpdir(), 'legion-codex-'));
+      try {
+        const prepared = await prepareCodexSkills(skills, opts.cwd, home.path, tempDir);
+        skillsRoot = prepared.extraRoot;
+        disabledSkills = prepared.disabled;
+      } catch (error) {
+        cleanup();
+        throw error;
+      }
+    }
+    try {
+      return await CodexSession.open(opts, mode, {
+        command,
+        args: appServerArgs(disabledSkills),
+        codexHome: home.path,
+        clientVersion: this.options.clientVersion ?? '0.0.0',
+        onStderr: this.options.onStderr,
+        skillsRoot,
+        onExit: cleanup,
+      });
+    } catch (error) {
+      cleanup();
+      throw error;
+    }
   }
 
   /**

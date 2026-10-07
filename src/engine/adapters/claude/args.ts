@@ -4,7 +4,8 @@
  * Every flag is re-passed on resume: the CLI does not restore model, permissions, MCP config, add-dirs or
  * settings from the transcript.
  */
-import type { McpConnection, PermissionProfile, SessionOptions } from '@shared/engine';
+import type { McpServer } from '@shared/domain';
+import { type McpConnection, type PermissionProfile, type SessionOptions, sessionExtras } from '@shared/engine';
 import { hasShellMeta } from '../../util/shell';
 
 /** Name of the Legion MCP server inside `--mcp-config`; its tools are `mcp__legion__<tool>`. */
@@ -28,6 +29,29 @@ export const BASE_ARGS: readonly string[] = [
  * `~/.claude/projects/<cwd>/memory/` (the CLI does so even in `dontAsk` mode when asked to "remember").
  */
 export const LEGION_FLAG_SETTINGS = { autoMemoryEnabled: false } as const;
+
+/** Name of the per-session plugin that carries the user's allowed skills (they show up as `legion-skills:<name>`). */
+export const SKILLS_PLUGIN_NAME = 'legion-skills';
+
+/**
+ * Skills the CLI ships that `disableBundledSkills` does not cover; turned off by name when a session has a skill
+ * allowlist. (An override for a skill that does not exist is ignored.)
+ */
+export const CLI_EXTRA_SKILLS: readonly string[] = ['plugin-authoring'];
+
+/**
+ * `--settings` payload. A skill allowlist switches the bundled skills off and turns off by name the repo skills
+ * (`disabledSkills`) that are not on it; user skills only exist when the session's plugin brings them.
+ */
+export function flagSettings(skills: SessionOptions['skills'], disabledSkills: readonly string[] = []): object {
+  if (!skills) return LEGION_FLAG_SETTINGS;
+  const off = [...new Set([...CLI_EXTRA_SKILLS, ...disabledSkills])].filter((name) => !skills.allow.includes(name));
+  return {
+    ...LEGION_FLAG_SETTINGS,
+    disableBundledSkills: true,
+    skillOverrides: Object.fromEntries(off.map((name) => [name, 'off'])),
+  };
+}
 
 export const EDIT_TOOLS: readonly string[] = ['Edit', 'Write', 'MultiEdit', 'NotebookEdit'];
 
@@ -103,8 +127,12 @@ export interface PermissionArgs {
  */
 export const WEB_TOOLS: readonly string[] = ['WebSearch', 'WebFetch'];
 
-export function permissionArgs(profile: PermissionProfile, mcp: McpConnection | null): PermissionArgs {
-  const mcpRules = mcp ? [`mcp__${LEGION_MCP_SERVER}`] : [];
+export function permissionArgs(
+  profile: PermissionProfile,
+  mcp: McpConnection | null,
+  extraServers: readonly string[] = [],
+): PermissionArgs {
+  const mcpRules = [...(mcp ? [`mcp__${LEGION_MCP_SERVER}`] : []), ...extraServers.map((name) => `mcp__${name}`)];
   const webRules = profile.web ? [...WEB_TOOLS] : [];
   if (profile.mode === 'read_only' || profile.mode === 'coordinate') {
     const denied = profile.mode === 'coordinate' ? COORDINATE_DENIED : READ_ONLY_DENIED;
@@ -123,17 +151,25 @@ export function permissionArgs(profile: PermissionProfile, mcp: McpConnection | 
   };
 }
 
-/** `--mcp-config` payload with only the Legion server (streamable HTTP + bearer token). */
-export function mcpConfig(mcp: McpConnection): { mcpServers: Record<string, unknown> } {
-  return {
-    mcpServers: {
-      [LEGION_MCP_SERVER]: {
-        type: 'http',
-        url: mcp.url,
-        headers: { Authorization: `Bearer ${mcp.token}` },
-      },
-    },
-  };
+/**
+ * `--mcp-config` payload: the Legion server (streamable HTTP + bearer token) when there is one, plus the
+ * project's allowed servers.
+ */
+export function mcpConfig(
+  mcp: McpConnection | null,
+  extra: Readonly<Record<string, McpServer>> = {},
+): { mcpServers: Record<string, unknown> } {
+  const servers: Record<string, unknown> = {};
+  if (mcp) {
+    servers[LEGION_MCP_SERVER] = { type: 'http', url: mcp.url, headers: { Authorization: `Bearer ${mcp.token}` } };
+  }
+  for (const [name, server] of Object.entries(extra)) {
+    servers[name] =
+      server.type === 'http'
+        ? { type: 'http', url: server.url, headers: server.headers }
+        : { type: 'stdio', command: server.command, args: server.args, env: server.env };
+  }
+  return { mcpServers: servers };
 }
 
 export interface BuildArgsInput {
@@ -147,9 +183,20 @@ export interface BuildArgsInput {
    * `opts.mcp` is set, the JSON is passed inline.
    */
   mcpConfigPath?: string | null;
+  /** Plugin folder that exposes the allowed user skills (`--plugin-dir`); null = none. */
+  skillsPluginDir?: string | null;
+  /** Repo skills (found in the working directory) the allowlist leaves out; turned off by name. */
+  disabledSkills?: readonly string[];
 }
 
-export function buildClaudeArgs({ opts, sessionId, resume, mcpConfigPath }: BuildArgsInput): string[] {
+export function buildClaudeArgs({
+  opts,
+  sessionId,
+  resume,
+  mcpConfigPath,
+  skillsPluginDir,
+  disabledSkills,
+}: BuildArgsInput): string[] {
   if (sessionId && resume) throw new Error('buildClaudeArgs: sessionId and resume are mutually exclusive');
   const args = [...BASE_ARGS];
   if (resume) args.push('--resume', resume);
@@ -160,7 +207,8 @@ export function buildClaudeArgs({ opts, sessionId, resume, mcpConfigPath }: Buil
   if (opts.systemPrompt) args.push('--append-system-prompt', opts.systemPrompt);
   if (opts.outputSchema) args.push('--json-schema', JSON.stringify(opts.outputSchema));
 
-  const perms = permissionArgs(opts.permission, opts.mcp);
+  const extras = sessionExtras(opts);
+  const perms = permissionArgs(opts.permission, opts.mcp, Object.keys(extras.extraMcp));
   args.push('--permission-mode', perms.mode);
   if (perms.askHost) args.push('--permission-prompt-tool', 'stdio');
   else args.push('--permission-prompts', 'none');
@@ -172,9 +220,12 @@ export function buildClaudeArgs({ opts, sessionId, resume, mcpConfigPath }: Buil
   // have planted hooks or permission rules in the worktree's .claude/ (the CLI reads '' as "none").
   if (opts.untrustedWorkdir) args.push('--setting-sources=');
   else args.push('--setting-sources', 'project');
-  args.push('--settings', JSON.stringify(LEGION_FLAG_SETTINGS));
+  args.push('--settings', JSON.stringify(flagSettings(extras.skills, disabledSkills)));
   args.push('--strict-mcp-config');
-  if (opts.mcp) args.push('--mcp-config', mcpConfigPath ?? JSON.stringify(mcpConfig(opts.mcp)));
+  if (opts.mcp || Object.keys(extras.extraMcp).length > 0) {
+    args.push('--mcp-config', mcpConfigPath ?? JSON.stringify(mcpConfig(opts.mcp, extras.extraMcp)));
+  }
+  if (skillsPluginDir) args.push('--plugin-dir', skillsPluginDir);
 
   for (const dir of opts.addDirs ?? []) args.push('--add-dir', dir);
   return args;

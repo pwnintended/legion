@@ -3,8 +3,6 @@ import { finalizerEngineFor, reviewerEngineFor } from './engines';
 import { ESTIMATE_CONSTANTS, estimateNode, estimatePlan } from './estimate';
 import { makeNode } from './testing';
 
-const codex = { engine: 'codex' as const, model: null, effort: null };
-
 describe('engines', () => {
   it('reviews with the other engine unless it is disabled', () => {
     expect(reviewerEngineFor('claude')).toBe('codex');
@@ -54,8 +52,8 @@ describe('estimateNode', () => {
     expect(estimateNode(makeNode('T1', [], { size: 'L', risk: 'high' }), { maxFixRounds: 1 }).expectedFixRounds).toBe(
       1,
     );
-    const overridden = estimateNode(makeNode('T1'), { engineOverrides: new Map([['T1', 'codex']]) });
-    expect([overridden.coderEngine, overridden.reviewerEngine]).toEqual(['codex', 'claude']);
+    const onCodex = estimateNode(makeNode('T1'), { coderEngine: 'codex' });
+    expect([onCodex.coderEngine, onCodex.reviewerEngine]).toEqual(['codex', 'claude']);
   });
 });
 
@@ -85,13 +83,19 @@ describe('estimatePlan', () => {
     expect(three.concurrency).toBe(3);
   });
 
-  it('applies per-engine caps to the coder engine', () => {
-    const mixed = [makeNode('T1'), makeNode('T2'), makeNode('T3', [], { agent: codex })];
-    const plan = estimatePlan(mixed, { concurrency: { global: 3, perEngine: { claude: 1, codex: 1 } } });
-    const start = Object.fromEntries(plan.schedule.map((s) => [s.nodeId, s.start]));
-    expect(start.T1).toBe(0);
-    expect(start.T3).toBe(0);
-    expect(start.T2).toBeGreaterThan(0);
+  it('applies the per-engine cap of the coder engine', () => {
+    const three = [makeNode('T1'), makeNode('T2'), makeNode('T3')];
+    const caps = { global: 3, perEngine: { claude: 1, codex: 3 } };
+    const onClaude = Object.fromEntries(
+      estimatePlan(three, { concurrency: caps }).schedule.map((s) => [s.nodeId, s.start]),
+    );
+    expect(onClaude.T1).toBe(0);
+    expect(onClaude.T2).toBeGreaterThan(0);
+    expect(onClaude.T3).toBeGreaterThan(0);
+    const onCodex = Object.fromEntries(
+      estimatePlan(three, { concurrency: caps, coderEngine: 'codex' }).schedule.map((s) => [s.nodeId, s.start]),
+    );
+    expect([onCodex.T1, onCodex.T2, onCodex.T3]).toEqual([0, 0, 0]);
   });
 
   it('starts dependents only after their dependencies are merged', () => {

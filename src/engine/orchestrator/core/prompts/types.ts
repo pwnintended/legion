@@ -1,11 +1,4 @@
-import type {
-  RealEngineKind,
-  ReviewCriterion,
-  ReviewFinding,
-  ReviewVerdict,
-  TaskNode,
-  TaskStatus,
-} from '@shared/domain';
+import type { ReviewCriterion, ReviewFinding, ReviewVerdict, TaskNode, TaskStatus } from '@shared/domain';
 import type { ScopeReport } from '../scope';
 
 /** What a session is started with (`SessionOptions.systemPrompt` / `.prompt`). */
@@ -36,6 +29,7 @@ export interface ToolNames {
   readonly waitForReply: string;
   readonly startImplementation: string;
   readonly runStatus: string;
+  readonly present: string;
 }
 
 export const DEFAULT_TOOL_NAMES: ToolNames = {
@@ -54,6 +48,7 @@ export const DEFAULT_TOOL_NAMES: ToolNames = {
   waitForReply: 'wait_for_reply',
   startImplementation: 'start_implementation',
   runStatus: 'run_status',
+  present: 'present',
 };
 
 /** A file the human attached to the run (sent with the agent's first message by the adapter). */
@@ -114,8 +109,6 @@ export interface PlanPromptInput {
   readonly issue: IssueInput;
   readonly repo: RepoInput;
   readonly answers: readonly QuestionAnswerInput[];
-  /** Engines a node may be assigned to, and the default coder engine. */
-  readonly engines: { readonly available: readonly RealEngineKind[]; readonly defaultCoder: RealEngineKind };
   /** Soft cap on the number of tasks. Default 12. */
   readonly maxTasks?: number;
   /** Set when revising: the previous plan and the human's feedback. */

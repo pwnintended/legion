@@ -29,6 +29,7 @@ export async function sendToSession(
   const session = liveSession(o, attemptId);
   const refs = o.attachments.refs(attachmentIds);
   if (refs.length) o.attachments.claim(refs, session.attempt.runId);
+  session.record({ type: 'user_message', text, attachments: refs, priority });
   await session.steer(text, priority, refs.length ? o.attachments.forSession(refs) : null);
 }
 

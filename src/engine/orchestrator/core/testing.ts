@@ -21,7 +21,7 @@ export function makeNode(
     size: 'M',
     verify: { commands: ['pnpm test'] },
     contextHints: { files: [], notes: '' },
-    agent: { engine: 'claude', model: null, effort: null },
+    agent: { effort: null },
     risk: 'low',
     ...rest,
   };

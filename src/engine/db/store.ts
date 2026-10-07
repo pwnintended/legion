@@ -26,6 +26,7 @@ import {
   type Merge,
   normalizeSettings,
   type Plan,
+  type Presentation,
   type Project,
   type Review,
   RUN_TRANSITIONS,
@@ -143,9 +144,6 @@ const tasks = new Table<Task>('tasks', {
   attemptCount: ['attempt_count'],
   fixRounds: ['fix_rounds'],
   mergedSha: ['merged_sha'],
-  engineOverride: ['engine_override'],
-  modelOverride: ['model_override'],
-  effortOverride: ['effort_override'],
   progress: ['progress'],
   report: ['report', 'json'],
   error: ['error'],
@@ -220,6 +218,17 @@ const messages = new Table<AgentMessage>('messages', {
   deliveredAt: ['delivered_at'],
 });
 
+const presentations = new Table<Presentation>('presentations', {
+  id: ['id'],
+  runId: ['run_id'],
+  taskId: ['task_id'],
+  attemptId: ['attempt_id'],
+  title: ['title'],
+  caption: ['caption'],
+  attachments: ['attachments', 'json'],
+  createdAt: ['created_at'],
+});
+
 const verifications = new Table<Verification>('verifications', {
   id: ['id'],
   runId: ['run_id'],
@@ -267,6 +276,10 @@ export type NewTask = Pick<Task, 'runId' | 'nodeId'> & Partial<Pick<Task, 'id' |
 export type NewAttempt = Pick<Attempt, 'runId' | 'taskId' | 'role' | 'engine' | 'model' | 'effort'> &
   Partial<Pick<Attempt, 'id' | 'status' | 'sessionId' | 'parentAttemptId'>>;
 export type NewMessage = Pick<AgentMessage, 'runId' | 'fromAttemptId' | 'toAttemptId' | 'kind' | 'body' | 'replyTo'>;
+export type NewPresentation = Pick<
+  Presentation,
+  'runId' | 'taskId' | 'attemptId' | 'title' | 'caption' | 'attachments'
+>;
 export type NewReview = Omit<Review, 'id' | 'createdAt'> & Partial<Pick<Review, 'id'>>;
 export type NewInboxItem<K extends InboxKind = InboxKind> = {
   runId: string;
@@ -666,6 +679,10 @@ export class Store {
       const project = this.requireProject(id);
       const runIds = this.all('SELECT id FROM runs WHERE project_id = ?', id).map((row) => row.id as string);
       this.run('DELETE FROM projects WHERE id = ?', id);
+      // Its MCP and skill grants go with it.
+      const grants = this.getSettings().access[id];
+      if (grants)
+        this.updateSettings({ access: { [id]: Object.fromEntries(Object.keys(grants).map((role) => [role, null])) } });
       for (const runId of runIds) {
         const run = this.requireRun(runId);
         this.append({ type: 'run.updated', run, from: null });
@@ -782,6 +799,7 @@ export class Store {
       verifications: this.listVerifications(runId),
       merges: this.listMerges(runId),
       messages: this.listMessages(runId),
+      presentations: this.listPresentations(runId),
     };
   }
 
@@ -849,9 +867,6 @@ export class Store {
         attemptCount: 0,
         fixRounds: 0,
         mergedSha: null,
-        engineOverride: null,
-        modelOverride: null,
-        effortOverride: null,
         progress: null,
         report: null,
         error: null,
@@ -1030,6 +1045,21 @@ export class Store {
       }
       return delivered;
     });
+  }
+
+  // -- presentations ----------------------------------------------------------------------------
+
+  insertPresentation(input: NewPresentation): Presentation {
+    return this.transaction(() => {
+      const presentation: Presentation = { ...input, id: newId('presentation'), createdAt: this.now() };
+      this.insert(presentations, presentation);
+      this.append({ type: 'presentation.created', presentation });
+      return presentation;
+    });
+  }
+
+  listPresentations(runId: string): Presentation[] {
+    return this.selectWhere(presentations, 'run_id = ?', 'created_at, id', runId);
   }
 
   // -- reviews ----------------------------------------------------------------------------------

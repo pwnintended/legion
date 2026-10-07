@@ -1,15 +1,9 @@
 import { z } from 'zod';
-import { EffortSchema, RealEngineKindSchema, TaskNodeSchema } from '../domain';
+import { TaskNodeSchema } from '../domain';
 import { toStrictJsonSchema } from './json-schema';
 
-/** A DAG node as produced by the planner: same as `TaskNode`, but only real engines may be assigned. */
-export const PlanOutputNodeSchema = TaskNodeSchema.extend({
-  agent: z.object({
-    engine: RealEngineKindSchema,
-    model: z.string().nullable(),
-    effort: EffortSchema.nullable(),
-  }),
-});
+/** A DAG node as produced by the planner. Its `agent` holds the effort only: the user's settings pick the engine and model. */
+export const PlanOutputNodeSchema = TaskNodeSchema;
 export type PlanOutputNode = z.infer<typeof PlanOutputNodeSchema>;
 
 /**

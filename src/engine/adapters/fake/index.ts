@@ -5,6 +5,8 @@
  */
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { dirname, isAbsolute, relative, resolve } from 'node:path';
+import { Client } from '@modelcontextprotocol/sdk/client/index.js';
+import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import type {
   AgentEngine,
   AgentSession,
@@ -43,7 +45,16 @@ export type FakeStep =
   | { kind: 'output'; value: unknown }
   /** error + failed turn_complete + exited(code); ends the session. */
   | { kind: 'fail'; message: string; retryable?: boolean; exitCode?: number }
-  | { kind: 'delay'; ms: number };
+  | { kind: 'delay'; ms: number }
+  /**
+   * Calls a tool of the Legion MCP server the session was given (`opts.mcp`), like a real agent would; emits the
+   * tool_call/tool_result pair. `args` may be computed when the step runs (e.g. to write a file first).
+   */
+  | {
+      kind: 'mcp';
+      tool: string;
+      args: Record<string, unknown> | ((opts: SessionOptions) => Promise<Record<string, unknown>>);
+    };
 
 export interface FakeTurnContext {
   opts: SessionOptions;
@@ -316,6 +327,38 @@ export class FakeSession implements AgentSession {
       case 'delay':
         await this.wait(step.ms, signal);
         return;
+      case 'mcp':
+        await this.callMcp(step.tool, step.args);
+        return;
+    }
+  }
+
+  private async callMcp(tool: string, args: Extract<FakeStep, { kind: 'mcp' }>['args']): Promise<void> {
+    const id = `fake-mcp-${Math.random().toString(36).slice(2, 10)}`;
+    const input = typeof args === 'function' ? await args(this.opts) : args;
+    this.emit({ type: 'tool_call', id, name: `mcp__legion__${tool}`, input, kind: 'mcp' });
+    const mcp = this.opts.mcp;
+    if (!mcp) {
+      this.emit({ type: 'tool_result', id, ok: false, output: 'no Legion MCP server in this session' });
+      return;
+    }
+    const client = new Client({ name: 'legion-fake', version: '1.0.0' });
+    try {
+      await client.connect(
+        new StreamableHTTPClientTransport(new URL(mcp.url), {
+          requestInit: { headers: { Authorization: `Bearer ${mcp.token}` } },
+        }),
+      );
+      const result = (await client.callTool({ name: tool, arguments: input })) as {
+        isError?: boolean;
+        content?: Array<{ type: string; text?: string }>;
+      };
+      const output = result.content?.map((c) => c.text ?? '').join('\n') ?? null;
+      this.emit({ type: 'tool_result', id, ok: result.isError !== true, output });
+    } catch (error) {
+      this.emit({ type: 'tool_result', id, ok: false, output: (error as Error).message });
+    } finally {
+      await client.close().catch(() => undefined);
     }
   }
 

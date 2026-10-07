@@ -4,17 +4,7 @@
  */
 import { realpath } from 'node:fs/promises';
 import { basename } from 'node:path';
-import {
-  type InboxItem,
-  type Plan,
-  type PlanAnnotation,
-  type PlanDag,
-  type QuestionAnswer,
-  REAL_ENGINE_KINDS,
-  type RealEngineKind,
-  type Run,
-  type TaskNode,
-} from '@shared/domain';
+import type { InboxItem, Plan, PlanAnnotation, PlanDag, QuestionAnswer, Run, TaskNode } from '@shared/domain';
 import type { JsonSchema, SessionAttachment } from '@shared/engine';
 import type { RpcInput } from '@shared/rpc';
 import { RpcError } from '@shared/rpc-transport';
@@ -33,6 +23,7 @@ import {
   type AgentPrompt,
   buildClarifyPrompt,
   buildPlanPrompt,
+  coderEngine,
   enabledEngines,
   maxAttempts,
   noteTag,
@@ -66,7 +57,12 @@ export async function validateOptions(o: Orchestrator, run: Run): Promise<Valida
   return {
     highRiskGlobs: config?.highRiskGlobs ?? [],
     enabled: enabledEngines(settings),
-    estimate: { concurrency: settings.concurrency, maxFixRounds: settings.limits.maxFixRounds },
+    coderEngine: coderEngine(settings),
+    estimate: {
+      concurrency: settings.concurrency,
+      maxFixRounds: settings.limits.maxFixRounds,
+      coderEngine: coderEngine(settings),
+    },
   };
 }
 
@@ -291,15 +287,10 @@ export async function runPlan(o: Orchestrator, runId: string, revision: PlanRevi
   const run = o.store.requireRun(runId);
   if (run.status !== 'planning') return;
   const config = await o.config(run);
-  const settings = o.settings();
-  const enabled = enabledEngines(settings);
-  const available = REAL_ENGINE_KINDS.filter((k) => enabled[k] || o.registry.isFake(k));
-  const defaultCoder: RealEngineKind = settings.roles.coder.engine === 'codex' ? 'codex' : 'claude';
   const base: PlanPromptInput = {
     issue: o.issue(run),
     repo: o.repoInput(run, config),
     answers: runMeta(o.store, runId).answers,
-    engines: { available, defaultCoder },
     revision: revision
       ? {
           previousMarkdown: revision.previous.markdown,

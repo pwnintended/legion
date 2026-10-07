@@ -46,7 +46,6 @@ export function buildClarifyPrompt(input: ClarifyPromptInput): AgentPrompt {
 /** Plan step: explore read-only, then produce `{markdown, dag}` per the plan schema. */
 export function buildPlanPrompt(input: PlanPromptInput): AgentPrompt {
   const maxTasks = input.maxTasks ?? 12;
-  const engines = input.engines.available.length > 0 ? input.engines.available : [input.engines.defaultCoder];
   const repoVerify = input.repo.verifyCommands ?? [];
 
   const revision = input.revision
@@ -101,7 +100,7 @@ export function buildPlanPrompt(input: PlanPromptInput): AgentPrompt {
         `**Real verify commands.** Each task needs at least one verify command that exists in this repository (or that the task itself adds), runs non-interactively from the repository root, and is as fast and scoped as the tooling allows. Never invent scripts or use placeholders. Legion also runs the repository-wide commands ${repoVerify.length > 0 ? repoVerify.map((c) => `\`${c}\``).join(', ') : '(none configured)'} on every task; do not repeat them.`,
         '**Integration last.** When there are three or more tasks, end with a task of kind `integration` that depends on the others, wires the pieces together (registrations, exports, configuration, docs) and runs the full test suite. A small issue may be a single task.',
         '**Risk.** `high` for database migrations, authentication or authorization, deleting data, breaking public APIs, CI or release configuration (these wait for human approval before merging); `med` for cross-cutting changes; `low` otherwise.',
-        `**Engines.** Set \`agent.engine\` to one of ${engines.map((e) => `\`${e}\``).join(', ')} (default \`${input.engines.defaultCoder}\`). Leave \`model\` null. Set \`effort\` only with a reason: \`high\` for subtle algorithms or concurrency, \`low\` for mechanical edits; otherwise null.`,
+        '**Effort.** Set `agent.effort` only with a reason: `high` for subtle algorithms or concurrency, `low` for mechanical edits; otherwise null. Do not choose engines or models: the user configures the coding agent.',
         '**Context hints.** In `contextHints.files` list the files the coder should read first; in `contextHints.notes` record pitfalls, conventions and the decisions from the contracts task the coder must follow.',
         `Use ids \`T1\`, \`T2\`, … in dependency order. Use at most ${maxTasks} tasks.`,
       ]),
@@ -121,7 +120,7 @@ export function buildPlanPrompt(input: PlanPromptInput): AgentPrompt {
     ),
     section(
       'Output',
-      'Respond with the structured output only: `{"markdown": "...", "dag": {"nodes": [...]}}`. Each node has `id`, `title`, `goal` (2–5 sentences: what and why), `kind` (contracts | feature | test | refactor | docs | integration), `dependsOn`, `acceptanceCriteria` (`{id, text}`), `touches` (`{glob, mode}`), `size` (S | M | L), `verify` (`{commands}`), `contextHints` (`{files, notes}`), `agent` (`{engine, model, effort}`) and `risk` (low | med | high).',
+      'Respond with the structured output only: `{"markdown": "...", "dag": {"nodes": [...]}}`. Each node has `id`, `title`, `goal` (2–5 sentences: what and why), `kind` (contracts | feature | test | refactor | docs | integration), `dependsOn`, `acceptanceCriteria` (`{id, text}`), `touches` (`{glob, mode}`), `size` (S | M | L), `verify` (`{commands}`), `contextHints` (`{files, notes}`), `agent` (`{effort}`) and `risk` (low | med | high).',
     ),
   );
   return { systemPrompt: PLANNER_SYSTEM, prompt };

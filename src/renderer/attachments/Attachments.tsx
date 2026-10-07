@@ -16,6 +16,7 @@ import { rpc } from '../app/hooks';
 import { useReducedMotionPref } from '../app/prefs';
 import { Icon } from '../chrome/icons';
 import { SPRING } from '../theme/motion';
+import { Markdown } from '../tiles/session/Markdown';
 import { AttachmentDraft, base64ToBlob, type DraftItem, type DraftSnapshot } from './model';
 import './attachments.css';
 
@@ -216,6 +217,11 @@ export const chipOfRef = (ref: AttachmentRef, url: string | null = null): ChipDa
   url,
   busy: false,
 });
+
+/** A markdown document (rendered, not shown as source, in previews). */
+export function isMarkdownChip(chip: Pick<ChipData, 'kind' | 'mime' | 'name'>): boolean {
+  return chip.kind === 'text' && (chip.mime === 'text/markdown' || /\.(md|markdown)$/i.test(chip.name));
+}
 
 function tone(chip: Pick<ChipData, 'kind' | 'mime'>): string {
   if (chip.mime === 'application/pdf') return 'var(--red)';
@@ -646,7 +652,11 @@ function Preview({ state }: { state: PreviewState }) {
               }}
             />
           ) : content.status === 'text' ? (
-            <TextView text={content.text} truncated={content.truncated} />
+            isMarkdownChip(chip) ? (
+              <MarkdownView text={content.text} truncated={content.truncated} />
+            ) : (
+              <TextView text={content.text} truncated={content.truncated} />
+            )
           ) : content.status === 'loading' ? (
             <div className="at-lb-note faint">Loading…</div>
           ) : content.status === 'error' ? (
@@ -660,6 +670,16 @@ function Preview({ state }: { state: PreviewState }) {
           )}
         </div>
       </motion.div>
+    </div>
+  );
+}
+
+function MarkdownView({ text, truncated }: { text: string; truncated: boolean }) {
+  return (
+    // biome-ignore lint/a11y/noNoninteractiveTabindex: scrollable region must be keyboard reachable
+    <div className="at-md-view" tabIndex={0} data-testid="attachment-preview-markdown">
+      <Markdown text={text} streaming={false} caret={false} />
+      {truncated ? <div className="at-lb-cut">Preview cut short.</div> : null}
     </div>
   );
 }

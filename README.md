@@ -12,10 +12,13 @@ requests, a file tree, a code viewer, `git grep` search, ⌘P to jump to a file)
 When you know what should change, start a run there (⌘N), or select lines in a file and "Start a run about
 this…".
 
-You stay in charge at a few gates: plan approval, tool approvals and questions the agents raise (all in one
-inbox), high-risk merges, and the PR itself. Everything is visible while it runs: a scrollable tiling
-workspace per run with live transcripts, diffs, review packs and terminals, and you can steer an agent or
-take its session over in a terminal at any time.
+A run is a conversation with an assistant. You describe the change, it hands it to the planner, and while the
+agents work it tells you what matters: the lead reports milestones to it, and agents show you screenshots and
+documents right in the conversation. You stay in charge at a few gates, each a card in that conversation: plan
+approval, tool approvals and questions the agents raise, high-risk merges, and the PR itself (⌘U jumps to the next
+one). The agents themselves are one key away (⌘E): a scrollable tiling workspace per run with live transcripts,
+diffs, review packs and terminals, where you can steer an agent or take its session over in a terminal at any
+time.
 
 ## Requirements
 
@@ -35,9 +38,10 @@ LEGION_FAKE_ENGINES=1 pnpm dev    # fake mode: scripted agents, no CLIs, no push
 
 **Fake mode** (`LEGION_FAKE_ENGINES=1`) serves every engine with a scripted agent and a PR host that never
 pushes or calls GitHub (the PR link is `https://github.invalid/...`). Point it at any git repo: one run goes
-through one clarify question, a 3-task plan with a dependency, one tool approval, one review with a major
-finding fixed in the next round, and the PR gate. `LEGION_HOME=<dir>` keeps the data (DB, worktrees) out of
-`~/Library/Application Support/Legion`.
+through a scripted assistant that hands the request to the planner, one clarify question, a 3-task plan with a
+dependency, one tool approval, one review with a major finding fixed in the next round, a screenshot and a
+document presented by coders, the lead's status update on every merge, and the PR gate. `LEGION_HOME=<dir>`
+keeps the data (DB, worktrees) out of `~/Library/Application Support/Legion`.
 
 ## Test
 

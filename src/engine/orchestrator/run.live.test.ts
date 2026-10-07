@@ -70,7 +70,7 @@ async function answer(client: RpcClient<RpcContract, ServerEvent>, item: InboxIt
         runId: item.runId,
         basePlanId: plan.id,
         markdown: plan.markdown,
-        nodes: plan.dag.nodes.map((n) => ({ ...n, agent: { engine: 'claude', model: 'haiku', effort: 'low' } })),
+        nodes: plan.dag.nodes.map((n) => ({ ...n, agent: { effort: 'low' } })),
       });
       await client.call('runs.approvePlan', { runId: item.runId, planId: pinned.id });
       return;

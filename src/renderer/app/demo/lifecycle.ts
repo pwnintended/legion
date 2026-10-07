@@ -22,14 +22,7 @@ export function extra<T extends object>(row: T, fields: Record<string, unknown>)
   return Object.assign(row, fields);
 }
 
-function node(
-  id: string,
-  title: string,
-  goal: string,
-  dependsOn: string[],
-  engine: 'claude' | 'codex',
-  touches: string[],
-) {
+function node(id: string, title: string, goal: string, dependsOn: string[], touches: string[]) {
   return {
     id,
     title,
@@ -41,7 +34,7 @@ function node(
     size: 'M',
     verify: { commands: ['pnpm test jobs'] },
     contextHints: { files: [], notes: '' },
-    agent: { engine, model: null, effort: 'high' },
+    agent: { effort: 'high' },
     risk: 'low',
   } satisfies TaskNode;
 }
@@ -74,9 +67,6 @@ function task(runId: string, nodeId: string, patch: Partial<Task>, at: number): 
     attemptCount: 1,
     fixRounds: 0,
     mergedSha: null,
-    engineOverride: null,
-    modelOverride: null,
-    effortOverride: null,
     progress: null,
     error: null,
     createdAt: at,
@@ -157,16 +147,10 @@ export function withLifecycleDemo(world: DemoWorld, now: number): DemoWorld {
   // --- E: failing task + escalation ------------------------------------------------------------------
   const E = FAILING_RUN_ID;
   const nodesE = [
-    node('T1', 'Queue adapter', 'A BullMQ-backed queue with the same API as the cron runner.', [], 'claude', [
-      'jobs/adapter.ts',
-    ]),
-    node('T2', 'Move nightly jobs', 'Run the nightly digest and cleanup jobs from the queue.', ['T1'], 'claude', [
-      'jobs/**',
-    ]),
-    node('T3', 'Remove the cron runner', 'Delete the old cron runner and its config.', ['T2'], 'codex', ['cron/**']),
-    node('T4', 'Queue dashboard route', 'Admin route listing queued and failed jobs.', ['T1'], 'codex', [
-      'server/admin/**',
-    ]),
+    node('T1', 'Queue adapter', 'A BullMQ-backed queue with the same API as the cron runner.', [], ['jobs/adapter.ts']),
+    node('T2', 'Move nightly jobs', 'Run the nightly digest and cleanup jobs from the queue.', ['T1'], ['jobs/**']),
+    node('T3', 'Remove the cron runner', 'Delete the old cron runner and its config.', ['T2'], ['cron/**']),
+    node('T4', 'Queue dashboard route', 'Admin route listing queued and failed jobs.', ['T1'], ['server/admin/**']),
   ];
   const createdE = now - 70 * MIN;
   const tE = (id: string, patch: Partial<Task>) => task(E, id, patch, createdE + 6 * MIN);
@@ -241,13 +225,9 @@ export function withLifecycleDemo(world: DemoWorld, now: number): DemoWorld {
   const F = DONE_RUN_ID;
   const createdF = now - 27 * HOUR;
   const nodesF = [
-    node('T1', 'Color tokens', 'Semantic color tokens for light and dark.', [], 'claude', ['web/src/theme/**']),
-    node('T2', 'Theme switcher', 'Settings toggle that follows the OS by default.', ['T1'], 'codex', [
-      'web/src/settings/**',
-    ]),
-    node('T3', 'Migrate components', 'Replace hard-coded colors with tokens.', ['T1'], 'claude', [
-      'web/src/components/**',
-    ]),
+    node('T1', 'Color tokens', 'Semantic color tokens for light and dark.', [], ['web/src/theme/**']),
+    node('T2', 'Theme switcher', 'Settings toggle that follows the OS by default.', ['T1'], ['web/src/settings/**']),
+    node('T3', 'Migrate components', 'Replace hard-coded colors with tokens.', ['T1'], ['web/src/components/**']),
   ];
   const tasksF = nodesF.map((n, i) =>
     task(F, n.id, { mergedSha: `d4e${i}a7c`, updatedAt: createdF + (3 + i) * HOUR }, createdF + HOUR),
@@ -288,7 +268,7 @@ export function withLifecycleDemo(world: DemoWorld, now: number): DemoWorld {
     }),
     { pr: { url: prUrlG, number: 371, state: 'merged', isDraft: false }, archived: true },
   );
-  const nodesG = [node('T1', 'Bump engines and CI images', 'Node 24 everywhere.', [], 'codex', ['**'])];
+  const nodesG = [node('T1', 'Bump engines and CI images', 'Node 24 everywhere.', [], ['**'])];
   const tasksG = [task(G, 'T1', { updatedAt: now - 5 * 24 * HOUR }, now - 6 * 24 * HOUR)];
 
   // Merges (in order) with post-merge verification, plus the final verify, for the finished runs.

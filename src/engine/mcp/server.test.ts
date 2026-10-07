@@ -3,7 +3,14 @@ import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { AgentMessage } from '../../shared/domain';
 import { claudeMcpConfig, codexMcpConfigOverrides } from './config';
-import { type McpBinding, type McpHost, type McpServerHandle, type SendMessageRequest, startMcpServer } from './server';
+import {
+  type McpBinding,
+  type McpHost,
+  type McpServerHandle,
+  type PresentRequest,
+  type SendMessageRequest,
+  startMcpServer,
+} from './server';
 
 interface Calls {
   progress: Array<[McpBinding, string]>;
@@ -15,6 +22,7 @@ interface Calls {
   amend: Array<[string, string]>;
   research: Array<[string, string, string]>;
   start: Array<[string, boolean]>;
+  present: Array<[McpBinding, PresentRequest]>;
 }
 
 function fakeHost() {
@@ -28,6 +36,7 @@ function fakeHost() {
     amend: [],
     research: [],
     start: [],
+    present: [],
   };
   const pendingAsks: Array<(a: string) => void> = [];
   const pendingWaits: Array<(m: AgentMessage | null) => void> = [];
@@ -97,6 +106,10 @@ function fakeHost() {
     startImplementation: (b, r) => {
       calls.start.push([r.title, r.clarify]);
       return { runId: b.runId, status: r.clarify ? 'clarifying' : 'planning' };
+    },
+    present: async (b, r) => {
+      calls.present.push([b, r]);
+      return { id: 'shw_1', files: r.files.length + (r.markdown ? 1 : 0) };
     },
     runStatus: (b) => ({
       runId: b.runId,
@@ -181,12 +194,44 @@ describe('legion mcp server', () => {
   it('lists tools per role', async () => {
     const names = async (b: McpBinding) =>
       (await (await connect(srv.issueToken(b))).listTools()).tools.map((t) => t.name).sort();
-    const writeTools = ['approve', 'mark_task_done', 'report_progress', 'request_human_input'];
+    const writeTools = ['approve', 'mark_task_done', 'present', 'report_progress', 'request_human_input'];
     expect(await names(coder())).toEqual(writeTools);
     expect(await names({ ...coder(), role: 'resolver' })).toEqual(writeTools);
     for (const role of ['planner', 'reviewer', 'finalizer'] as const) {
-      expect(await names({ ...reviewer, role })).toEqual(['approve', 'report_progress', 'request_human_input']);
+      expect(await names({ ...reviewer, role })).toEqual([
+        'approve',
+        'present',
+        'report_progress',
+        'request_human_input',
+      ]);
     }
+  });
+
+  describe('present', () => {
+    it('passes files and documents to the host; coordinators present documents only', async () => {
+      const c = await connect(srv.issueToken(coder()));
+      const result = await call(c, 'present', {
+        title: 'Settings page',
+        caption: 'The new list',
+        files: ['shot.png'],
+      });
+      expect(JSON.parse(result.text)).toEqual({ id: 'shw_1', files: 1 });
+      expect(f.calls.present[0]?.[1]).toEqual({
+        title: 'Settings page',
+        caption: 'The new list',
+        files: ['shot.png'],
+        markdown: null,
+      });
+      const empty = await call(c, 'present', { title: 'Nothing' });
+      expect(empty.isError).toBe(true);
+      expect(empty.text).toMatch(/nothing to show/);
+
+      const lead = await connect(srv.issueToken({ ...coder(), taskId: null, role: 'lead' }));
+      const tool = (await lead.listTools()).tools.find((t) => t.name === 'present');
+      expect(Object.keys(tool?.inputSchema.properties ?? {})).not.toContain('files');
+      await call(lead, 'present', { title: 'Summary', markdown: '# What changed' });
+      expect(f.calls.present[1]?.[1]).toMatchObject({ files: [], markdown: '# What changed' });
+    });
   });
 
   describe('messaging tools', () => {
@@ -196,15 +241,24 @@ describe('legion mcp server', () => {
       const names = async (b: McpBinding) =>
         (await (await connect(srv.issueToken(b))).listTools()).tools.map((t) => t.name).sort();
       expect(await names(ledCoder)).toEqual(
-        ['approve', 'ask_lead', 'mark_task_done', 'report_progress', 'request_human_input', ...messagingTools].sort(),
+        [
+          'approve',
+          'ask_lead',
+          'mark_task_done',
+          'present',
+          'report_progress',
+          'request_human_input',
+          ...messagingTools,
+        ].sort(),
       );
       expect(await names({ ...reviewer, role: 'researcher', parentAttemptId: 'lead1' })).toEqual(
-        ['approve', 'ask_lead', 'report_progress', 'request_human_input', ...messagingTools].sort(),
+        ['approve', 'ask_lead', 'present', 'report_progress', 'request_human_input', ...messagingTools].sort(),
       );
       // Planners and reviewers sit under a coordinator only to be steered.
       for (const role of ['planner', 'reviewer'] as const) {
         expect(await names({ ...reviewer, role, parentAttemptId: 'lead1' })).toEqual([
           'approve',
+          'present',
           'report_progress',
           'request_human_input',
         ]);
@@ -272,7 +326,7 @@ describe('legion mcp server', () => {
       size: 'S',
       verify: { commands: ['test -f docs/x.md'] },
       contextHints: { files: [], notes: '' },
-      agent: { engine: 'claude', model: null, effort: null },
+      agent: { effort: null },
       risk: 'low',
     };
 
@@ -286,6 +340,7 @@ describe('legion mcp server', () => {
           'cancel_task',
           'list_agents',
           'plan_status',
+          'present',
           'read_plan',
           'report_progress',
           'request_human_input',
@@ -345,6 +400,7 @@ describe('legion mcp server', () => {
         [
           'approve',
           'list_agents',
+          'present',
           'report_progress',
           'request_human_input',
           'run_status',
