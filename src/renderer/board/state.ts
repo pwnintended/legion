@@ -44,9 +44,16 @@ interface BoardStore {
   view: BoardView | null;
   /** Bumped when the keyboard moved focus: the focused tile takes DOM focus. */
   focusRequest: number;
+  /** A new conversation was asked for from a conversation's agents: the board splits it in once it is up. */
+  pendingNew: boolean;
 }
 
-export const boardStore = createStore<BoardStore>(() => ({ boards: {}, view: null, focusRequest: 0 }));
+export const boardStore = createStore<BoardStore>(() => ({
+  boards: {},
+  view: null,
+  focusRequest: 0,
+  pendingNew: false,
+}));
 
 const STORAGE = 'legion.board.';
 
@@ -167,6 +174,18 @@ export const boardActions = {
       if (view.projectId) actions.openProjectHome(view.projectId);
     } else actions.setActiveRun(id);
     if (keyboard) boardStore.setState((s) => ({ focusRequest: s.focusRequest + 1 }));
+  },
+
+  /** Back from a conversation's agents to the board, with that conversation's tile focused. */
+  backFromAgents(): void {
+    actions.setView('chat');
+    boardStore.setState((s) => ({ focusRequest: s.focusRequest + 1 }));
+  },
+
+  /** New conversation from a conversation's agents: back to the board, where the new tile splits in. */
+  newFromAgents(): void {
+    boardStore.setState({ pendingNew: true });
+    actions.setView('chat');
   },
 
   /** Split a new-conversation tile in as the master (or focus the one already there). */

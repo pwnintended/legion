@@ -9,7 +9,7 @@ draft PR.
 
 Legion starts from your **projects**: add a repository and you land on its home (README, history, open pull
 requests, a file tree, a code viewer, `git grep` search, ⌘P to jump to a file) before you ever write a prompt.
-When you know what should change, start a run there (⌘N), or select lines in a file and "Start a run about
+When you know what should change, start a run there (⌘⇧N), or select lines in a file and "Start a run about
 this…".
 
 A run is a conversation with an assistant. You describe the change, it hands it to the planner, and while the

@@ -138,7 +138,17 @@ export function RouteMap({ runId }: { runId: string }) {
   return (
     <div ref={setRoot} className="route" data-workspace={runId} data-narrow={narrow} data-testid="route-map">
       {narrow ? (
-        <div className="rm-bar-wrap">
+        // biome-ignore lint/a11y/noStaticElementInteractions: Esc bubbling up from the bar or the open map closes it
+        <div
+          className="rm-bar-wrap"
+          onKeyDown={(event) => {
+            // Esc closes the open map first; only a closed map lets Esc go back to the board.
+            if (event.key !== 'Escape' || !mapOpen) return;
+            event.preventDefault();
+            setMapOpen(false);
+            event.currentTarget.querySelector<HTMLButtonElement>('.rm-bar')?.focus();
+          }}
+        >
           <button
             type="button"
             className="rm-bar"

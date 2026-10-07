@@ -16,6 +16,7 @@
 import { useSyncExternalStore } from 'react';
 import { useStore } from 'zustand';
 import { boardCommands } from '../board/commands';
+import { boardActions } from '../board/state';
 import {
   collapse,
   cycleColumnMode,
@@ -35,7 +36,7 @@ import {
 import { toast } from '../overlays/nav';
 import { canArchive, isArchived, runPr } from './compat';
 import { isConfirmOpen } from './confirm';
-import { type DataState, TERMINAL_RUN_STATUSES } from './data';
+import { type DataState, hasAgents, TERMINAL_RUN_STATUSES } from './data';
 import { rpc } from './hooks';
 import { formatChord, isTerminal, isTextInput, matchesChord, ownsPlainKeys, parseChord } from './keys';
 import {
@@ -314,9 +315,26 @@ export function handleKeyDown(event: KeyboardEvent): boolean {
   return false;
 }
 
+/**
+ * Esc leaves a conversation's agents for the board. It listens in the bubble phase, after everything on the
+ * page: a tile or popover that takes Esc for itself (clearing a selection, closing the folded map) gets it first.
+ */
+export function handleAgentsEscape(event: KeyboardEvent): boolean {
+  if (event.key !== 'Escape' || event.defaultPrevented || event.isComposing || event.repeat) return false;
+  if (event.metaKey || event.ctrlKey || event.altKey || event.shiftKey) return false;
+  if (isConfirmOpen() || ownsPlainKeys(event.target) || isTextInput(event.target) || isTerminal(event.target))
+    return false;
+  const { ui } = context();
+  if (ui.view !== 'agents' || ui.overlay !== null || ui.keyMode !== 'normal') return false;
+  event.preventDefault();
+  void executeCommand('view.agents.leave');
+  return true;
+}
+
 /** Install the global key handler and the menu command channel. Returns a disposer. */
 export function installKeybindings(target: Window = window): () => void {
   const onKey = (event: KeyboardEvent) => void handleKeyDown(event);
+  const onEscape = (event: KeyboardEvent) => void handleAgentsEscape(event);
   const onMessage = (event: MessageEvent) => {
     const data = event.data as { type?: unknown; id?: unknown } | null;
     if (event.source === target && data?.type === 'legion:command' && typeof data.id === 'string')
@@ -324,6 +342,7 @@ export function installKeybindings(target: Window = window): () => void {
   };
   const onFocus = (event: FocusEvent) => actions.setTerminalLocked(isTerminal(event.target));
   target.addEventListener('keydown', onKey, true);
+  target.addEventListener('keydown', onEscape);
   target.addEventListener('message', onMessage);
   target.addEventListener('focusin', onFocus);
   // The app menu (main process) may expose a command channel on the bridge in a later version.
@@ -331,6 +350,7 @@ export function installKeybindings(target: Window = window): () => void {
   const offBridge = typeof bridge?.onCommand === 'function' ? bridge.onCommand((id) => void executeCommand(id)) : null;
   return () => {
     target.removeEventListener('keydown', onKey, true);
+    target.removeEventListener('keydown', onEscape);
     target.removeEventListener('message', onMessage);
     target.removeEventListener('focusin', onFocus);
     offBridge?.();
@@ -392,7 +412,8 @@ export function builtinCommands(): Command[] {
       inOverlay: true,
       title: 'New run…',
       category: 'Run',
-      keybinding: 'Mod+N',
+      // ⌘N is a new conversation on the board; the full composer is ⌘⇧N everywhere.
+      keybinding: 'Mod+Shift+N',
       // Opened from a project (its home or one of its runs): that project is preselected.
       run: () => newRunInProject(),
     },
@@ -403,7 +424,9 @@ export function builtinCommands(): Command[] {
       inOverlay: true,
       title: 'Add a project…',
       category: 'Project',
-      keybinding: 'Mod+Shift+N',
+      keybinding: 'Mod+O',
+      // The composer's repository picker has its own ⌘O (browse for a folder); it keeps it while open.
+      when: (ctx) => ctx.ui.overlay !== 'composer',
       run: () => actions.openOverlay('addProject'),
     },
     {
@@ -482,14 +505,25 @@ export function builtinCommands(): Command[] {
       title: 'Show the conversation',
       category: 'Layout',
       when: (ctx) => ctx.ui.view !== 'chat' && (activeRun(ctx) !== null || projectInView(ctx) !== null),
-      run: () => actions.setView('chat'),
+      run: (ctx) => (ctx.ui.view === 'agents' ? boardActions.backFromAgents() : actions.setView('chat')),
     },
+    // The agents are the inside of one conversation, not a view of their own: ⌘E on the focused tile goes in,
+    // ⌘E or Esc comes back out to it. A conversation without a plan or tasks has nothing to show; ⌘E does nothing.
     {
       id: 'view.agents',
-      title: 'Show the agents',
+      title: "Show this conversation's agents",
       category: 'Layout',
-      when: (ctx) => ctx.ui.view !== 'agents' && activeRun(ctx) !== null,
+      keybinding: 'Mod+E',
+      when: (ctx) => ctx.ui.view === 'chat' && hasAgents(ctx.data, ctx.activeRunId),
       run: () => actions.setView('agents'),
+    },
+    {
+      id: 'view.agents.leave',
+      title: 'Back to the board',
+      category: 'Layout',
+      keybinding: 'Mod+E',
+      when: (ctx) => ctx.ui.view === 'agents',
+      run: () => boardActions.backFromAgents(),
     },
     {
       id: 'view.code',
@@ -498,15 +532,6 @@ export function builtinCommands(): Command[] {
       keybinding: 'Mod+Shift+E',
       when: (ctx) => ctx.ui.view !== 'code' && projectInView(ctx) !== null,
       run: () => actions.setView('code'),
-    },
-    {
-      id: 'view.toggle',
-      title: 'Switch between the conversation and the agents',
-      category: 'Layout',
-      keybinding: 'Mod+E',
-      hidden: true,
-      when: (ctx) => activeRun(ctx) !== null || projectInView(ctx) !== null,
-      run: () => actions.toggleView(),
     },
     {
       id: 'palette.open',

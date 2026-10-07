@@ -2,6 +2,7 @@ import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { type ElectronApplication, _electron as electron, expect, type Page, test } from '@playwright/test';
+import { openAgents } from './agents';
 
 const root = resolve(import.meta.dirname, '../..');
 const shots = join(root, 'test-results', 'plan-review');
@@ -23,8 +24,6 @@ async function launchDemo(
     localStorage.setItem('legion.demo', '1');
     localStorage.setItem('legion.demo.live', '0');
     localStorage.setItem('legion.demo.stage', s);
-    // The agents view (the run's route map); a run opens in its chat otherwise.
-    localStorage.setItem('legion.ui', JSON.stringify({ view: 'agents' }));
   }, stage);
   await window.reload();
   await app.evaluate(({ BrowserWindow }) => {
@@ -35,6 +34,7 @@ async function launchDemo(
   await expect(window.getByTestId('titlebar')).toContainText('demo', { timeout: 30_000 });
   // Workspace shortcuts (⌘2, ⌘3) need the run list loaded.
   await expect(window.getByTestId('rail-run')).toHaveCount(8);
+  await openAgents(window);
   return { app, window, home };
 }
 

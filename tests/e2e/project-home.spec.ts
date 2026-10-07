@@ -229,7 +229,7 @@ test('project home: add a project, browse, go to file, search, a commit, start a
     await expect(window.getByTestId('new-conversation-input')).toBeVisible();
     await expect(window.getByTestId('view-code')).toHaveText(/Code/);
     // No run yet: no agents to show.
-    await expect(window.getByTestId('view-agents')).toHaveCount(0);
+    await expect(window.getByTestId('titlebar-agents')).toHaveCount(0);
     await window.waitForTimeout(300);
     await window.screenshot({ path: join(shots, '02b-new-conversation-1280x800.png') });
     await window.getByTestId('view-code').click();
@@ -348,10 +348,10 @@ test('project home: add a project, browse, go to file, search, a commit, start a
     await window.waitForTimeout(400);
     await shotAt(app, window, '09-composer');
 
-    // ⌘N from the home preselects the project too; the run shows up under it in the rail.
+    // ⌘⇧N from the home preselects the project too; the run shows up under it in the rail.
     await window.keyboard.press('Escape');
     await expect(composer).toHaveCount(0);
-    await window.keyboard.press('Meta+n');
+    await window.keyboard.press('Meta+Shift+n');
     await expect(composer).toBeVisible();
     await composer.locator('textarea').fill('Make truncate count graphemes');
     await expect(composer.getByTestId('repo-status')).toHaveAttribute('data-state', 'ok', { timeout: 15_000 });

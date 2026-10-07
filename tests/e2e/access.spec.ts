@@ -19,7 +19,6 @@ async function launchDemo(): Promise<{ app: ElectronApplication; window: Page; h
   await window.evaluate(() => {
     localStorage.setItem('legion.demo', '1');
     localStorage.setItem('legion.demo.live', '0');
-    localStorage.setItem('legion.ui', JSON.stringify({ view: 'agents' }));
   });
   await window.reload();
   await app.evaluate(({ BrowserWindow }) => {

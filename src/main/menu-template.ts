@@ -17,7 +17,7 @@ export interface MenuTemplateOptions {
  * `column.cycleMode` / `mode.resize`. ⌘1–9 belong to the renderer's workspace switching and are never bound here.
  */
 export const MENU_ACCELERATORS: Partial<Record<CommandId, string>> = {
-  'composer.open': 'CmdOrCtrl+N',
+  'composer.open': 'CmdOrCtrl+Shift+N',
   'inbox.open': 'CmdOrCtrl+I',
   'palette.open': 'CmdOrCtrl+K',
   'layout.focus': 'CmdOrCtrl+Return',
@@ -28,7 +28,7 @@ export const MENU_ACCELERATORS: Partial<Record<CommandId, string>> = {
   'column.cycleMode': 'CmdOrCtrl+W',
   'mode.resize': 'CmdOrCtrl+R',
   'settings.open': 'CmdOrCtrl+,',
-  'project.add': 'CmdOrCtrl+Shift+N',
+  'project.add': 'CmdOrCtrl+O',
   'file.goto': 'CmdOrCtrl+P',
   'project.search': 'CmdOrCtrl+Shift+F',
 };

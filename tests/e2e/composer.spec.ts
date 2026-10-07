@@ -132,8 +132,8 @@ test('composer: repository picker, status line, base branch, at three sizes', as
     const list = window.getByTestId('repo-picker-list');
     const status = composer.getByTestId('repo-status');
 
-    // ⌘N: the issue field has focus; nothing is picked on a fresh install.
-    await window.keyboard.press('Meta+n');
+    // ⌘⇧N: the issue field has focus; nothing is picked on a fresh install.
+    await window.keyboard.press('Meta+Shift+n');
     await expect(composer).toBeVisible();
     await expect.poll(() => window.evaluate(() => document.activeElement?.tagName)).toBe('TEXTAREA');
     await expect(picker).toContainText('Choose a repository…');
@@ -239,7 +239,7 @@ test('composer: repository picker, status line, base branch, at three sizes', as
     for (const size of SIZES) {
       const tag = `${size[0]}x${size[1]}`;
       await setSize(app, window, size);
-      await window.keyboard.press('Meta+n');
+      await window.keyboard.press('Meta+Shift+n');
       await expect(composer).toBeVisible();
       // Empty: no text yet (the draft keeps the last repo).
       await composer.locator('textarea').fill('');

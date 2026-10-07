@@ -863,6 +863,17 @@ export const openInbox = memoByRun((inbox: Record<string, InboxItem>, runId: str
     .sort((a, b) => a.createdAt - b.createdAt),
 );
 
+/**
+ * Does a run have agents to show? Once the planner is at work (clarifying, drafting) or there is a plan or a
+ * task, yes; a conversation still only with the assistant (or the new conversation, no run) has none.
+ */
+export function hasAgents(state: DataState, runId: string | null): boolean {
+  const run = runId ? state.runs[runId] : undefined;
+  if (!run) return false;
+  if (run.status === 'clarifying' || run.status === 'planning') return true;
+  return plansOfRun(state.plans, run.id).length > 0 || tasksOfRun(state.tasks, run.id).length > 0;
+}
+
 export function latestPlan(state: DataState, runId: string): Plan | null {
   return plansOfRun(state.plans, runId).at(-1) ?? null;
 }

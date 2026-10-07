@@ -1,5 +1,5 @@
 /**
- * Composer (⌘N): describe the work or paste a GitHub / Linear URL, pick a repository (recent, found on this
+ * Composer (⌘⇧N): describe the work or paste a GitHub / Linear URL, pick a repository (recent, found on this
  * Mac, a typed path, Browse… ⌘O, or a folder dropped from Finder), a base branch and the planner engine, then
  * ⌘⏎ creates the run and focuses its workspace. Screenshots and files attach by paste (⌘V), drop or the Attach
  * button (⌘⇧A). The draft, attachments included, survives closing the overlay.
@@ -24,7 +24,7 @@ import {
 } from '../attachments/Attachments';
 import { dragIntent } from '../attachments/model';
 import { Icon } from '../chrome/icons';
-import { Kbd } from '../chrome/ui';
+import { CommandKbd, Kbd } from '../chrome/ui';
 import { errorMessage } from '../tiles/session/actions';
 import { BranchPicker, RepoPicker } from './Picker';
 import { abbreviatePath, baseName, mergeRepos, pathFromFileUrl } from './picker-model';
@@ -79,7 +79,7 @@ type Inspect =
   | { status: 'done'; result: RepoInspection }
   | { status: 'error'; message: string };
 
-/** Discovery is cached by the engine; keep the last answer here too so reopening ⌘N is instant. */
+/** Discovery is cached by the engine; keep the last answer here too so reopening ⌘⇧N is instant. */
 let lastFound: DiscoveredRepo[] | null = null;
 let lastHome: string | null = null;
 
@@ -395,7 +395,7 @@ export function ComposerOverlay() {
       >
         <div className="ovl-head ovl-head-plain">
           <span className="ovl-title">New run</span>
-          <Kbd>⌘N</Kbd>
+          <CommandKbd id="composer.open" />
           <button
             type="button"
             className="btn btn-ghost btn-icon"

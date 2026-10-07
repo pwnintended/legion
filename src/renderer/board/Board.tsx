@@ -91,6 +91,10 @@ export function Board({ boardKey }: { boardKey: string }) {
     boardStore.setState({
       view: { key: boardKey, projectId: project?.id ?? null, ids: shown, focus, arrangement, temporary },
     });
+    if (boardStore.getState().pendingNew) {
+      boardStore.setState({ pendingNew: false });
+      boardActions.openNew();
+    }
   });
   useEffect(() => () => boardStore.setState({ view: null }), []);
 
@@ -324,18 +328,6 @@ function RunTile({
         <span className="bd-grow" />
         {engine ? <EngineChip engine={engine} /> : null}
         <div className="tile-actions bd-actions">
-          <button
-            type="button"
-            className="btn btn-ghost btn-icon"
-            aria-label="Show the agents of this conversation"
-            title={commandTooltip('view.toggle', 'Agents')}
-            onClick={() => {
-              actions.setActiveRun(runId);
-              actions.setView('agents');
-            }}
-          >
-            <Icon name="agents" size={13} />
-          </button>
           {many && canTile && !temporary ? (
             <button
               type="button"

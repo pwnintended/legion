@@ -115,8 +115,8 @@ function closedReason(run: Run, live: Attempt | null, hadAssistant: boolean): st
   if (run.archived) return 'This run is archived: its worktrees and branches are cleaned up. Start a new one with ⌘N.';
   if (run.status === 'done') return 'This run is finished. Start a new one with ⌘N.';
   if (run.status === 'cancelled') return 'This run was stopped.';
-  if (run.status === 'failed') return 'This run failed. Its agents are still in the Agents view (⌘E).';
-  if (!hadAssistant) return 'This run has no assistant. Steer its agents from the Agents view (⌘E).';
+  if (run.status === 'failed') return 'This run failed. ⌘E still shows its agents.';
+  if (!hadAssistant) return 'This run has no assistant. ⌘E opens its agents, where you can steer them.';
   if (live?.status !== 'running') return 'The assistant is not running. Legion reopens it when there is news.';
   return null;
 }

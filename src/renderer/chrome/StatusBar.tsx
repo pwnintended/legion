@@ -35,7 +35,7 @@ export function StatusBar() {
     >
       {view === 'agents' ? (
         <span className="faint" data-testid="map-hint">
-          ⌘⌥J/K stations · ⌘⌥H/L tabs
+          ⌘E/Esc board · ⌘⌥J/K stations · ⌘⌥H/L tabs
         </span>
       ) : null}
       {view === 'code' ? (

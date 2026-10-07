@@ -20,6 +20,7 @@ import {
   test,
 } from '@playwright/test';
 import { png, sevenPng, textPdf } from '../../src/engine/attachments/testing';
+import { openAgents } from './agents';
 
 const root = resolve(import.meta.dirname, '../..');
 const shots = join(root, 'test-results', 'attachments');
@@ -130,7 +131,7 @@ test('attachments: paste, drop, dialog, preview, remove, then the planner receiv
     await expect(window.getByTestId('connection-status')).toHaveText('connected', { timeout: 30_000 });
 
     // The composer with a repository and a description.
-    await window.keyboard.press('Meta+n');
+    await window.keyboard.press('Meta+Shift+n');
     const composer = window.getByTestId('composer');
     await expect(composer).toBeVisible();
     const textarea = composer.locator('textarea');
@@ -230,7 +231,7 @@ test('attachments: paste, drop, dialog, preview, remove, then the planner receiv
     // The draft (attachments included) survives closing the composer.
     await window.keyboard.press('Escape');
     await expect(composer).toHaveCount(0);
-    await window.keyboard.press('Meta+n');
+    await window.keyboard.press('Meta+Shift+n');
     await expect(composer).toBeVisible();
     await expect(chips).toHaveCount(3);
 
@@ -251,8 +252,8 @@ test('attachments: paste, drop, dialog, preview, remove, then the planner receiv
     const clarify = chat.locator('[data-testid="chat-decision"][data-kind="question"]').getByTestId('clarify');
     await expect(clarify).toBeVisible({ timeout: 30_000 });
     await expect(chat.locator('.ch-you-files').first().getByTestId('attachment-chip')).toHaveCount(3);
-    // Among the agents (⌘E and back): the route map's Plan station shows the plan-to-be, which lists them as the
-    // issue's attachments.
+    // Among the agents (⌘E and back): the planner is at work, so the route map's Plan station shows the
+    // plan-to-be, which lists them as the issue's attachments.
     await window.keyboard.press('Meta+e');
     await expect(window.getByTestId('route-map')).toBeVisible();
     await expect(window.getByTestId('station-pane')).toHaveAttribute('data-station', 'plan');
@@ -333,11 +334,11 @@ test('attachments in demo mode: a screenshot pasted into the steer bar travels w
       localStorage.clear();
       localStorage.setItem('legion.demo', '1');
       localStorage.setItem('legion.demo.live', '0');
-      // The agents view (the route map), which opens on T2's station: its session tile has the steer bar.
-      localStorage.setItem('legion.ui', JSON.stringify({ view: 'agents' }));
     });
     await window.reload();
     await setSize(app, window, [1440, 900]);
+    // The run's agents (the route map) open on T2's station: its session tile has the steer bar.
+    await openAgents(window);
     const t2 = window.locator('[data-tile-id="session:T2"]');
     await expect(t2.getByText('Read 3 files')).toBeVisible({ timeout: 30_000 });
     await expect(window.getByTestId('station-pane')).toHaveAttribute('data-station', 'task:T2');

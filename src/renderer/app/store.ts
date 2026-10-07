@@ -23,7 +23,16 @@ import {
   makeColumn,
   type Workspace,
 } from '../layout/tree';
-import { attemptsOfRun, type DataState, initialData, latestPlan, openInbox, selectRunList, tasksOfRun } from './data';
+import {
+  attemptsOfRun,
+  type DataState,
+  hasAgents,
+  initialData,
+  latestPlan,
+  openInbox,
+  selectRunList,
+  tasksOfRun,
+} from './data';
 import { projectOfRun, projectWorkspaceKey, selectProjects } from './projects';
 
 export type Overlay = 'composer' | 'palette' | 'settings' | 'addProject' | 'goto';
@@ -97,7 +106,8 @@ export function initialUi(): UiState {
     activeRunId: typeof prefs.activeRunId === 'string' ? prefs.activeRunId : null,
     activeProjectId: typeof prefs.activeProjectId === 'string' ? prefs.activeProjectId : null,
     overlay: null,
-    view: prefs.view === 'agents' || prefs.view === 'code' ? prefs.view : 'chat',
+    // The agents are a conversation's inside, never a place to launch into: a saved agents view reopens the board.
+    view: prefs.view === 'code' ? 'code' : 'chat',
     chatFocus: null,
     mapNode: {},
     keyMode: 'normal',
@@ -309,18 +319,13 @@ export const actions = {
       uiStore.setState({ overlay: null, focusRequest: uiStore.getState().focusRequest + 1 });
   },
 
-  /** Switch view. A run's agents need a run: without one, the project's code is what there is to show. */
+  /** Switch view. The agents need a run with a plan or tasks: without one nothing changes. */
   setView(view: View): void {
-    const next = view === 'agents' && uiStore.getState().activeRunId === null ? 'code' : view;
-    if (uiStore.getState().view === next) return;
-    uiStore.setState({ view: next, keyMode: 'normal' });
+    if (view === 'agents' && !hasAgents(dataStore.getState(), uiStore.getState().activeRunId)) return;
+    if (uiStore.getState().view === view) return;
+    uiStore.setState({ view, keyMode: 'normal' });
     savePrefs(uiStore.getState());
     syncActiveLayout();
-  },
-  /** ⌘E: the conversation and the run's agents (the project's code when no run is active). */
-  toggleView(): void {
-    const { view, activeRunId } = uiStore.getState();
-    actions.setView(view !== 'chat' ? 'chat' : activeRunId ? 'agents' : 'code');
   },
 
   /** Show a thread item of a run's conversation (a decision card, a presentation). */

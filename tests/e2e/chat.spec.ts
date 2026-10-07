@@ -101,7 +101,8 @@ test('the run is a conversation: updates, presentations, decisions, the agents o
     await window.waitForTimeout(300);
     await shot(window, 'task-dot');
     await dot.click();
-    await expect(window.getByTestId('view-agents')).toHaveAttribute('aria-pressed', 'true');
+    await expect(window.getByTestId('titlebar-agents')).toBeVisible();
+    await expect(window.getByTestId('view-chat')).toHaveAttribute('aria-pressed', 'true');
     await expect(window.getByTestId('route-map')).toBeVisible();
     await expect(window.getByTestId('station-pane')).toHaveAttribute('data-station', 'task:T2');
     await expect(window.getByTestId('route-row-T2')).toHaveAttribute('aria-current', 'true');

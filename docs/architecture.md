@@ -650,7 +650,7 @@ re-attaches the transferred port to a live terminal (a detached shell, or the te
 - Concept: projects are the top level; a run is a **conversation** (chat view, the default) whose agents work
   offstage in the **agents view** (⌘E toggles; the title bar's Chat | Agents switch). The agents view is the tiling
   workspace: strip of columns = tasks (plus plan/DAG/PR tiles); tile = a view; layout modes Strip / Focus /
-  Overview / Pipeline (switching to one shows the agents). Overlays: composer (⌘N), palette (⌘K), add a project
+  Overview / Pipeline (switching to one shows the agents). Overlays: composer (⌘⇧N), palette (⌘K), add a project
   (⌘⇧N), go to file (⌘P). The status bar carries usage only (run spend, rate limits; the key mode in the agents view).
   See `docs/research/tiling-ux.md`.
 - Conversation (`renderer/chat/`): `thread.ts` folds the assistant attempts' transcripts (`user_message` = the
@@ -676,7 +676,7 @@ re-attaches the transferred port to a live terminal (a detached shell, or the te
   a new column): the code viewer (Shiki in the diff worker, virtualized, image and Markdown previews, binary/size
   guards), the diff tile for commits, the search tile (⌘⇧F). Selecting lines in the code viewer → "Start a run about
   this…" (⌘⏎) opens the composer with the project and a `path:lines` reference. Adding a project opens its home,
-  never the composer; ⌘N preselects the project on screen (`app/composer-seed.ts`); ⌘⇧H returns to the home. The
+  never the composer; ⌘⇧N preselects the project on screen (`app/composer-seed.ts`); ⌘⇧H returns to the home. The
   empty state leads with adding a project (and lists checkouts found on this Mac).
 - Coordination (§8.4-8.6): the composer's prompt starts a conversation with the assistant (`runs.chat`); with the
   assistant switched off (Settings → Runs → Coordination) it goes to the planner (`runs.create`). A run with an

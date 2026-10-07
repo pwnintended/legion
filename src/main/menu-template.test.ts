@@ -44,7 +44,7 @@ describe('menu template', () => {
   it('mirrors the renderer command registry', () => {
     // Keep in sync with builtinCommands() in src/renderer/app/commands.ts.
     expect(MENU_ACCELERATORS).toEqual({
-      'composer.open': 'CmdOrCtrl+N',
+      'composer.open': 'CmdOrCtrl+Shift+N',
       'inbox.open': 'CmdOrCtrl+I',
       'palette.open': 'CmdOrCtrl+K',
       'layout.focus': 'CmdOrCtrl+Return',
@@ -54,7 +54,7 @@ describe('menu template', () => {
       'column.cycleMode': 'CmdOrCtrl+W',
       'mode.resize': 'CmdOrCtrl+R',
       'settings.open': 'CmdOrCtrl+,',
-      'project.add': 'CmdOrCtrl+Shift+N',
+      'project.add': 'CmdOrCtrl+O',
       'file.goto': 'CmdOrCtrl+P',
       'project.search': 'CmdOrCtrl+Shift+F',
     });

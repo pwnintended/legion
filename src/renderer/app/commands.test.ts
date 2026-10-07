@@ -1,7 +1,16 @@
+import type { Plan, Run } from '@shared/domain';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { currentToasts } from '../overlays/nav';
-import { builtinCommands, executeCommand, handleKeyDown, registerCommand, registerCommands } from './commands';
-import { initialUi, uiStore } from './store';
+import {
+  builtinCommands,
+  executeCommand,
+  handleAgentsEscape,
+  handleKeyDown,
+  registerCommand,
+  registerCommands,
+} from './commands';
+import { initialData } from './data';
+import { actions, dataStore, initialUi, uiStore } from './store';
 
 interface FakeKey {
   key: string;
@@ -183,5 +192,79 @@ describe('key dispatch', () => {
     } finally {
       off();
     }
+  });
+});
+
+describe("a conversation's agents (⌘E in, ⌘E or Esc out)", () => {
+  const ran: string[] = [];
+  let dispose: (() => void) | null = null;
+  const cmdE = () => keydown({ key: 'e', code: 'KeyE', metaKey: true, target: button }) as unknown as KeyboardEvent;
+  const esc = (target: unknown = button) => keydown({ key: 'Escape', code: 'Escape', target });
+  const withRun = (status: Run['status']) =>
+    dataStore.setState({ ...initialData(), runs: { r1: { id: 'r1', status } as unknown as Run } });
+  const withPlan = () =>
+    dataStore.setState({
+      ...initialData(),
+      runs: { r1: { id: 'r1', status: 'awaiting_approval' } as unknown as Run },
+      plans: { p1: { id: 'p1', runId: 'r1', version: 1 } as unknown as Plan },
+    });
+
+  beforeEach(() => {
+    ran.length = 0;
+    dataStore.setState(initialData());
+    uiStore.setState({ ...initialUi(), view: 'chat', activeRunId: 'r1' });
+    dispose = registerCommands(builtinCommands().map((c) => ({ ...c, run: () => void ran.push(c.id) })));
+  });
+  afterEach(() => {
+    dispose?.();
+    dataStore.setState(initialData());
+    uiStore.setState(initialUi());
+  });
+
+  it('⌘E does nothing on a conversation still with the assistant, and never falls through to the code', () => {
+    withRun('chatting');
+    expect(handleKeyDown(cmdE())).toBe(false);
+    uiStore.setState({ activeRunId: null });
+    expect(handleKeyDown(cmdE())).toBe(false);
+    expect(ran).toEqual([]);
+    actions.setView('agents');
+    expect(uiStore.getState().view).toBe('chat');
+  });
+
+  it("⌘E opens the focused conversation's agents once the planner is at work, or there is a plan", () => {
+    withRun('clarifying');
+    expect(handleKeyDown(cmdE())).toBe(true);
+    withPlan();
+    expect(handleKeyDown(cmdE())).toBe(true);
+    expect(ran).toEqual(['view.agents', 'view.agents']);
+  });
+
+  it('⌘E is not available from the code view', () => {
+    withPlan();
+    uiStore.setState({ view: 'code' });
+    expect(handleKeyDown(cmdE())).toBe(false);
+    expect(ran).toEqual([]);
+  });
+
+  it('inside the agents, ⌘E and Esc go back to the board', () => {
+    withPlan();
+    uiStore.setState({ view: 'agents' });
+    expect(handleKeyDown(cmdE())).toBe(true);
+    expect(handleAgentsEscape(esc() as unknown as KeyboardEvent)).toBe(true);
+    expect(ran).toEqual(['view.agents.leave', 'view.agents.leave']);
+  });
+
+  it('Esc stays with a field, an overlay, a key mode or a handler that already took it', () => {
+    withPlan();
+    uiStore.setState({ view: 'agents' });
+    const input = { tagName: 'TEXTAREA', isContentEditable: false, closest: () => null };
+    expect(handleAgentsEscape(esc(input) as unknown as KeyboardEvent)).toBe(false);
+    const taken = { ...esc(), defaultPrevented: true };
+    expect(handleAgentsEscape(taken as unknown as KeyboardEvent)).toBe(false);
+    uiStore.setState({ keyMode: 'resize' });
+    expect(handleAgentsEscape(esc() as unknown as KeyboardEvent)).toBe(false);
+    uiStore.setState({ keyMode: 'normal', overlay: 'palette' });
+    expect(handleAgentsEscape(esc() as unknown as KeyboardEvent)).toBe(false);
+    expect(ran).toEqual([]);
   });
 });

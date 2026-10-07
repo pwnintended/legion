@@ -2,12 +2,13 @@ import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { type ElectronApplication, _electron as electron, expect, type Page, test } from '@playwright/test';
+import { openAgents } from './agents';
 
 const root = resolve(import.meta.dirname, '../..');
 const shots = join(root, 'test-results', 'layout');
 
 /** Launch the built app and switch the renderer to demo mode (fixture data, frozen agents). */
-async function launchDemo(): Promise<{ app: ElectronApplication; window: Page; home: string }> {
+async function launchDemo({ board = false } = {}): Promise<{ app: ElectronApplication; window: Page; home: string }> {
   const home = mkdtempSync(join(tmpdir(), 'legion-e2e-layout-'));
   const env: Record<string, string> = {};
   for (const [key, value] of Object.entries(process.env)) if (value !== undefined) env[key] = value;
@@ -19,7 +20,7 @@ async function launchDemo(): Promise<{ app: ElectronApplication; window: Page; h
   await window.evaluate(() => {
     localStorage.setItem('legion.demo', '1');
     localStorage.setItem('legion.demo.live', '0');
-    // The agents view (the run's route map); a run opens in its chat otherwise.
+    // A saved agents view is never restored: the app opens on the board, and ⌘E goes into a conversation's agents.
     localStorage.setItem('legion.ui', JSON.stringify({ view: 'agents' }));
   });
   await window.reload();
@@ -28,6 +29,7 @@ async function launchDemo(): Promise<{ app: ElectronApplication; window: Page; h
     win?.setSize(1440, 900);
     win?.focus();
   });
+  if (!board) await openAgents(window);
   return { app, window, home };
 }
 
@@ -52,13 +54,18 @@ const columnOrder = (window: Page) =>
 
 test('demo workspace: route map, stations and tabs, decisions, the code strip', async () => {
   mkdirSync(shots, { recursive: true });
-  const { app, window, home } = await launchDemo();
+  const { app, window, home } = await launchDemo({ board: true });
   try {
     // Chrome: demo badge, eight runs in the rail (an archived one is hidden), the passkeys run active.
     await expect(window.getByTestId('titlebar')).toContainText('demo', { timeout: 30_000 });
     await expect(window.getByTestId('rail-run')).toHaveCount(8);
     await expect(window.getByTestId('titlebar')).toContainText('Add passkey (WebAuthn) login');
-    await expect(window.getByTestId('view-agents')).toHaveAttribute('aria-pressed', 'true');
+    // The board, not the saved agents view; the switch is Chat | Code, and ⌘E opens the focused tile's agents.
+    await expect(window.getByTestId('view-chat')).toHaveAttribute('aria-pressed', 'true');
+    await expect(window.getByTestId('view-agents')).toHaveCount(0);
+    await window.keyboard.press('Meta+e');
+    await expect(window.getByTestId('titlebar-agents')).toBeVisible();
+    await expect(window.getByTestId('view-chat')).toHaveAttribute('aria-pressed', 'true');
     await expect(window.getByTestId('needs-you').locator('.tb-needs-count')).toHaveText('6');
     // The agents view has no key modes: the status bar shows the map's keys, not the NORMAL pill.
     await expect(window.getByTestId('map-hint')).toBeVisible();
@@ -70,7 +77,8 @@ test('demo workspace: route map, stations and tabs, decisions, the code strip', 
     await expect(routeMap).toHaveAttribute('data-workspace', 'run_authv2demo01');
     await expect(map.locator('.rm-crew')).toContainText('Assistant, Lead');
     await expect(map.getByTestId('route-plan')).toContainText('Signed off · 6 tasks');
-    for (const id of ['T1', 'T2', 'T3', 'T4', 'T5', 'T6']) await expect(map.getByTestId(`route-row-${id}`)).toBeVisible();
+    for (const id of ['T1', 'T2', 'T3', 'T4', 'T5', 'T6'])
+      await expect(map.getByTestId(`route-row-${id}`)).toBeVisible();
     await expect(map.getByTestId('route-integration')).toBeVisible();
     await expect(map.getByTestId('route-pr')).toBeVisible();
     await expect(map.locator('[data-testid^="route-row-"]')).toHaveText([/T1/, /T2/, /T3/, /T4/, /T5/, /T6/]);
@@ -187,7 +195,7 @@ test('demo workspace: route map, stations and tabs, decisions, the code strip', 
     await window.keyboard.press('Meta+1');
     await expect(window.getByTestId('titlebar')).toContainText('Add passkey (WebAuthn) login');
     await window.keyboard.press('Meta+e');
-    await expect(window.getByTestId('view-agents')).toHaveAttribute('aria-pressed', 'true');
+    await expect(window.getByTestId('titlebar-agents')).toBeVisible();
     await expect.poll(() => station(window)).toBe('task:T3');
     await expect.poll(() => focusedTile(window)).toBe('session:T3');
     await expect(window.getByTestId('map-hint')).toBeVisible();
@@ -278,14 +286,29 @@ test('demo workspace: route map, stations and tabs, decisions, the code strip', 
     await thin.locator('button').first().click();
     await expect(window.locator('[data-column="col:activity"] [data-tile-body]')).toBeVisible();
 
-    // ⌘E from the code view goes to the conversation, and back to the agents; the pill goes with the strip.
+    // ⌘E means a conversation's agents: from the code view it does nothing. Chat goes to the board, ⌘E into the
+    // focused tile's agents, and Esc back out to the board; the pill goes with the strip.
     await window.keyboard.press('Meta+e');
+    await expect(window.getByTestId('view-code')).toHaveAttribute('aria-pressed', 'true');
+    await window.getByTestId('view-chat').click();
     await expect(window.getByTestId('view-chat')).toHaveAttribute('aria-pressed', 'true');
     await expect(window.getByTestId('mode-pill')).toHaveCount(0);
     await window.keyboard.press('Meta+e');
-    await expect(window.getByTestId('view-agents')).toHaveAttribute('aria-pressed', 'true');
+    await expect(window.getByTestId('titlebar-agents')).toBeVisible();
     await expect(window.getByTestId('route-map')).toBeVisible();
     await expect(window.getByTestId('mode-pill')).toHaveCount(0);
+    await window.getByTestId('route-map').locator('.rm-title').click();
+    await window.keyboard.press('Escape');
+    await expect(window.getByTestId('route-map')).toHaveCount(0);
+    await expect(window.getByTestId('titlebar-agents')).toHaveCount(0);
+    // A conversation's agents are inside the board: New conversation (⌘N) goes back to it and splits the new tile in.
+    await window.keyboard.press('Meta+e');
+    await expect(window.getByTestId('titlebar-agents')).toBeVisible();
+    await expect(window.getByTestId('titlebar')).toContainText('New conversation');
+    await window.keyboard.press('Meta+n');
+    await expect(window.getByTestId('new-conversation')).toBeVisible();
+    await expect(window.getByTestId('route-map')).toHaveCount(0);
+    await expect(window.getByTestId('composer')).toHaveCount(0);
   } finally {
     await app.close();
     rmSync(home, { recursive: true, force: true });

@@ -2,6 +2,7 @@ import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { type ElectronApplication, _electron as electron, expect, type Page, test } from '@playwright/test';
+import { openAgents } from './agents';
 
 const root = resolve(import.meta.dirname, '../..');
 const shots = join(root, 'test-results', 'session');
@@ -20,8 +21,6 @@ async function launchDemo(): Promise<{ app: ElectronApplication; window: Page; h
     localStorage.clear();
     localStorage.setItem('legion.demo', '1');
     localStorage.setItem('legion.demo.live', '0');
-    // The agents view (the run's route map); a run opens in its chat otherwise.
-    localStorage.setItem('legion.ui', JSON.stringify({ view: 'agents' }));
   });
   await window.reload();
   await app.evaluate(({ BrowserWindow }) => {
@@ -29,6 +28,7 @@ async function launchDemo(): Promise<{ app: ElectronApplication; window: Page; h
     win?.setSize(1440, 900);
     win?.focus();
   });
+  await openAgents(window);
   return { app, window, home };
 }
 
@@ -90,8 +90,8 @@ test('session tiles, approvals, composer, decisions, palette, clarify', async ()
     await window.waitForTimeout(400);
     await t3.screenshot({ path: join(shots, 'approval-accepted.png') });
 
-    // Composer (⌘N): validation, repo inspection, issue link detection.
-    await window.keyboard.press('Meta+n');
+    // Composer (⌘⇧N; ⌘N is a new conversation tile on the board): validation, repo inspection, issue link detection.
+    await window.keyboard.press('Meta+Shift+n');
     const composer = window.getByTestId('composer');
     await expect(composer).toBeVisible();
     await expect(composer.getByTestId('repo-status')).toContainText('erudiet/app');
@@ -153,7 +153,7 @@ test('session tiles, approvals, composer, decisions, palette, clarify', async ()
     await window.screenshot({ path: join(shots, 'palette-search.png') });
     await window.keyboard.press('Enter');
     await expect(palette).toHaveCount(0);
-    await expect(window.getByTestId('view-agents')).toHaveAttribute('aria-pressed', 'true');
+    await expect(window.getByTestId('titlebar-agents')).toBeVisible();
     await expect.poll(() => station(window)).toBe('task:T4');
     await expect.poll(() => focusedTile(window)).toBe('session:T4');
     await expect(window.getByTestId('route-row-T4')).toHaveAttribute('aria-current', 'true');

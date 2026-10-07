@@ -74,8 +74,8 @@ test('full run, chat first: composer → assistant → clarify → plan → appr
     await expect(window.getByTestId('connection-status')).toHaveText('connected', { timeout: 30_000 });
     await shot(window, 'empty');
 
-    // ⌘N → composer; pick the repo through the picker's Browse… (the folder dialog is answered by the test hook).
-    await window.keyboard.press('Meta+n');
+    // ⌘⇧N → composer; pick the repo through the picker's Browse… (the folder dialog is answered by the test hook).
+    await window.keyboard.press('Meta+Shift+n');
     const composer = window.getByTestId('composer');
     await expect(composer).toBeVisible();
     await composer.locator('textarea').fill('Add a demo feature\n\nThe widgets repo needs a small feature with docs.');

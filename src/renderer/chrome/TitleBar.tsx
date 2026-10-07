@@ -1,7 +1,9 @@
 /**
  * Title bar (hiddenInset window): drag region with room for the traffic lights, project / run breadcrumb (the
- * project opens its home), the Chat | Agents | Code switch (Agents only with a run), and the Commands /
- * needs-you / New run buttons.
+ * project opens its home), the Chat | Code switch, and the Commands / needs-you / New run buttons.
+ *
+ * A conversation's agents are not a view of the switch: they are the inside of one conversation, so Chat stays
+ * lit there and the crumb grows `/ Agents`, its run title leading back to the board.
  */
 import { motion } from 'motion/react';
 import { commandTooltip, executeCommand } from '../app/commands';
@@ -9,13 +11,13 @@ import { useActiveRun, useData, useInbox, useUi } from '../app/hooks';
 import { useReducedMotionPref } from '../app/prefs';
 import { openProject } from '../app/project-actions';
 import { actions, activeProjectOf, type View } from '../app/store';
+import { boardActions } from '../board/state';
 import { SPRING } from '../theme/motion';
 import { Icon, type IconName, LegionMark } from './icons';
 import { CommandKbd } from './ui';
 
-const VIEWS: { view: View; label: string; icon: IconName; command: string; tip: string; needsRun?: true }[] = [
+const VIEWS: { view: View; label: string; icon: IconName; command: string; tip: string }[] = [
   { view: 'chat', label: 'Chat', icon: 'chat', command: 'view.chat', tip: 'The conversations' },
-  { view: 'agents', label: 'Agents', icon: 'agents', command: 'view.agents', tip: "The run's agents", needsRun: true },
   { view: 'code', label: 'Code', icon: 'fileCode', command: 'view.code', tip: "The project's code and terminals" },
 ];
 
@@ -33,8 +35,12 @@ export function TitleBar() {
   const activeProjectId = useUi((s) => s.activeProjectId);
   const project = useData((s) => activeProjectOf({ activeRunId, activeProjectId }, s));
   const branch = useData((s) => (project ? (s.projectStatus[project.id]?.branch ?? null) : null));
-  // On a project's board, New splits a conversation tile in; elsewhere it opens the full composer.
-  const onBoard = view === 'chat' && project !== null;
+  // Inside a conversation's agents, the switch still says where that conversation lives.
+  const inAgents = view === 'agents' && run !== null;
+  // On a project's board (or inside one of its conversations), New splits a conversation tile in; elsewhere it
+  // opens the full composer.
+  const onBoard = (view === 'chat' || inAgents) && project !== null;
+  const lit: View = view === 'agents' ? 'chat' : view;
   return (
     <header
       className="drag flex h-11 flex-none items-center gap-3 border-b border-[var(--chrome-line)] bg-mantle pr-2.5"
@@ -69,9 +75,29 @@ export function TitleBar() {
         {run ? (
           <>
             {project ? <span className="faint hidden lg:inline">/</span> : null}
-            <span className="muted hidden truncate text-[13px] lg:inline" title={run.title}>
-              {run.title}
-            </span>
+            {inAgents ? (
+              <button
+                type="button"
+                className="tb-crumb tb-crumb-run no-drag hidden lg:inline"
+                onClick={() => boardActions.backFromAgents()}
+                title={commandTooltip('view.agents.leave', `Back to ${run.title}`)}
+                data-testid="titlebar-run"
+              >
+                {run.title}
+              </button>
+            ) : (
+              <span className="muted hidden truncate text-[13px] lg:inline" title={run.title}>
+                {run.title}
+              </span>
+            )}
+            {inAgents ? (
+              <>
+                <span className="faint">/</span>
+                <span className="tb-here" aria-current="page" data-testid="titlebar-agents">
+                  Agents
+                </span>
+              </>
+            ) : null}
             {run.paused ? <span className="chip chip-warn">paused</span> : null}
           </>
         ) : project && branch ? (
@@ -85,17 +111,23 @@ export function TitleBar() {
       {run || project ? (
         <div className="no-drag flex flex-none items-center gap-2">
           <nav aria-label="View" className="segs tb-views isolate flex-none">
-            {VIEWS.filter((v) => run || !v.needsRun).map((v) => (
+            {VIEWS.map((v) => (
               <button
                 key={v.view}
                 type="button"
                 className="seg"
-                aria-pressed={view === v.view}
-                title={commandTooltip(v.command, v.tip)}
-                onClick={() => actions.setView(v.view)}
+                aria-pressed={lit === v.view}
+                title={
+                  inAgents && v.view === 'chat'
+                    ? commandTooltip('view.agents.leave', 'Back to the board')
+                    : commandTooltip(v.command, v.tip)
+                }
+                onClick={() =>
+                  inAgents && v.view === 'chat' ? boardActions.backFromAgents() : actions.setView(v.view)
+                }
                 data-testid={`view-${v.view}`}
               >
-                {view === v.view ? (
+                {lit === v.view ? (
                   <motion.span
                     layoutId="view-pill"
                     className="seg-pill"

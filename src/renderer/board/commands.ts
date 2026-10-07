@@ -4,6 +4,7 @@
  * The tiles hold text fields, so every binding is a ⌘-chord except Esc, which never fires while typing.
  */
 import type { Command, CommandContext } from '../app/commands';
+import { activeProjectOf } from '../app/store';
 import { type Direction, neighbour } from './arrange';
 import { boardActions, boardOf, boardStore, NEW } from './state';
 
@@ -25,8 +26,11 @@ export function boardCommands(): Command[] {
       category: 'Workspace',
       keybinding: 'Mod+N',
       priority: 1,
-      when: (ctx) => onBoard(ctx) && boardStore.getState().view?.projectId != null,
-      run: () => boardActions.openNew(),
+      // From a conversation's agents too: the new conversation is a tile, so it goes back to the board for it.
+      when: (ctx) =>
+        (onBoard(ctx) && boardStore.getState().view?.projectId != null) ||
+        (ctx.ui.view === 'agents' && activeProjectOf(ctx.ui, ctx.data) !== null),
+      run: (ctx) => (ctx.ui.view === 'agents' ? boardActions.newFromAgents() : boardActions.openNew()),
     },
     ...DIRS.map<Command>(({ dir, keys }) => ({
       id: `board.focus.${dir}`,

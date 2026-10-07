@@ -1,5 +1,5 @@
 /**
- * Overlay host, mounted once by App: shows the composer (⌘N), palette (⌘K), settings, ... from
+ * Overlay host, mounted once by App: shows the composer (⌘⇧N), palette (⌘K), settings, ... from
  * `uiStore.overlay`, restores focus when it closes, and renders transient toasts.
  */
 import { AnimatePresence, motion } from 'motion/react';

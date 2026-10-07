@@ -970,6 +970,24 @@ body {
   outline: 2px solid var(--mauve);
   outline-offset: 0;
 }
+/* The run title inside a conversation's agents: a quiet way back to the board, truncating before the rest. */
+.tb-crumb-run {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-weight: 400;
+  color: var(--subtext0);
+}
+.tb-crumb-run:hover {
+  color: var(--text);
+}
+/* Where you are: the last crumb, not a link. */
+.tb-here {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+  white-space: nowrap;
+}
 .tb-branch {
   display: inline-flex;
   align-items: center;

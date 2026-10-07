@@ -15,7 +15,7 @@ import { projectWorkspaceKey, selectRailGroups } from '../../app/projects';
 import { actions } from '../../app/store';
 import { Icon } from '../../chrome/icons';
 import { runStatusLine } from '../../chrome/run-status';
-import { Dot, Kbd, toneColor } from '../../chrome/ui';
+import { CommandKbd, Dot, toneColor } from '../../chrome/ui';
 import { formatCost } from '../../layout/describe';
 import { previewTile } from '../../layout/project';
 import type { TileProps } from '../../layout/types';
@@ -220,7 +220,7 @@ export default function ActivityTile({ params, tileId }: TileProps<'activity'>) 
         <div className="ac-empty">
           <span>No runs in this project yet.</span>
           <span className="faint">
-            When you know what should change, <Kbd>⌘N</Kbd> plans it here.
+            When you know what should change, <CommandKbd id="composer.open" /> plans it here.
           </span>
         </div>
       ) : (

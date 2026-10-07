@@ -1,6 +1,6 @@
 /**
  * Project overview tile: who/what/where at a glance (branch, remote, gh, size, languages, last commit), the
- * next steps as quiet buttons (New run ⌘N with this project, Go to file ⌘P, Search ⌘⇧F, Terminal, Finder) and
+ * next steps as quiet buttons (New run ⌘⇧N with this project, Go to file ⌘P, Search ⌘⇧F, Terminal, Finder) and
  * the README rendered underneath.
  */
 import type { LanguageStat, ProjectInfo } from '@shared/rpc';
