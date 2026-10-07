@@ -6,7 +6,7 @@ import type { Run } from '@shared/domain';
 import type { ProcedureName, RpcInput } from '@shared/rpc';
 import { RpcError } from '@shared/rpc-transport';
 import { isArchived } from './compat';
-import { selectRunList } from './data';
+import { applyRunRow, selectRunList } from './data';
 import { actions, dataStore, uiStore } from './store';
 import { getClient, getSync } from './sync';
 
@@ -28,9 +28,11 @@ function looksLikeRun(value: unknown, runId: string): value is Run {
 }
 
 /** Put a run row returned by a procedure into the store (the matching event may arrive later). */
-function applyRun(row: Run): void {
-  dataStore.setState((s) => ({ runs: { ...s.runs, [row.id]: row } }));
+export function adoptRun(row: Run): void {
+  const atSeq = getClient().seq;
+  dataStore.setState((s) => applyRunRow(s, row, atSeq), true);
 }
+const applyRun = adoptRun;
 
 /** Archive a finished run: the engine removes its worktrees and hides it from the rail. */
 export async function archiveRun(runId: string): Promise<void> {

@@ -1,8 +1,9 @@
+import type { Run } from '@shared/domain';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { Workspace } from '../layout/tree';
-import { applyRunList, applySnapshot, initialData } from './data';
+import { applyEvents, applyRunList, applyRunRow, applySnapshot, initialData } from './data';
 import { createDemoWorld, snapshotOf } from './demo/fixtures';
-import { dataStore, initialUi, syncActiveLayout, uiStore } from './store';
+import { actions, dataStore, initialUi, syncActiveLayout, uiStore } from './store';
 
 const RUN = 'run_authv2demo01';
 
@@ -44,5 +45,38 @@ describe('syncActiveLayout', () => {
     dataStore.setState({ seq: 101 });
     off();
     expect(seen).toEqual([101]);
+  });
+});
+
+describe('activating a just-created run', () => {
+  afterEach(() => {
+    uiStore.setState(initialUi(), true);
+    dataStore.setState(initialData(), true);
+  });
+
+  const created = { ...(createDemoWorld(1_000_000_000).runs[0] as Run), id: 'run_new', status: 'clarifying' as const };
+
+  it('stays on the new run when another data event lands before its run.updated', () => {
+    loadDemoRun();
+    actions.setActiveRun(RUN);
+    // What the composer does with the `runs.create` result.
+    dataStore.setState((s) => applyRunRow(s, created, s.seq), true);
+    actions.setActiveRun(created.id);
+    dataStore.setState({ seq: 150 });
+    expect(uiStore.getState().activeRunId).toBe('run_new');
+    // Its run.updated arrives later and applies on top.
+    dataStore.setState(
+      (s) =>
+        applyEvents(s, [{ seq: 151, ts: 1, type: 'run.updated', run: { ...created, status: 'planning' }, from: null }]),
+      true,
+    );
+    expect(dataStore.getState().runs.run_new?.status).toBe('planning');
+  });
+
+  it('(without adopting the row first, the run would be replaced by the first run of the list)', () => {
+    loadDemoRun();
+    actions.setActiveRun(created.id);
+    dataStore.setState({ seq: 150 });
+    expect(uiStore.getState().activeRunId).toBe(RUN);
   });
 });

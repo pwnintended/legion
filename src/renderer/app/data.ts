@@ -497,6 +497,16 @@ export function applySnapshot(state: DataState, snapshot: RunSnapshot): DataStat
   return draft.next;
 }
 
+/**
+ * A run row returned by a procedure (`runs.create`, `runs.archive`, ...) after client seq `atSeq`: it is at
+ * least as new as what the store has (the procedure ran after all of it). Its `run.updated` event may still
+ * come and then applies on top.
+ */
+export function applyRunRow(state: DataState, run: Run, atSeq: number): DataState {
+  const draft = new Draft(state);
+  return draft.put('run', run, Math.max(atSeq, draft.version('run', run.id)), true) ? draft.next : state;
+}
+
 /** `runs.list` result read at (or after) client seq `atSeq`. */
 export function applyRunList(state: DataState, list: readonly RunSummary[], atSeq: number): DataState {
   const draft = new Draft(state);
