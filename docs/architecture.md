@@ -278,7 +278,7 @@ relies on this); when both exist the structured report wins.
    - Code (coder session) → Legion commits (`git add -A && git commit`, message from `mark_task_done`).
    - Verify: run node `verify.commands` + repo `legion.json` `verify`; scope check (actual changed files vs
      declared `touches`).
-   - Review (other engine, fresh session, read-only): input = node spec, issue, `git diff startSha..HEAD`,
+   - Review (other engine, fresh session, read-only): input = node spec, issue, `git diff <diff base>..HEAD` (§8.1 Diffs),
      verify results, scope report → `Review`. Approve iff all criteria met and no blocker/major.
    - Fix loop: send blocker/major findings back to the coder session (resume), re-verify, re-review.
      Max 2 fix rounds, then escalate to inbox.
@@ -358,8 +358,11 @@ The service applies `core/` decisions with CAS transitions; every flow is re-ent
   the attempt, its run (not terminal, not archived) and its task are still live, checked before and after the
   resume; otherwise the resumed process is closed and the attempt is `cancelled`. The renderer
   attaches with `terminals.open({target: {kind: "attempt", attemptId}, terminalId, cols, rows})`.
-- **Diffs**: task = `startSha` → the task worktree including uncommitted and untracked files (staged into a
-  throwaway index); once the worktree is gone, `startSha..branch`. Run = `base...integration`.
+- **Diffs**: task = its diff base → the task worktree including uncommitted and untracked files (staged into a
+  throwaway index); once the worktree is gone, `base..branch`. The diff base (`taskDiffBase`) is the merge-base of
+  the task branch with integration: `startSha` until integration is merged into the task branch (post-merge fix
+  round, conflict resolution), then that integration commit, so the task's diff, scope check, sensitive-change
+  check and reviewer input never include other tasks' merged code. Run = `base...integration`.
 - **Bookkeeping** that is not a domain row (planner session id, clarify answers, fix context, coder session, latest
   report, resolver attempts, per-run budget) lives in the `settings` key/value table under `run:<id>` /
   `task:<id>`. `gc.auto` is reference-counted per repository under `repo:<repoPath>` (`repo-gc.ts`): the user's

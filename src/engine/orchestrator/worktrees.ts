@@ -8,7 +8,9 @@ import {
   cleanWorktree,
   createWorktree,
   git,
+  gitText,
   integrationBranchName,
+  isAncestor,
   type LegionConfig,
   provisionFiles,
   reconcile,
@@ -143,6 +145,26 @@ export async function provisionIntegration(o: Orchestrator, run: Run, config: Le
 /** Untracked files Legion provisioned into the run's integration worktree (kept when it is cleaned). */
 export function integrationKeep(o: Orchestrator, run: Pick<Run, 'id'>): string[] {
   return runMeta(o.store, run.id).integrationKeep;
+}
+
+/**
+ * Where the task's own changes start: the merge-base of the task branch (`rev` in `cwd`) with the
+ * integration branch. That is `startSha` until integration is merged into the task branch (post-merge fix
+ * round, conflict resolution), then the merged integration commit, so diffs, the scope check and the
+ * reviewer never blame the task for other tasks' code. Falls back to `startSha` when integration was reset
+ * below it.
+ */
+export async function taskDiffBase(
+  run: Pick<Run, 'id'>,
+  task: Pick<Task, 'startSha'>,
+  cwd: string,
+  rev = 'HEAD',
+): Promise<string | null> {
+  const start = task.startSha;
+  if (!start) return null;
+  const base = await gitText(cwd, ['merge-base', rev, integrationBranchName(run.id)]).catch(() => null);
+  if (!base || base === start) return start;
+  return (await isAncestor(cwd, start, base)) ? base : start;
 }
 
 /** Task verify commands plus the repo-wide ones, deduplicated. */

@@ -77,6 +77,49 @@ describe('merge bookkeeping', () => {
   });
 });
 
+describe('diff base after integration is merged into a task branch', () => {
+  it('a post-merge fix round is reviewed and scope-checked against the merged integration commit', async () => {
+    let scratch = '';
+    const failOnce = () =>
+      `test -f src/t2.txt && (case "$PWD" in */_integration) mkdir "${scratch}/failed-once" 2>/dev/null && exit 1;; esac; true)`;
+    const fixScript: Script = (ctx) => {
+      if (ctx.opts.role === 'planner') {
+        return [planOutput([node('T1'), node('T2', { verify: { commands: [failOnce()] } })])];
+      }
+      if (ctx.opts.role === 'reviewer' || ctx.opts.role === 'finalizer') return [approve(ctx)];
+      const id = taskIdIn(ctx.message);
+      return [
+        // T2 finishes after T1 is merged, so its post-merge verify (and fix round) sees T1's work.
+        ...(id === 'T2' && !ctx.resumed ? [{ kind: 'delay' as const, ms: 400 }] : []),
+        { kind: 'write_file', path: `src/${id.toLowerCase()}.txt`, content: `${id} ${ctx.resumed ? 'fixed' : ''}\n` },
+        report(`Implement ${id}`),
+      ];
+    };
+    h = await startHarness({ script: fixScript });
+    const harness = h;
+    scratch = harness.repo.scratch;
+    const run = await startRun(harness);
+    await harness.waitFor(() => runOf(harness, run.id).status === 'pr_ready', 'pr_ready', 30_000);
+    const t2 = harness.engine.store.listTasks(run.id).find((t) => t.nodeId === 'T2');
+    expect(t2?.fixRounds).toBe(1);
+    const t1 = harness.engine.store.listTasks(run.id).find((t) => t.nodeId === 'T1');
+    expect(
+      harness.engine.store.listMerges(run.id).map((m) => `${m.taskId === t1?.id ? 'T1' : 'T2'}:${m.status}`),
+    ).toEqual(['T1:merged', 'T2:reverted', 'T2:merged']);
+    const reviews = harness.codex.sessions.filter((s) => s.opts.role === 'reviewer' && s.opts.prompt.includes('T2'));
+    expect(reviews).toHaveLength(2);
+    const fixReview = reviews[1]?.opts.prompt ?? '';
+    expect(fixReview).toContain('src/t2.txt');
+    expect(fixReview).not.toContain('src/t1.txt');
+    // The UI diff of the task shows only its own file.
+    const diff = await harness.client.call('diff.get', {
+      target: { kind: 'task', taskId: t2?.id as string },
+      contextLines: 3,
+    });
+    expect(diff.files.map((f) => f.path)).toEqual(['src/t2.txt']);
+  });
+});
+
 describe('settlePendingMerges (crash points)', () => {
   async function setup() {
     h = await startHarness({ script });

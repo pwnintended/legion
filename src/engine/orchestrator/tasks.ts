@@ -48,7 +48,7 @@ import {
 import type { AgentRun } from './live-session';
 import { type FixContext, patchTaskMeta, taskMeta } from './meta';
 import { AgentFailure, Closed, type Orchestrator } from './orchestrator';
-import { confirmedIntegrationSha, runVerification, verifyCommands } from './worktrees';
+import { confirmedIntegrationSha, runVerification, taskDiffBase, verifyCommands } from './worktrees';
 
 type Step = 'next' | 'park';
 
@@ -391,7 +391,8 @@ async function code(o: Orchestrator, run: Run, task: Task, mode: 'coder' | 'fixe
   }
   o.assertOpen();
   const current = o.store.requireTask(task.id);
-  const changed = current.startSha ? await changedFiles(worktree, current.startSha, 'HEAD') : [];
+  const base = await taskDiffBase(run, current, worktree);
+  const changed = base ? await changedFiles(worktree, base, 'HEAD') : [];
   patchTaskMeta(o.store, task.id, { files: touchedPaths(changed) });
   const decision = decideAfterCoderTurn(
     current,
@@ -421,10 +422,11 @@ async function verify(o: Orchestrator, run: Run, task: Task): Promise<Step> {
   // The agent's work is committed; anything else in the tree now is verify output (stamps, coverage,
   // formatter rewrites). Discard it so a later commit never sweeps it into the task.
   await cleanWorktree(worktree, taskMeta(o.store, task.id).provisioned);
-  const changed = task.startSha ? touchedPaths(await changedFiles(worktree, task.startSha, 'HEAD')) : [];
+  const base = await taskDiffBase(run, task, worktree);
+  const changed = base ? touchedPaths(await changedFiles(worktree, base, 'HEAD')) : [];
   const alwaysAllowed = config?.installCommand ? LOCKFILES.map((l) => `**/${l.file}`) : [];
   const scope = checkScope(node, changed, alwaysAllowed);
-  const sensitive = task.startSha ? await sensitiveChanges(worktree, task.startSha, changed) : [];
+  const sensitive = base ? await sensitiveChanges(worktree, base, changed) : [];
   patchTaskMeta(o.store, task.id, { lastVerify: outcome.results, scope, sensitive });
   const current = o.store.requireTask(task.id);
   const decision = decideAfterVerify(current, outcome.ok, o.limits());
@@ -466,7 +468,7 @@ async function review(o: Orchestrator, run: Run, task: Task): Promise<Step> {
   const gate = o.gate(run.id, engine);
   if (gate) return park(o, task, gate);
   const worktree = task.worktreePath as string;
-  const startSha = task.startSha as string;
+  const startSha = (await taskDiffBase(run, task, worktree)) as string;
   const meta = taskMeta(o.store, task.id);
   const reviews = new Map(o.store.listReviews(run.id).map((r) => [r.id, r]));
   const previous = meta.reviewIds.length > 0 ? reviews.get(meta.reviewIds.at(-1) as string) : undefined;

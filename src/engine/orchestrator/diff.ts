@@ -1,5 +1,6 @@
 /**
- * `diff.get`: task = `startSha` → the task worktree including uncommitted and untracked changes (staged
+ * `diff.get`: task = its diff base (`taskDiffBase`: `startSha`, or the integration commit last merged into
+ * the task branch) → the task worktree including uncommitted and untracked changes (staged
  * into a throwaway index, so the worktree's own index is never touched); run = `base...integration`;
  * range = `from..to` in the run's repo.
  */
@@ -12,6 +13,7 @@ import { RpcError } from '@shared/rpc-transport';
 import { branchExists, git, parseUnifiedDiff } from '../git';
 import { runMeta } from './meta';
 import type { Orchestrator } from './orchestrator';
+import { taskDiffBase } from './worktrees';
 
 const DIFF_FLAGS = ['diff', '-M', '--no-color', '--no-ext-diff', '--src-prefix=a/', '--dst-prefix=b/'];
 
@@ -43,12 +45,14 @@ export async function getDiff(o: Orchestrator, target: DiffTarget, contextLines:
     const run = o.store.requireRun(task.runId);
     if (!task.startSha) return { from: '', to: '', files: [] };
     if (task.worktreePath && existsSync(task.worktreePath)) {
-      const text = await diffWorktree(task.worktreePath, task.startSha, contextLines);
-      return { from: task.startSha, to: 'WORKTREE', files: parseUnifiedDiff(text) };
+      const from = (await taskDiffBase(run, task, task.worktreePath)) ?? task.startSha;
+      const text = await diffWorktree(task.worktreePath, from, contextLines);
+      return { from, to: 'WORKTREE', files: parseUnifiedDiff(text) };
     }
     if (task.branch && (await branchExists(run.repoPath, task.branch))) {
-      const text = await diffRange(run.repoPath, `${task.startSha}..${task.branch}`, contextLines);
-      return { from: task.startSha, to: task.branch, files: parseUnifiedDiff(text) };
+      const from = (await taskDiffBase(run, task, run.repoPath, task.branch)) ?? task.startSha;
+      const text = await diffRange(run.repoPath, `${from}..${task.branch}`, contextLines);
+      return { from, to: task.branch, files: parseUnifiedDiff(text) };
     }
     return { from: task.startSha, to: task.startSha, files: [] };
   }
