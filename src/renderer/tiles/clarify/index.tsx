@@ -5,6 +5,7 @@
 import type { InboxItemOf, QuestionAnswer } from '@shared/domain';
 import { useId, useState } from 'react';
 import { rpc, useInboxItem, useRun } from '../../app/hooks';
+import { itemResolved, singleFlight, whenData } from '../../app/pending';
 import { Icon } from '../../chrome/icons';
 import { Chip, Kbd } from '../../chrome/ui';
 import type { TileCardProps, TileProps } from '../../layout/types';
@@ -46,14 +47,20 @@ function Questions({ item, runId, planner }: { item: InboxItemOf<'question'>; ru
   const set = (id: string, patch: Partial<Answer>) =>
     setAnswers((all) => ({ ...all, [id]: { option: null, note: '', ...all[id], ...patch } }));
 
-  const send = async (list: QuestionAnswer[]) => {
-    setState({ status: 'sending' });
-    try {
-      await rpc('runs.answerClarify', { runId, answers: list });
-    } catch (error) {
-      setState({ status: 'error', message: errorMessage(error) });
-    }
-  };
+  // One answer at a time: ⌘⏎ (also held) while sending, or before the planner picked the answers up, is
+  // ignored instead of sending the answers twice.
+  const [once] = useState(singleFlight);
+  const send = (list: QuestionAnswer[]) =>
+    once(async () => {
+      setState({ status: 'sending' });
+      try {
+        await rpc('runs.answerClarify', { runId, answers: list });
+        // Stays "sending" until the question is resolved in the store (the tile then shows the answers).
+        if (!(await whenData(itemResolved(item.id)))) setState({ status: 'idle' });
+      } catch (error) {
+        setState({ status: 'error', message: errorMessage(error) });
+      }
+    });
   const submit = () =>
     send(questions.map((q) => ({ questionId: q.id, answer: composeAnswer(answers[q.id]) || ASSUME })));
   const skip = () => send(questions.map((q) => ({ questionId: q.id, answer: ASSUME })));
@@ -70,7 +77,7 @@ function Questions({ item, runId, planner }: { item: InboxItemOf<'question'>; ru
       onKeyDown={(event) => {
         if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) {
           event.preventDefault();
-          void submit();
+          if (!event.repeat) void submit();
         }
       }}
     >

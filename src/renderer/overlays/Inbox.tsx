@@ -65,6 +65,11 @@ export function InboxOverlay() {
   const onKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
     if (event.metaKey || event.ctrlKey || event.altKey || isTextInput(event.target)) return;
     const key = event.key;
+    // A held key repeats: fine for moving the selection, never for answering or jumping.
+    if (event.repeat && !['j', 'k', 'ArrowDown', 'ArrowUp'].includes(key)) {
+      if (['a', 'A', 'd', 'Enter'].includes(key)) event.preventDefault();
+      return;
+    }
     if (key === 'j' || key === 'ArrowDown') setSelection(moveSelection(ranked, selection, 1));
     else if (key === 'k' || key === 'ArrowUp') setSelection(moveSelection(ranked, selection, -1));
     else if (key === 'Enter' && current && (event.target as HTMLElement).tagName !== 'BUTTON') jumpToItem(current);

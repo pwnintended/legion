@@ -7,7 +7,7 @@ import type { InboxItemOf } from '@shared/domain';
 import { useState } from 'react';
 import { rpc } from '../../app/hooks';
 import { Kbd } from '../../chrome/ui';
-import { errorMessage } from './actions';
+import { trackResolution, usePendingResolution } from './actions';
 import { Glyph } from './glyphs';
 
 export type EscalationItem = InboxItemOf<'escalation'> | InboxItemOf<'conflict'>;
@@ -23,33 +23,31 @@ const REASON: Record<InboxItemOf<'escalation'>['payload']['reason'], string> = {
 
 type Action = 'retry' | 'skip' | 'edit' | 'abort';
 
-export function resolveEscalation(item: EscalationItem, action: Action, note: string | null) {
-  if (item.kind === 'conflict')
-    return rpc('inbox.resolve', {
-      itemId: item.id,
-      resolution: { kind: 'conflict', action: action === 'edit' ? 'retry' : action, note },
-    });
-  return rpc('inbox.resolve', { itemId: item.id, resolution: { kind: 'escalation', action, note } });
+/**
+ * Resolve an escalation / conflict. Tracked per item (see `trackResolution`): the card's buttons, the `R` key
+ * and the inbox share one in-flight state, so a repeated key or a second click can't resolve it twice.
+ */
+export function resolveEscalation(item: EscalationItem, action: Action, note: string | null): Promise<void> {
+  return trackResolution(item.id, action, () =>
+    item.kind === 'conflict'
+      ? rpc('inbox.resolve', {
+          itemId: item.id,
+          resolution: { kind: 'conflict', action: action === 'edit' ? 'retry' : action, note },
+        })
+      : rpc('inbox.resolve', { itemId: item.id, resolution: { kind: 'escalation', action, note } }),
+  );
 }
 
 export function EscalationCard({ item, focused, label }: { item: EscalationItem; focused: boolean; label: string }) {
   const [editing, setEditing] = useState(false);
   const [note, setNote] = useState('');
-  const [pending, setPending] = useState<Action | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const tracked = usePendingResolution(item.id);
+  const pending = tracked?.state === 'pending' ? (tracked.choice as Action) : null;
+  const error = tracked?.state === 'error' ? tracked.message : null;
   const actions: readonly Action[] =
     item.kind === 'escalation' ? item.payload.actions : (['retry', 'skip', 'abort'] as const);
 
-  const act = async (action: Action, withNote: string | null = null) => {
-    setPending(action);
-    setError(null);
-    try {
-      await resolveEscalation(item, action, withNote);
-    } catch (e) {
-      setError(errorMessage(e));
-      setPending(null);
-    }
-  };
+  const act = (action: Action, withNote: string | null = null) => resolveEscalation(item, action, withNote);
 
   const title = item.kind === 'escalation' ? REASON[item.payload.reason] : 'Merge conflict';
   return (

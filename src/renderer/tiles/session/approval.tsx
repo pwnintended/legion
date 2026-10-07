@@ -108,7 +108,7 @@ export function ApprovalSubjectView({ subject, compact = false }: { subject: App
   );
 }
 
-const CHOICE_LABEL: Record<ApprovalChoice, string> = {
+const CHOICE_LABEL: Record<string, string> & Record<ApprovalChoice, string> = {
   accept: 'Accepting…',
   acceptTask: 'Accepting for task…',
   deny: 'Denying…',
@@ -157,7 +157,7 @@ export function ApprovalButtons({
       </button>
       {pending ? (
         <span className={`ap-status${pending.state === 'error' ? ' ap-status-error' : ''}`} role="status">
-          {pending.state === 'pending' ? CHOICE_LABEL[pending.choice] : pending.message}
+          {pending.state === 'pending' ? (CHOICE_LABEL[pending.choice] ?? 'Sending…') : pending.message}
         </span>
       ) : null}
     </div>

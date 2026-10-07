@@ -8,6 +8,7 @@ interface FakeKey {
   metaKey?: boolean;
   altKey?: boolean;
   shiftKey?: boolean;
+  repeat?: boolean;
   target?: unknown;
 }
 
@@ -95,6 +96,27 @@ describe('key dispatch', () => {
       uiStore.setState({ overlay: 'inbox' });
       handleKeyDown(cmdEnter() as unknown as KeyboardEvent);
       expect(ran).toEqual(['test.approve']);
+    } finally {
+      off();
+    }
+  });
+
+  it('runs action commands once per press: a held key (auto-repeat) is swallowed, navigation repeats', () => {
+    const off = registerCommands([
+      { id: 'test.approve', title: 'Approve', keybinding: 'A', run: () => void ran.push('test.approve') },
+      { id: 'test.next', title: 'Next', keybinding: 'J', repeatable: true, run: () => void ran.push('test.next') },
+    ]);
+    try {
+      const press = (key: string, repeat: boolean) =>
+        keydown({ key, code: `Key${key.toUpperCase()}`, repeat, target: button });
+      expect(handleKeyDown(press('a', false) as unknown as KeyboardEvent)).toBe(true);
+      const held = press('a', true);
+      expect(handleKeyDown(held as unknown as KeyboardEvent)).toBe(true);
+      expect(held.prevented).toBe(true);
+      handleKeyDown(press('a', true) as unknown as KeyboardEvent);
+      handleKeyDown(press('j', false) as unknown as KeyboardEvent);
+      handleKeyDown(press('j', true) as unknown as KeyboardEvent);
+      expect(ran).toEqual(['test.approve', 'test.next', 'test.next']);
     } finally {
       off();
     }

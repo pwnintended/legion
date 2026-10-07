@@ -7,6 +7,7 @@ import type { ApprovalDecision, Attempt, InboxItemOf, Task } from '@shared/domai
 import { useSyncExternalStore } from 'react';
 import { attemptsOfRun, type DataState, openInbox } from '../../app/data';
 import { rpc } from '../../app/hooks';
+import { itemResolved, whenData } from '../../app/pending';
 import { actions, dataStore, uiStore } from '../../app/store';
 import {
   allocateId,
@@ -75,18 +76,25 @@ export function approvalDecision(choice: ApprovalChoice): ApprovalDecision {
   }
 }
 
-type Pending = { state: 'pending'; choice: ApprovalChoice } | { state: 'error'; message: string };
+/** `choice` is the approval choice, or the escalation action, being sent. */
+type Pending = { state: 'pending'; choice: string } | { state: 'error'; message: string };
 const pendingStore = createMapStore<Pending>();
 
 export const usePendingResolution = (itemId: string | null | undefined) => useMapStore(pendingStore, itemId);
+export const pendingResolution = (itemId: string) => pendingStore.get(itemId);
 
-/** Generic inbox resolution with in-flight/error tracking (used by the inbox for every kind). */
-export async function trackResolution(itemId: string, choice: ApprovalChoice, run: () => Promise<unknown>) {
+/**
+ * Generic inbox resolution with in-flight/error tracking (inbox, approval and escalation cards, keys). The
+ * item stays pending until the store shows it resolved (the `inbox.updated` event), not just until the RPC
+ * returns: a held or repeated key in between must not send a second `inbox.resolve`.
+ */
+export async function trackResolution(itemId: string, choice: string, run: () => Promise<unknown>): Promise<void> {
   const current = pendingStore.get(itemId);
   if (current?.state === 'pending') return;
   pendingStore.set(itemId, { state: 'pending', choice });
   try {
     await run();
+    await whenData(itemResolved(itemId));
     pendingStore.set(itemId, undefined);
   } catch (error) {
     pendingStore.set(itemId, { state: 'error', message: errorMessage(error) });

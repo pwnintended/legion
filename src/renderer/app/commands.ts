@@ -74,6 +74,11 @@ export interface Command {
    * commands (e.g. ⌘⏎ "approve" on a focused review) use it to take precedence over global ones.
    */
   priority?: number;
+  /**
+   * Fires again on key auto-repeat (holding the key): navigation and resizing. Everything else runs once per
+   * press, so holding `a` or ⌘⏎ can't approve twice.
+   */
+  repeatable?: boolean;
 }
 
 export interface CommandView extends Command {
@@ -236,6 +241,8 @@ export function handleKeyDown(event: KeyboardEvent): boolean {
       if (!keyGuard(command, ctx, { modChord: chord.mod || chord.ctrl, inInput, inTerminal })) continue;
       event.preventDefault();
       event.stopPropagation();
+      // Auto-repeat of a held key: swallowed unless the command is meant to repeat.
+      if (event.repeat && !command.repeatable) return true;
       void Promise.resolve(command.run(ctx)).catch((error: unknown) =>
         console.error(`[legion] command ${command.id} failed`, error),
       );
@@ -415,6 +422,7 @@ export function builtinCommands(): Command[] {
       title: `Focus ${name}`,
       category: 'Focus',
       keybinding: keys.map((k) => `Mod+Alt+${k}`),
+      repeatable: true,
       when: hasLayout,
       run: layoutOp((l) => focusDir(l, dir)),
     })),
@@ -423,6 +431,7 @@ export function builtinCommands(): Command[] {
       title: dir === 'h' || dir === 'l' ? `Move column ${name}` : `Move tile ${name}`,
       category: 'Focus',
       keybinding: keys.map((k) => `Mod+Alt+Shift+${k}`),
+      repeatable: true,
       when: hasLayout,
       run: layoutOp((l) => moveDir(l, dir)),
     })),
@@ -432,6 +441,7 @@ export function builtinCommands(): Command[] {
       keybinding: keys,
       mode: 'move',
       hidden: true,
+      repeatable: true,
       when: hasLayout,
       run: layoutOp((l) => moveDir(l, dir)),
     })),
@@ -476,6 +486,7 @@ export function builtinCommands(): Command[] {
       keybinding: ['H', 'Left'],
       mode: 'resize',
       hidden: true,
+      repeatable: true,
       run: onFocusedColumn((l, c) => cycleWidth(l, c, -1)),
     },
     {
@@ -484,6 +495,7 @@ export function builtinCommands(): Command[] {
       keybinding: ['L', 'Right'],
       mode: 'resize',
       hidden: true,
+      repeatable: true,
       run: onFocusedColumn((l, c) => cycleWidth(l, c, 1)),
     },
     {
