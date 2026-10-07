@@ -51,21 +51,25 @@ export function peerLabel(peer: Pick<Attempt, 'id' | 'role'>, nodeId: string | n
   return nodeId ? `${peer.role} of ${nodeId} (${peer.id})` : `${peer.role} (${peer.id})`;
 }
 
+/** The note above messages queued while the recipient was not running. */
+export const QUEUED_MESSAGES_NOTE =
+  'These arrived while you were not running. Act on them as part of your work; answer a question with `send_message` (kind `answer`, `reply_to` = its id).';
+
+/** The note above a message passed into the planner's running turn (it has no mailbox tools). */
+export const PLANNER_STEER_NOTE =
+  "This arrived while you work; it carries the human's wishes. Take it into account in the plan you are producing (it overrides the issue where they conflict). You cannot reply: where it leaves something open, decide and say so in the plan.";
+
 /**
  * Render messages for a prompt. Empty input → null (nothing to prepend). Each message carries its id so the
  * recipient can answer it with `send_message(reply_to)`.
  */
-export function renderMessages(messages: readonly MessageLine[]): string | null {
+export function renderMessages(messages: readonly MessageLine[], note = QUEUED_MESSAGES_NOTE): string | null {
   if (messages.length === 0) return null;
   const blocks = messages.map((m) => {
     const head = `### ${KIND_LABEL[m.kind]} from ${m.from} · id ${m.id}${m.replyTo ? ` · replies to ${m.replyTo}` : ''}`;
     return `${head}\n\n${m.body.trim()}`;
   });
-  return [
-    `## Messages from other agents (${messages.length})`,
-    'These arrived while you were not running. Act on them as part of your work; answer a question with `send_message` (kind `answer`, `reply_to` = its id).',
-    ...blocks,
-  ].join('\n\n');
+  return [`## Messages from other agents (${messages.length})`, note, ...blocks].join('\n\n');
 }
 
 /** Line form of a stored message, labelling the sender. */

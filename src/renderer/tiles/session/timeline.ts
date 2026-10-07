@@ -3,7 +3,9 @@
  * - streamed `text_delta`s accumulate into one assistant text, replaced by the final `message`;
  * - consecutive reads collapse into one "Read N files" row; tool results attach to their call;
  * - `file_change` counts attach to the edit call for the same path (or become an edit row of their own);
- * - `todo` snapshots replace the previous checklist; `usage` is summarized, not listed.
+ * - `todo` snapshots replace the previous checklist; `usage` is summarized, not listed;
+ * - `working` says what the agent is doing between rows (thinking, writing its output, waiting for the model),
+ *   so a long stretch without rows reads as progress.
  * Row keys are the seq of the row's first event, so they stay stable while the transcript grows.
  *
  * Building is incremental (`TimelineBuilder` / `timelineCursor`): a live event costs O(1), not a rebuild of
@@ -35,6 +37,16 @@ export interface Usage {
   costUsd: number | null;
 }
 
+/** What the agent is busy with while no row shows it (null: idle, or a row already shows it). */
+export interface Working {
+  kind: 'thinking' | 'output' | 'tool_input' | 'waiting';
+  tool: string | null;
+  /** Characters streamed for the current block (0 when unknown). */
+  chars: number;
+  /** Seq of the event that started it (its timestamp is when). */
+  since: number;
+}
+
 export interface Timeline {
   /**
    * The rows (rows themselves are immutable; the array grows in place as the builder advances, so read
@@ -47,6 +59,7 @@ export interface Timeline {
   streaming: boolean;
   /** Request ids of the approval rows (approvals already shown inline). */
   approvalIds: ReadonlySet<string>;
+  working: Working | null;
 }
 
 function record(input: unknown): Record<string, unknown> {
@@ -108,6 +121,7 @@ export class TimelineBuilder {
   private todoIndex = -1;
   private usage: Usage | null = null;
   private model: string | null = null;
+  private working: Working | null = null;
 
   private last(): TimelineRow | undefined {
     return this.rows.at(-1);
@@ -129,7 +143,40 @@ export class TimelineBuilder {
     this.streamingRows = this.streamingRows.filter((i) => i !== index).map((i) => (i > index ? i - 1 : i));
   }
 
-  push({ seq, event }: TranscriptEntry): void {
+  push(entry: TranscriptEntry): void {
+    this.track(entry);
+    this.fold(entry);
+  }
+
+  /** Keep `working` current: rows and turn ends replace it; a finished step hands the turn back to the model. */
+  private track({ seq, event }: TranscriptEntry): void {
+    const waiting: Working = { kind: 'waiting', tool: null, chars: 0, since: seq };
+    switch (event.type) {
+      case 'activity': {
+        const prev = this.working;
+        const same = prev && prev.kind === event.activity && prev.tool === event.tool && event.chars > 0;
+        this.working = { kind: event.activity, tool: event.tool, chars: event.chars, since: same ? prev.since : seq };
+        return;
+      }
+      case 'session_started':
+      case 'tool_result':
+      case 'reasoning':
+      case 'message':
+        this.working = waiting;
+        return;
+      case 'text_delta':
+      case 'tool_call':
+      case 'approval_request':
+      case 'turn_complete':
+      case 'exited':
+        this.working = null;
+        return;
+      default:
+        return;
+    }
+  }
+
+  private fold({ seq, event }: TranscriptEntry): void {
     const rows = this.rows;
     switch (event.type) {
       case 'session_started':
@@ -288,6 +335,7 @@ export class TimelineBuilder {
         this.add({ kind: 'exited', key: seq, code: event.code });
         break;
       case 'rate_limit':
+      case 'activity':
         break;
     }
   }
@@ -301,6 +349,7 @@ export class TimelineBuilder {
       model: this.model,
       streaming: tail?.kind === 'text' && tail.streaming,
       approvalIds: this.approvals,
+      working: this.working,
     };
   }
 }

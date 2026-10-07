@@ -201,7 +201,9 @@ inline text files as fenced blocks headed by the file name (first 100k character
 anything else by path (`adapters/attachments.ts`).
 
 Normalized `AgentEvent` kinds: `session_started{sessionId, model, version}`, `text_delta`, `message`
-(final assistant text), `reasoning`, `tool_call{id, name, input, kind: read|edit|command|mcp|other}`,
+(final assistant text), `reasoning`, `activity{activity: thinking|output|tool_input, tool?, chars}` (a block that
+streams without visible text, e.g. the structured plan: at its start and every 2k characters; Claude only),
+`tool_call{id, name, input, kind: read|edit|command|mcp|other}`,
 `tool_result{id, ok, output?}`, `file_change{path, added, removed}`, `todo{items}`,
 `approval_request{requestId, tool, input, reason?}`, `usage{inputTokens, outputTokens, costUsd?}`,
 `rate_limit{engine, window, usedPct, resetsAt}`, `turn_complete{structuredOutput?, isError, reason?}`,
@@ -300,7 +302,9 @@ relies on this); when both exist the structured report wins.
 
 ## 8. Orchestration flow
 
-1. **Create run** (composer): repo, base ref (default: current default branch), issue text/URL, planner engine.
+1. **Create run** (composer): repo, base ref (default: current default branch), issue text/URL, planner engine. A
+   repo without commits is refused (runs branch from a commit); the composer offers `repos.initialCommit` (its
+   files, `.gitignore` applied, as "Initial commit").
 2. **Clarify** (planner, read-only): returns `{questions[]}` (0–5) as structured output → inbox items, answered inline.
 3. **Plan** (planner, read-only, same session resumed): returns `{markdown, dag}` per `schemas/plan.ts`.
 4. **Validate** (deterministic, `orchestrator/core/dag.ts`): ids unique, deps resolve, acyclic, every node has
@@ -506,8 +510,13 @@ through `sessions.send` on the assistant attempt: its process stays alive and id
   inbox, then the lead, whose parent is the assistant); `run_status` (status, plan, every task, what waits for the
   human, PR); plus the coordinator tools (`list_agents`, `send_message`, `wait_for_reply`, `spawn_research`,
   research cap 3). A conversation that never starts work stays `chatting` until archived or cancelled.
+- **Steering the planner**: planner attempts of a run with an assistant are its children. The planner has no
+  mailbox tools; a message to it (`send_message` with `to: "planner"` or a planner attempt id) is passed into
+  the running planner session as a queued user message (folded into its turn after the current tool, like a
+  human steer), or, with no planner running, prepended to the next planner step's prompt.
 - **Wakes**: like the lead loop, one message per batch of news: queued messages (the lead's questions and reports,
-  research reports) and conversation changes (run status transitions, new inbox items waiting for the human). The
+  research reports) and conversation changes (run status transitions, new inbox items waiting for the human, and
+  what the human decided on resolved ones: clarify answers, plan approval or requested changes). The
   store's `run.updated` and `inbox.updated` events wake it. The lead sends decisions that are the human's to its
   parent (kind `question`) instead of `request_human_input` when it has one.
 - **Failures**: resumed as a new attempt with its children re-parented; after `MAX_ASSISTANT_FAILURES` (3) without

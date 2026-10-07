@@ -54,6 +54,19 @@ export const AgentEventSchema = z.discriminatedUnion('type', [
   /** Final assistant text of one message. */
   z.object({ type: z.literal('message'), text: z.string() }),
   z.object({ type: z.literal('reasoning'), text: z.string() }),
+  /**
+   * What the model is producing before it shows up as an event of its own: thinking, the final structured
+   * output, or a tool call's input. Emitted when the block starts and then every few thousand characters, so
+   * a long silent stretch (a big plan being written) reads as progress, not a hang.
+   */
+  z.object({
+    type: z.literal('activity'),
+    activity: z.enum(['thinking', 'output', 'tool_input']),
+    /** The tool whose input is being written (`tool_input`). */
+    tool: z.string().nullable(),
+    /** Characters streamed for this block so far. */
+    chars: z.number().int().nonnegative(),
+  }),
   z.object({
     type: z.literal('tool_call'),
     id: z.string(),

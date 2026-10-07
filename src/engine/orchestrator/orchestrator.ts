@@ -66,6 +66,7 @@ import {
   type Limits,
   messageLine,
   messageRefusal,
+  PLANNER_STEER_NOTE,
   peerLabel,
   planDispatch,
   type RateLimit,
@@ -503,8 +504,13 @@ export class Orchestrator {
         role: params.role,
         parentAttemptId: attempt.parentAttemptId ?? null,
       }) ?? null;
-    // Messages that arrived while this engine session was not running reach it with the resumed prompt.
-    const inherited = this.drainQueuedMessages([attempt, ...continued]);
+    // Messages that arrived while this engine session was not running reach it with the resumed prompt. The
+    // planner's are addressed to whichever planner attempt the sender saw, so it takes all of the run's.
+    const inherited = this.drainQueuedMessages(
+      params.role === 'planner'
+        ? [attempt, ...this.store.listAttempts(params.run.id).filter((a) => a.role === 'planner')]
+        : [attempt, ...continued],
+    );
     const opts: SessionOptions = {
       role: params.role,
       cwd: params.cwd,
@@ -593,10 +599,17 @@ export class Orchestrator {
     return message;
   }
 
-  /** Hand `message` to a blocked wait of its recipient, if any; otherwise it stays queued (a lead is woken). */
+  /**
+   * Hand `message` to a blocked wait of its recipient, if any; a drafting planner reads it mid-turn (like a
+   * human's steer); otherwise it stays queued (a lead or assistant is woken).
+   */
   private deliverMessage(message: AgentMessage): void {
     const waiting = this.messageWaiters.get(message.toAttemptId);
     if (!waiting) {
+      if (this.store.getAttempt(message.toAttemptId)?.role === 'planner') {
+        this.steerPlanner(message);
+        return;
+      }
       const meta = runMeta(this.store, message.runId);
       if (meta.leadAttemptId === message.toAttemptId) this.wakeLead(message.runId);
       if (meta.assistantAttemptId === message.toAttemptId) this.wakeAssistant(message.runId);
@@ -608,6 +621,24 @@ export class Orchestrator {
     if (waiting.length === 0) this.messageWaiters.delete(message.toAttemptId);
     const [delivered] = this.store.markDelivered([message.id]);
     waiter?.resolve(delivered ?? message);
+  }
+
+  /**
+   * The planner has no mailbox tools: a message for it goes into its live session as a queued user message
+   * (folded into the running turn after its current tool). With no planner running, it waits for the next
+   * planner step's prompt (`openSession`).
+   */
+  private steerPlanner(message: AgentMessage): void {
+    const live = [...this.live.values()].find(
+      (r) => r.attempt.runId === message.runId && r.attempt.role === 'planner' && !r.ended && !r.takenOver,
+    );
+    if (!live) return;
+    const text =
+      renderMessages([messageLine(message, this.agentName(message.fromAttemptId))], PLANNER_STEER_NOTE) ?? message.body;
+    this.store.markDelivered([message.id]);
+    live.session.send(text, 'next').catch((error: unknown) => {
+      this.log.warn(`run ${message.runId}: could not pass a message to the planner: ${(error as Error).message}`);
+    });
   }
 
   private rejectMessageWaiters(attemptId: string, note: string): void {
@@ -1341,8 +1372,16 @@ export class Orchestrator {
     sendMessage: (binding, request) => {
       this.assertOpen();
       const from = this.store.requireAttempt(binding.attemptId);
-      const target = request.to === 'lead' ? from.parentAttemptId : request.to;
-      if (!target) throw new Error('you have no lead');
+      const target =
+        request.to === 'lead'
+          ? from.parentAttemptId
+          : request.to === 'planner'
+            ? (this.store
+                .listChildAttempts(from.id)
+                .filter((a) => a.role === 'planner')
+                .at(-1)?.id ?? null)
+            : request.to;
+      if (!target) throw new Error(request.to === 'planner' ? 'no planner has started yet' : 'you have no lead');
       const to = this.store.getAttempt(target);
       if (!to || !canMessage(from, to)) throw new Error(messageRefusal(from, to));
       if (request.replyTo !== null) {

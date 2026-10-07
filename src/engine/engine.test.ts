@@ -181,6 +181,26 @@ describe('engine over RPC (plain Node)', () => {
     expect((await client.call('app.info', {})).homeDir).toBeTruthy();
   });
 
+  it('repos.initialCommit gives a repository without commits its first one, with its files', async () => {
+    const repo = join(dir.path, 'fresh');
+    execFileSync('mkdir', ['-p', join(repo, '.claude')]);
+    git(repo, 'init', '-q', '-b', 'main');
+    git(repo, 'config', 'user.email', 'test@legion.test');
+    git(repo, 'config', 'user.name', 'Legion Test');
+    writeFileSync(join(repo, '.claude', 'skill.md'), '# skill\n');
+    writeFileSync(join(repo, '.gitignore'), 'secret.txt\n');
+    writeFileSync(join(repo, 'secret.txt'), 'nope\n');
+    expect((await client.call('repos.inspect', { path: repo })).headSha).toBeNull();
+
+    const after = await client.call('repos.initialCommit', { path: repo });
+    expect(after.headSha).toMatch(/^[0-9a-f]{40}$/);
+    expect(execFileSync('git', ['-C', repo, 'log', '--format=%s'], { encoding: 'utf8' }).trim()).toBe('Initial commit');
+    const files = execFileSync('git', ['-C', repo, 'ls-files'], { encoding: 'utf8' }).trim().split('\n');
+    expect(files.sort()).toEqual(['.claude/skill.md', '.gitignore']);
+    await expect(client.call('repos.initialCommit', { path: repo })).rejects.toThrow(/already has commits/);
+    await expect(client.call('repos.initialCommit', { path: dir.path })).rejects.toThrow(/not a git repository/);
+  });
+
   it('repos.inspect reports non-repos and bad paths', async () => {
     await expect(client.call('repos.inspect', { path: dir.path })).resolves.toMatchObject({
       exists: true,

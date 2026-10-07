@@ -54,6 +54,17 @@ export function headSha(repo: string): Promise<string> {
   return resolveSha(repo, 'HEAD');
 }
 
+/**
+ * The first commit of a repository that has none ("Initial commit"): every file git would add (`.gitignore`
+ * applies), or an empty commit for an empty folder. Runs with the user's own git config (identity, hooks,
+ * signing): it is their commit. Returns its sha.
+ */
+export async function createInitialCommit(repo: string, env?: Readonly<Record<string, string>>): Promise<string> {
+  await git(repo, ['add', '-A'], { env });
+  await git(repo, ['commit', '--allow-empty', '-m', 'Initial commit'], { env });
+  return headSha(repo);
+}
+
 export interface Remote {
   name: string;
   url: string;

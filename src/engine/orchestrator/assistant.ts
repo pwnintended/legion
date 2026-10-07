@@ -7,7 +7,14 @@
  * sent only after the previous turn ended.
  */
 import { basename } from 'node:path';
-import { type InboxItem, isTerminal, RUN_TRANSITIONS, type Run, type RunStatus } from '@shared/domain';
+import {
+  type InboxItem,
+  isTerminal,
+  type QuestionAnswer,
+  RUN_TRANSITIONS,
+  type Run,
+  type RunStatus,
+} from '@shared/domain';
 import type { RpcInput } from '@shared/rpc';
 import { RpcError } from '@shared/rpc-transport';
 import type { AssistantRunStatus, McpBinding, StartImplementationRequest } from '../mcp';
@@ -73,13 +80,44 @@ const STATUS_LINE: Partial<Record<RunStatus, string>> = {
   cancelled: 'the run was cancelled',
 };
 
-function conversationChanges(previous: RunStatus, run: Run, newItems: readonly InboxItem[]): string[] {
+const clip = (text: string, max = 600) => (text.length > max ? `${text.slice(0, max - 1)}…` : text);
+
+/** What the human decided in the inbox, for the assistant (it cannot see the inbox). */
+export function resolvedItemLine(item: InboxItem): string | null {
+  if (item.kind === 'question') {
+    const resolution = item.resolution as { answers: QuestionAnswer[] } | null;
+    if (item.payload.source !== 'clarify' || !resolution) return null;
+    const answers = item.payload.questions.map((q) => {
+      const answer = resolution.answers.find((a) => a.questionId === q.id)?.answer.trim();
+      return `  - ${clip(q.question, 300)} → ${answer ? clip(answer) : '(no answer: the planner uses its judgement)'}`;
+    });
+    return `the human answered the planner's questions:\n${answers.join('\n')}`;
+  }
+  if (item.kind === 'plan_signoff') {
+    const resolution = item.resolution as { approved: boolean; feedback: string | null } | null;
+    if (resolution?.approved) return `the human approved plan v${item.payload.version}`;
+    if (resolution?.feedback)
+      return `the human asked for changes to plan v${item.payload.version}: ${clip(resolution.feedback)}`;
+  }
+  return null;
+}
+
+function conversationChanges(
+  previous: RunStatus,
+  run: Run,
+  newItems: readonly InboxItem[],
+  resolvedItems: readonly InboxItem[] = [],
+): string[] {
   const lines: string[] = [];
   if (previous !== run.status) {
     const detail = STATUS_LINE[run.status];
     lines.push(
       `run status ${previous} → ${run.status}${detail ? `: ${detail}` : ''}${run.error ? ` (${run.error})` : ''}`,
     );
+  }
+  for (const item of resolvedItems) {
+    const line = resolvedItemLine(item);
+    if (line) lines.push(line);
   }
   for (const item of newItems) {
     const line = HUMAN_ITEM_LINES[item.kind]?.(item);
@@ -102,10 +140,13 @@ export async function runAssistant(o: Orchestrator, runId: string, loop: LeadLoo
       if (isTerminal(RUN_TRANSITIONS, run.status) || !assistantEnabled(o, runId)) break;
       const meta = runMeta(o.store, runId);
       const open = o.store.listInbox({ runId, includeResolved: false });
+      const openIds = new Set(open.map((i) => i.id));
+      const resolved = [...seenItems].filter((id) => !openIds.has(id)).flatMap((id) => o.store.getInboxItem(id) ?? []);
       const changes = conversationChanges(
         lastStatus,
         run,
         open.filter((i) => !seenItems.has(i.id)),
+        resolved,
       );
       const queued = session ? o.store.queuedMessagesFor(session.attempt.id) : [];
 
@@ -129,7 +170,7 @@ export async function runAssistant(o: Orchestrator, runId: string, loop: LeadLoo
         continue;
       }
       lastStatus = run.status;
-      seenItems = new Set(open.map((i) => i.id));
+      seenItems = openIds;
 
       let turn = await session.nextTurn();
       o.assertOpen();

@@ -321,7 +321,8 @@ export const TRANSCRIPT_HEAD = 200;
 /**
  * Shrink a transcript that grew past the cap without changing what the timeline shows where possible:
  * 1. consecutive `text_delta`s (and `reasoning` chunks) fold into one entry with the joined text, keeping
- *    the first one's seq (the row key) — streamed text is most of a long transcript;
+ *    the first one's seq (the row key) — streamed text is most of a long transcript; `activity` readings of
+ *    one block keep the latest count;
  * 2. `usage` keeps only its latest reading and `rate_limit` readings go (the timeline doesn't show them);
  * 3. only if that is not enough, the oldest entries *after* the session's head are dropped (counted in
  *    `dropped`), never the start of the session.
@@ -351,6 +352,18 @@ export function compactEntries(
     }
     if (prev && event.type === 'reasoning' && prev.event.type === 'reasoning') {
       out[out.length - 1] = { ...prev, event: { ...prev.event, text: prev.event.text + event.text }, through };
+      return;
+    }
+    // Progress readings of one streaming block: the latest count, under the first one's seq (when it started).
+    if (
+      prev &&
+      event.type === 'activity' &&
+      prev.event.type === 'activity' &&
+      prev.event.activity === event.activity &&
+      prev.event.tool === event.tool &&
+      event.chars > 0
+    ) {
+      out[out.length - 1] = { ...prev, event, through };
       return;
     }
     out.push(entry);

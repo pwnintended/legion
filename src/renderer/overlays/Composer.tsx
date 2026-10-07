@@ -7,7 +7,7 @@
 import type { EngineKind } from '@shared/domain';
 import type { EngineInfo } from '@shared/engine';
 import type { DiscoveredRepo, RecentRepo, RepoBranches, RepoInspection } from '@shared/rpc';
-import { useEffect, useId, useMemo, useRef, useState } from 'react';
+import { type ReactNode, useEffect, useId, useMemo, useRef, useState } from 'react';
 import { seededBase, seededText, takeComposerSeed } from '../app/composer-seed';
 import { rpc, useActiveRun, useEngines, useSettings } from '../app/hooks';
 import { adoptRun } from '../app/run-actions';
@@ -150,6 +150,8 @@ export function ComposerOverlay() {
   const [attempted, setAttempted] = useState(false);
   const [creating, setCreating] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
+  const [committing, setCommitting] = useState(false);
+  const [commitError, setCommitError] = useState<string | null>(null);
   const textRef = useRef<HTMLTextAreaElement>(null);
   const [expanded, setExpanded] = useState(readExpanded);
   const attachments = useDraft(savedAttachments);
@@ -210,7 +212,11 @@ export function ComposerOverlay() {
 
   const inspection = inspect.status === 'done' ? inspect.result : null;
   const root = inspection?.isGitRepo ? inspection.root : null;
+  // Runs branch from a commit: a fresh `git init` needs its first one (Legion can make it).
+  const noCommits = !!root && !inspection?.headSha;
+  const headSha = inspection?.headSha ?? null;
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: the branches appear with the first commit (`headSha`).
   useEffect(() => {
     if (!root) return;
     let cancelled = false;
@@ -221,7 +227,7 @@ export function ComposerOverlay() {
     return () => {
       cancelled = true;
     };
-  }, [root]);
+  }, [root, headSha]);
 
   // A repo that inspects fine is recorded as recent by the engine: refresh the list so it shows up there.
   useEffect(() => {
@@ -243,6 +249,7 @@ export function ComposerOverlay() {
 
   const selectRepo = (path: string) => {
     setSubmitError(null);
+    setCommitError(null);
     if (path === repoPath) return;
     setRepoPath(path);
     setBase('');
@@ -255,6 +262,20 @@ export function ComposerOverlay() {
     if (picked) selectRepo(picked);
   };
 
+  const initialCommit = async () => {
+    if (!root || committing) return;
+    setCommitting(true);
+    setCommitError(null);
+    setSubmitError(null);
+    try {
+      setInspect({ status: 'done', result: await rpc('repos.initialCommit', { path: root }) });
+    } catch (error) {
+      setCommitError(errorMessage(error));
+    } finally {
+      setCommitting(false);
+    }
+  };
+
   const link = detectIssueLink(text);
   const repoError = !repoPath
     ? 'Choose a repository.'
@@ -262,7 +283,9 @@ export function ComposerOverlay() {
       ? inspect.message
       : inspection && !inspection.isGitRepo
         ? repoProblem(inspection)
-        : null;
+        : noCommits
+          ? 'No commits yet. Agents work on branches cut from a commit.'
+          : null;
   const textError = text.trim() ? null : 'Describe the work or paste an issue URL.';
   const engineInfo = engines.list.find((e) => e.kind === engine);
   const engineError =
@@ -276,13 +299,15 @@ export function ComposerOverlay() {
       ? 'Choose a repository first'
       : inspect.status === 'loading'
         ? 'Checking the repository…'
-        : repoError
-          ? 'Pick a git repository first'
-          : engineError
-            ? engineError
-            : uploading
-              ? 'Attachments are still uploading…'
-              : null;
+        : noCommits
+          ? 'Create the first commit first'
+          : repoError
+            ? 'Pick a git repository first'
+            : engineError
+              ? engineError
+              : uploading
+                ? 'Attachments are still uploading…'
+                : null;
   const branchState = branches && branches.root === root ? branches.value : null;
 
   const submit = async () => {
@@ -516,6 +541,23 @@ export function ComposerOverlay() {
             path={repoPath}
             home={home}
             error={repoPath ? repoError : attempted ? repoError : null}
+            fix={
+              noCommits ? (
+                <>
+                  <button
+                    type="button"
+                    className="btn btn-sm"
+                    data-testid="repo-initial-commit"
+                    disabled={committing}
+                    title="git add -A && git commit -m 'Initial commit' (.gitignore applies)"
+                    onClick={() => void initialCommit()}
+                  >
+                    {committing ? 'Committing…' : 'Commit its files as "Initial commit"'}
+                  </button>
+                  {commitError ? <span className="cmp-error">{commitError}</span> : null}
+                </>
+              ) : null
+            }
           />
           {engineError ? <span className="cmp-error">{engineError}</span> : null}
 
@@ -603,12 +645,15 @@ function RepoStatus({
   path,
   home,
   error,
+  fix = null,
 }: {
   id: string;
   inspect: Inspect;
   path: string | null;
   home: string | null;
   error: string | null;
+  /** An action that resolves `error` (e.g. the first commit). */
+  fix?: ReactNode;
 }) {
   if (inspect.status === 'loading')
     return (
@@ -622,6 +667,7 @@ function RepoStatus({
       <div id={id} className="cmp-status cmp-status-bad" data-testid="repo-status" data-state="error" role="alert">
         <Icon name="alert" size={12} className="flex-none" />
         <span className="min-w-0">{withCode(error)}</span>
+        {fix ? <span className="cmp-fix">{fix}</span> : null}
       </div>
     );
   if (inspect.status !== 'done' || !inspect.result.isGitRepo)

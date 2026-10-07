@@ -178,6 +178,8 @@ async function plannerStep<T>(
         outputSchema: jsonSchema,
         cwd,
         resumeSessionId: meta.plannerSessionId,
+        // Under the run's assistant (when it has one), so the assistant can steer the plan while it is drafted.
+        parentAttemptId: o.assistantAttemptId(runId),
         attachments: meta.plannerSessionId ? followUpAttachments : o.runAttachments(run),
       });
       if (session.sessionId) patchRunMeta(o.store, runId, { plannerSessionId: session.sessionId });

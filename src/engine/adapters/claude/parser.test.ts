@@ -161,6 +161,39 @@ describe('ClaudeStreamParser (synthetic)', () => {
     expect(classifyTool('WebFetch')).toBe('other');
   });
 
+  it('reports activity for thinking and structured output that streams without visible text', () => {
+    const p = parser(true);
+    const stream = (event: Record<string, unknown>) => events(p, { type: 'stream_event', event });
+    expect(
+      stream({ type: 'content_block_start', index: 0, content_block: { type: 'thinking', thinking: '' } }),
+    ).toEqual([{ type: 'activity', activity: 'thinking', tool: null, chars: 0 }]);
+    expect(
+      stream({ type: 'content_block_delta', delta: { type: 'thinking_delta', thinking: 'x'.repeat(1500) } }),
+    ).toEqual([]);
+    expect(
+      stream({ type: 'content_block_delta', delta: { type: 'thinking_delta', thinking: 'x'.repeat(600) } }),
+    ).toEqual([{ type: 'activity', activity: 'thinking', tool: null, chars: 2100 }]);
+    expect(stream({ type: 'content_block_stop', index: 0 })).toEqual([]);
+    expect(
+      stream({ type: 'content_block_start', content_block: { type: 'tool_use', id: 't1', name: 'StructuredOutput' } }),
+    ).toEqual([{ type: 'activity', activity: 'output', tool: null, chars: 0 }]);
+    expect(
+      stream({ type: 'content_block_delta', delta: { type: 'input_json_delta', partial_json: '{'.repeat(2000) } }),
+    ).toEqual([{ type: 'activity', activity: 'output', tool: null, chars: 2000 }]);
+    expect(
+      stream({ type: 'content_block_start', content_block: { type: 'tool_use', id: 't2', name: 'Write' } }),
+    ).toEqual([{ type: 'activity', activity: 'tool_input', tool: 'Write', chars: 0 }]);
+    // Text blocks and subagent streams stay as they were.
+    expect(stream({ type: 'content_block_start', content_block: { type: 'text', text: '' } })).toEqual([]);
+    expect(
+      events(p, {
+        type: 'stream_event',
+        parent_tool_use_id: 'toolu_x',
+        event: { type: 'content_block_start', content_block: { type: 'thinking' } },
+      }),
+    ).toEqual([]);
+  });
+
   it('sums usage over models and reports cost', () => {
     expect(events(parser(), result({}))[0]).toEqual({ type: 'usage', inputTokens: 8, outputTokens: 2, costUsd: 0.01 });
   });

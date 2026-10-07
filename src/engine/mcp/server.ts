@@ -273,7 +273,8 @@ function buildServer(binding: McpBinding, host: McpHost, log: Log): McpServer {
     ),
   );
 
-  if (binding.parentAttemptId !== null || COORDINATOR_ROLES.has(binding.role))
+  // The planner sits under the assistant only to be steered: messages reach it in its prompt, it has no mailbox.
+  if ((binding.parentAttemptId !== null && binding.role !== 'planner') || COORDINATOR_ROLES.has(binding.role))
     registerMessaging(server, binding, host, guard);
   if (binding.role === 'lead') registerLeadTools(server, binding, host, guard);
   if (COORDINATOR_ROLES.has(binding.role)) registerResearch(server, binding, host, guard);

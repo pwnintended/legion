@@ -33,6 +33,9 @@ export interface ParserOptions {
 /** Tool output kept on `tool_result` events (the full output stays in Claude's transcript). */
 export const TOOL_OUTPUT_LIMIT = 16_000;
 
+/** A streaming thinking/tool-input block reports `activity` again after this many more characters. */
+export const ACTIVITY_STEP_CHARS = 2_000;
+
 /** Internal tool the CLI injects for `--json-schema`; its call/result are not shown as tool activity. */
 const STRUCTURED_OUTPUT_TOOL = 'StructuredOutput';
 
@@ -96,8 +99,18 @@ export class LineBuffer {
   }
 }
 
+/** A content block of the main thread that streams without visible text (see the `activity` event). */
+interface StreamingBlock {
+  activity: 'thinking' | 'output' | 'tool_input';
+  tool: string | null;
+  chars: number;
+  /** `chars` at the last `activity` event. */
+  reported: number;
+}
+
 export class ClaudeStreamParser {
   private readonly tools = new Map<string, { name: string; input: unknown }>();
+  private block: StreamingBlock | null = null;
   private readonly tasks = new Map<string, TodoItem>();
   private interruptRequested = false;
   private startedSessionId: string | null = null;
@@ -185,10 +198,42 @@ export class ClaudeStreamParser {
   private streamEvent(msg: Obj): ParserOutput[] {
     if (msg.parent_tool_use_id) return [];
     const event = isObj(msg.event) ? msg.event : null;
+    if (event?.type === 'content_block_start') return this.blockStart(event);
+    if (event?.type === 'content_block_stop') {
+      this.block = null;
+      return [];
+    }
     if (event?.type !== 'content_block_delta' || !isObj(event.delta)) return [];
-    if (event.delta.type !== 'text_delta') return [];
-    const text = str(event.delta.text);
-    return text ? [ev({ type: 'text_delta', text })] : [];
+    const delta = event.delta;
+    if (delta.type === 'text_delta') {
+      const text = str(delta.text);
+      return text ? [ev({ type: 'text_delta', text })] : [];
+    }
+    const chunk = delta.type === 'thinking_delta' ? str(delta.thinking) : str(delta.partial_json);
+    if (!this.block || !chunk) return [];
+    this.block.chars += chunk.length;
+    if (this.block.chars < this.block.reported + ACTIVITY_STEP_CHARS) return [];
+    this.block.reported = this.block.chars;
+    return [this.activityEvent(this.block)];
+  }
+
+  private blockStart(event: Obj): ParserOutput[] {
+    const block = isObj(event.content_block) ? event.content_block : null;
+    this.block = null;
+    if (block?.type === 'thinking' || block?.type === 'redacted_thinking') {
+      this.block = { activity: 'thinking', tool: null, chars: 0, reported: 0 };
+    } else if (block?.type === 'tool_use') {
+      const name = str(block.name) ?? 'unknown';
+      this.block =
+        name === STRUCTURED_OUTPUT_TOOL
+          ? { activity: 'output', tool: null, chars: 0, reported: 0 }
+          : { activity: 'tool_input', tool: name, chars: 0, reported: 0 };
+    }
+    return this.block ? [this.activityEvent(this.block)] : [];
+  }
+
+  private activityEvent(block: StreamingBlock): ParserOutput {
+    return ev({ type: 'activity', activity: block.activity, tool: block.tool, chars: block.chars });
   }
 
   private assistant(msg: Obj): ParserOutput[] {

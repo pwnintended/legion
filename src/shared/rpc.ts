@@ -82,8 +82,9 @@ export const RepoInspectionSchema = z.object({
   isGitRepo: z.boolean(),
   /** Top-level directory of the work tree. */
   root: z.string().nullable(),
-  /** null when HEAD is detached or the repo has no commits. */
+  /** null when HEAD is detached. */
   currentBranch: z.string().nullable(),
+  /** null when the repo has no commits yet. */
   headSha: z.string().nullable(),
   /** origin/HEAD if known, else main/master if present, else the current branch. */
   defaultBranch: z.string().nullable(),
@@ -464,6 +465,11 @@ export const rpcContract = {
   // repos ---------------------------------------------------------------------------------------
   /** Read-only inspection; a valid repo is also recorded in recent repos. */
   'repos.inspect': { input: z.object({ path: z.string().min(1) }), output: RepoInspectionSchema },
+  /**
+   * A repository without commits gets its first one ("Initial commit": its files, `.gitignore` applied), so runs
+   * have a commit to branch from. `conflict` when it already has commits. Returns the new inspection.
+   */
+  'repos.initialCommit': { input: z.object({ path: z.string().min(1) }), output: RepoInspectionSchema },
   'repos.recent': { input: Empty, output: z.array(RecentRepoSchema) },
   /**
    * Checkouts found by a shallow, time-boxed scan of common dev folders (~/Projects, ~/Developer, ...) and the

@@ -1,6 +1,8 @@
 import { homedir } from 'node:os';
 import { basename } from 'node:path';
+import { RpcError } from '@shared/rpc-transport';
 import type { EngineContext } from '../context';
+import { createInitialCommit, GitError } from '../git';
 import { DiscoveryCache, discoveryRoots, listBranches } from './repo-discover';
 import { inspectRepo } from './repo-inspect';
 import type { EngineRpcServer } from './server';
@@ -46,6 +48,18 @@ export function registerCoreHandlers(server: EngineRpcServer, ctx: EngineContext
       ctx.store.touchRecentRepo(inspection.root, basename(inspection.root));
     }
     return inspection;
+  });
+  server.implement('repos.initialCommit', async ({ path }) => {
+    const before = await inspectRepo(path, ctx.env);
+    if (!before.isGitRepo || !before.root) throw new RpcError('bad_request', before.error ?? 'not a git repository');
+    if (before.headSha) throw new RpcError('conflict', 'the repository already has commits');
+    try {
+      await createInitialCommit(before.root, ctx.env);
+    } catch (error) {
+      const detail = error instanceof GitError ? error.stderr.trim() || error.stdout.trim() : (error as Error).message;
+      throw new RpcError('failed_precondition', `git commit failed: ${detail}`);
+    }
+    return inspectRepo(path, ctx.env);
   });
   server.implement('repos.discover', ({ refresh }) => {
     const recent = ctx.store.listRecentRepos().map((r) => r.path);

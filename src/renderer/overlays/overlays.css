@@ -288,6 +288,15 @@
 .cmp-status-bad svg {
   margin-top: 2px;
 }
+.cmp-fix {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+  margin: -3px 0 -3px 4px;
+  min-width: 0;
+  color: var(--text);
+}
 .cmp-ok {
   display: inline-flex;
   color: var(--green);

@@ -4,13 +4,13 @@
  * answered with the buttons or `a` / `A` / `d` while the tile has layout focus. The footer steers the session
  * (⏎ queue, ⌘⏎ now) and the header offers interrupt and take over.
  */
-import type { Attempt, InboxItem, TaskNode } from '@shared/domain';
+import type { Attempt, InboxItem, Role, TaskNode } from '@shared/domain';
 import { useCallback, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useShallow } from 'zustand/react/shallow';
 import { type CommandContext, registerCommands } from '../../app/commands';
 import { taskReport } from '../../app/compat';
 import { type DataState, openInbox } from '../../app/data';
-import { useActivity, useData, useTask, useTaskNode, useTranscript } from '../../app/hooks';
+import { useActivity, useData, useNow, useTask, useTaskNode, useTranscript } from '../../app/hooks';
 import { prefersReducedMotion } from '../../app/prefs';
 import { dataStore } from '../../app/store';
 import { getSync } from '../../app/sync';
@@ -50,7 +50,7 @@ import { EscalationCard, type EscalationItem, resolveEscalation } from './escala
 import { Glyph } from './glyphs';
 import { Row, type RowContext, SentRow } from './Rows';
 import './session.css';
-import { entryTs, type TimelineRow, timelineCursor } from './timeline';
+import { entryTs, type TimelineRow, timelineCursor, type Working } from './timeline';
 
 // ---------------------------------------------------------------------------------------------
 // Keyboard: a / A / d answer the focused session's pending approval
@@ -483,6 +483,13 @@ export default function SessionTile({ tileId, runId, params, focused }: TileProp
                   <EscalationCard item={escalation} focused={focused} label={task?.nodeId ?? 'this task'} />
                 </div>
               ) : null}
+              {running && timeline.working && attempt ? (
+                <WorkingLine
+                  working={timeline.working}
+                  role={attempt.role}
+                  since={entryTs(transcript.entries, transcript.count, timeline.working.since)}
+                />
+              ) : null}
             </>
           )}
           {notice && attempt ? (
@@ -509,6 +516,47 @@ export default function SessionTile({ tileId, runId, params, focused }: TileProp
       ) : null}
 
       {attempt ? <SteerBar attempt={attempt} label={label} running={running} onSent={() => toBottom(true)} /> : null}
+    </div>
+  );
+}
+
+/** What the structured output is, by role (the planner's is its plan). */
+const OUTPUT_LABEL: Partial<Record<Role, string>> = {
+  planner: 'Writing the plan',
+  researcher: 'Writing the report',
+  research_lead: 'Writing the report',
+  reviewer: 'Writing the review',
+  finalizer: 'Writing the review',
+};
+
+export function workingLabel(working: Working, role: Role): string {
+  switch (working.kind) {
+    case 'thinking':
+      return 'Thinking';
+    case 'output':
+      return OUTPUT_LABEL[role] ?? 'Writing the result';
+    case 'tool_input':
+      return `Preparing ${working.tool ?? 'a tool call'}`;
+    case 'waiting':
+      return 'Waiting for the model';
+  }
+}
+
+function elapsed(ms: number): string {
+  const s = Math.max(0, Math.floor(ms / 1000));
+  return s < 60 ? `${s}s` : `${Math.floor(s / 60)}m ${String(s % 60).padStart(2, '0')}s`;
+}
+
+/** A live line under the feed while the agent works on something no row shows yet (e.g. a long plan). */
+function WorkingLine({ working, role, since }: { working: Working; role: Role; since: number }) {
+  const now = useNow(1000);
+  const parts = [workingLabel(working, role)];
+  if (working.chars > 0) parts.push(`${(working.chars / 1000).toFixed(1)}k chars`);
+  if (since > 0) parts.push(elapsed(now - since));
+  return (
+    <div className="ss-working faint" role="status" data-testid="session-working" data-kind={working.kind}>
+      <span className="dot live" />
+      <span className="mono">{parts.join(' · ')}</span>
     </div>
   );
 }

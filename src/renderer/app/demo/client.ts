@@ -325,6 +325,9 @@ export class DemoClient implements EngineClient {
         ];
       case 'repos.inspect':
         return inspectDemoRepo(input.path as string);
+      case 'repos.initialCommit':
+        demoCommitted.add(input.path as string);
+        return inspectDemoRepo(input.path as string);
       case 'repos.discover':
         return discoverDemoRepos();
       case 'repos.branches':
@@ -776,17 +779,24 @@ function demoBranches(path: string): RepoBranches {
   };
 }
 
-/** A plausible `repos.inspect` answer; paths containing "not-a-repo" are rejected. */
+/** Demo repos given their first commit (`repos.initialCommit`). */
+const demoCommitted = new Set<string>();
+
+/**
+ * A plausible `repos.inspect` answer; paths containing "not-a-repo" are rejected, and ones containing
+ * "no-commits" have no commit until `repos.initialCommit`.
+ */
 function inspectDemoRepo(path: string): RepoInspection {
   const name = path.split('/').filter(Boolean).at(-1) ?? path;
   const ok = !path.includes('not-a-repo');
+  const committed = ok && (!path.includes('no-commits') || demoCommitted.has(path));
   return {
     path,
     exists: true,
     isGitRepo: ok,
     root: ok ? path : null,
     currentBranch: ok ? 'main' : null,
-    headSha: ok ? 'a1f3c9e4b2d8' : null,
+    headSha: committed ? 'a1f3c9e4b2d8' : null,
     defaultBranch: ok ? 'main' : null,
     remotes: ok ? [{ name: 'origin', url: `https://github.com/erudiet/${name}.git` }] : [],
     github: ok ? { owner: 'erudiet', name } : null,

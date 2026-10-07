@@ -28,6 +28,40 @@ describe('buildTimeline', () => {
     expect(done.streaming).toBe(false);
   });
 
+  it('says what the agent is doing between rows: waiting, thinking, writing its output', () => {
+    const at = (events: AgentEvent[]) => buildTimeline(entries(events)).working;
+    const started: AgentEvent = { type: 'session_started', sessionId: 's', model: null, version: null };
+    const call: AgentEvent = { type: 'tool_call', id: 'a', name: 'Bash', input: { command: 'ls' }, kind: 'command' };
+    const result: AgentEvent = { type: 'tool_result', id: 'a', ok: true, output: '' };
+    expect(at([started])).toEqual({ kind: 'waiting', tool: null, chars: 0, since: 10 });
+    expect(at([started, call])).toBeNull(); // the command row shows it
+    expect(at([started, call, result])).toEqual({ kind: 'waiting', tool: null, chars: 0, since: 12 });
+    expect(
+      at([
+        started,
+        call,
+        result,
+        { type: 'activity', activity: 'output', tool: null, chars: 0 },
+        { type: 'activity', activity: 'output', tool: null, chars: 4000 },
+      ]),
+    ).toEqual({ kind: 'output', tool: null, chars: 4000, since: 13 });
+    expect(
+      at([
+        { type: 'activity', activity: 'output', tool: null, chars: 4000 },
+        { type: 'turn_complete', structuredOutput: {}, isError: false, reason: null },
+      ]),
+    ).toBeNull();
+    // A new block of the same kind restarts the clock.
+    expect(
+      at([
+        { type: 'activity', activity: 'thinking', tool: null, chars: 2000 },
+        { type: 'activity', activity: 'thinking', tool: null, chars: 0 },
+      ]),
+    ).toEqual({ kind: 'thinking', tool: null, chars: 0, since: 11 });
+    // Activity makes no rows.
+    expect(buildTimeline(entries([{ type: 'activity', activity: 'thinking', tool: null, chars: 0 }])).rows).toEqual([]);
+  });
+
   it('collapses consecutive reads and keeps keys stable', () => {
     const t = buildTimeline(
       entries([

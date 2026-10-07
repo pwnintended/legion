@@ -7,7 +7,17 @@ import { afterEach, describe, expect, it } from 'vitest';
 import type { FakeTurnContext } from '../adapters/fake';
 import type { McpBinding } from '../mcp';
 import { runMeta } from './meta';
-import { approve, type Harness, node, planOutput, report, type Script, startHarness, taskIdIn } from './test-harness';
+import {
+  approve,
+  type Harness,
+  node,
+  plannerKind,
+  planOutput,
+  report,
+  type Script,
+  startHarness,
+  taskIdIn,
+} from './test-harness';
 
 let h: Harness | null = null;
 afterEach(async () => {
@@ -179,6 +189,86 @@ describe('the assistant', () => {
     await harness.waitFor(() => store.requireAttempt(assistant.id).status !== 'running', 'assistant closed');
     await harness.waitFor(() => !orchestrator.assistantLoops.has(run.id), 'loop gone');
   }, 90_000);
+
+  it("steers the drafting planner and hears the human's inbox answers", async () => {
+    const rec = recorder();
+    h = await startHarness({
+      script: (ctx) => {
+        if (ctx.opts.role !== 'planner') return script(ctx, 'claude');
+        if (plannerKind(ctx) === 'clarify') {
+          return [{ kind: 'output', value: { questions: [{ id: 'q1', question: 'Port or forest?', options: [] }] } }];
+        }
+        return [{ kind: 'delay', ms: 600 }, planOutput([node('T1')])];
+      },
+      assistant: rec.assistant,
+    });
+    const harness = h;
+    const { orchestrator, store } = harness.engine;
+    const { run, assistant } = await chat(harness, 'Build the slice.');
+    await harness.waitFor(() => rec.turns.length === 1, 'first turn');
+    const host = orchestrator.mcpHost;
+    const asAssistant = binding(store.requireAttempt(assistant.id));
+    expect(() => host.sendMessage(asAssistant, { to: 'planner', kind: 'brief', body: 'x', replyTo: null })).toThrow(
+      /no planner/,
+    );
+    host.startImplementation(asAssistant, { title: 'Slice', brief: 'Build the slice.', clarify: true });
+
+    // The clarify answers reach the assistant (it cannot see the inbox).
+    await harness.waitFor(
+      () => store.listInbox({ runId: run.id, includeResolved: false }).find((i) => i.kind === 'question'),
+      'question',
+    );
+    await harness.client.call('runs.answerClarify', {
+      runId: run.id,
+      answers: [{ questionId: 'q1', answer: 'Forest' }],
+      attachmentIds: null,
+    });
+    await harness.waitFor(
+      () => rec.messages().some((m) => m.includes("the human answered the planner's questions")),
+      'answers relayed',
+    );
+    expect(rec.messages().find((m) => m.includes('answered the planner'))).toContain('Port or forest? → Forest');
+
+    // While the planner drafts, it is the assistant's child and a brief reaches its running session.
+    const planner = await harness.waitFor(() => {
+      const live = store.listAttempts(run.id).filter((a) => a.role === 'planner' && a.status === 'running');
+      return live.at(-1);
+    }, 'drafting planner');
+    expect(planner.parentAttemptId).toBe(assistant.id);
+    const brief = await host.sendMessage(asAssistant, {
+      to: 'planner',
+      kind: 'brief',
+      body: 'Boreal forest, no port town.',
+      replyTo: null,
+    });
+    expect(brief.toAttemptId).toBe(planner.id);
+    expect(store.getMessage(brief.id)?.deliveredAt).not.toBeNull();
+    const plannerSession = harness.claude.sessions.filter((s) => s.opts.role === 'planner').at(-1);
+    expect(plannerSession?.session.sent.map((m) => m.text).join('\n')).toContain('Boreal forest, no port town.');
+    expect(plannerSession?.opts.mcp).not.toBeNull();
+
+    // With the plan waiting for sign-off, a brief waits for the next planner step; the human's feedback is relayed.
+    await harness.waitFor(() => store.requireRun(run.id).status === 'awaiting_approval', 'plan');
+    const later = await host.sendMessage(asAssistant, {
+      to: 'planner',
+      kind: 'brief',
+      body: 'Add fog.',
+      replyTo: null,
+    });
+    expect(store.getMessage(later.id)?.deliveredAt).toBeNull();
+    await harness.client.call('runs.requestPlanRevision', {
+      runId: run.id,
+      planId: store.latestPlan(run.id)?.id as string,
+      feedback: 'More mist please.',
+    });
+    await harness.waitFor(() => store.getMessage(later.id)?.deliveredAt, 'queued brief delivered');
+    const revising = harness.claude.sessions.filter((s) => s.opts.role === 'planner').at(-1);
+    expect(revising?.opts.prompt).toContain('Add fog.');
+    await harness.waitFor(
+      () => rec.messages().some((m) => m.includes('the human asked for changes to plan v1: More mist please.')),
+      'feedback relayed',
+    );
+  }, 60_000);
 
   it('fails a conversation whose assistant keeps dying, and refuses to chat when disabled', async () => {
     h = await startHarness({ script, assistant: () => [{ kind: 'fail', message: 'boom', exitCode: 1 }] });

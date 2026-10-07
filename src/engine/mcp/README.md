@@ -9,8 +9,9 @@ one bearer token per agent session (token → `{ runId, taskId, attemptId, role,
   can wait for hours. The client side limits then apply: set `MCP_TOOL_TIMEOUT` (ms) for Claude Code and
   `tool_timeout_sec` for Codex (`codexMcpConfigOverrides` defaults to 24h).
 - Tools: `report_progress`, `request_human_input`, `approve`, `mark_task_done` (coder/resolver only); `spawn_research` for coordinators; `start_implementation` and `run_status` for the assistant; for attempts with
-  a `parentAttemptId` or a role in `COORDINATOR_ROLES`: `list_agents`, `send_message`, `wait_for_reply`, and (with a
-  parent) `ask_lead`. The host (`McpHost.listAgents/sendMessage/awaitMessage`) enforces the parent ↔ child rule
+  a `parentAttemptId` (except the planner, which is only steered) or a role in `COORDINATOR_ROLES`: `list_agents`,
+  `send_message` (`to` may be `lead`, or `planner` for the caller's latest planner child), `wait_for_reply`, and
+  (with a parent) `ask_lead`. The host (`McpHost.listAgents/sendMessage/awaitMessage`) enforces the parent ↔ child rule
   (`orchestrator/core/messaging.ts`, architecture §7).
   Host errors become MCP tool errors (`isError`). `approve` is an unused fallback: both adapters receive tool
   approvals in-band (Claude `--permission-prompt-tool stdio`, Codex `requestApproval` server requests), so no
