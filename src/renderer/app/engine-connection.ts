@@ -24,7 +24,7 @@ export class EngineConnection {
   private waiters: (() => void)[] = [];
   private readonly statusListeners = new Set<() => void>();
   private readonly eventListeners = new Set<(events: ServerEvent[]) => void>();
-  private readonly resetListeners = new Set<() => void>();
+  private readonly resetListeners = new Set<(fromSeq: number) => void>();
   private readonly onWindowMessage = (event: MessageEvent): void => {
     if (event.source !== window) return;
     const data = event.data as { type?: unknown } | null;
@@ -56,8 +56,8 @@ export class EngineConnection {
     return () => this.eventListeners.delete(listener);
   }
 
-  /** The engine could not replay missed events: stores must refetch their snapshots. */
-  onReset(listener: () => void): () => void {
+  /** The engine could not replay events after `fromSeq`: stores must refetch their snapshots. */
+  onReset(listener: (fromSeq: number) => void): () => void {
     this.resetListeners.add(listener);
     return () => this.resetListeners.delete(listener);
   }
@@ -105,8 +105,9 @@ export class EngineConnection {
       .call('subscribe', { sinceSeq: this.lastSeq })
       .then(({ headSeq, replayed }) => {
         if (!replayed) {
+          const fromSeq = this.lastSeq;
           this.lastSeq = Math.max(this.lastSeq, headSeq);
-          for (const listener of this.resetListeners) listener();
+          for (const listener of this.resetListeners) listener(fromSeq);
         }
       })
       .catch((error: unknown) => console.error('[legion] subscribe failed', error));

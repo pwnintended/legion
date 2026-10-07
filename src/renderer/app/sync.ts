@@ -16,6 +16,7 @@ import {
   applyTranscriptPage,
   beginTranscript,
   type DataState,
+  dropTranscript,
   failTranscript,
   TERMINAL_RUN_STATUSES,
 } from './data';
@@ -30,13 +31,21 @@ export interface EngineClient {
   readonly seq: number;
   onStatus(listener: () => void): () => void;
   onEvents(listener: (events: ServerEvent[]) => void): () => void;
-  onReset(listener: () => void): () => void;
+  /** Events after `fromSeq` could not be replayed (snapshots must be refetched); undefined = unknown. */
+  onReset(listener: (fromSeq?: number) => void): () => void;
   call<P extends ProcedureName>(method: P, input: RpcInput<P>, options?: CallOptions): Promise<RpcOutput<P>>;
 }
 
 type Store = { getState(): DataState; setState(partial: Partial<DataState>): void };
 
-const TRANSCRIPT_PAGE = 1000;
+const TRANSCRIPT_PAGE = 2000;
+/**
+ * History fetched per transcript at most (entries). Pages are compacted as they land (see `compactEntries`),
+ * so memory stays bounded either way; this bounds the work for a pathological session.
+ */
+const MAX_HISTORY_PAGES = 100;
+/** A transcript no tile has shown for this long is dropped from the store (refetched when shown again). */
+export const TRANSCRIPT_IDLE_MS = 90_000;
 /** Snapshots fetched eagerly: every unfinished run plus this many finished ones. */
 const RECENT_FINISHED_SNAPSHOTS = 3;
 
@@ -55,16 +64,23 @@ export class StoreSync {
   private refreshAgain = false;
   private readonly snapshotRequests = new Map<string, Promise<void>>();
   private readonly transcriptRequests = new Map<string, Promise<void>>();
+  /** attemptId → number of mounted views of its transcript. */
+  private readonly transcriptUsers = new Map<string, number>();
+  private readonly evictTimers = new Map<string, ReturnType<typeof setTimeout>>();
 
   constructor(
     readonly client: EngineClient,
     private readonly store: Store = dataStore,
+    private readonly idleMs = TRANSCRIPT_IDLE_MS,
   ) {}
 
   start(): this {
     this.unsubscribe.push(
       this.client.onEvents((events) => this.update((s) => applyEvents(s, events))),
-      this.client.onReset(() => void this.refresh()),
+      this.client.onReset((fromSeq) => {
+        void this.refresh();
+        this.topUpTranscripts(fromSeq);
+      }),
       this.client.onStatus(() => this.onStatus()),
       uiStore.subscribe((ui, prev) => {
         if (ui.activeRunId && ui.activeRunId !== prev.activeRunId) void this.ensureSnapshot(ui.activeRunId);
@@ -76,6 +92,8 @@ export class StoreSync {
 
   stop(): void {
     for (const off of this.unsubscribe.splice(0)) off();
+    for (const timer of this.evictTimers.values()) clearTimeout(timer);
+    this.evictTimers.clear();
   }
 
   private update(fn: (state: DataState) => DataState): void {
@@ -136,11 +154,12 @@ export class StoreSync {
         .map((r) => r.run.id);
       const activeRunId = uiStore.getState().activeRunId;
       const wanted = new Set([...(activeRunId ? [activeRunId] : []), ...active, ...finished]);
+      // Transcripts are not refetched here: live events keep them current, and a stream gap tops up only
+      // the ones on screen (see `topUpTranscripts`).
       await Promise.all([
         ...[...wanted].filter((id) => list.some((r) => r.run.id === id)).map((id) => this.loadSnapshot(id)),
         this.loadEngines(),
         this.loadSettings(),
-        ...Object.keys(this.store.getState().transcripts).map((id) => this.loadTranscript(id)),
       ]);
     } catch (error) {
       if (!(error instanceof RpcError && error.code === 'disconnected'))
@@ -197,20 +216,76 @@ export class StoreSync {
     return this.loadTranscript(attemptId);
   }
 
-  private loadTranscript(attemptId: string): Promise<void> {
+  /**
+   * A view shows `attemptId`'s transcript: keep it in the store. Returns the release function; once nothing
+   * has shown a transcript for `idleMs`, it is dropped (and refetched if shown again).
+   */
+  retainTranscript(attemptId: string): () => void {
+    this.transcriptUsers.set(attemptId, (this.transcriptUsers.get(attemptId) ?? 0) + 1);
+    const timer = this.evictTimers.get(attemptId);
+    if (timer) clearTimeout(timer);
+    this.evictTimers.delete(attemptId);
+    let released = false;
+    return () => {
+      if (released) return;
+      released = true;
+      const n = (this.transcriptUsers.get(attemptId) ?? 1) - 1;
+      if (n > 0) {
+        this.transcriptUsers.set(attemptId, n);
+        return;
+      }
+      this.transcriptUsers.delete(attemptId);
+      this.scheduleEviction(attemptId);
+    };
+  }
+
+  private scheduleEviction(attemptId: string): void {
+    const previous = this.evictTimers.get(attemptId);
+    if (previous) clearTimeout(previous);
+    this.evictTimers.set(
+      attemptId,
+      setTimeout(() => {
+        this.evictTimers.delete(attemptId);
+        if (this.transcriptUsers.has(attemptId)) return;
+        // A load in flight would re-create it: evict once it has landed.
+        if (this.transcriptRequests.has(attemptId)) return this.scheduleEviction(attemptId);
+        this.update((s) => dropTranscript(s, attemptId));
+      }, this.idleMs),
+    );
+  }
+
+  /**
+   * The event stream had a gap after `fromSeq`: fetch what the transcripts on screen missed. The others are
+   * dropped (they would be stale) and refetched in full when shown again.
+   */
+  private topUpTranscripts(fromSeq: number | undefined): void {
+    for (const attemptId of Object.keys(this.store.getState().transcripts)) {
+      if (!this.transcriptUsers.has(attemptId)) {
+        if (!this.transcriptRequests.has(attemptId)) this.update((s) => dropTranscript(s, attemptId));
+        continue;
+      }
+      void this.loadTranscript(attemptId, fromSeq ?? 0);
+    }
+  }
+
+  private loadTranscript(attemptId: string, fromSeq = 0): Promise<void> {
     const pending = this.transcriptRequests.get(attemptId);
     if (pending) return pending;
     this.update((s) => beginTranscript(s, attemptId));
     const run = async () => {
       try {
-        // Page from the start with a local cursor: live events may already sit in the transcript with
-        // higher seqs than the history we still have to fetch. Entries are merged/deduplicated by seq.
-        let sinceSeq = 0;
-        for (;;) {
+        // Page forward with a local cursor: live events may already sit in the transcript with higher seqs
+        // than the history we still have to fetch. Entries are merged/deduplicated by seq and compacted.
+        let sinceSeq = fromSeq;
+        for (let pages = 0; pages < MAX_HISTORY_PAGES; pages++) {
           const page = await this.client.call('attempts.transcript', { attemptId, sinceSeq, limit: TRANSCRIPT_PAGE });
-          this.update((s) => applyTranscriptPage(s, attemptId, page.entries, !page.hasMore));
+          // Dropped meanwhile (evicted, or the gap handling started over): stop.
+          if (!this.store.getState().transcripts[attemptId]) return;
           const last = page.entries.at(-1);
-          if (!page.hasMore || !last) break;
+          const capped = page.hasMore && !!last && pages === MAX_HISTORY_PAGES - 1;
+          const done = !page.hasMore || !last || capped;
+          this.update((s) => applyTranscriptPage(s, attemptId, page.entries, done, capped ? last.seq : null));
+          if (done) break;
           sinceSeq = last.seq;
         }
         const t = this.store.getState().transcripts[attemptId];

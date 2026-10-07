@@ -268,9 +268,19 @@ export default function SessionTile({ tileId, runId, params, focused }: TileProp
   const rows = timeline.rows.slice(start);
   // Your steer messages sit between the rows that happened before and after them.
   const feed = useMemo(() => {
-    const items: ({ kind: 'row'; row: TimelineRow } | { kind: 'sent'; message: (typeof sent)[number] })[] = [];
+    const items: (
+      | { kind: 'row'; row: TimelineRow }
+      | { kind: 'sent'; message: (typeof sent)[number] }
+      | { kind: 'gap'; dropped: number }
+    )[] = [];
     let next = 0;
+    // A very long session keeps its start and its recent part; mark where the middle was trimmed.
+    let gap = transcript.gap;
     for (const row of rows) {
+      if (gap && row.key > gap.to) {
+        if (items.length > 0 || start > 0) items.push({ kind: 'gap', dropped: transcript.dropped });
+        gap = null;
+      }
       const ts = sent.length ? entryTs(transcript.entries, transcript.count, row.key) : 0;
       while (next < sent.length && (sent[next] as (typeof sent)[number]).ts < ts)
         items.push({ kind: 'sent', message: sent[next++] as (typeof sent)[number] });
@@ -278,7 +288,7 @@ export default function SessionTile({ tileId, runId, params, focused }: TileProp
     }
     while (next < sent.length) items.push({ kind: 'sent', message: sent[next++] as (typeof sent)[number] });
     return items;
-  }, [rows, sent, transcript]);
+  }, [rows, sent, transcript, start]);
   const growBy = useRef<number | null>(null);
   // biome-ignore lint/correctness/useExhaustiveDependencies: runs after older rows were prepended (`extra`).
   useLayoutEffect(() => {
@@ -436,6 +446,10 @@ export default function SessionTile({ tileId, runId, params, focused }: TileProp
                 item.kind === 'row' ? (
                   <div className="ss-row" key={item.row.key}>
                     <Row row={item.row} ctx={ctx} last={i === feed.length - 1} />
+                  </div>
+                ) : item.kind === 'gap' ? (
+                  <div className="ss-gap" key="gap" data-testid="session-gap">
+                    {item.dropped > 0 ? `${item.dropped} earlier events trimmed` : 'Earlier events not loaded'}
                   </div>
                 ) : (
                   <div className="ss-row" key={`you-${item.message.id}`}>

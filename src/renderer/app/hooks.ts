@@ -132,7 +132,15 @@ export function useAcknowledged(itemIds: readonly string[]): boolean {
 // Live sessions
 // ---------------------------------------------------------------------------------------------
 
-const EMPTY_TRANSCRIPT: Transcript = { status: 'loading', entries: [], count: 0, lastSeq: 0, error: null };
+const EMPTY_TRANSCRIPT: Transcript = {
+  status: 'loading',
+  entries: [],
+  count: 0,
+  lastSeq: 0,
+  error: null,
+  dropped: 0,
+  gap: null,
+};
 
 /**
  * An attempt's transcript: fetched once on first use, then appended live from agent events.
@@ -141,7 +149,12 @@ const EMPTY_TRANSCRIPT: Transcript = { status: 'loading', entries: [], count: 0,
 export function useTranscript(attemptId: string | null | undefined): Transcript {
   const transcript = useData((s) => (attemptId ? s.transcripts[attemptId] : undefined));
   useEffect(() => {
-    if (attemptId) void getSync()?.requestTranscript(attemptId);
+    const sync = getSync();
+    if (!attemptId || !sync) return;
+    // Kept while shown; dropped a while after the last view of it unmounts.
+    const release = sync.retainTranscript(attemptId);
+    void sync.requestTranscript(attemptId);
+    return release;
   }, [attemptId]);
   return transcript ?? EMPTY_TRANSCRIPT;
 }

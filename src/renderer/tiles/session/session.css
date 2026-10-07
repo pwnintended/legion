@@ -112,6 +112,22 @@
   color: var(--text);
 }
 
+/* Where a long session's middle was trimmed (the start and the recent part are kept). */
+.ss-gap {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 6px 0;
+  font-size: 11.5px;
+  color: var(--overlay1);
+}
+.ss-gap::before,
+.ss-gap::after {
+  content: "";
+  flex: 1;
+  border-top: 1px dashed var(--surface1);
+}
+
 .ev {
   display: flex;
   gap: 10px;
