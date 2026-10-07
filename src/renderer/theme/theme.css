@@ -1,0 +1,186 @@
+@import "tailwindcss";
+@import "./components.css" layer(components);
+
+/*
+ * Catppuccin Mocha (https://catppuccin.com/palette) as CSS variables, plus Legion's semantic aliases.
+ * Tailwind utilities map onto them via @theme below: bg-base, text-subtext0, border-surface1,
+ * text-claude, bg-attention/20, ...
+ */
+:root {
+  color-scheme: dark;
+
+  --rosewater: #f5e0dc;
+  --flamingo: #f2cdcd;
+  --pink: #f5c2e7;
+  --mauve: #cba6f7;
+  --red: #f38ba8;
+  --maroon: #eba0ac;
+  --peach: #fab387;
+  --yellow: #f9e2af;
+  --green: #a6e3a1;
+  --teal: #94e2d5;
+  --sky: #89dceb;
+  --sapphire: #74c7ec;
+  --blue: #89b4fa;
+  --lavender: #b4befe;
+  --text: #cdd6f4;
+  --subtext1: #bac2de;
+  --subtext0: #a6adc8;
+  --overlay2: #9399b2;
+  --overlay1: #7f849c;
+  --overlay0: #6c7086;
+  --surface2: #585b70;
+  --surface1: #45475a;
+  --surface0: #313244;
+  --base: #1e1e2e;
+  --mantle: #181825;
+  --crust: #11111b;
+
+  /* Derived shades (between palette steps) used for hairlines, chrome borders and hover states. */
+  --hairline: #2a2b3c;
+  --chrome-line: #232336;
+  --mauve-hover: #d7b9f9;
+  --peach-hover: #fbc19d;
+  --green-hover: #b8eab4;
+  --shadow: #000000;
+
+  /* Semantic aliases (architecture §11). */
+  --accent: var(--lavender);
+  --claude: var(--mauve);
+  --codex: var(--teal);
+  --attention: var(--peach);
+  --ok: var(--green);
+  --error: var(--red);
+  --running: var(--blue);
+
+  --font-ui: "Geist Variable", ui-sans-serif, system-ui, -apple-system, sans-serif;
+  --font-code: "Geist Mono Variable", ui-monospace, "SF Mono", Menlo, monospace;
+}
+
+/* Catppuccin Latte (Settings → Appearance). Components only use the tokens above, so swapping them is enough. */
+:root[data-flavour="latte"] {
+  color-scheme: light;
+
+  --rosewater: #dc8a78;
+  --flamingo: #dd7878;
+  --pink: #ea76cb;
+  --mauve: #8839ef;
+  --red: #d20f39;
+  --maroon: #e64553;
+  --peach: #fe640b;
+  --yellow: #df8e1d;
+  --green: #40a02b;
+  --teal: #179299;
+  --sky: #04a5e5;
+  --sapphire: #209fb5;
+  --blue: #1e66f5;
+  --lavender: #7287fd;
+  --text: #4c4f69;
+  /* Text steps darkened from Latte's #5c5f77/#6c6f85/#7c7f93/#8c8fa1 so secondary text meets WCAG AA. */
+  --subtext1: #4f5268;
+  --subtext0: #575a70;
+  --overlay2: #5f6278;
+  --overlay1: #74778c;
+  --overlay0: #9ca0b0;
+  --surface2: #acb0be;
+  --surface1: #bcc0cc;
+  --surface0: #ccd0da;
+  --base: #eff1f5;
+  --mantle: #e6e9ef;
+  --crust: #dce0e8;
+
+  --hairline: #dfe2ea;
+  --chrome-line: #d3d7e0;
+  --mauve-hover: #7629dc;
+  --peach-hover: #e85a06;
+  --green-hover: #37902a;
+  --shadow: #4c4f69;
+}
+
+@theme inline {
+  --color-rosewater: var(--rosewater);
+  --color-flamingo: var(--flamingo);
+  --color-pink: var(--pink);
+  --color-mauve: var(--mauve);
+  --color-red: var(--red);
+  --color-maroon: var(--maroon);
+  --color-peach: var(--peach);
+  --color-yellow: var(--yellow);
+  --color-green: var(--green);
+  --color-teal: var(--teal);
+  --color-sky: var(--sky);
+  --color-sapphire: var(--sapphire);
+  --color-blue: var(--blue);
+  --color-lavender: var(--lavender);
+  --color-text: var(--text);
+  --color-subtext1: var(--subtext1);
+  --color-subtext0: var(--subtext0);
+  --color-overlay2: var(--overlay2);
+  --color-overlay1: var(--overlay1);
+  --color-overlay0: var(--overlay0);
+  --color-surface2: var(--surface2);
+  --color-surface1: var(--surface1);
+  --color-surface0: var(--surface0);
+  --color-base: var(--base);
+  --color-mantle: var(--mantle);
+  --color-crust: var(--crust);
+
+  --color-accent: var(--accent);
+  --color-claude: var(--claude);
+  --color-codex: var(--codex);
+  --color-attention: var(--attention);
+  --color-ok: var(--ok);
+  --color-error: var(--error);
+  --color-running: var(--running);
+
+  --font-sans: var(--font-ui);
+  --font-mono: var(--font-code);
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--crust);
+  color: var(--text);
+  font-family: var(--font-ui);
+  -webkit-font-smoothing: antialiased;
+  user-select: none;
+  overflow: hidden;
+}
+
+/* Draggable window chrome (hiddenInset title bar). Interactive children opt out with .no-drag. */
+.drag {
+  -webkit-app-region: drag;
+}
+.no-drag {
+  -webkit-app-region: no-drag;
+}
+
+/* Reduced motion: the OS setting unless Settings → Appearance overrides it (data-motion on <html>). */
+@media (prefers-reduced-motion: reduce) {
+  :root:not([data-motion="full"]) *,
+  :root:not([data-motion="full"]) *::before,
+  :root:not([data-motion="full"]) *::after {
+    /* biome-ignore lint/complexity/noImportantStyles: reduced motion must override component styles */
+    animation-duration: 0.01ms !important;
+    /* biome-ignore lint/complexity/noImportantStyles: reduced motion must override component styles */
+    animation-iteration-count: 1 !important;
+    /* biome-ignore lint/complexity/noImportantStyles: reduced motion must override component styles */
+    transition-duration: 0.01ms !important;
+  }
+}
+:root[data-motion="reduce"] *,
+:root[data-motion="reduce"] *::before,
+:root[data-motion="reduce"] *::after {
+  /* biome-ignore lint/complexity/noImportantStyles: reduced motion must override component styles */
+  animation-duration: 0.01ms !important;
+  /* biome-ignore lint/complexity/noImportantStyles: reduced motion must override component styles */
+  animation-iteration-count: 1 !important;
+  /* biome-ignore lint/complexity/noImportantStyles: reduced motion must override component styles */
+  transition-duration: 0.01ms !important;
+}

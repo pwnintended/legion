@@ -1,0 +1,658 @@
+/**
+ * The command registry (architecture §11): one list of commands feeds keybindings, the palette
+ * (`useCommands()`), tooltips (`commandTooltip(id)`), and the app menu (`executeCommand(id)`, also reachable
+ * via `window.postMessage({ type: 'legion:command', id })`).
+ *
+ * Keyboard rules:
+ * - ⌘-chords work everywhere, including text inputs, unless the command sets `inInput: false`.
+ * - Plain keys (Escape, or h/j/k/l inside RESIZE/MOVE mode) never fire while typing in an input, unless the
+ *   command sets `inInput: true`.
+ * - Terminals are "locked": everything except ⌘-chords passes through to them.
+ * - Overlays own their keys: while one is open, only commands marked `inOverlay` (opening/closing/switching
+ *   overlays) are dispatched from the keyboard; everything else (⌘⏎ Focus layout, ⌘⌥H, plain tile keys, ...)
+ *   passes through untouched to the overlay, so e.g. ⌘⏎ submits the composer even with focus on a button.
+ *   `executeCommand` (palette, app menu) is not guarded: those callers decide for themselves.
+ */
+import { useSyncExternalStore } from 'react';
+import { useStore } from 'zustand';
+import {
+  allocateId,
+  collapse,
+  cycleColumnMode,
+  cycleWidth,
+  type Dir,
+  findTile,
+  focusDir,
+  focusedColumn,
+  focusedTile,
+  insertColumn,
+  makeColumn,
+  maximize,
+  moveDir,
+  remove,
+  setWidthPreset,
+  toggleCollapsed,
+  type Workspace,
+} from '../layout/tree';
+import { toast } from '../overlays/nav';
+import { canArchive, runPr } from './compat';
+import { isConfirmOpen } from './confirm';
+import { type DataState, selectRunList, TERMINAL_RUN_STATUSES } from './data';
+import { rpc } from './hooks';
+import { formatChord, isTerminal, isTextInput, matchesChord, ownsPlainKeys, parseChord } from './keys';
+import { archiveRunInteractively, refreshPr } from './run-actions';
+import { actions, dataStore, jumpToNextUrgent, type KeyMode, type UiState, uiStore } from './store';
+
+export interface CommandContext {
+  ui: UiState;
+  data: DataState;
+  activeRunId: string | null;
+  layout: Workspace | null;
+}
+
+export type CommandCategory = 'Run' | 'Layout' | 'Focus' | 'Column' | 'Tile' | 'Overlay' | 'Workspace' | 'Mode' | 'App';
+
+export interface Command {
+  /** Stable id, e.g. `layout.overview`. The app menu and palette refer to commands by id. */
+  id: string;
+  title: string;
+  category?: CommandCategory;
+  /** One or more bindings like `Mod+Alt+H` (see keys.ts). The first is shown in tooltips. */
+  keybinding?: string | readonly string[];
+  /** Only bound in this key mode (RESIZE/MOVE). Omitted = every mode. */
+  mode?: KeyMode;
+  /** Override whether the binding fires while a text input has focus (see module doc). */
+  inInput?: boolean;
+  /** The binding also fires while an overlay is open (default: overlays own the keyboard; see module doc). */
+  inOverlay?: boolean;
+  /** Available right now? Disabled commands are skipped by keys and greyed out in the palette. */
+  when?: (ctx: CommandContext) => boolean;
+  run: (ctx: CommandContext) => unknown;
+  /** Bound and executable, but not listed in the palette. */
+  hidden?: boolean;
+  /**
+   * When several enabled commands share a binding, the highest priority wins (default 0). Tile-scoped
+   * commands (e.g. ⌘⏎ "approve" on a focused review) use it to take precedence over global ones.
+   */
+  priority?: number;
+  /**
+   * Fires again on key auto-repeat (holding the key): navigation and resizing. Everything else runs once per
+   * press, so holding `a` or ⌘⏎ can't approve twice.
+   */
+  repeatable?: boolean;
+}
+
+export interface CommandView extends Command {
+  enabled: boolean;
+  /** Formatted first keybinding (`⌘⌥H`), or null. */
+  shortcut: string | null;
+}
+
+// ---------------------------------------------------------------------------------------------
+// Registry
+// ---------------------------------------------------------------------------------------------
+
+const registry = new Map<string, Command>();
+const listeners = new Set<() => void>();
+let version = 0;
+let parsedCache: { version: number; list: { command: Command; chords: ReturnType<typeof parseChord>[] }[] } | null =
+  null;
+
+function changed(): void {
+  version++;
+  parsedCache = null;
+  for (const listener of listeners) listener();
+}
+
+/** Register (or replace) commands. Returns a disposer. */
+export function registerCommands(commands: readonly Command[]): () => void {
+  for (const command of commands) registry.set(command.id, command);
+  changed();
+  return () => {
+    for (const command of commands) if (registry.get(command.id) === command) registry.delete(command.id);
+    changed();
+  };
+}
+
+export function registerCommand(command: Command): () => void {
+  return registerCommands([command]);
+}
+
+export function getCommand(id: string): Command | null {
+  return registry.get(id) ?? null;
+}
+
+export function listCommands(): Command[] {
+  return [...registry.values()];
+}
+
+function context(): CommandContext {
+  const ui = uiStore.getState();
+  const activeRunId = ui.activeRunId;
+  return {
+    ui,
+    data: dataStore.getState(),
+    activeRunId,
+    layout: activeRunId ? (ui.layouts[activeRunId] ?? null) : null,
+  };
+}
+
+function bindings(command: Command): string[] {
+  if (!command.keybinding) return [];
+  return typeof command.keybinding === 'string' ? [command.keybinding] : [...command.keybinding];
+}
+
+export function isEnabled(command: Command, ctx: CommandContext = context()): boolean {
+  try {
+    return command.when ? command.when(ctx) : true;
+  } catch {
+    return false;
+  }
+}
+
+/** A command threw or its promise rejected (e.g. `runs.pause` refused): say so, don't fail silently. */
+function reportFailure(command: Command, error: unknown): void {
+  console.error(`[legion] command ${command.id} failed`, error);
+  const code = (error as { code?: unknown } | null)?.code;
+  const message =
+    code === 'disconnected'
+      ? 'the engine is not connected'
+      : code === 'not_implemented'
+        ? 'this engine does not support it yet'
+        : error instanceof Error
+          ? error.message
+          : String(error);
+  toast(`${command.title.replace(/…$/, '')} failed: ${message}`, 'error');
+}
+
+/** Run a command by id. Resolves to false when it doesn't exist, isn't available or fails (with a toast). */
+export async function executeCommand(id: string): Promise<boolean> {
+  const command = registry.get(id);
+  if (!command) {
+    console.warn(`[legion] unknown command ${id}`);
+    return false;
+  }
+  const ctx = context();
+  if (!isEnabled(command, ctx)) return false;
+  try {
+    await command.run(ctx);
+    return true;
+  } catch (error) {
+    reportFailure(command, error);
+    return false;
+  }
+}
+
+/** `⌘K`-style label of a command's first binding. */
+export function shortcutFor(id: string): string | null {
+  const binding = bindings(registry.get(id) ?? { id, title: '', run: () => {} })[0];
+  return binding ? formatChord(binding) : null;
+}
+
+/** Tooltip text: `Command palette  ⌘K`. */
+export function commandTooltip(id: string, title?: string): string {
+  const command = registry.get(id);
+  const shortcut = shortcutFor(id);
+  const label = title ?? command?.title ?? id;
+  return shortcut ? `${label}  ${shortcut}` : label;
+}
+
+function subscribe(listener: () => void): () => void {
+  listeners.add(listener);
+  return () => listeners.delete(listener);
+}
+
+/** All palette-visible commands with their enabled state and formatted shortcut. Re-renders on state changes. */
+export function useCommands(): CommandView[] {
+  useSyncExternalStore(subscribe, () => version);
+  // Re-evaluate `when` when the UI or data change.
+  useStore(uiStore);
+  useStore(dataStore, (s) => s.seq);
+  const ctx = context();
+  return listCommands()
+    .filter((c) => !c.hidden)
+    .map((c) => ({ ...c, enabled: isEnabled(c, ctx), shortcut: shortcutFor(c.id) }));
+}
+
+// ---------------------------------------------------------------------------------------------
+// Key dispatch
+// ---------------------------------------------------------------------------------------------
+
+function parsedBindings() {
+  if (parsedCache?.version === version) return parsedCache.list;
+  const list = listCommands()
+    .map((command) => ({ command, chords: bindings(command).map(parseChord) }))
+    .sort((a, b) => (b.command.priority ?? 0) - (a.command.priority ?? 0));
+  parsedCache = { version, list };
+  return list;
+}
+
+/**
+ * Key-dispatch guard: may `command` handle a key event right now? Separate from `when` (which says whether
+ * the command is available at all, e.g. for the palette) because it depends on where the key was pressed.
+ */
+export function keyGuard(
+  command: Command,
+  ctx: CommandContext,
+  where: { modChord: boolean; inInput: boolean; inTerminal: boolean },
+): boolean {
+  if (ctx.ui.overlay !== null && !command.inOverlay) return false;
+  if (!where.modChord && where.inTerminal) return false;
+  if (where.inInput && (where.modChord ? command.inInput === false : command.inInput !== true)) return false;
+  if (command.mode && command.mode !== ctx.ui.keyMode) return false;
+  return isEnabled(command, ctx);
+}
+
+/** Global keydown handler. Returns true when a command handled the event. */
+export function handleKeyDown(event: KeyboardEvent): boolean {
+  if (event.defaultPrevented || event.isComposing) return false;
+  // A confirm dialog is up: it owns every key (Esc must not close the overlay underneath).
+  if (isConfirmOpen()) return false;
+  if (['Meta', 'Control', 'Alt', 'Shift'].includes(event.key)) return false;
+  // A popover (picker list) owns its plain keys: Esc closes it, not the overlay underneath.
+  if (!event.metaKey && !event.ctrlKey && ownsPlainKeys(event.target)) return false;
+  const inInput = isTextInput(event.target);
+  const inTerminal = isTerminal(event.target);
+  const ctx = context();
+  const keyMode = ctx.ui.keyMode;
+  for (const { command, chords } of parsedBindings()) {
+    for (const chord of chords) {
+      if (!matchesChord(chord, event)) continue;
+      if (!keyGuard(command, ctx, { modChord: chord.mod || chord.ctrl, inInput, inTerminal })) continue;
+      event.preventDefault();
+      event.stopPropagation();
+      // Auto-repeat of a held key: swallowed unless the command is meant to repeat.
+      if (event.repeat && !command.repeatable) return true;
+      try {
+        void Promise.resolve(command.run(ctx)).catch((error: unknown) => reportFailure(command, error));
+      } catch (error) {
+        reportFailure(command, error);
+      }
+      return true;
+    }
+  }
+  // Inside RESIZE/MOVE mode, stray letters must not leak into the page.
+  if (
+    keyMode !== 'normal' &&
+    ctx.ui.overlay === null &&
+    !inTerminal &&
+    !inInput &&
+    /^Key[A-Z]$/.test(event.code) &&
+    !event.metaKey
+  ) {
+    event.preventDefault();
+    return true;
+  }
+  return false;
+}
+
+/** Install the global key handler and the menu command channel. Returns a disposer. */
+export function installKeybindings(target: Window = window): () => void {
+  const onKey = (event: KeyboardEvent) => void handleKeyDown(event);
+  const onMessage = (event: MessageEvent) => {
+    const data = event.data as { type?: unknown; id?: unknown } | null;
+    if (event.source === target && data?.type === 'legion:command' && typeof data.id === 'string')
+      void executeCommand(data.id);
+  };
+  const onFocus = (event: FocusEvent) => actions.setTerminalLocked(isTerminal(event.target));
+  target.addEventListener('keydown', onKey, true);
+  target.addEventListener('message', onMessage);
+  target.addEventListener('focusin', onFocus);
+  // The app menu (main process) may expose a command channel on the bridge in a later version.
+  const bridge = (target as Window & { legion?: { onCommand?: (cb: (id: string) => void) => () => void } }).legion;
+  const offBridge = typeof bridge?.onCommand === 'function' ? bridge.onCommand((id) => void executeCommand(id)) : null;
+  return () => {
+    target.removeEventListener('keydown', onKey, true);
+    target.removeEventListener('message', onMessage);
+    target.removeEventListener('focusin', onFocus);
+    offBridge?.();
+  };
+}
+
+// ---------------------------------------------------------------------------------------------
+// Built-in commands
+// ---------------------------------------------------------------------------------------------
+
+const hasLayout = (ctx: CommandContext) => ctx.layout !== null && ctx.layout.strip.columns.length > 0;
+const noOverlay = (ctx: CommandContext) => ctx.ui.overlay === null;
+const activeRun = (ctx: CommandContext) => (ctx.activeRunId ? (ctx.data.runs[ctx.activeRunId] ?? null) : null);
+const inStripish = (ctx: CommandContext) => ctx.ui.layoutMode === 'strip' || ctx.ui.layoutMode === 'focus';
+
+function layoutOp(op: (layout: Workspace) => Workspace) {
+  return () => actions.layout(op);
+}
+
+function onFocusedColumn(op: (layout: Workspace, columnId: string) => Workspace) {
+  return layoutOp((layout) => {
+    const column = focusedColumn(layout);
+    return column ? op(layout, column.id) : layout;
+  });
+}
+
+const DIRS: { dir: Dir; name: string; keys: string[] }[] = [
+  { dir: 'h', name: 'left', keys: ['H', 'Left'] },
+  { dir: 'j', name: 'down', keys: ['J', 'Down'] },
+  { dir: 'k', name: 'up', keys: ['K', 'Up'] },
+  { dir: 'l', name: 'right', keys: ['L', 'Right'] },
+];
+
+function openTerminal(ctx: CommandContext): void {
+  const run = activeRun(ctx);
+  if (!run) return;
+  actions.layout((layout) => {
+    const tile = focusedTile(layout);
+    const taskId =
+      tile && (tile.kind === 'session' || tile.kind === 'review')
+        ? (tile.params as { taskId: string | null }).taskId
+        : null;
+    const cwd = (taskId && ctx.data.tasks[taskId]?.worktreePath) || run.repoPath;
+    const [id, next] = allocateId(layout, 'terminal');
+    const column = makeColumn({
+      id: `col:${id}`,
+      width: '1/2',
+      tiles: [{ id, kind: 'terminal', params: { terminalId: null, cwd, attemptId: null }, auto: false }],
+    });
+    return insertColumn(next, column, layout.focus?.column ?? null, true);
+  });
+  actions.setLayoutMode('strip');
+}
+
+export function builtinCommands(): Command[] {
+  const commands: Command[] = [
+    // Overlays -----------------------------------------------------------------------------------
+    {
+      id: 'composer.open',
+      inOverlay: true,
+      title: 'New run…',
+      category: 'Run',
+      keybinding: 'Mod+N',
+      run: () => actions.openOverlay('composer'),
+    },
+    {
+      id: 'inbox.open',
+      inOverlay: true,
+      title: 'Open inbox',
+      category: 'Overlay',
+      keybinding: 'Mod+I',
+      run: () => actions.toggleOverlay('inbox'),
+    },
+    {
+      id: 'palette.open',
+      inOverlay: true,
+      title: 'Command palette',
+      category: 'Overlay',
+      keybinding: 'Mod+K',
+      run: () => actions.toggleOverlay('palette'),
+    },
+    {
+      id: 'settings.open',
+      inOverlay: true,
+      title: 'Settings…',
+      category: 'App',
+      keybinding: 'Mod+,',
+      run: (ctx) => (ctx.ui.overlay === 'settings' ? actions.closeOverlay() : actions.openSettings()),
+    },
+    {
+      id: 'overlay.close',
+      title: 'Close overlay',
+      category: 'Overlay',
+      keybinding: 'Escape',
+      inInput: true,
+      inOverlay: true,
+      hidden: true,
+      when: (ctx) => ctx.ui.overlay !== null,
+      run: () => actions.closeOverlay(),
+    },
+
+    // Layout modes ---------------------------------------------------------------------------------
+    { id: 'layout.strip', title: 'Layout: Strip', category: 'Layout', run: () => actions.setLayoutMode('strip') },
+    {
+      id: 'layout.back',
+      title: 'Back to Strip',
+      category: 'Layout',
+      keybinding: 'Escape',
+      hidden: true,
+      when: (ctx) => noOverlay(ctx) && ctx.ui.keyMode === 'normal' && ctx.ui.layoutMode !== 'strip',
+      run: () => actions.setLayoutMode('strip'),
+    },
+    {
+      id: 'layout.focus',
+      title: 'Layout: Focus',
+      category: 'Layout',
+      keybinding: 'Mod+Enter',
+      inInput: false,
+      run: () => actions.toggleLayoutMode('focus'),
+    },
+    {
+      id: 'layout.overview',
+      title: 'Layout: Overview',
+      category: 'Layout',
+      keybinding: ['Mod+Tab', 'Mod+Shift+O'],
+      run: () => actions.toggleLayoutMode('overview'),
+    },
+    {
+      id: 'layout.pipeline',
+      title: 'Layout: Pipeline',
+      category: 'Layout',
+      keybinding: 'Mod+G',
+      run: () => actions.toggleLayoutMode('pipeline'),
+    },
+
+    // Focus & move -----------------------------------------------------------------------------------
+    ...DIRS.map<Command>(({ dir, name, keys }) => ({
+      id: `focus.${name}`,
+      title: `Focus ${name}`,
+      category: 'Focus',
+      keybinding: keys.map((k) => `Mod+Alt+${k}`),
+      repeatable: true,
+      when: hasLayout,
+      run: layoutOp((l) => focusDir(l, dir)),
+    })),
+    ...DIRS.map<Command>(({ dir, name, keys }) => ({
+      id: `move.${name}`,
+      title: dir === 'h' || dir === 'l' ? `Move column ${name}` : `Move tile ${name}`,
+      category: 'Focus',
+      keybinding: keys.map((k) => `Mod+Alt+Shift+${k}`),
+      repeatable: true,
+      when: hasLayout,
+      run: layoutOp((l) => moveDir(l, dir)),
+    })),
+    ...DIRS.map<Command>(({ dir, name, keys }) => ({
+      id: `move.mode.${name}`,
+      title: `Move ${name}`,
+      keybinding: keys,
+      mode: 'move',
+      hidden: true,
+      repeatable: true,
+      when: hasLayout,
+      run: layoutOp((l) => moveDir(l, dir)),
+    })),
+    {
+      id: 'focus.nextUrgent',
+      inOverlay: true,
+      title: 'Jump to next tile that needs you',
+      category: 'Focus',
+      keybinding: 'Mod+U',
+      run: () => {
+        if (jumpToNextUrgent()) actions.closeOverlay();
+      },
+    },
+
+    // Modes ------------------------------------------------------------------------------------------
+    {
+      id: 'mode.resize',
+      title: 'Resize mode',
+      category: 'Mode',
+      keybinding: 'Mod+R',
+      when: (ctx) => hasLayout(ctx) && inStripish(ctx),
+      run: (ctx) => actions.setKeyMode(ctx.ui.keyMode === 'resize' ? 'normal' : 'resize'),
+    },
+    {
+      id: 'mode.move',
+      title: 'Move mode',
+      category: 'Mode',
+      when: (ctx) => hasLayout(ctx) && inStripish(ctx),
+      run: (ctx) => actions.setKeyMode(ctx.ui.keyMode === 'move' ? 'normal' : 'move'),
+    },
+    {
+      id: 'mode.exit',
+      title: 'Back to normal mode',
+      keybinding: ['Escape', 'Enter'],
+      hidden: true,
+      when: (ctx) => ctx.ui.keyMode !== 'normal',
+      run: () => actions.setKeyMode('normal'),
+    },
+    {
+      id: 'resize.narrower',
+      title: 'Narrower',
+      keybinding: ['H', 'Left'],
+      mode: 'resize',
+      hidden: true,
+      repeatable: true,
+      run: onFocusedColumn((l, c) => cycleWidth(l, c, -1)),
+    },
+    {
+      id: 'resize.wider',
+      title: 'Wider',
+      keybinding: ['L', 'Right'],
+      mode: 'resize',
+      hidden: true,
+      repeatable: true,
+      run: onFocusedColumn((l, c) => cycleWidth(l, c, 1)),
+    },
+    {
+      id: 'resize.full',
+      title: 'Full width',
+      keybinding: 'F',
+      mode: 'resize',
+      hidden: true,
+      run: onFocusedColumn((l, c) => setWidthPreset(l, c, 'full')),
+    },
+    {
+      id: 'resize.thin',
+      title: 'Collapse',
+      keybinding: 'T',
+      mode: 'resize',
+      hidden: true,
+      run: onFocusedColumn((l, c) => collapse(l, c)),
+    },
+
+    // Columns & tiles --------------------------------------------------------------------------------
+    {
+      id: 'column.maximize',
+      title: 'Maximize column',
+      category: 'Column',
+      keybinding: 'Mod+F',
+      when: hasLayout,
+      run: layoutOp(maximize),
+    },
+    {
+      id: 'column.cycleMode',
+      title: 'Toggle tabbed / stacked column',
+      category: 'Column',
+      keybinding: 'Mod+W',
+      when: hasLayout,
+      run: onFocusedColumn(cycleColumnMode),
+    },
+    {
+      id: 'column.toggleCollapse',
+      title: 'Collapse / expand column',
+      category: 'Column',
+      keybinding: 'Mod+Alt+C',
+      when: hasLayout,
+      run: onFocusedColumn(toggleCollapsed),
+    },
+    {
+      id: 'column.cycleWidth',
+      title: 'Cycle column width',
+      category: 'Column',
+      when: hasLayout,
+      run: onFocusedColumn((l, c) => cycleWidth(l, c, 1)),
+    },
+    {
+      id: 'tile.newTerminal',
+      title: 'Open a terminal in the focused worktree',
+      category: 'Tile',
+      when: (ctx) => activeRun(ctx) !== null,
+      run: openTerminal,
+    },
+    {
+      id: 'tile.close',
+      title: 'Close tile',
+      category: 'Tile',
+      keybinding: 'Mod+Shift+W',
+      when: (ctx) => {
+        const tile = ctx.layout && focusedTile(ctx.layout);
+        return !!tile && !tile.auto;
+      },
+      run: layoutOp((l) => (l.focus && !findTile(l, l.focus.tile)?.auto ? remove(l, l.focus.tile) : l)),
+    },
+
+    // Run ----------------------------------------------------------------------------------------------
+    {
+      id: 'run.pause',
+      title: 'Pause run',
+      category: 'Run',
+      when: (ctx) => {
+        const run = activeRun(ctx);
+        return !!run && !run.paused && !TERMINAL_RUN_STATUSES.has(run.status);
+      },
+      run: (ctx) => rpc('runs.pause', { runId: ctx.activeRunId as string }),
+    },
+    {
+      id: 'run.resume',
+      title: 'Resume run',
+      category: 'Run',
+      when: (ctx) => {
+        const run = activeRun(ctx);
+        return !!run && run.paused;
+      },
+      run: (ctx) => rpc('runs.resume', { runId: ctx.activeRunId as string }),
+    },
+    {
+      id: 'run.archive',
+      title: 'Archive run (cleans up its worktrees)',
+      category: 'Run',
+      when: (ctx) => canArchive(activeRun(ctx)),
+      run: async (ctx) => {
+        const run = activeRun(ctx);
+        if (!run) return;
+        try {
+          await archiveRunInteractively(run);
+        } catch (error) {
+          toast(`Couldn't archive: ${error instanceof Error ? error.message : String(error)}`, 'error');
+        }
+      },
+    },
+    {
+      id: 'run.refreshPr',
+      title: 'Refresh pull request status',
+      category: 'Run',
+      when: (ctx) => runPr(activeRun(ctx))?.state === 'open',
+      run: async (ctx) => {
+        try {
+          await refreshPr(ctx.activeRunId as string);
+        } catch (error) {
+          toast(`Couldn't refresh the PR: ${error instanceof Error ? error.message : String(error)}`, 'error');
+        }
+      },
+    },
+  ];
+
+  // Workspaces ⌘1–9.
+  for (let n = 1; n <= 9; n++) {
+    commands.push({
+      id: `workspace.${n}`,
+      title: `Go to workspace ${n}`,
+      category: 'Workspace',
+      keybinding: `Mod+${n}`,
+      hidden: n > 1,
+      when: (ctx) => selectRunList(ctx.data).length >= n,
+      run: (ctx) => {
+        const run = selectRunList(ctx.data)[n - 1];
+        if (run) actions.setActiveRun(run.id);
+      },
+    });
+  }
+  return commands;
+}

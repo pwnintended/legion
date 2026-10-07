@@ -1,0 +1,925 @@
+/* Session tile: agent timeline, inline approvals, steer bar. Tokens from theme/theme.css + components.css. */
+
+.ss {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  container-type: size;
+}
+
+/* Sub-header ---------------------------------------------------------------------------------- */
+.ss-sub {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  min-height: 30px;
+  padding: 4px 8px 4px 14px;
+  border-bottom: 1px solid var(--hairline);
+  font-size: 11px;
+  color: var(--overlay2);
+  overflow: hidden;
+  white-space: nowrap;
+}
+.ss-sub-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  flex: none;
+}
+.ss-sub-branch {
+  flex: 0 1 auto;
+  min-width: 40px;
+}
+.ss-ellipsis {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 280px;
+}
+.ss-attempts {
+  margin-left: auto;
+  display: flex;
+  gap: 2px;
+  flex: none;
+}
+.ss-attempt {
+  all: unset;
+  box-sizing: border-box;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 22px;
+  padding: 0 8px;
+  border-radius: 6px;
+  font-family: var(--font-ui);
+  font-size: 11.5px;
+  color: var(--overlay2);
+  transition:
+    background-color 0.15s,
+    color 0.15s;
+}
+.ss-attempt .dot {
+  width: 6px;
+  height: 6px;
+}
+.ss-attempt:hover {
+  color: var(--text);
+}
+.ss-attempt[aria-selected="true"] {
+  background: var(--surface0);
+  color: var(--text);
+}
+.ss-attempt:focus-visible {
+  outline: 2px solid var(--mauve);
+  outline-offset: -2px;
+}
+
+/* Feed ---------------------------------------------------------------------------------------- */
+.ss-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+.ss-feed {
+  display: flex;
+  flex-direction: column;
+  padding: 10px 14px 16px;
+  user-select: text;
+}
+/* Cheap virtualization: off-screen rows skip layout and paint. */
+.ss-row {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 34px;
+}
+.ss-earlier {
+  all: unset;
+  box-sizing: border-box;
+  cursor: pointer;
+  align-self: center;
+  margin-bottom: 6px;
+  padding: 4px 11px;
+  border-radius: 999px;
+  font-size: 11.5px;
+  color: var(--overlay2);
+}
+.ss-earlier:hover {
+  background: var(--surface0);
+  color: var(--text);
+}
+
+/* Where a long session's middle was trimmed (the start and the recent part are kept). */
+.ss-gap {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 6px 0;
+  font-size: 11.5px;
+  color: var(--overlay1);
+}
+.ss-gap::before,
+.ss-gap::after {
+  content: "";
+  flex: 1;
+  border-top: 1px dashed var(--surface1);
+}
+
+.ev {
+  display: flex;
+  gap: 10px;
+  padding: 5px 0;
+  line-height: 1.5;
+  min-width: 0;
+}
+.evi {
+  width: 22px;
+  height: 22px;
+  border-radius: 7px;
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-top: 1px;
+  background: var(--surface0);
+  color: var(--subtext0);
+}
+.evi-letter {
+  font-size: 11px;
+  font-weight: 700;
+}
+.evi-claude {
+  background: color-mix(in srgb, var(--mauve) 16%, transparent);
+  color: var(--mauve);
+}
+.evi-codex {
+  background: color-mix(in srgb, var(--teal) 14%, transparent);
+  color: var(--teal);
+}
+.evi-ok {
+  background: color-mix(in srgb, var(--green) 14%, transparent);
+  color: var(--green);
+}
+.evi-bad {
+  background: color-mix(in srgb, var(--red) 14%, transparent);
+  color: var(--red);
+}
+.evi-warn {
+  background: color-mix(in srgb, var(--peach) 14%, transparent);
+  color: var(--peach);
+}
+.evi-user {
+  background: color-mix(in srgb, var(--lavender) 14%, transparent);
+  color: var(--lavender);
+}
+.evi-muted {
+  background: transparent;
+  box-shadow: inset 0 0 0 1px var(--surface0);
+  color: var(--overlay2);
+}
+.ev-body {
+  flex: 1;
+  min-width: 0;
+}
+
+/* Tool rows (extend components.css .tool) */
+.ss .tool {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+  min-width: 0;
+  padding: 6px 9px;
+  line-height: 1.45;
+}
+.ss .tool.tool-col {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 3px;
+}
+.tool-verb {
+  color: var(--subtext1);
+}
+.tool-path {
+  color: var(--text);
+  overflow-wrap: anywhere;
+  min-width: 0;
+}
+.tool-path.muted {
+  color: var(--subtext0);
+}
+.tool-line {
+  all: unset;
+  box-sizing: border-box;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+  width: 100%;
+}
+.tool-toggle:not(:disabled) {
+  cursor: pointer;
+}
+.tool-toggle:focus-visible {
+  outline: 2px solid var(--mauve);
+  outline-offset: 3px;
+  border-radius: 4px;
+}
+.tool-cmd {
+  color: var(--text);
+  overflow-wrap: anywhere;
+  min-width: 0;
+}
+.tool-summary {
+  font-size: 11px;
+  color: var(--subtext0);
+  overflow-wrap: anywhere;
+}
+.tool-output {
+  margin: 3px 0 0;
+  padding-top: 6px;
+  border-top: 1px solid var(--hairline);
+  max-height: 240px;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--subtext0);
+}
+.tool-button {
+  all: unset;
+  box-sizing: border-box;
+  cursor: pointer;
+  width: 100%;
+  font-family: var(--font-code);
+  font-size: 11.5px;
+  background: var(--mantle);
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-sm);
+  color: var(--subtext1);
+  transition: border-color 0.15s;
+}
+.tool-button:hover {
+  border-color: var(--surface1);
+}
+.tool-button:hover .tool-path {
+  text-decoration: underline;
+  text-decoration-color: var(--surface2);
+  text-underline-offset: 3px;
+}
+.tool-button:focus-visible {
+  outline: 2px solid var(--mauve);
+  outline-offset: 2px;
+}
+.tool-more {
+  all: unset;
+  cursor: pointer;
+  font-family: var(--font-ui);
+  font-size: 11px;
+  color: var(--mauve);
+}
+.tool-more:hover {
+  text-decoration: underline;
+}
+.add {
+  color: var(--green);
+}
+.del {
+  color: var(--red);
+}
+.tl-ok {
+  color: var(--green);
+  display: inline-flex;
+}
+.tl-bad {
+  color: var(--red);
+  display: inline-flex;
+}
+.tl-run {
+  color: var(--blue);
+}
+.tl-running {
+  color: var(--blue);
+  width: 6px;
+  height: 6px;
+  margin-top: 6px;
+}
+.tool-line .tl-ok,
+.tool-line .tl-bad {
+  margin-top: 2px;
+}
+
+/* Notes (progress, resolved approvals) */
+.ev-note {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-size: 12.5px;
+  color: var(--subtext1);
+  min-width: 0;
+  padding-top: 1px;
+}
+.ev-note-label {
+  flex: none;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--overlay2);
+}
+.ev-note-mono {
+  font-size: 11.5px;
+  color: var(--subtext0);
+  overflow-wrap: anywhere;
+  min-width: 0;
+}
+.ev-error {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--red);
+  font-size: 12.5px;
+}
+
+/* Todo checklist */
+.todo {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  font-size: 12.5px;
+}
+.todo-head {
+  font-size: 11px;
+}
+.todo-item {
+  color: var(--text);
+}
+.todo-completed {
+  color: var(--subtext0);
+}
+.todo-pending {
+  color: var(--overlay2);
+}
+
+/* Reasoning (collapsed by default) */
+.reasoning {
+  all: unset;
+  box-sizing: border-box;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  width: 100%;
+  min-width: 0;
+  padding-top: 2px;
+}
+.reasoning:focus-visible {
+  outline: 2px solid var(--mauve);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+.reasoning-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--overlay2);
+  min-width: 0;
+}
+.reasoning-peek {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--overlay2);
+  font-style: italic;
+}
+.reasoning-text {
+  white-space: pre-wrap;
+  font-size: 12.5px;
+  line-height: 1.55;
+  color: var(--subtext0);
+  font-style: italic;
+  padding-left: 17px;
+  user-select: text;
+}
+
+/* Dividers */
+.tl-divider {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 6px 0;
+  font-family: var(--font-code);
+  font-size: 10.5px;
+  color: var(--overlay1);
+  white-space: nowrap;
+}
+.tl-divider::before,
+.tl-divider::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: var(--hairline);
+}
+.tl-divider > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.tl-divider-bad {
+  color: var(--red);
+}
+
+/* You */
+.you {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 3px;
+}
+.you-text {
+  background: var(--surface0);
+  color: var(--text);
+  border-radius: 10px;
+  padding: 5px 10px;
+  overflow-wrap: anywhere;
+}
+.you-meta {
+  display: inline-flex;
+  gap: 8px;
+  font-size: 11px;
+  color: var(--overlay2);
+}
+
+/* Markdown ----------------------------------------------------------------------------------- */
+.md {
+  font-size: 13px;
+  line-height: 1.55;
+  color: var(--text);
+  overflow-wrap: anywhere;
+  min-width: 0;
+}
+.md p,
+.md ul,
+.md ol,
+.md blockquote,
+.md table {
+  margin: 0 0 6px;
+}
+.md :is(p, ul, ol, blockquote, table, .md-code):last-child {
+  margin-bottom: 0;
+}
+.md ul,
+.md ol {
+  padding-left: 18px;
+}
+.md ul {
+  list-style: disc;
+}
+.md ol {
+  list-style: decimal;
+}
+.md li {
+  margin: 2px 0;
+}
+.md li::marker {
+  color: var(--overlay1);
+}
+.md :is(h1, h2, h3, h4, h5, h6) {
+  margin: 10px 0 4px;
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--text);
+}
+.md h1 {
+  font-size: 15px;
+}
+.md strong {
+  font-weight: 600;
+}
+.md a {
+  color: var(--mauve);
+  text-decoration: none;
+  cursor: pointer;
+}
+.md a:hover {
+  color: var(--lavender);
+  text-decoration: underline;
+}
+.md blockquote {
+  border-left: 2px solid var(--surface1);
+  padding-left: 10px;
+  color: var(--subtext0);
+}
+.md hr {
+  border: none;
+  border-top: 1px solid var(--hairline);
+  margin: 10px 0;
+}
+.md table {
+  border-collapse: collapse;
+  font-size: 12px;
+}
+.md :is(th, td) {
+  border: 1px solid var(--hairline);
+  padding: 3px 8px;
+  text-align: left;
+}
+.md th {
+  color: var(--subtext1);
+  font-weight: 600;
+}
+.md-inline {
+  font-family: var(--font-code);
+  font-size: 12px;
+  color: var(--yellow);
+  background: color-mix(in srgb, var(--yellow) 7%, transparent);
+  border-radius: 4px;
+  padding: 1px 4px;
+}
+.md-code {
+  position: relative;
+  margin: 6px 0;
+  background: var(--mantle);
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+}
+.md-code-lang {
+  position: absolute;
+  top: 5px;
+  right: 8px;
+  font-family: var(--font-code);
+  font-size: 10px;
+  color: var(--overlay1);
+  pointer-events: none;
+}
+.md-code-body,
+.md-code-body pre {
+  margin: 0;
+  padding: 8px 11px;
+  overflow-x: auto;
+  font-family: var(--font-code);
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--subtext1);
+  /* biome-ignore lint/complexity/noImportantStyles: Shiki writes the theme background inline. */
+  background: transparent !important;
+}
+.md-code-body pre {
+  padding: 0;
+}
+.md-code-body code {
+  font-family: inherit;
+}
+
+/* Blinking caret at the end of streaming text. */
+.md-caret > :last-child > :last-child::after,
+.md-caret > :last-child > :is(ul, ol) > li:last-child::after {
+  content: "";
+  display: inline-block;
+  width: 7px;
+  height: 14px;
+  margin-left: 2px;
+  vertical-align: -2px;
+  background: var(--caret, var(--mauve));
+  animation: ss-blink 1s steps(2) infinite;
+}
+.evi-codex + .ev-body .md {
+  --caret: var(--teal);
+}
+
+/* Approval card ------------------------------------------------------------------------------ */
+.ap-card {
+  margin: 6px 0;
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  border: 1.5px solid var(--peach);
+  border-radius: var(--radius);
+  background: color-mix(in srgb, var(--peach) 7%, transparent);
+  animation: ss-rise 0.22s var(--ease-out) both;
+}
+.ap-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--peach);
+  font-weight: 600;
+}
+.ap-tool {
+  margin-left: auto;
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--overlay2);
+}
+.ap-subject {
+  font-size: 12.5px;
+  background: var(--mantle);
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-sm);
+  padding: 7px 10px;
+  color: var(--text);
+  overflow-wrap: anywhere;
+  user-select: text;
+}
+.ap-edit {
+  padding: 0 0 6px;
+  font-size: 11.5px;
+  line-height: 1.6;
+  overflow: hidden;
+}
+.ap-edit-path {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  margin-bottom: 4px;
+  border-bottom: 1px solid var(--hairline);
+  color: var(--subtext1);
+}
+.ap-line {
+  padding: 0 10px;
+  white-space: pre-wrap;
+}
+.ap-line-add {
+  background: color-mix(in srgb, var(--green) 7%, transparent);
+}
+.ap-line-del {
+  background: color-mix(in srgb, var(--red) 7%, transparent);
+}
+.ap-sign {
+  display: inline-block;
+  width: 14px;
+  color: var(--overlay2);
+}
+.ap-line-add .ap-sign {
+  color: var(--green);
+}
+.ap-line-del .ap-sign {
+  color: var(--red);
+}
+.ap-more {
+  padding: 2px 10px 0;
+}
+.ap-raw {
+  margin: 4px 0 0;
+  white-space: pre-wrap;
+  font-size: 11.5px;
+  color: var(--subtext1);
+}
+.ap-reason {
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--subtext0);
+}
+.ap-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.ap-status {
+  font-size: 12px;
+  color: var(--overlay2);
+}
+.ap-status-error {
+  color: var(--red);
+}
+
+/* Footer: steer bar + jump pill --------------------------------------------------------------- */
+.ss-steer {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px;
+  border-top: 1px solid var(--hairline);
+}
+.ss-input {
+  all: unset;
+  box-sizing: border-box;
+  flex: 1;
+  min-width: 0;
+  height: 34px;
+  padding: 0 12px;
+  border-radius: 10px;
+  background: var(--mantle);
+  border: 1.5px solid var(--surface0);
+  font-size: 13px;
+  color: var(--text);
+  user-select: text;
+  transition: border-color 0.15s;
+}
+.ss-input::placeholder {
+  color: var(--overlay1);
+}
+.ss-input:focus {
+  border-color: var(--mauve);
+}
+.ss-input:disabled {
+  opacity: 0.6;
+}
+.ss-keys {
+  display: flex;
+  gap: 4px;
+  flex: none;
+}
+@container (max-width: 380px) {
+  .ss-keys {
+    display: none;
+  }
+}
+@container (max-width: 560px) {
+  .ss-sub-model {
+    display: none;
+  }
+}
+@container (max-width: 440px) {
+  .ss-sub-sha {
+    display: none;
+  }
+}
+/* Short tiles (Focus stack): the timeline gets the room. */
+@container (max-height: 300px) {
+  .ss-steer {
+    display: none;
+  }
+  .ss-jump {
+    bottom: 12px;
+  }
+}
+.ss-jump {
+  all: unset;
+  box-sizing: border-box;
+  cursor: pointer;
+  position: absolute;
+  left: 50%;
+  bottom: 66px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  padding: 0 12px;
+  border-radius: 999px;
+  background: var(--surface0);
+  border: 1px solid var(--surface1);
+  color: var(--text);
+  font-size: 12px;
+  box-shadow: 0 8px 22px color-mix(in srgb, var(--shadow) 40%, transparent);
+  transform: translateX(-50%);
+  animation: ss-pop 0.18s var(--ease-out) both;
+}
+.ss-jump:hover {
+  background: var(--surface1);
+}
+.ss-jump:focus-visible {
+  outline: 2px solid var(--mauve);
+  outline-offset: 2px;
+}
+
+/* States -------------------------------------------------------------------------------------- */
+.ss-notice {
+  margin-top: 8px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 4px 4px 10px;
+  border-radius: var(--radius-sm);
+  font-size: 12px;
+  background: color-mix(in srgb, var(--surface0) 60%, transparent);
+  color: var(--subtext1);
+}
+.ss-notice > span {
+  flex: 1;
+}
+.ss-notice-error {
+  background: color-mix(in srgb, var(--red) 10%, transparent);
+  color: var(--red);
+}
+.ss-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 18px 2px;
+  font-size: 12.5px;
+}
+.ss-skeleton {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 8px 0;
+}
+.ss-skeleton > div {
+  height: 10px;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--surface0) 60%, transparent);
+}
+.ss-plan {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 6px 2px;
+  font-size: 12.5px;
+  color: var(--subtext1);
+}
+.ss-plan .sec {
+  margin-top: 10px;
+}
+.ss-plan-status {
+  font-size: 12px;
+}
+.ss-plan-goal {
+  margin: 0;
+  font-size: 13.5px;
+  line-height: 1.5;
+  color: var(--text);
+}
+.ss-plan-list {
+  margin: 0;
+  padding-left: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.ss-plan-touch {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  font-size: 11.5px;
+  color: var(--subtext0);
+}
+
+@keyframes ss-blink {
+  50% {
+    opacity: 0;
+  }
+}
+@keyframes ss-rise {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+@keyframes ss-pop {
+  from {
+    opacity: 0;
+    transform: translate(-50%, 6px);
+  }
+  to {
+    opacity: 1;
+    transform: translate(-50%, 0);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .md-caret > :last-child > :last-child::after,
+  .md-caret > :last-child > :is(ul, ol) > li:last-child::after,
+  .ap-card,
+  .ss-jump {
+    /* biome-ignore lint/complexity/noImportantStyles: reduced motion must override component styles */
+    animation: none !important;
+  }
+}
+
+/* Escalation (failed task) card: the approval card's shape, in red. */
+.esc-card {
+  border-color: var(--red);
+  background: color-mix(in srgb, var(--red) 6%, transparent);
+}
+.esc-title {
+  color: var(--red);
+}
+.esc-summary {
+  color: var(--text);
+}
+.esc-files {
+  font-size: 11.5px;
+  color: var(--subtext0);
+}
+.esc-edit {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.esc-note {
+  resize: vertical;
+  line-height: 1.45;
+}
+.esc-abort {
+  color: var(--red);
+}
+.esc-error {
+  font-size: 12px;
+  color: var(--red);
+}

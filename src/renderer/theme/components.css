@@ -1,0 +1,772 @@
+/*
+ * Legion component classes (mirrors the design mockup). Shared by chrome, layout and tiles:
+ *   .chip .chip-{claude,codex,ok,run,warn,bad,idle,accent}   status / engine chips
+ *   .btn .btn-ghost .btn-primary .btn-warn .btn-icon          buttons      .kbd   key caps
+ *   .dot .live                                                status dots  .sec   section label
+ *   .tool                                                     mono "tool call" box
+ *   .tile .tile-head .tile-body                               tile frame (layout/TileFrame.tsx)
+ */
+
+:root {
+  --gap: 10px;
+  --radius: 12px;
+  --radius-sm: 8px;
+  --border-w: 1.5px;
+  --glow-focus:
+    0 0 0 1px color-mix(in srgb, var(--mauve) 30%, transparent),
+    0 0 18px color-mix(in srgb, var(--mauve) 20%, transparent);
+  --glow-urgent: 0 0 0 1.5px var(--peach), 0 0 24px color-mix(in srgb, var(--peach) 45%, transparent);
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+body {
+  font-size: 13px;
+}
+
+::selection {
+  background: color-mix(in srgb, var(--mauve) 30%, transparent);
+}
+
+:focus-visible {
+  outline: 2px solid var(--mauve);
+  outline-offset: 2px;
+}
+
+/* Thin, quiet scrollbars. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--surface1) transparent;
+}
+
+.mono {
+  font-family: var(--font-code);
+  font-feature-settings: "zero" 0;
+}
+.muted {
+  color: var(--subtext0);
+}
+.faint {
+  color: var(--overlay2);
+}
+
+/* Chips ------------------------------------------------------------------------------------- */
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 20px;
+  padding: 0 7px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 1;
+  white-space: nowrap;
+  flex: none;
+}
+.chip-claude {
+  background: color-mix(in srgb, var(--mauve) 14%, transparent);
+  color: var(--mauve);
+}
+.chip-codex {
+  background: color-mix(in srgb, var(--teal) 13%, transparent);
+  color: var(--teal);
+}
+.chip-ok {
+  background: color-mix(in srgb, var(--green) 13%, transparent);
+  color: var(--green);
+}
+.chip-run {
+  background: color-mix(in srgb, var(--blue) 14%, transparent);
+  color: var(--blue);
+}
+.chip-warn {
+  background: color-mix(in srgb, var(--peach) 16%, transparent);
+  color: var(--peach);
+}
+.chip-bad {
+  background: color-mix(in srgb, var(--red) 14%, transparent);
+  color: var(--red);
+}
+.chip-idle {
+  background: var(--surface0);
+  color: var(--subtext0);
+}
+.chip-accent {
+  background: color-mix(in srgb, var(--lavender) 14%, transparent);
+  color: var(--lavender);
+}
+
+.dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex: none;
+  display: inline-block;
+  background: currentColor;
+}
+.live {
+  animation: lg-breathe 1.4s ease-in-out infinite;
+}
+
+/* Buttons ------------------------------------------------------------------------------------ */
+.btn {
+  all: unset;
+  box-sizing: border-box;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  height: 30px;
+  padding: 0 11px;
+  border-radius: var(--radius-sm);
+  font-size: 12.5px;
+  font-weight: 500;
+  background: var(--surface0);
+  color: var(--text);
+  white-space: nowrap;
+  transition:
+    background-color 0.15s,
+    color 0.15s;
+}
+.btn:hover {
+  background: var(--surface1);
+}
+.btn:focus-visible {
+  outline: 2px solid var(--mauve);
+  outline-offset: 2px;
+}
+.btn:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+.btn-ghost {
+  background: transparent;
+  color: var(--subtext1);
+}
+.btn-ghost:hover {
+  background: var(--surface0);
+  color: var(--text);
+}
+.btn-primary {
+  background: var(--mauve);
+  color: var(--crust);
+}
+.btn-primary:hover {
+  background: var(--mauve-hover);
+}
+.btn-warn {
+  background: var(--peach);
+  color: var(--crust);
+}
+.btn-warn:hover {
+  background: var(--peach-hover);
+}
+.btn-danger {
+  background: var(--red);
+  color: var(--crust);
+}
+.btn-danger:hover {
+  background: color-mix(in srgb, var(--red) 86%, var(--text));
+}
+.btn-icon {
+  width: 28px;
+  height: 28px;
+  padding: 0;
+}
+.btn-sm {
+  height: 24px;
+  padding: 0 8px;
+  font-size: 12px;
+  border-radius: 6px;
+}
+
+.kbd {
+  font-family: var(--font-code);
+  font-size: 10.5px;
+  line-height: 1;
+  padding: 3px 5px;
+  border-radius: 4px;
+  background: var(--crust);
+  color: var(--subtext0);
+  border: 1px solid var(--surface1);
+  white-space: nowrap;
+}
+.btn-primary .kbd,
+.btn-warn .kbd {
+  background: color-mix(in srgb, var(--crust) 18%, transparent);
+  border-color: color-mix(in srgb, var(--crust) 25%, transparent);
+  color: var(--crust);
+}
+
+.sec {
+  font-size: 10.5px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--overlay2);
+  font-weight: 600;
+}
+
+.tool {
+  font-family: var(--font-code);
+  font-size: 11.5px;
+  background: var(--mantle);
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-sm);
+  padding: 7px 9px;
+  color: var(--subtext1);
+}
+
+.bar {
+  height: 4px;
+  border-radius: 2px;
+  background: var(--surface0);
+  overflow: hidden;
+  display: inline-block;
+  vertical-align: middle;
+}
+.bar > span {
+  display: block;
+  height: 100%;
+  border-radius: 2px;
+  transition: width 0.4s var(--ease-out);
+}
+
+/* Segmented control (layout switcher) ----------------------------------------------------------- */
+.segs {
+  display: flex;
+  gap: 2px;
+  padding: 3px;
+  background: var(--crust);
+  border-radius: 9px;
+  border: 1px solid var(--surface0);
+}
+.seg {
+  all: unset;
+  box-sizing: border-box;
+  cursor: pointer;
+  position: relative;
+  height: 26px;
+  padding: 0 10px;
+  border-radius: 6px;
+  font-size: 12px;
+  color: var(--subtext0);
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  transition: color 0.15s;
+}
+.seg:hover {
+  color: var(--text);
+}
+.seg[aria-pressed="true"] {
+  color: var(--text);
+}
+.seg:focus-visible {
+  outline: 2px solid var(--mauve);
+  outline-offset: 1px;
+}
+.seg-pill {
+  position: absolute;
+  inset: 0;
+  border-radius: 6px;
+  background: var(--surface0);
+  z-index: -1;
+}
+
+/* Tiles ------------------------------------------------------------------------------------------ */
+.tile {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  background: var(--base);
+  border: var(--border-w) solid var(--surface0);
+  border-radius: var(--radius);
+  overflow: hidden;
+  contain: layout paint;
+  transition:
+    border-color 0.25s,
+    box-shadow 0.25s,
+    opacity 0.25s;
+}
+.tile:focus {
+  outline: none;
+}
+.tile[data-dim="true"] {
+  opacity: 0.86;
+}
+.tile[data-focused="true"] {
+  border-color: var(--mauve);
+  box-shadow: var(--glow-focus);
+  opacity: 1;
+}
+.tile[data-urgent="true"] {
+  border-color: var(--peach);
+  opacity: 1;
+}
+.tile[data-urgent="true"][data-focused="true"] {
+  box-shadow:
+    0 0 0 1px color-mix(in srgb, var(--peach) 35%, transparent),
+    0 0 18px color-mix(in srgb, var(--peach) 25%, transparent);
+}
+/* Urgency pulse: opacity-only on a pseudo-element; stops once acknowledged. */
+.tile[data-pulse="true"]::after,
+.card[data-pulse="true"]::after,
+.pnode[data-pulse="true"]::after {
+  content: "";
+  position: absolute;
+  inset: -1.5px;
+  border-radius: var(--radius);
+  box-shadow: var(--glow-urgent);
+  animation: lg-pulse 1.6s ease-in-out infinite;
+  pointer-events: none;
+}
+
+.tile-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 38px;
+  padding: 0 6px 0 12px;
+  border-bottom: 1px solid var(--hairline);
+  flex: none;
+  min-width: 0;
+}
+.tile-head-title {
+  all: unset;
+  box-sizing: border-box;
+  cursor: default;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+}
+.tile-id {
+  font-family: var(--font-code);
+  font-size: 11px;
+  color: var(--overlay2);
+  flex: none;
+}
+.tile-title {
+  font-size: 13px;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+.tile-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex: none;
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+.tile:hover .tile-actions,
+.tile[data-focused="true"] .tile-actions,
+.tile-actions:focus-within {
+  opacity: 1;
+}
+.tile-body {
+  flex: 1;
+  min-height: 0;
+  position: relative;
+  overflow: hidden;
+}
+/* Stacked column: inactive tiles show only their header. */
+.tile[data-collapsed="true"] {
+  flex: none;
+}
+.tile[data-collapsed="true"] .tile-head {
+  border-bottom: none;
+}
+
+/* Thin collapsed column */
+.thin {
+  width: 44px;
+  height: 100%;
+  cursor: pointer;
+}
+.thin-inner {
+  all: unset;
+  box-sizing: border-box;
+  cursor: pointer;
+  height: 100%;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 12px 0;
+  gap: 10px;
+}
+.thin-inner:focus-visible {
+  outline: 2px solid var(--mauve);
+  outline-offset: -3px;
+  border-radius: var(--radius);
+}
+.vt {
+  writing-mode: vertical-rl;
+  transform: rotate(180deg);
+  font-size: 12px;
+  white-space: nowrap;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  overflow: hidden;
+  min-height: 0;
+}
+
+/* Tabs in tabbed columns */
+.tabs {
+  display: flex;
+  gap: 2px;
+  padding: 4px;
+  border-bottom: 1px solid var(--hairline);
+  flex: none;
+  overflow-x: auto;
+}
+.tab {
+  all: unset;
+  box-sizing: border-box;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 26px;
+  padding: 0 10px;
+  border-radius: 6px;
+  font-size: 12px;
+  color: var(--subtext0);
+  white-space: nowrap;
+}
+.tab:hover {
+  color: var(--text);
+  background: color-mix(in srgb, var(--surface0) 50%, transparent);
+}
+.tab[aria-selected="true"] {
+  background: var(--surface0);
+  color: var(--text);
+}
+
+/* Overview cards & pipeline nodes ------------------------------------------------------------------ */
+.card {
+  all: unset;
+  box-sizing: border-box;
+  cursor: pointer;
+  position: relative;
+  background: var(--base);
+  border: var(--border-w) solid var(--surface0);
+  border-radius: var(--radius);
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+  transition:
+    border-color 0.2s,
+    transform 0.2s var(--ease-out);
+}
+.card:hover {
+  border-color: var(--surface2);
+  transform: translateY(-2px);
+}
+.card:focus-visible {
+  outline: 2px solid var(--mauve);
+  outline-offset: 2px;
+}
+.card[data-urgent="true"] {
+  border-color: var(--peach);
+}
+.card[data-focused="true"] {
+  border-color: var(--mauve);
+  box-shadow: var(--glow-focus);
+}
+.card[data-quiet="true"] {
+  opacity: 0.75;
+}
+.mini {
+  font-family: var(--font-code);
+  font-size: 10.5px;
+  line-height: 1.6;
+  color: var(--overlay2);
+  background: var(--mantle);
+  border-radius: var(--radius-sm);
+  padding: 7px 9px;
+  height: 62px;
+  overflow: hidden;
+}
+.mini > div {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.pnode {
+  all: unset;
+  box-sizing: border-box;
+  cursor: pointer;
+  position: absolute;
+  width: 220px;
+  height: 84px;
+  background: var(--base);
+  border: var(--border-w) solid var(--surface0);
+  border-radius: var(--radius);
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  transition:
+    border-color 0.2s,
+    transform 0.2s var(--ease-out),
+    opacity 0.2s;
+}
+.pnode:hover {
+  transform: translateY(-2px);
+  border-color: var(--surface2);
+}
+.pnode:focus-visible {
+  outline: 2px solid var(--mauve);
+  outline-offset: 2px;
+}
+.pnode[data-tone="ok"] {
+  border-color: color-mix(in srgb, var(--green) 45%, transparent);
+}
+.pnode[data-tone="run"] {
+  border-color: var(--blue);
+}
+.pnode[data-crit="true"] {
+  border-color: var(--lavender);
+}
+.pnode[data-urgent="true"] {
+  border-color: var(--peach);
+  box-shadow: 0 0 22px color-mix(in srgb, var(--peach) 30%, transparent);
+}
+.pnode[data-quiet="true"] {
+  color: var(--subtext0);
+  border-style: dashed;
+}
+.flow {
+  stroke-dasharray: 4 6;
+  animation: lg-dash 1s linear infinite;
+}
+
+/* Rail ---------------------------------------------------------------------------------------- */
+.rail-item {
+  all: unset;
+  box-sizing: border-box;
+  cursor: pointer;
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  width: 100%;
+  padding: 9px 10px;
+  border-radius: 10px;
+  border: var(--border-w) solid transparent;
+  transition: background-color 0.15s;
+}
+.rail-item:hover {
+  background: var(--base);
+}
+.rail-item[aria-current="true"] {
+  background: var(--base);
+  border-color: var(--surface0);
+}
+.rail-item:focus-visible {
+  outline: 2px solid var(--mauve);
+  outline-offset: -2px;
+}
+.rail-row {
+  position: relative;
+}
+.rail-row[data-archiving="true"] {
+  opacity: 0.5;
+  pointer-events: none;
+}
+.rail-action {
+  position: absolute;
+  right: 6px;
+  top: 7px;
+  width: 24px;
+  height: 24px;
+  background: var(--base);
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+.rail-row:hover .rail-action,
+.rail-action:focus-visible {
+  opacity: 1;
+}
+.rail-toggle {
+  all: unset;
+  box-sizing: border-box;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  height: 26px;
+  margin: 6px 0 2px;
+  padding: 0 10px;
+  border-radius: 7px;
+  font-size: 11.5px;
+  color: var(--subtext0);
+  transition:
+    background-color 0.15s,
+    color 0.15s;
+}
+.rail-toggle:hover {
+  background: var(--base);
+  color: var(--text);
+}
+.rail-toggle:focus-visible {
+  outline: 2px solid var(--mauve);
+  outline-offset: -2px;
+}
+.rail-engine {
+  all: unset;
+  box-sizing: border-box;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 24px;
+  padding: 0 6px;
+  border-radius: 6px;
+  font-size: 12px;
+  color: var(--subtext1);
+  transition: background-color 0.15s;
+}
+.rail-engine:hover {
+  background: var(--base);
+}
+.rail-engine:focus-visible {
+  outline: 2px solid var(--mauve);
+  outline-offset: -2px;
+}
+.ws {
+  width: 22px;
+  height: 22px;
+  border-radius: 6px;
+  background: var(--surface0);
+  color: var(--subtext1);
+  font-family: var(--font-code);
+  font-size: 11px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+}
+.rail-item[aria-current="true"] .ws {
+  background: var(--mauve);
+  color: var(--crust);
+  font-weight: 600;
+}
+
+/* Ghost "+" column */
+.ghost {
+  all: unset;
+  box-sizing: border-box;
+  cursor: pointer;
+  width: 120px;
+  flex: none;
+  border: var(--border-w) dashed var(--surface1);
+  border-radius: var(--radius);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  color: var(--overlay2);
+  font-size: 12px;
+  transition:
+    border-color 0.2s,
+    color 0.2s,
+    background-color 0.2s;
+}
+.ghost:hover {
+  border-color: var(--overlay0);
+  color: var(--text);
+  background: color-mix(in srgb, var(--base) 50%, transparent);
+}
+.ghost:focus-visible {
+  outline: 2px solid var(--mauve);
+  outline-offset: 2px;
+}
+
+/* Skeleton for virtualized columns */
+.placeholder {
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--base) 70%, transparent),
+    color-mix(in srgb, var(--base) 35%, transparent)
+  );
+  border: var(--border-w) solid var(--surface0);
+  border-radius: var(--radius);
+}
+
+/* No scroll snapping: the strip scrolls programmatically, minimally (niri), and snap points would drag a
+   right-aligned focused column back to the nearest column start and cut it off. */
+.strip {
+  scrollbar-width: none;
+}
+.strip::-webkit-scrollbar {
+  display: none;
+}
+.strip-col {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 600px;
+}
+
+@keyframes lg-pulse {
+  0%,
+  100% {
+    opacity: 0.2;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+@keyframes lg-breathe {
+  0%,
+  100% {
+    opacity: 0.45;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+@keyframes lg-dash {
+  to {
+    stroke-dashoffset: -20;
+  }
+}
+@keyframes lg-rise {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .live,
+  .flow,
+  .tile[data-pulse="true"]::after,
+  .card[data-pulse="true"]::after,
+  .pnode[data-pulse="true"]::after {
+    /* biome-ignore lint/complexity/noImportantStyles: reduced motion must override component styles */
+    animation: none !important;
+  }
+  .tile[data-pulse="true"]::after,
+  .card[data-pulse="true"]::after,
+  .pnode[data-pulse="true"]::after {
+    opacity: 0.7;
+  }
+}
