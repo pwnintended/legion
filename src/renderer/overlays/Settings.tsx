@@ -28,6 +28,8 @@ const ROLES: { role: Role; label: string; note: string }[] = [
   { role: 'resolver', label: 'Resolver', note: 'Resolves merge conflicts.' },
   { role: 'finalizer', label: 'Final review', note: 'Reviews base…integration before the PR.' },
   { role: 'lead', label: 'Lead', note: 'Coordinates the coders after approval; talks, never touches files.' },
+  { role: 'researcher', label: 'Researcher', note: 'Read-only repository and web research on a brief.' },
+  { role: 'research_lead', label: 'Research lead', note: 'Splits a broad brief over researchers and synthesises.' },
 ];
 const SECTIONS: { id: SettingsSection; label: string }[] = [
   { id: 'engines', label: 'Engines' },

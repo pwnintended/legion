@@ -143,7 +143,7 @@ Task       runtime row per node: runId, nodeId, status, branch, worktreePath, st
            mergedSha?, engine/model/effortOverride?, progress?, report? {summary, commitMessage}, error?
            status: blocked → queued → provisioning → running → verifying → reviewing → fixing
                    → approved → awaiting_human → merging → merged | failed | skipped | cancelled
-Attempt    id, taskId?, runId, role (planner|coder|reviewer|resolver|finalizer|lead), engine, model,
+Attempt    id, taskId?, runId, role (planner|coder|reviewer|resolver|finalizer|lead|researcher|research_lead), engine, model,
            sessionId (claude session / codex thread), parentAttemptId? (the attempt it reports to), status,
            startedAt, endedAt, costUsd?, tokens?, error?
            status: pending → running → succeeded | failed | interrupted | cancelled  (interrupted → running on resume)
@@ -211,8 +211,9 @@ Normalized `AgentEvent` kinds: `session_started{sessionId, model, version}`, `te
 | Role | Claude | Codex |
 |---|---|---|
 | planner, reviewer, finalizer | `--permission-mode dontAsk --permission-prompts none`, `--allowedTools mcp__legion`, `--disallowedTools` edit tools + AskUserQuestion/Enter/ExitPlanMode. Reads inside cwd/`--add-dir` and commands the CLI classifies as read-only (`ls`, `git diff`, …) need no rule. | `sandbox: read-only`, `approvalPolicy: never` |
+| researcher | as above plus `--allowedTools WebSearch,WebFetch` (`PermissionProfile.web`) | as above plus `web_search = "live"` |
 | coder, resolver | `--permission-mode acceptEdits` (edits inside the working dirs), `--allowedTools` = `Bash(<cmd>)`/`Bash(<cmd> *)` per verify command + `mcp__legion`; everything else → `--permission-prompt-tool stdio` → `approval_request` (or `--permission-prompts none` when `askHuman` is false) | `sandbox: workspace-write` (cwd = worktree), `approvalPolicy: on-request` → requestApproval → inbox |
-| lead (`coordinate`) | `dontAsk --permission-prompts none`, `--allowedTools mcp__legion`, `--disallowedTools` = the read-only list + `Read, Glob, Grep, LS, Bash, BashOutput, KillShell, WebFetch, WebSearch, Task, Agent, NotebookRead, TodoWrite, Skill, ToolSearch`: the session can only talk | `sandbox: read-only`, `approvalPolicy: never` (best effort: Codex's tool list cannot be trimmed) |
+| lead (`coordinate`); research_lead = the same plus `WebSearch`, `WebFetch` allowed | `dontAsk --permission-prompts none`, `--allowedTools mcp__legion`, `--disallowedTools` = the read-only list + `Read, Glob, Grep, LS, Bash, BashOutput, KillShell, WebFetch, WebSearch, Task, Agent, NotebookRead, TodoWrite, Skill, ToolSearch`: the session can only talk | `sandbox: read-only`, `approvalPolicy: never` (best effort: Codex's tool list cannot be trimmed) |
 
 Every Claude profile also denies `Bash(git commit *)`, `Bash(git push *)`, Enter/ExitWorktree and the
 scheduling tools (Cron*, ScheduleWakeup, RemoteTrigger, PushNotification). Approval decisions: allow →
@@ -279,6 +280,8 @@ tools are in §8.4:
   when given); `null` on timeout
 - `ask_lead({question})` (parent only) — `send_message(question)` to the caller's *current* parent (`to: "lead"`) +
   `wait_for_reply` in one blocking call
+- `spawn_research({title, brief, mode})` (coordinators) — open a researcher (`single`) or a research lead (`team`) as
+  the caller's child; its report comes back as a `report` message (§8.5)
 
 Delivery: a message resolves a blocked `wait_for_reply` / `ask_lead` of its recipient at once; otherwise it stays
 queued (`deliveredAt: null`) and is prepended to the prompt the next time the orchestrator resumes that recipient's
@@ -469,6 +472,24 @@ approval.
   picks them up on the next tick.
 - Recovery: the lead attempt is `interrupted → failed` like other run-level attempts; the executing run's first
   tick restarts the loop, which resumes the session.
+
+### 8.5 Research agents (`orchestrator/research.ts`)
+
+Coordinators (the lead; the assistant later) can spawn research with the `spawn_research({title, brief, mode})`
+MCP tool. Research agents read and never write, so they can never make a decision that conflicts with a coder's.
+
+- **Roles**: `researcher` = read-only + web (`PermissionProfile.web`: Claude pre-approves `WebSearch`/`WebFetch`,
+  Codex sets `web_search = "live"`); `research_lead` = coordinate + web, a coordinator that splits a broad brief over
+  researchers (`spawn_research` single only) and synthesises. Engines and models: `settings.roles.researcher` /
+  `research_lead`. Both run in the integration worktree with an untrusted config (§6) and the run's attachments.
+- **Tree and caps** (`core/research.ts`): a research agent is a child of the caller (parent ↔ child messaging as
+  usual). A lead may have 3 research agents running, a research lead 4; a research lead cannot spawn a team, so the
+  tree is at most lead → research lead → researchers.
+- **Reports**: every research agent ends its turn with a `ResearchReport` (structured output, `schemas/research.ts`:
+  summary, findings `{claim, evidence, sources}`, open questions, confidence). The driver renders it to markdown
+  (`formatResearchReport`, bounded to 12k characters) and posts it to the parent as a `report` message, then closes
+  the agent; a failure posts a `status` message so the parent never waits on a dead child. The lead reads reports on
+  its next wake; a research lead blocks in `wait_for_reply` for each of its researchers.
 
 ## 9. Git & filesystem conventions
 

@@ -23,8 +23,21 @@ export const REAL_ENGINE_KINDS = ['claude', 'codex'] as const;
 export const RealEngineKindSchema = z.enum(REAL_ENGINE_KINDS);
 export type RealEngineKind = z.infer<typeof RealEngineKindSchema>;
 
-/** `lead`: the run's coordinator after plan approval (coordinate mode: talks, never touches files). */
-export const ROLES = ['planner', 'coder', 'reviewer', 'resolver', 'finalizer', 'lead'] as const;
+/**
+ * `lead`: the run's coordinator after plan approval (coordinate mode: talks, never touches files).
+ * `researcher`: read-only + web, answers one brief with a research report. `research_lead`: coordinate + web, fans
+ * a brief out to researchers and synthesises their reports.
+ */
+export const ROLES = [
+  'planner',
+  'coder',
+  'reviewer',
+  'resolver',
+  'finalizer',
+  'lead',
+  'researcher',
+  'research_lead',
+] as const;
 export const RoleSchema = z.enum(ROLES);
 export type Role = z.infer<typeof RoleSchema>;
 
@@ -680,6 +693,8 @@ export const SettingsSchema = z.object({
     resolver: RoleDefaultsSchema,
     finalizer: RoleDefaultsSchema,
     lead: RoleDefaultsSchema,
+    researcher: RoleDefaultsSchema,
+    research_lead: RoleDefaultsSchema,
   }),
   lead: z.object({
     /** Open an implementation lead for every run once its plan is approved (`orchestrator/lead.ts`). */
@@ -720,6 +735,8 @@ export const DEFAULT_SETTINGS: Settings = {
     resolver: roleDefaults('claude'),
     finalizer: roleDefaults('codex'),
     lead: roleDefaults('claude'),
+    researcher: roleDefaults('claude'),
+    research_lead: roleDefaults('claude'),
   },
   lead: { enabled: true },
   budget: { perRunUsd: null, warnAtPct: 80 },
@@ -755,6 +772,8 @@ export const SettingsPatchSchema = z
         resolver: RoleDefaultsPatchSchema,
         finalizer: RoleDefaultsPatchSchema,
         lead: RoleDefaultsPatchSchema,
+        researcher: RoleDefaultsPatchSchema,
+        research_lead: RoleDefaultsPatchSchema,
       })
       .partial(),
     lead: SettingsSchema.shape.lead.partial(),

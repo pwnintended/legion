@@ -99,19 +99,23 @@ export interface PermissionArgs {
  * `acceptEdits` (working directories only). Anything else asks the host (`can_use_tool`) or, without
  * `askHuman`, is denied (`--permission-prompts none` / `dontAsk`).
  */
+export const WEB_TOOLS: readonly string[] = ['WebSearch', 'WebFetch'];
+
 export function permissionArgs(profile: PermissionProfile, mcp: McpConnection | null): PermissionArgs {
   const mcpRules = mcp ? [`mcp__${LEGION_MCP_SERVER}`] : [];
+  const webRules = profile.web ? [...WEB_TOOLS] : [];
   if (profile.mode === 'read_only' || profile.mode === 'coordinate') {
+    const denied = profile.mode === 'coordinate' ? COORDINATE_DENIED : READ_ONLY_DENIED;
     return {
       mode: 'dontAsk',
-      allowedTools: mcpRules,
-      disallowedTools: [...ALWAYS_DENIED, ...(profile.mode === 'coordinate' ? COORDINATE_DENIED : READ_ONLY_DENIED)],
+      allowedTools: [...mcpRules, ...webRules],
+      disallowedTools: [...ALWAYS_DENIED, ...denied.filter((tool) => !profile.web || !WEB_TOOLS.includes(tool))],
       askHost: false,
     };
   }
   return {
     mode: 'acceptEdits',
-    allowedTools: [...new Set([...profile.allowedCommands.flatMap(bashRules), ...mcpRules])],
+    allowedTools: [...new Set([...profile.allowedCommands.flatMap(bashRules), ...mcpRules, ...webRules])],
     disallowedTools: [...ALWAYS_DENIED],
     askHost: profile.askHuman,
   };

@@ -13,6 +13,8 @@ import {
   buildPlanPrompt,
   buildPrBody,
   buildPrTitle,
+  buildResearcherPrompt,
+  buildResearchLeadPrompt,
   buildResolverPrompt,
   buildReviewerPrompt,
   clipMiddle,
@@ -424,5 +426,21 @@ describe('lead prompts', () => {
     const base = { issue, repo, node, planSummary, upstream: [], attempt: 1 };
     expect(buildCoderPrompt({ ...base, lead: true }).systemPrompt).toContain('`ask_lead`');
     expect(buildCoderPrompt(base).systemPrompt).not.toContain('ask_lead');
+  });
+});
+
+describe('research prompts', () => {
+  it('brief a researcher and a research lead', () => {
+    const base = { title: 'Auth flow', brief: 'How are sessions handled?', repo, requester: 'implementation lead' };
+    const single = buildResearcherPrompt(base);
+    expect(single.systemPrompt).toContain('read-only');
+    expect(single.systemPrompt).toContain('implementation lead asked you');
+    expect(single.prompt).toContain('Research brief: Auth flow.');
+    expect(single.prompt).toContain('`confidence`');
+    const team = buildResearchLeadPrompt({ ...base, maxResearchers: 4 });
+    expect(team.systemPrompt).toContain('no file, shell or web tools yourself');
+    expect(team.prompt).toContain('at most 4 independent sub-questions');
+    expect(team.prompt).toContain('`spawn_research`');
+    expect(team.prompt).toContain('`wait_for_reply`');
   });
 });

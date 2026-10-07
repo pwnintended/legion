@@ -139,6 +139,7 @@ export function threadConfig(opts: SessionOptions): Record<string, JsonValue> {
   // Agent-written worktree (reviewer, finalizer): ignore its AGENTS.md. Project `.codex/config.toml` is only
   // read for trusted projects, and the Legion CODEX_HOME trusts none; hooks are off for every session.
   if (opts.untrustedWorkdir) config.project_doc_max_bytes = 0;
+  if (opts.permission.web) config.web_search = 'live';
   if (opts.permission.mode === 'workspace_write' && opts.addDirs && opts.addDirs.length > 0) {
     config.sandbox_workspace_write = { writable_roots: opts.addDirs.map((dir) => resolve(opts.cwd, dir)) };
   }

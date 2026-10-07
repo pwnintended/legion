@@ -1,11 +1,13 @@
 export * from './clarify';
 export * from './json-schema';
 export * from './plan';
+export * from './research';
 export * from './review';
 export * from './task-report';
 
 import { clarifyOutputJsonSchema } from './clarify';
 import { planOutputJsonSchema } from './plan';
+import { researchReportJsonSchema } from './research';
 import { reviewOutputJsonSchema } from './review';
 import { taskReportJsonSchema } from './task-report';
 
@@ -15,4 +17,5 @@ export const AGENT_OUTPUT_JSON_SCHEMAS = {
   plan: planOutputJsonSchema,
   review: reviewOutputJsonSchema,
   taskReport: taskReportJsonSchema,
+  research: researchReportJsonSchema,
 } as const;

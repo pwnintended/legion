@@ -13,10 +13,11 @@ interface Calls {
   sent: Array<[McpBinding, SendMessageRequest]>;
   waits: Array<[McpBinding, string | null, number | null]>;
   amend: Array<[string, string]>;
+  research: Array<[string, string, string]>;
 }
 
 function fakeHost() {
-  const calls: Calls = { progress: [], ask: [], approve: [], done: [], sent: [], waits: [], amend: [] };
+  const calls: Calls = { progress: [], ask: [], approve: [], done: [], sent: [], waits: [], amend: [], research: [] };
   const pendingAsks: Array<(a: string) => void> = [];
   const pendingWaits: Array<(m: AgentMessage | null) => void> = [];
   let messageSeq = 0;
@@ -76,6 +77,10 @@ function fakeHost() {
     cancelTask: (_b, nodeId) => {
       calls.amend.push(['cancel', nodeId]);
       return { outcome: 'applied', planVersion: 3, reason: null };
+    },
+    spawnResearch: (b, r) => {
+      calls.research.push([b.role, r.title, r.mode]);
+      return { attemptId: 'att_r1', role: r.mode === 'team' ? 'research_lead' : 'researcher' };
     },
   };
   return { host, calls, pendingAsks, pendingWaits };
@@ -236,7 +241,7 @@ describe('legion mcp server', () => {
       risk: 'low',
     };
 
-    it('exist for the lead only, with the messaging tools and without ask_lead', async () => {
+    it('exist for the lead only, with the messaging and research tools and without ask_lead', async () => {
       const names = (await (await connect(srv.issueToken(lead))).listTools()).tools.map((t) => t.name).sort();
       expect(names).toEqual(
         [
@@ -249,6 +254,7 @@ describe('legion mcp server', () => {
           'report_progress',
           'request_human_input',
           'send_message',
+          'spawn_research',
           'wait_for_reply',
         ].sort(),
       );
@@ -280,6 +286,41 @@ describe('legion mcp server', () => {
         ['amend', 'T2:title,risk'],
         ['cancel', 'T3'],
       ]);
+    });
+  });
+
+  describe('spawn_research', () => {
+    const lead: McpBinding = { runId: 'r1', taskId: null, attemptId: 'lead1', role: 'lead', parentAttemptId: null };
+    const researchLead: McpBinding = { ...lead, attemptId: 'rl1', role: 'research_lead', parentAttemptId: 'lead1' };
+
+    it('lets a lead spawn single or team research, and a research lead single only', async () => {
+      const c = await connect(srv.issueToken(lead));
+      expect(JSON.parse((await call(c, 'spawn_research', { title: 'Auth', brief: 'How is auth done?' })).text)).toEqual(
+        {
+          attemptId: 'att_r1',
+          role: 'researcher',
+        },
+      );
+      expect(
+        JSON.parse((await call(c, 'spawn_research', { title: 'All', brief: 'Everything.', mode: 'team' })).text),
+      ).toEqual({
+        attemptId: 'att_r1',
+        role: 'research_lead',
+      });
+      const rl = await connect(srv.issueToken(researchLead));
+      const tool = (await rl.listTools()).tools.find((t) => t.name === 'spawn_research');
+      expect(tool?.description).toContain('single researchers only');
+      const properties = (tool?.inputSchema as { properties?: object } | undefined)?.properties ?? {};
+      expect(Object.keys(properties)).toEqual(['title', 'brief']);
+      await call(rl, 'spawn_research', { title: 'Sub', brief: 'Part.', mode: 'team' });
+      expect(f.calls.research).toEqual([
+        ['lead', 'Auth', 'single'],
+        ['lead', 'All', 'team'],
+        ['research_lead', 'Sub', 'single'],
+      ]);
+      expect((await (await connect(srv.issueToken(coder()))).listTools()).tools.map((t) => t.name)).not.toContain(
+        'spawn_research',
+      );
     });
   });
 

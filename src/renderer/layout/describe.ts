@@ -108,7 +108,7 @@ export function displayEngine(
   const task = attempt.taskId ? state.tasks[attempt.taskId] : null;
   const node = task ? (taskNode(latestPlan(state, attempt.runId), task.nodeId) ?? null) : null;
   const planned = task ? taskEngine(task, node, null) : null;
-  const configured = (role: 'planner' | 'finalizer', otherwise: EngineKind) => {
+  const configured = (role: 'planner' | 'finalizer' | 'researcher' | 'research_lead', otherwise: EngineKind) => {
     const engine = state.settings?.roles[role].engine;
     return engine && engine !== 'fake' ? engine : otherwise;
   };
@@ -125,6 +125,9 @@ export function displayEngine(
     }
     case 'finalizer':
       return configured('finalizer', 'codex');
+    case 'researcher':
+    case 'research_lead':
+      return configured(attempt.role, 'claude');
   }
 }
 

@@ -109,10 +109,10 @@ describe('buildClaudeArgs', () => {
   });
 
   it('denies instead of asking when a write profile has askHuman=false', () => {
-    const perms = permissionArgs({ mode: 'workspace_write', allowedCommands: [], askHuman: false }, null);
+    const perms = permissionArgs({ mode: 'workspace_write', allowedCommands: [], askHuman: false, web: false }, null);
     expect(perms).toMatchObject({ mode: 'acceptEdits', askHost: false, allowedTools: [] });
     const args = buildClaudeArgs({
-      opts: base({ permission: { mode: 'workspace_write', allowedCommands: [], askHuman: false } }),
+      opts: base({ permission: { mode: 'workspace_write', allowedCommands: [], askHuman: false, web: false } }),
     });
     expect(flag(args, '--permission-prompts')).toBe('none');
   });
@@ -141,7 +141,7 @@ describe('childEnv', () => {
 describe('coordinate mode', () => {
   it('may only talk: dontAsk, Legion MCP allowed, every read/shell/web/sub-agent tool denied', () => {
     const perms = permissionArgs(
-      { mode: 'coordinate', allowedCommands: ['pnpm test'], askHuman: false },
+      { mode: 'coordinate', allowedCommands: ['pnpm test'], askHuman: false, web: false },
       { url: 'http://127.0.0.1:9/mcp', token: 't' },
     );
     expect(perms).toMatchObject({ mode: 'dontAsk', askHost: false, allowedTools: ['mcp__legion'] });
@@ -162,5 +162,23 @@ describe('coordinate mode', () => {
       ]),
     );
     expect(perms.disallowedTools).not.toContain('Bash(pnpm test)');
+  });
+});
+
+describe('web research profiles', () => {
+  it('pre-approves the web tools for a read-only researcher', () => {
+    const perms = permissionArgs(permissionProfileFor('researcher'), { url: 'http://127.0.0.1:9/mcp', token: 't' });
+    expect(perms.mode).toBe('dontAsk');
+    expect(perms.allowedTools).toEqual(['mcp__legion', 'WebSearch', 'WebFetch']);
+    expect(perms.disallowedTools).toEqual(expect.arrayContaining(['Edit', 'Write']));
+    expect(perms.disallowedTools).not.toContain('WebFetch');
+  });
+
+  it('lets a research lead search the web but nothing else', () => {
+    const perms = permissionArgs(permissionProfileFor('research_lead'), null);
+    expect(perms.allowedTools).toEqual(['WebSearch', 'WebFetch']);
+    expect(perms.disallowedTools).toEqual(expect.arrayContaining(['Read', 'Bash', 'Task']));
+    expect(perms.disallowedTools).not.toContain('WebSearch');
+    expect(permissionArgs(permissionProfileFor('lead'), null).disallowedTools).toContain('WebSearch');
   });
 });

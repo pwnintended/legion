@@ -69,6 +69,13 @@ export interface AmendmentResult {
 
 export type TaskNodePatch = Partial<Omit<TaskNode, 'id'>>;
 
+export interface SpawnResearchRequest {
+  title: string;
+  brief: string;
+  /** `single`: one researcher. `team`: a research lead that spawns researchers (not for a research lead itself). */
+  mode: 'single' | 'team';
+}
+
 export type ApproveResult =
   | { behavior: 'allow'; updatedInput?: Record<string, unknown> }
   | { behavior: 'deny'; message: string };
@@ -105,6 +112,11 @@ export interface McpHost {
   addTask(binding: McpBinding, node: TaskNode): AmendmentResult | Promise<AmendmentResult>;
   amendTask(binding: McpBinding, nodeId: string, patch: TaskNodePatch): AmendmentResult | Promise<AmendmentResult>;
   cancelTask(binding: McpBinding, nodeId: string, reason: string): AmendmentResult | Promise<AmendmentResult>;
+  /** Open a research agent as the caller's child; its report arrives later as a `report` message. */
+  spawnResearch(
+    binding: McpBinding,
+    request: SpawnResearchRequest,
+  ): { attemptId: string; role: Role } | Promise<{ attemptId: string; role: Role }>;
 }
 
 export interface McpServerOptions {
@@ -237,6 +249,7 @@ function buildServer(binding: McpBinding, host: McpHost, log: Log): McpServer {
   if (binding.parentAttemptId !== null || COORDINATOR_ROLES.has(binding.role))
     registerMessaging(server, binding, host, guard);
   if (binding.role === 'lead') registerLeadTools(server, binding, host, guard);
+  if (COORDINATOR_ROLES.has(binding.role)) registerResearch(server, binding, host, guard);
 
   if (WRITE_ROLES.has(binding.role)) {
     server.registerTool(
@@ -354,6 +367,35 @@ function registerMessaging(server: McpServer, binding: McpBinding, host: McpHost
       if (!reply) throw new Error('no answer arrived');
       return { answer: reply.body, message_id: reply.id };
     }),
+  );
+}
+
+/** `spawn_research` for coordinators; a research lead may only spawn single researchers (bounded depth). */
+function registerResearch(server: McpServer, binding: McpBinding, host: McpHost, guard: Guard): void {
+  const teamAllowed = binding.role !== 'research_lead';
+  server.registerTool(
+    'spawn_research',
+    {
+      description:
+        'Start a read-only research agent (repository and web) as one of your agents and return at once with its ' +
+        'attempt id; its report arrives later as a message (kind report). Give it a precise title and a brief: ' +
+        'what to find out, where to look first, the format you want back, what is out of scope. ' +
+        (teamAllowed
+          ? 'mode single (default) = one researcher for a focused question; team = a research lead that splits a broad ' +
+            'brief over several researchers and synthesises. Start single; escalate to team only when a report shows ' +
+            'the question is broad.'
+          : 'As a research lead you spawn single researchers only.'),
+      inputSchema: {
+        title: z.string().min(1).max(120).describe('Short name of the question.'),
+        brief: z.string().min(1).describe('The brief (markdown).'),
+        ...(teamAllowed ? { mode: z.enum(['single', 'team']).optional().describe('single (default) | team') } : {}),
+      },
+    },
+    guard(
+      'spawn_research',
+      async ({ title, brief, mode }: { title: string; brief: string; mode?: 'single' | 'team' }) =>
+        host.spawnResearch(binding, { title, brief, mode: teamAllowed && mode === 'team' ? 'team' : 'single' }),
+    ),
   );
 }
 

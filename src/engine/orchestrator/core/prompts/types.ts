@@ -31,6 +31,8 @@ export interface ToolNames {
   readonly addTask: string;
   readonly amendTask: string;
   readonly cancelTask: string;
+  readonly spawnResearch: string;
+  readonly waitForReply: string;
 }
 
 export const DEFAULT_TOOL_NAMES: ToolNames = {
@@ -44,6 +46,8 @@ export const DEFAULT_TOOL_NAMES: ToolNames = {
   addTask: 'add_task',
   amendTask: 'amend_task',
   cancelTask: 'cancel_task',
+  spawnResearch: 'spawn_research',
+  waitForReply: 'wait_for_reply',
 };
 
 /** A file the human attached to the run (sent with the agent's first message by the adapter). */
@@ -161,6 +165,20 @@ export interface LeadWakeInput {
   readonly changes: readonly string[];
   readonly board: readonly BoardRow[];
   readonly tools?: ToolNames;
+}
+
+export interface ResearcherPromptInput {
+  readonly title: string;
+  readonly brief: string;
+  readonly repo: RepoInput;
+  /** Who asked (role label), so the report is pitched right. */
+  readonly requester: string;
+  readonly tools?: ToolNames;
+}
+
+export interface ResearchLeadPromptInput extends ResearcherPromptInput {
+  /** Researchers the lead may have running at once. */
+  readonly maxResearchers: number;
 }
 
 export interface FixerPromptInput {

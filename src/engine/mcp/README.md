@@ -8,7 +8,7 @@ one bearer token per agent session (token → `{ runId, taskId, attemptId, role,
   15s keep-alive comment, and Node's request/socket timeouts are disabled, so `request_human_input`
   can wait for hours. The client side limits then apply: set `MCP_TOOL_TIMEOUT` (ms) for Claude Code and
   `tool_timeout_sec` for Codex (`codexMcpConfigOverrides` defaults to 24h).
-- Tools: `report_progress`, `request_human_input`, `approve`, `mark_task_done` (coder/resolver only); for attempts with
+- Tools: `report_progress`, `request_human_input`, `approve`, `mark_task_done` (coder/resolver only); `spawn_research` for coordinators; for attempts with
   a `parentAttemptId` or a role in `COORDINATOR_ROLES`: `list_agents`, `send_message`, `wait_for_reply`, and (with a
   parent) `ask_lead`. The host (`McpHost.listAgents/sendMessage/awaitMessage`) enforces the parent ↔ child rule
   (`orchestrator/core/messaging.ts`, architecture §7).

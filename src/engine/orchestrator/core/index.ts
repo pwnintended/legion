@@ -12,6 +12,7 @@ export * from './messaging';
 export * from './policy';
 export * from './priority';
 export * from './prompts';
+export * from './research';
 export * from './scheduler';
 export * from './scope';
 export * from './sensitive';

@@ -36,7 +36,7 @@ import type { EngineToMainMessage } from '@shared/host-protocol';
 import type { z } from 'zod';
 import { AttachmentService } from '../attachments';
 import type { EngineContext, Logger } from '../context';
-import type { Store } from '../db';
+import type { NewMessage, Store } from '../db';
 import { integrationWorktreePath, type LegionConfig, loadLegionConfig, repoHash, taskWorktreePath } from '../git';
 import {
   type AgentPeer,
@@ -47,6 +47,7 @@ import {
   type McpHost,
   type McpServerHandle,
   type PlanStatus,
+  type SpawnResearchRequest,
   type TaskNodePatch,
 } from '../mcp';
 import type { TerminalService } from '../pty';
@@ -82,6 +83,13 @@ import type { EngineRegistry } from './registry';
 export const RATE_LIMIT_PAUSE_PCT = 95;
 /** Pause after a retryable 429 without a known reset time. */
 export const RATE_LIMIT_BACKOFF_MS = 60_000;
+/** Roles whose working directory holds content other agents wrote (§6 trust boundary). */
+const UNTRUSTED_WORKDIR_ROLES: ReadonlySet<Role> = new Set<Role>([
+  'reviewer',
+  'finalizer',
+  'researcher',
+  'research_lead',
+]);
 /** Claude Code's MCP tool-call timeout (ms): `request_human_input` may wait for hours. */
 export const MCP_TOOL_TIMEOUT_MS = 24 * 60 * 60 * 1000;
 
@@ -196,6 +204,8 @@ export const CLAUDE_PROMPT_TOOLS: ToolNames = {
   addTask: CLAUDE_TOOL_NAMES.addTask,
   amendTask: CLAUDE_TOOL_NAMES.amendTask,
   cancelTask: CLAUDE_TOOL_NAMES.cancelTask,
+  spawnResearch: CLAUDE_TOOL_NAMES.spawnResearch,
+  waitForReply: CLAUDE_TOOL_NAMES.waitForReply,
 };
 
 export const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms).unref?.());
@@ -494,8 +504,8 @@ export class Orchestrator {
       model: params.model,
       effort: params.effort,
       permission: permissionProfileFor(params.role, params.allowedCommands ?? []),
-      // Reviewers and the finalizer read worktrees that coders wrote: never trust their config.
-      untrustedWorkdir: params.role === 'reviewer' || params.role === 'finalizer',
+      // Reviewers, the finalizer and research agents read worktrees that coders wrote: never trust their config.
+      untrustedWorkdir: UNTRUSTED_WORKDIR_ROLES.has(params.role),
       outputSchema: params.outputSchema,
       mcp: token && this.mcp ? { url: this.mcp.url, token } : null,
       env: this.sessionEnv(),
@@ -567,6 +577,13 @@ export class Orchestrator {
     return { attemptId: attempt.id, role: attempt.role, nodeId: this.nodeIdOf(attempt), status: attempt.status };
   }
 
+  /** Queue a message and hand it over (a blocked wait, or the lead's next wake). */
+  postMessage(input: NewMessage): AgentMessage {
+    const message = this.store.insertMessage(input);
+    this.deliverMessage(message);
+    return message;
+  }
+
   /** Hand `message` to a blocked wait of its recipient, if any; otherwise it stays queued (a lead is woken). */
   private deliverMessage(message: AgentMessage): void {
     const waiting = this.messageWaiters.get(message.toAttemptId);
@@ -602,8 +619,14 @@ export class Orchestrator {
   /** Wait for a turn whose structured output parses with `schema`, nudging the agent on schema misses. */
   async structuredTurn<T>(run: AgentRun, schema: z.ZodType<T>, retries = 2): Promise<T> {
     for (let i = 0; ; i++) {
-      const turn = await run.nextTurn();
+      let turn = await run.nextTurn();
       this.assertOpen();
+      if (turn.kind === 'turn' && turn.isError) {
+        // A process that dies reports its failed turn first and its exit right after: wait for the exit so the
+        // failure carries the real error instead of a nudge sent into a closed session.
+        await sleep(50);
+        if (run.ended) turn = await run.nextTurn();
+      }
       const failure = this.turnFailure(turn);
       if (failure && (failure.kind !== 'agent_error' || turn.kind === 'exited' || turn.reason === 'interrupted')) {
         throw new AgentFailure(failure);
@@ -995,6 +1018,7 @@ export class Orchestrator {
       amendTask(binding: McpBinding, nodeId: string, patch: TaskNodePatch): Promise<AmendmentResult>;
       cancelTask(binding: McpBinding, nodeId: string, reason: string): Promise<AmendmentResult>;
     };
+    spawnResearch(binding: McpBinding, request: SpawnResearchRequest): Promise<{ attemptId: string; role: Role }>;
   } | null = null;
 
   /** Open the run's lead loop (no-op when one runs). */
@@ -1268,7 +1292,7 @@ export class Orchestrator {
         const original = this.store.getMessage(request.replyTo);
         if (!original || original.runId !== from.runId) throw new Error(`unknown reply_to message ${request.replyTo}`);
       }
-      const message = this.store.insertMessage({
+      return this.postMessage({
         runId: from.runId,
         fromAttemptId: from.id,
         toAttemptId: to.id,
@@ -1276,8 +1300,6 @@ export class Orchestrator {
         body: request.body,
         replyTo: request.replyTo,
       });
-      this.deliverMessage(message);
-      return message;
     },
     awaitMessage: (binding, filter) => {
       this.assertOpen();
@@ -1319,6 +1341,11 @@ export class Orchestrator {
     addTask: (binding, node) => this.leadTools().addTask(binding, node),
     amendTask: (binding, nodeId, patch) => this.leadTools().amendTask(binding, nodeId, patch),
     cancelTask: (binding, nodeId, reason) => this.leadTools().cancelTask(binding, nodeId, reason),
+    spawnResearch: (binding, request) => {
+      this.assertOpen();
+      if (!this.flows) throw new Error('research is not wired');
+      return this.flows.spawnResearch(binding, request);
+    },
   };
 
   private leadTools(): NonNullable<Orchestrator['flows']>['leadTools'] {

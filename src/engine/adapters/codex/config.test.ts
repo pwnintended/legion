@@ -53,10 +53,12 @@ describe('permissions', () => {
         approvalsReviewer: 'user',
       });
     }
-    const unattended = opts({ permission: { mode: 'workspace_write', allowedCommands: [], askHuman: false } });
+    const unattended = opts({
+      permission: { mode: 'workspace_write', allowedCommands: [], askHuman: false, web: false },
+    });
     expect(policyFor(unattended).approvalPolicy).toBe('never');
     // coordinate is best effort on Codex: the read-only sandbox, never asking.
-    const coordinate = opts({ permission: { mode: 'coordinate', allowedCommands: [], askHuman: false } });
+    const coordinate = opts({ permission: { mode: 'coordinate', allowedCommands: [], askHuman: false, web: false } });
     expect(policyFor(coordinate)).toEqual({ sandbox: 'read-only', approvalPolicy: 'never', approvalsReviewer: 'user' });
   });
 
@@ -135,6 +137,15 @@ describe('thread parameters', () => {
     });
     expect(threadConfig(opts({ mcp: null }))).toEqual({});
     expect(threadConfig(opts({ mcp: null, untrustedWorkdir: true }))).toEqual({ project_doc_max_bytes: 0 });
+  });
+
+  it('turns live web search on for research roles only', () => {
+    expect(threadConfig(opts({ role: 'researcher', permission: permissionProfileFor('researcher') })).web_search).toBe(
+      'live',
+    );
+    expect(
+      threadConfig(opts({ role: 'reviewer', permission: permissionProfileFor('reviewer') })).web_search,
+    ).toBeUndefined();
   });
 
   it('adds extra writable roots for workspace-write sessions only', () => {

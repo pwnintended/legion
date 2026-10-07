@@ -19,6 +19,7 @@ export const CLAUDE_TOOL_NAMES = {
   addTask: 'mcp__legion__add_task',
   amendTask: 'mcp__legion__amend_task',
   cancelTask: 'mcp__legion__cancel_task',
+  spawnResearch: 'mcp__legion__spawn_research',
 } as const;
 
 /**

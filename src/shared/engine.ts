@@ -56,6 +56,8 @@ export interface PermissionProfile {
   allowedCommands: readonly string[];
   /** Whether anything outside the profile is routed to the human (true) or simply denied (false). */
   askHuman: boolean;
+  /** Web search and fetch tools are allowed (research roles). Claude: `WebSearch`/`WebFetch`; Codex: `web_search`. */
+  web: boolean;
 }
 
 export const ROLE_PERMISSION_MODE: { readonly [R in Role]: PermissionProfile['mode'] } = {
@@ -65,7 +67,12 @@ export const ROLE_PERMISSION_MODE: { readonly [R in Role]: PermissionProfile['mo
   coder: 'workspace_write',
   resolver: 'workspace_write',
   lead: 'coordinate',
+  researcher: 'read_only',
+  research_lead: 'coordinate',
 };
+
+/** Roles whose profile includes the web tools. */
+export const WEB_ROLES: ReadonlySet<Role> = new Set<Role>(['researcher', 'research_lead']);
 
 export function permissionProfileFor(role: Role, allowedCommands: readonly string[] = []): PermissionProfile {
   const mode = ROLE_PERMISSION_MODE[role];
@@ -73,6 +80,7 @@ export function permissionProfileFor(role: Role, allowedCommands: readonly strin
     mode,
     allowedCommands: mode === 'workspace_write' ? allowedCommands : [],
     askHuman: mode === 'workspace_write',
+    web: WEB_ROLES.has(role),
   };
 }
 
@@ -81,7 +89,7 @@ export function permissionProfileFor(role: Role, allowedCommands: readonly strin
  * `wait_for_reply`) even without a parent. A non-coordinator gets the tools only when it was opened with a
  * parent attempt.
  */
-export const COORDINATOR_ROLES: ReadonlySet<Role> = new Set<Role>(['lead']);
+export const COORDINATOR_ROLES: ReadonlySet<Role> = new Set<Role>(['lead', 'research_lead']);
 
 export interface McpConnection {
   /** Legion MCP server URL, e.g. http://127.0.0.1:43123/mcp */

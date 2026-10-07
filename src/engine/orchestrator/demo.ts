@@ -144,6 +144,14 @@ export const demoScript: FakeScript = (ctx) => {
       },
     ];
   }
+  if (role === 'researcher' || role === 'research_lead') {
+    return [
+      { kind: 'text', text: 'Looking it up.' },
+      { kind: 'tool', name: 'Grep', toolKind: 'read', input: { pattern: 'legion-demo' }, output: 'README.md' },
+      usage(0.01),
+      { kind: 'output', value: 'auto' },
+    ];
+  }
   if (role === 'lead') {
     return [{ kind: 'text', text: ctx.turn === 0 ? 'Plan read; standing by for my coders.' : 'Noted.' }, usage(0.004)];
   }

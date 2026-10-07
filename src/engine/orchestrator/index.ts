@@ -8,6 +8,7 @@ import { finalize } from './finalize';
 import { addTask, amendTask, cancelTask, leadEnabled, planStatus, runLead } from './lead';
 import { mergeQueue } from './merge';
 import { Orchestrator, type OrchestratorOptions } from './orchestrator';
+import { spawnResearch } from './research';
 import { driveTask } from './tasks';
 
 export * from './actions';
@@ -48,6 +49,7 @@ export function createOrchestrator(options: OrchestratorOptions): Orchestrator {
       amendTask: (binding, nodeId, patch) => amendTask(o, binding, nodeId, patch),
       cancelTask: (binding, nodeId, reason) => cancelTask(o, binding, nodeId, reason),
     },
+    spawnResearch: (binding, request) => spawnResearch(o, binding, request),
   };
   const pollMs = options.prPollMs ?? PR_POLL_MS;
   if (pollMs > 0) o.disposers.push(startPrPolling(o, pollMs));
