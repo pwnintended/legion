@@ -83,6 +83,21 @@ describe('key dispatch', () => {
     expect(ran).toEqual(['palette.open', 'overlay.close']);
   });
 
+  it('a popover marked data-local-keys owns Esc (the picker closes, not the composer); ⌘ chords still pass', () => {
+    uiStore.setState({ overlay: 'composer' });
+    const input = {
+      tagName: 'INPUT',
+      type: 'text',
+      isContentEditable: false,
+      closest: (selector: string) => (selector === '[data-local-keys]' ? {} : null),
+    };
+    const esc = keydown({ key: 'Escape', code: 'Escape', target: input });
+    expect(handleKeyDown(esc as unknown as KeyboardEvent)).toBe(false);
+    expect(esc.prevented).toBe(false);
+    handleKeyDown(keydown({ key: 'k', code: 'KeyK', metaKey: true, target: input }) as unknown as KeyboardEvent);
+    expect(ran).toEqual(['palette.open']);
+  });
+
   it('tile-scoped commands that opt in win over global ones, and stay quiet under an overlay', () => {
     const off = registerCommand({
       id: 'test.approve',

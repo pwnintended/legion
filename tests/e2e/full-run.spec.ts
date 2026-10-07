@@ -72,14 +72,15 @@ test('full run: composer → clarify → plan → approval → review fix round 
     await expect(window.getByTestId('connection-status')).toHaveText('connected', { timeout: 30_000 });
     await shot(window, 'empty');
 
-    // ⌘N → composer; pick the repo through "Choose folder…" (answered by the test hook).
+    // ⌘N → composer; pick the repo through the picker's Browse… (the folder dialog is answered by the test hook).
     await window.keyboard.press('Meta+n');
     const composer = window.getByTestId('composer');
     await expect(composer).toBeVisible();
     await composer.locator('textarea').fill('Add a demo feature\n\nThe widgets repo needs a small feature with docs.');
-    await composer.locator('select').selectOption({ label: 'Choose folder…' });
+    await composer.getByTestId('repo-picker').click();
+    await window.getByTestId('repo-browse').click();
     await expect(composer.getByTestId('repo-status')).toContainText('main', { timeout: 15_000 });
-    await expect(composer.locator('select')).toHaveValue(repo);
+    await expect(composer.getByTestId('repo-picker')).toHaveAttribute('title', repo);
     await shot(window, 'composer');
     await composer.locator('textarea').press('Meta+Enter');
     await expect(composer).toBeHidden({ timeout: 15_000 });

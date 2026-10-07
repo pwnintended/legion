@@ -25,6 +25,7 @@ export function OverlayPanel({
   label: string;
   placement: Placement;
   width: number;
+  /** Distance from the top of the window in px; shrinks on short windows so the panel stays on screen. */
   top: number;
   children: ReactNode;
   testId: string;
@@ -78,23 +79,26 @@ export function OverlayPanel({
         transition={{ duration: 0.16 }}
         onClick={() => actions.closeOverlay()}
       />
-      <motion.div
-        ref={ref}
-        role="dialog"
-        aria-modal="true"
-        aria-label={label}
-        tabIndex={-1}
-        data-testid={testId}
-        className={`ovl ovl-${placement}`}
-        style={{ width, top }}
-        initial={hidden}
-        animate={shown}
-        exit={{ ...hidden, transition: { duration: 0.12 } }}
-        transition={reduced ? { duration: 0.12 } : SPRING}
-        onKeyDown={trap}
-      >
-        {children}
-      </motion.div>
+      {/* Placement is a flex box, never a transform: Motion owns the panel's transform for the spring. */}
+      <div className={`ovl-place ovl-place-${placement}`} style={{ '--ovl-top': `${top}px` } as React.CSSProperties}>
+        <motion.div
+          ref={ref}
+          role="dialog"
+          aria-modal="true"
+          aria-label={label}
+          tabIndex={-1}
+          data-testid={testId}
+          className={`ovl ovl-${placement}`}
+          style={{ width }}
+          initial={hidden}
+          animate={shown}
+          exit={{ ...hidden, transition: { duration: 0.12 } }}
+          transition={reduced ? { duration: 0.12 } : SPRING}
+          onKeyDown={trap}
+        >
+          {children}
+        </motion.div>
+      </div>
     </div>
   );
 }

@@ -42,6 +42,11 @@ export interface LegionBridge {
   requestEnginePort(): void;
   /** Native folder picker; resolves to null when cancelled. */
   pickDirectory(options?: { title?: string; defaultPath?: string }): Promise<string | null>;
+  /**
+   * The filesystem path of a File from a drag-and-drop (Finder folder or file); '' when it has none.
+   * (`File.path` is gone in sandboxed renderers; this wraps `webUtils.getPathForFile`.)
+   */
+  pathForFile(file: File): string;
   /** Open an http(s) URL in the default browser. */
   openExternal(url: string): Promise<void>;
   /** Reveal a file or folder in Finder. */

@@ -171,6 +171,22 @@ const PATHS = {
   ),
   external: <path d="M14 4h6v6M20 4l-9 9M18 14v4a2 2 0 01-2 2H6a2 2 0 01-2-2V8a2 2 0 012-2h4" />,
   refresh: <path d="M20 11a8 8 0 10-2.3 5.7M20 4v7h-7" />,
+  folder: <path d="M3.5 7.5A2 2 0 015.5 5.5h3.6l2 2.2h7.4a2 2 0 012 2v7.8a2 2 0 01-2 2h-13a2 2 0 01-2-2z" />,
+  folderPlus: (
+    <>
+      <path d="M3.5 7.5A2 2 0 015.5 5.5h3.6l2 2.2h7.4a2 2 0 012 2v7.8a2 2 0 01-2 2h-13a2 2 0 01-2-2z" />
+      <path d="M12 11v5M9.5 13.5h5" />
+    </>
+  ),
+  repo: (
+    <>
+      <path d="M5 19.5V5a2 2 0 012-2h12v14H7a2 2 0 00-2 2.5z" />
+      <path d="M5 19.5A1.5 1.5 0 006.5 21H19v-4" />
+      <path d="M9 7h6" />
+    </>
+  ),
+  chevronDown: <path d="M6 9l6 6 6-6" />,
+  chevronUpDown: <path d="M8 9.5l4-4 4 4M8 14.5l4 4 4-4" />,
 } as const;
 
 export type IconName = keyof typeof PATHS;

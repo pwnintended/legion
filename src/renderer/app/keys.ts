@@ -113,6 +113,15 @@ export function isTextInput(target: EventTarget | null): boolean {
 }
 
 /** Is the target inside a terminal (xterm or anything marked `data-terminal`)? */
+/**
+ * Inside a popover that handles plain keys itself (a combobox list: Escape closes the list, not the overlay
+ * around it). Mark its root with `data-local-keys`.
+ */
+export function ownsPlainKeys(target: EventTarget | null): boolean {
+  if (!target || typeof (target as Element).closest !== 'function') return false;
+  return (target as Element).closest('[data-local-keys]') !== null;
+}
+
 export function isTerminal(target: EventTarget | null): boolean {
   if (!target || typeof (target as Element).closest !== 'function') return false;
   return (target as Element).closest('[data-terminal], .xterm, [data-tile-kind="terminal"] [data-tile-body]') !== null;

@@ -61,60 +61,62 @@ function ConfirmDialog({ request }: { request: NonNullable<ReturnType<typeof con
         transition={{ duration: 0.14 }}
         onClick={() => answerConfirm(false)}
       />
-      <motion.div
-        ref={panelRef}
-        role="alertdialog"
-        aria-modal="true"
-        aria-labelledby="cf-title"
-        className="ovl ovl-center cf"
-        data-testid="confirm"
-        style={{ width: 440, top: 150 }}
-        initial={hidden}
-        animate={{ opacity: 1, y: 0, scale: 1 }}
-        exit={{ ...hidden, transition: { duration: 0.1 } }}
-        transition={reduced ? { duration: 0.12 } : SPRING}
-        onKeyDown={onKeyDown}
-      >
-        <div className="cf-body">
-          <div id="cf-title" className="ovl-title">
-            {request.title}
+      <div className="ovl-place ovl-place-center" style={{ '--ovl-top': '150px' } as React.CSSProperties}>
+        <motion.div
+          ref={panelRef}
+          role="alertdialog"
+          aria-modal="true"
+          aria-labelledby="cf-title"
+          className="ovl ovl-center cf"
+          data-testid="confirm"
+          style={{ width: 440 }}
+          initial={hidden}
+          animate={{ opacity: 1, y: 0, scale: 1 }}
+          exit={{ ...hidden, transition: { duration: 0.1 } }}
+          transition={reduced ? { duration: 0.12 } : SPRING}
+          onKeyDown={onKeyDown}
+        >
+          <div className="cf-body">
+            <div id="cf-title" className="ovl-title">
+              {request.title}
+            </div>
+            {request.body.map((p) => (
+              <p key={p} className="cf-text">
+                {p}
+              </p>
+            ))}
+            {request.items?.length ? (
+              <ul className="cf-items mono">
+                {request.items.map((item) => (
+                  <li key={item}>{item}</li>
+                ))}
+              </ul>
+            ) : null}
           </div>
-          {request.body.map((p) => (
-            <p key={p} className="cf-text">
-              {p}
-            </p>
-          ))}
-          {request.items?.length ? (
-            <ul className="cf-items mono">
-              {request.items.map((item) => (
-                <li key={item}>{item}</li>
-              ))}
-            </ul>
-          ) : null}
-        </div>
-        <div className="cf-actions">
-          {request.cancelLabel === null ? null : (
+          <div className="cf-actions">
+            {request.cancelLabel === null ? null : (
+              <button
+                ref={cancelRef}
+                type="button"
+                className="btn btn-ghost"
+                onClick={() => answerConfirm(false)}
+                data-testid="confirm-cancel"
+              >
+                {request.cancelLabel ?? 'Cancel'}
+              </button>
+            )}
             <button
-              ref={cancelRef}
+              ref={request.cancelLabel === null ? cancelRef : undefined}
               type="button"
-              className="btn btn-ghost"
-              onClick={() => answerConfirm(false)}
-              data-testid="confirm-cancel"
+              className={`btn ${request.tone === 'danger' ? 'btn-danger' : request.tone === 'warn' ? 'btn-warn' : 'btn-primary'}`}
+              onClick={() => answerConfirm(true)}
+              data-testid="confirm-ok"
             >
-              {request.cancelLabel ?? 'Cancel'}
+              {request.confirmLabel}
             </button>
-          )}
-          <button
-            ref={request.cancelLabel === null ? cancelRef : undefined}
-            type="button"
-            className={`btn ${request.tone === 'danger' ? 'btn-danger' : request.tone === 'warn' ? 'btn-warn' : 'btn-primary'}`}
-            onClick={() => answerConfirm(true)}
-            data-testid="confirm-ok"
-          >
-            {request.confirmLabel}
-          </button>
-        </div>
-      </motion.div>
+          </div>
+        </motion.div>
+      </div>
     </div>
   );
 }

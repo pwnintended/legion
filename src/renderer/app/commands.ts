@@ -39,7 +39,7 @@ import { canArchive, runPr } from './compat';
 import { isConfirmOpen } from './confirm';
 import { type DataState, selectRunList, TERMINAL_RUN_STATUSES } from './data';
 import { rpc } from './hooks';
-import { formatChord, isTerminal, isTextInput, matchesChord, parseChord } from './keys';
+import { formatChord, isTerminal, isTextInput, matchesChord, ownsPlainKeys, parseChord } from './keys';
 import { archiveRunInteractively, refreshPr } from './run-actions';
 import { actions, dataStore, jumpToNextUrgent, type KeyMode, type UiState, uiStore } from './store';
 
@@ -249,6 +249,8 @@ export function handleKeyDown(event: KeyboardEvent): boolean {
   // A confirm dialog is up: it owns every key (Esc must not close the overlay underneath).
   if (isConfirmOpen()) return false;
   if (['Meta', 'Control', 'Alt', 'Shift'].includes(event.key)) return false;
+  // A popover (picker list) owns its plain keys: Esc closes it, not the overlay underneath.
+  if (!event.metaKey && !event.ctrlKey && ownsPlainKeys(event.target)) return false;
   const inInput = isTextInput(event.target);
   const inTerminal = isTerminal(event.target);
   const ctx = context();

@@ -34,7 +34,15 @@ test('launches, connects the renderer to the engine over MessagePort RPC, and sh
     expect(exposed).toEqual({
       hasRequire: false,
       hasProcess: false,
-      bridgeKeys: ['onCommand', 'openExternal', 'pickDirectory', 'platform', 'requestEnginePort', 'showItemInFolder'],
+      bridgeKeys: [
+        'onCommand',
+        'openExternal',
+        'pathForFile',
+        'pickDirectory',
+        'platform',
+        'requestEnginePort',
+        'showItemInFolder',
+      ],
     });
 
     // Survives a renderer reload: a fresh port is wired and info is shown again.
