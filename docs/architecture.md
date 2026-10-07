@@ -295,10 +295,14 @@ relies on this); when both exist the structured report wins.
    over `base...integration`; blocker findings → inbox.
 8. **PR**: `git push -u origin legion/<run>/integration`, `gh pr create --draft --base <base> --title … --body-file …`.
    Body: issue link, plan summary, task table (engine, reviewer verdict), verification, minor findings, run id.
-9. **Cleanup** (`runs.archive`, also run automatically when the PR is merged or closed): cancel the run if still
-   active, close its sessions and takeover terminals, remove the task worktrees and local task branches and the
-   integration worktree (the integration branch stays while the PR is open), restore `gc.auto`, set
-   `archived: true` (hidden from `runs.list` unless `includeArchived`). Idempotent.
+9. **Cleanup** (`runs.archive({runId, force?})`, also run automatically when the PR is **merged**): an active run
+   is refused unless `force` (which cancels it first). Close its sessions and takeover terminals, then remove
+   worktrees and local branches **only where no work is lost**: a worktree with uncommitted changes is kept, a task
+   branch with commits or content in neither integration nor the base (content check via `merge-tree`, since
+   tasks are squash-merged) is kept (`force` removes both anyway); the integration branch is deleted only when
+   the PR was merged, or closed with the branch fully pushed to its upstream, or when it has nothing beyond the
+   base (`force` never deletes it). The result's `archiveReport` lists what was kept and why. Restore
+   `gc.auto`, set `archived: true` (hidden from `runs.list` unless `includeArchived`). Idempotent.
 
 ### 8.1 Lifecycle service (`engine/orchestrator/`)
 
@@ -385,8 +389,9 @@ The service applies `core/` decisions with CAS transitions; every flow is re-ent
   `settings.engines.<kind>.fallbackReviewModel` (claude `opus`, codex `null`) unless the coder ran that model, then
   the Claude sibling (opus ↔ sonnet) or another model from the engine's probe (`core/engines.ts`).
 - **PR status** (`cleanup.ts`): `runs.createPr` stores `run.pr`; `runs.refreshPr` and a 3-minute poll of open PRs
-  read it again through the `PrHost` (`gh pr view`). A merged or closed PR moves a still-open run to `done` and
-  archives it (§8 step 9). The coder's final report is copied to `task.report` (cleared when a fresh attempt starts).
+  read it again through the `PrHost` (`gh pr view`). A merged or closed PR moves a still-open run to `done`; only a
+  merged one archives it (§8 step 9). A closed PR keeps everything (it may be reopened; the work is not in the
+  base) and is no longer polled. The coder's final report is copied to `task.report` (cleared when a fresh attempt starts).
 - **Settings**: `settings.updated` rebuilds an engine whose binary path changed (`EngineRegistry.reconfigure`, then
   a re-probe); live sessions keep their instance. Models, effort and `enabled` are read at each session start.
 - **Fake mode**: the demo script (`demo.ts`) hits every human touch point once: one clarify question, a 3-task plan

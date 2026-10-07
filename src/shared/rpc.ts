@@ -215,6 +215,20 @@ const TerminalSize = { cols: z.number().int().min(1).max(1000), rows: z.number()
 
 const NullableModel = { model: z.string().nullable(), effort: EffortSchema.nullable() };
 
+/** What `runs.archive` left in place (and why), and cleanup steps that failed. */
+export const ArchiveReportSchema = z.object({
+  kept: z.array(
+    z.object({
+      kind: z.enum(['branch', 'worktree']),
+      /** Branch name or worktree path. */
+      name: z.string(),
+      reason: z.string(),
+    }),
+  ),
+  problems: z.array(z.string()),
+});
+export type ArchiveReport = z.infer<typeof ArchiveReportSchema>;
+
 // ---------------------------------------------------------------------------------------------
 // The contract
 // ---------------------------------------------------------------------------------------------
@@ -302,12 +316,18 @@ export const rpcContract = {
    */
   'runs.refreshPr': { input: ByRun, output: RunSchema },
   /**
-   * Clean up a run (§8 step 9) and hide it from `runs.list`: cancels it if still active, closes its
-   * sessions and terminals, removes task worktrees + local task branches and the integration worktree
-   * (the integration branch stays while a PR is open), restores `gc.auto`, sets `archived: true`.
-   * Idempotent.
+   * Clean up a run (§8 step 9) and hide it from `runs.list`. A run that is still active is refused
+   * (`failed_precondition`) unless `force: true`, which cancels it first. Closes its sessions and terminals,
+   * removes worktrees and local branches **unless they hold work found nowhere else**: a worktree with
+   * uncommitted changes and a task branch with work in neither integration nor the base are kept (removed
+   * anyway with `force`); the integration branch is deleted only when the PR was merged, or closed with the
+   * branch fully pushed, or when it has nothing beyond the base (`force` never deletes it). What was kept is
+   * listed in `archiveReport`. Restores `gc.auto`, sets `archived: true`. Idempotent.
    */
-  'runs.archive': { input: ByRun, output: RunSchema },
+  'runs.archive': {
+    input: z.object({ runId: IdSchema, force: z.boolean().nullish() }),
+    output: RunSchema.extend({ archiveReport: ArchiveReportSchema.nullish() }),
+  },
 
   // tasks ---------------------------------------------------------------------------------------
   'tasks.retry': {
