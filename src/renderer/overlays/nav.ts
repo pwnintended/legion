@@ -66,6 +66,11 @@ export function toast(text: string, tone: Toast['tone'] = 'info'): void {
   }, 4200);
 }
 
+/** The toasts on screen (tests, diagnostics). */
+export function currentToasts(): readonly Toast[] {
+  return toasts;
+}
+
 export function useToasts(): Toast[] {
   return useSyncExternalStore(
     (l) => {

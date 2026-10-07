@@ -149,7 +149,22 @@ export function isEnabled(command: Command, ctx: CommandContext = context()): bo
   }
 }
 
-/** Run a command by id. Resolves to false when it doesn't exist or isn't available. */
+/** A command threw or its promise rejected (e.g. `runs.pause` refused): say so, don't fail silently. */
+function reportFailure(command: Command, error: unknown): void {
+  console.error(`[legion] command ${command.id} failed`, error);
+  const code = (error as { code?: unknown } | null)?.code;
+  const message =
+    code === 'disconnected'
+      ? 'the engine is not connected'
+      : code === 'not_implemented'
+        ? 'this engine does not support it yet'
+        : error instanceof Error
+          ? error.message
+          : String(error);
+  toast(`${command.title.replace(/…$/, '')} failed: ${message}`, 'error');
+}
+
+/** Run a command by id. Resolves to false when it doesn't exist, isn't available or fails (with a toast). */
 export async function executeCommand(id: string): Promise<boolean> {
   const command = registry.get(id);
   if (!command) {
@@ -162,7 +177,7 @@ export async function executeCommand(id: string): Promise<boolean> {
     await command.run(ctx);
     return true;
   } catch (error) {
-    console.error(`[legion] command ${id} failed`, error);
+    reportFailure(command, error);
     return false;
   }
 }
@@ -243,9 +258,11 @@ export function handleKeyDown(event: KeyboardEvent): boolean {
       event.stopPropagation();
       // Auto-repeat of a held key: swallowed unless the command is meant to repeat.
       if (event.repeat && !command.repeatable) return true;
-      void Promise.resolve(command.run(ctx)).catch((error: unknown) =>
-        console.error(`[legion] command ${command.id} failed`, error),
-      );
+      try {
+        void Promise.resolve(command.run(ctx)).catch((error: unknown) => reportFailure(command, error));
+      } catch (error) {
+        reportFailure(command, error);
+      }
       return true;
     }
   }

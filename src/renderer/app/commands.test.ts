@@ -1,5 +1,6 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { builtinCommands, handleKeyDown, registerCommand, registerCommands } from './commands';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { currentToasts } from '../overlays/nav';
+import { builtinCommands, executeCommand, handleKeyDown, registerCommand, registerCommands } from './commands';
 import { initialUi, uiStore } from './store';
 
 interface FakeKey {
@@ -98,6 +99,37 @@ describe('key dispatch', () => {
       expect(ran).toEqual(['test.approve']);
     } finally {
       off();
+    }
+  });
+
+  it('says so in a toast when a command fails (key or palette/menu)', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const off = registerCommands([
+      {
+        id: 'test.pause',
+        title: 'Pause run',
+        keybinding: 'P',
+        run: async () => {
+          throw Object.assign(new Error('run is done'), { code: 'conflict' });
+        },
+      },
+      {
+        id: 'test.boom',
+        title: 'Resume run',
+        run: () => {
+          throw new Error('nope');
+        },
+      },
+    ]);
+    try {
+      handleKeyDown(keydown({ key: 'p', code: 'KeyP', target: button }) as unknown as KeyboardEvent);
+      await new Promise((r) => setTimeout(r, 0));
+      expect(currentToasts().at(-1)).toMatchObject({ tone: 'error', text: 'Pause run failed: run is done' });
+      expect(await executeCommand('test.boom')).toBe(false);
+      expect(currentToasts().at(-1)).toMatchObject({ tone: 'error', text: 'Resume run failed: nope' });
+    } finally {
+      off();
+      vi.restoreAllMocks();
     }
   });
 
