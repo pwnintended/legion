@@ -117,3 +117,11 @@ adjacent only); `canMessage` and `messageRefusal` (worded for the agent that tri
 turns queued messages into the block the lifecycle service prepends to a resumed prompt (one `### <Kind> from
 <peer> · id <msg>` section each, so the recipient can answer by id); `messageLine` and `peerLabel` (`coder of T3
 (att_…)`) build those lines.
+
+## The lead's rules — `lead.ts`
+
+`amendmentNeedsSignoff(approvedNodes, node)` → the reason a plan amendment must wait for the human, or null when it
+may apply at once: `high` risk, or a write touch whose directory (`touchDirectory`: the literal prefix's directory,
+`src/api/**` → `src/api`, `README.md` → `.`) is not inside a directory the approved plan already writes to.
+`boardChanges(snapshot, board)` → one line per task whose status changed since the snapshot (the wake digest);
+`AMENDABLE_STATUSES` = blocked, queued. Prompts: `prompts/lead.ts` (`buildLeadPrompt`, `buildLeadWakePrompt`).

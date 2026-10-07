@@ -64,6 +64,7 @@ export const ROLE_PERMISSION_MODE: { readonly [R in Role]: PermissionProfile['mo
   finalizer: 'read_only',
   coder: 'workspace_write',
   resolver: 'workspace_write',
+  lead: 'coordinate',
 };
 
 export function permissionProfileFor(role: Role, allowedCommands: readonly string[] = []): PermissionProfile {
@@ -77,10 +78,10 @@ export function permissionProfileFor(role: Role, allowedCommands: readonly strin
 
 /**
  * Roles that coordinate other agents: they get the messaging MCP tools (`list_agents`, `send_message`,
- * `wait_for_reply`) even without a parent. Empty until the lead and assistant roles land; a non-coordinator gets
- * the tools only when it was opened with a parent attempt.
+ * `wait_for_reply`) even without a parent. A non-coordinator gets the tools only when it was opened with a
+ * parent attempt.
  */
-export const COORDINATOR_ROLES: ReadonlySet<Role> = new Set<Role>();
+export const COORDINATOR_ROLES: ReadonlySet<Role> = new Set<Role>(['lead']);
 
 export interface McpConnection {
   /** Legion MCP server URL, e.g. http://127.0.0.1:43123/mcp */

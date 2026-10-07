@@ -23,7 +23,8 @@ export const REAL_ENGINE_KINDS = ['claude', 'codex'] as const;
 export const RealEngineKindSchema = z.enum(REAL_ENGINE_KINDS);
 export type RealEngineKind = z.infer<typeof RealEngineKindSchema>;
 
-export const ROLES = ['planner', 'coder', 'reviewer', 'resolver', 'finalizer'] as const;
+/** `lead`: the run's coordinator after plan approval (coordinate mode: talks, never touches files). */
+export const ROLES = ['planner', 'coder', 'reviewer', 'resolver', 'finalizer', 'lead'] as const;
 export const RoleSchema = z.enum(ROLES);
 export type Role = z.infer<typeof RoleSchema>;
 
@@ -678,6 +679,11 @@ export const SettingsSchema = z.object({
     reviewer: RoleDefaultsSchema,
     resolver: RoleDefaultsSchema,
     finalizer: RoleDefaultsSchema,
+    lead: RoleDefaultsSchema,
+  }),
+  lead: z.object({
+    /** Open an implementation lead for every run once its plan is approved (`orchestrator/lead.ts`). */
+    enabled: z.boolean(),
   }),
   budget: z.object({
     /** Per-run spend limit in USD (estimates); null = unlimited. Crossing it raises a `budget` inbox item. */
@@ -713,7 +719,9 @@ export const DEFAULT_SETTINGS: Settings = {
     reviewer: roleDefaults('codex'),
     resolver: roleDefaults('claude'),
     finalizer: roleDefaults('codex'),
+    lead: roleDefaults('claude'),
   },
+  lead: { enabled: true },
   budget: { perRunUsd: null, warnAtPct: 80 },
   limits: { maxRetries: 2, maxFixRounds: 2, maxResolverAttempts: 2 },
   engines: {
@@ -746,8 +754,10 @@ export const SettingsPatchSchema = z
         reviewer: RoleDefaultsPatchSchema,
         resolver: RoleDefaultsPatchSchema,
         finalizer: RoleDefaultsPatchSchema,
+        lead: RoleDefaultsPatchSchema,
       })
       .partial(),
+    lead: SettingsSchema.shape.lead.partial(),
     budget: SettingsSchema.shape.budget.partial(),
     limits: SettingsSchema.shape.limits.partial(),
     engines: z

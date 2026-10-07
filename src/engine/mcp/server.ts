@@ -10,8 +10,9 @@ import type { AddressInfo } from 'node:net';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { z } from 'zod';
-import { type AgentMessage, MESSAGE_KINDS, type MessageKind, type Role } from '../../shared/domain';
+import { type AgentMessage, MESSAGE_KINDS, type MessageKind, type Role, type TaskNode } from '../../shared/domain';
 import { COORDINATOR_ROLES } from '../../shared/engine';
+import { PlanOutputNodeSchema } from '../../shared/schemas';
 
 export interface McpBinding {
   runId: string;
@@ -33,11 +34,40 @@ export interface AgentPeer {
 }
 
 export interface SendMessageRequest {
+  /** Attempt id of the recipient, or `lead` for the caller's current parent. */
   to: string;
   kind: MessageKind;
   body: string;
   replyTo: string | null;
 }
+
+/** The lead's board (`plan_status`). */
+export interface PlanStatus {
+  runStatus: string;
+  paused: boolean;
+  tasks: Array<{
+    nodeId: string;
+    title: string;
+    status: string;
+    dependsOn: string[];
+    progress: string | null;
+    error: string | null;
+    summary: string | null;
+    coderAttemptId: string | null;
+  }>;
+  /** A plan version waiting for the human's sign-off, if any. */
+  pendingAmendment: { version: number; reason: string } | null;
+}
+
+/** Outcome of `add_task` / `amend_task` / `cancel_task`. */
+export interface AmendmentResult {
+  /** `applied`: in effect now. `pending`: waiting for the human (`reason` says why). */
+  outcome: 'applied' | 'pending';
+  planVersion: number;
+  reason: string | null;
+}
+
+export type TaskNodePatch = Partial<Omit<TaskNode, 'id'>>;
 
 export type ApproveResult =
   | { behavior: 'allow'; updatedInput?: Record<string, unknown> }
@@ -70,6 +100,11 @@ export interface McpHost {
     binding: McpBinding,
     filter: { replyTo: string | null; timeoutMs: number | null },
   ): Promise<AgentMessage | null>;
+  /** Lead tools (role `lead`): the board and plan amendments. */
+  planStatus(binding: McpBinding): PlanStatus | Promise<PlanStatus>;
+  addTask(binding: McpBinding, node: TaskNode): AmendmentResult | Promise<AmendmentResult>;
+  amendTask(binding: McpBinding, nodeId: string, patch: TaskNodePatch): AmendmentResult | Promise<AmendmentResult>;
+  cancelTask(binding: McpBinding, nodeId: string, reason: string): AmendmentResult | Promise<AmendmentResult>;
 }
 
 export interface McpServerOptions {
@@ -201,6 +236,7 @@ function buildServer(binding: McpBinding, host: McpHost, log: Log): McpServer {
 
   if (binding.parentAttemptId !== null || COORDINATOR_ROLES.has(binding.role))
     registerMessaging(server, binding, host, guard);
+  if (binding.role === 'lead') registerLeadTools(server, binding, host, guard);
 
   if (WRITE_ROLES.has(binding.role)) {
     server.registerTool(
@@ -313,13 +349,66 @@ function registerMessaging(server: McpServer, binding: McpBinding, host: McpHost
       inputSchema: { question: z.string().min(1).describe('A specific, self-contained question.') },
     },
     guard('ask_lead', async ({ question }: { question: string }) => {
-      const parent = binding.parentAttemptId;
-      if (parent === null) throw new Error('you have no lead');
-      const sent = await host.sendMessage(binding, { to: parent, kind: 'question', body: question, replyTo: null });
+      const sent = await host.sendMessage(binding, { to: 'lead', kind: 'question', body: question, replyTo: null });
       const reply = await host.awaitMessage(binding, { replyTo: sent.id, timeoutMs: null });
       if (!reply) throw new Error('no answer arrived');
       return { answer: reply.body, message_id: reply.id };
     }),
+  );
+}
+
+const NodePatchShape = PlanOutputNodeSchema.omit({ id: true }).partial();
+
+/** The lead's own tools: the board and plan amendments (the host validates and applies them). */
+function registerLeadTools(server: McpServer, binding: McpBinding, host: McpHost, guard: Guard): void {
+  server.registerTool(
+    'plan_status',
+    {
+      description:
+        'The board: every task of the plan with its status, dependencies, progress line, error and latest ' +
+        'report summary, plus the coder attempt id to message, and whether a plan change is waiting for the human.',
+      inputSchema: {},
+    },
+    guard('plan_status', async () => host.planStatus(binding)),
+  );
+  server.registerTool(
+    'add_task',
+    {
+      description:
+        'Add a task to the plan (a new plan version). Use the next free id (T<n>). Give it a goal, narrow ' +
+        'touches, 2-5 acceptance criteria, real verify commands and dependsOn for the tasks whose code it needs. ' +
+        'Returns {outcome: "applied" | "pending", planVersion, reason}: pending means the human must sign the ' +
+        "new version off first (high risk, or writes outside the approved plan's directories).",
+      inputSchema: { node: PlanOutputNodeSchema.describe('The task node, same shape as the plan DAG nodes.') },
+    },
+    guard('add_task', async ({ node }: { node: TaskNode }) => host.addTask(binding, node)),
+  );
+  server.registerTool(
+    'amend_task',
+    {
+      description:
+        'Change a task that has not started yet (blocked or queued): any node fields except id. Same outcome ' +
+        'rules as add_task. A running task cannot be amended; message its coder instead.',
+      inputSchema: {
+        node_id: z.string().min(1).describe('The task id, e.g. T3.'),
+        patch: NodePatchShape.describe('Fields to replace.'),
+      },
+    },
+    guard('amend_task', async ({ node_id, patch }: { node_id: string; patch: TaskNodePatch }) =>
+      host.amendTask(binding, node_id, patch),
+    ),
+  );
+  server.registerTool(
+    'cancel_task',
+    {
+      description:
+        'Drop a task that has not started yet (it is skipped; tasks depending on it may then start). ' +
+        'Say why in reason.',
+      inputSchema: { node_id: z.string().min(1), reason: z.string().min(1) },
+    },
+    guard('cancel_task', async ({ node_id, reason }: { node_id: string; reason: string }) =>
+      host.cancelTask(binding, node_id, reason),
+    ),
   );
 }
 

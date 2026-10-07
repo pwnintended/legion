@@ -27,6 +27,19 @@ export interface RunMeta {
   gcAuto: string | null;
   /** `gc.auto` is reference-counted per repository (`repo-gc.ts`) for this run. */
   gcRepoManaged: boolean;
+  /** The implementation lead (`lead.ts`): its current attempt and engine session, failures, and whether it was given up. */
+  leadAttemptId: string | null;
+  leadSessionId: string | null;
+  leadFailures: number;
+  leadDisabled: boolean;
+  /** A plan version proposed by the lead that waits for, or just got, the human's answer. */
+  amendment: {
+    planId: string;
+    version: number;
+    reason: string;
+    status: 'pending' | 'approved' | 'rejected';
+    feedback: string | null;
+  } | null;
 }
 
 export interface FixContext {
@@ -75,6 +88,11 @@ const RUN_DEFAULTS: RunMeta = {
   budgetWarned: false,
   gcAuto: null,
   gcRepoManaged: false,
+  leadAttemptId: null,
+  leadSessionId: null,
+  leadFailures: 0,
+  leadDisabled: false,
+  amendment: null,
 };
 
 const TASK_DEFAULTS: TaskMeta = {

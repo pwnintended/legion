@@ -969,6 +969,19 @@ export class Store {
     });
   }
 
+  /** Move every child of `from` under `to` (the lead resumed as a new attempt). Returns the moved children. */
+  reparentAttempts(from: string, to: string): Attempt[] {
+    return this.transaction(() => {
+      const children = this.listChildAttempts(from);
+      for (const child of children) this.patchRow(attempts, child.id, { parentAttemptId: to });
+      const moved = this.listChildAttempts(to);
+      for (const attempt of moved) {
+        if (children.some((c) => c.id === attempt.id)) this.append({ type: 'attempt.updated', attempt, from: null });
+      }
+      return moved.filter((a) => children.some((c) => c.id === a.id));
+    });
+  }
+
   /** Direct children of an attempt in the agent hierarchy, oldest first. */
   listChildAttempts(parentAttemptId: string): Attempt[] {
     return this.selectWhere(attempts, 'parent_attempt_id = ?', 'started_at, id', parentAttemptId);

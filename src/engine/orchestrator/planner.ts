@@ -41,6 +41,7 @@ import {
   type ValidationResult,
   validatePlan,
 } from './core';
+import { applyAmendment, rejectAmendment } from './lead';
 import type { AgentRun } from './live-session';
 import { patchRunMeta, runMeta } from './meta';
 import { AgentFailure, Closed, type Orchestrator } from './orchestrator';
@@ -411,8 +412,23 @@ export async function updatePlan(o: Orchestrator, input: RpcInput<'runs.updatePl
   return storePlanVersion(o, run.id, { markdown: input.markdown, dag: result.dag, source: 'user', feedback: null });
 }
 
+/** A plan version the lead proposed while the run executes (`lead.ts`), waiting for the human. */
+function pendingAmendment(o: Orchestrator, run: Run, planId: string): Plan | null {
+  if (run.status !== 'executing') return null;
+  const meta = runMeta(o.store, run.id);
+  if (meta.amendment?.status !== 'pending' || meta.amendment.planId !== planId) return null;
+  const plan = o.store.getPlan(planId);
+  return plan && plan.approvedAt === null ? plan : null;
+}
+
 export function requestPlanRevision(o: Orchestrator, runId: string, planId: string, feedback: string): Run {
   const run = o.store.requireRun(runId);
+  const amendment = pendingAmendment(o, run, planId);
+  if (amendment) {
+    if (!feedback.trim()) throw new RpcError('bad_request', 'rejecting a plan change needs feedback');
+    rejectAmendment(o, runId, amendment, feedback);
+    return run;
+  }
   const previous = latestPlanOrConflict(o, run, planId);
   const next = o.store.transaction(() => {
     for (const item of o.store.listInbox({ runId, includeResolved: false })) {
@@ -429,6 +445,11 @@ export function requestPlanRevision(o: Orchestrator, runId: string, planId: stri
 /** `runs.approvePlan`: integration branch at the base sha, one task per node, execution starts. */
 export async function approvePlan(o: Orchestrator, runId: string, planId: string): Promise<Run> {
   const run = o.store.requireRun(runId);
+  const amendment = pendingAmendment(o, run, planId);
+  if (amendment) {
+    applyAmendment(o, runId, amendment);
+    return o.store.requireRun(runId);
+  }
   const plan = latestPlanOrConflict(o, run, planId);
   const result = validatePlan(plan.dag, await validateOptions(o, run));
   if (!result.ok) throw validationError(result);

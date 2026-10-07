@@ -5,6 +5,7 @@
 import type { PtyProcess, PtySpawn } from '../pty';
 import { PR_POLL_MS, startPrPolling } from './cleanup';
 import { finalize } from './finalize';
+import { addTask, amendTask, cancelTask, leadEnabled, planStatus, runLead } from './lead';
 import { mergeQueue } from './merge';
 import { Orchestrator, type OrchestratorOptions } from './orchestrator';
 import { driveTask } from './tasks';
@@ -15,6 +16,7 @@ export { DEMO_PLAN, demoScript } from './demo';
 export { getDiff } from './diff';
 export { createPr, enterPrReady, prText } from './finalize';
 export { registerOrchestratorHandlers } from './handlers';
+export { board, leadEnabled, MAX_LEAD_FAILURES, runLead } from './lead';
 export { AgentRun, HANDBACK_PROMPT, type TurnResult } from './live-session';
 export { type RunMeta, runMeta, type TaskMeta, taskMeta } from './meta';
 export {
@@ -38,6 +40,14 @@ export function createOrchestrator(options: OrchestratorOptions): Orchestrator {
     driveTask: (taskId) => driveTask(o, taskId),
     mergeQueue: (runId) => mergeQueue(o, runId),
     finalize: (runId) => finalize(o, runId),
+    lead: (runId, loop) => runLead(o, runId, loop),
+    leadEnabled: (runId) => leadEnabled(o, runId),
+    leadTools: {
+      planStatus: (binding) => planStatus(o, binding),
+      addTask: (binding, node) => addTask(o, binding, node),
+      amendTask: (binding, nodeId, patch) => amendTask(o, binding, nodeId, patch),
+      cancelTask: (binding, nodeId, reason) => cancelTask(o, binding, nodeId, reason),
+    },
   };
   const pollMs = options.prPollMs ?? PR_POLL_MS;
   if (pollMs > 0) o.disposers.push(startPrPolling(o, pollMs));

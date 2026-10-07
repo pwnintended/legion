@@ -143,7 +143,7 @@ Task       runtime row per node: runId, nodeId, status, branch, worktreePath, st
            mergedSha?, engine/model/effortOverride?, progress?, report? {summary, commitMessage}, error?
            status: blocked → queued → provisioning → running → verifying → reviewing → fixing
                    → approved → awaiting_human → merging → merged | failed | skipped | cancelled
-Attempt    id, taskId?, runId, role (planner|coder|reviewer|resolver|finalizer), engine, model,
+Attempt    id, taskId?, runId, role (planner|coder|reviewer|resolver|finalizer|lead), engine, model,
            sessionId (claude session / codex thread), parentAttemptId? (the attempt it reports to), status,
            startedAt, endedAt, costUsd?, tokens?, error?
            status: pending → running → succeeded | failed | interrupted | cancelled  (interrupted → running on resume)
@@ -212,7 +212,7 @@ Normalized `AgentEvent` kinds: `session_started{sessionId, model, version}`, `te
 |---|---|---|
 | planner, reviewer, finalizer | `--permission-mode dontAsk --permission-prompts none`, `--allowedTools mcp__legion`, `--disallowedTools` edit tools + AskUserQuestion/Enter/ExitPlanMode. Reads inside cwd/`--add-dir` and commands the CLI classifies as read-only (`ls`, `git diff`, …) need no rule. | `sandbox: read-only`, `approvalPolicy: never` |
 | coder, resolver | `--permission-mode acceptEdits` (edits inside the working dirs), `--allowedTools` = `Bash(<cmd>)`/`Bash(<cmd> *)` per verify command + `mcp__legion`; everything else → `--permission-prompt-tool stdio` → `approval_request` (or `--permission-prompts none` when `askHuman` is false) | `sandbox: workspace-write` (cwd = worktree), `approvalPolicy: on-request` → requestApproval → inbox |
-| `coordinate` (no role yet: the future lead / assistant) | `dontAsk --permission-prompts none`, `--allowedTools mcp__legion`, `--disallowedTools` = the read-only list + `Read, Glob, Grep, LS, Bash, BashOutput, KillShell, WebFetch, WebSearch, Task, Agent, NotebookRead, TodoWrite, Skill, ToolSearch`: the session can only talk | `sandbox: read-only`, `approvalPolicy: never` (best effort: Codex's tool list cannot be trimmed) |
+| lead (`coordinate`) | `dontAsk --permission-prompts none`, `--allowedTools mcp__legion`, `--disallowedTools` = the read-only list + `Read, Glob, Grep, LS, Bash, BashOutput, KillShell, WebFetch, WebSearch, Task, Agent, NotebookRead, TodoWrite, Skill, ToolSearch`: the session can only talk | `sandbox: read-only`, `approvalPolicy: never` (best effort: Codex's tool list cannot be trimmed) |
 
 Every Claude profile also denies `Bash(git commit *)`, `Bash(git push *)`, Enter/ExitWorktree and the
 scheduling tools (Cron*, ScheduleWakeup, RemoteTrigger, PushNotification). Approval decisions: allow →
@@ -270,14 +270,15 @@ parentAttemptId?}). Tools (all return small JSON):
 Agent hierarchy and mailbox (`orchestrator/core/messaging.ts`). Attempts form a tree through
 `parentAttemptId` (`openSession({parentAttemptId})`; a resumed engine session inherits it). An attempt may message
 only its parent and its children; the MCP host refuses anything else with a message naming the lead. The tools
-below exist only for attempts that have a parent or whose role is in `COORDINATOR_ROLES` (empty until the lead
-and assistant roles land), so today's roles are unchanged:
+below exist only for attempts that have a parent or whose role is in `COORDINATOR_ROLES` (`lead`); the lead's own
+tools are in §8.4:
 
 - `list_agents()` — the caller's parent and children (attempt id, role, task node, status)
 - `send_message({to, kind, body, reply_to?})` — queue an `AgentMessage` (kinds §5); never blocks
 - `wait_for_reply({message_id?, timeout_seconds?})` — the next message for the caller (a reply to `message_id`
   when given); `null` on timeout
-- `ask_lead({question})` (parent only) — `send_message(question)` + `wait_for_reply` in one blocking call
+- `ask_lead({question})` (parent only) — `send_message(question)` to the caller's *current* parent (`to: "lead"`) +
+  `wait_for_reply` in one blocking call
 
 Delivery: a message resolves a blocked `wait_for_reply` / `ask_lead` of its recipient at once; otherwise it stays
 queued (`deliveredAt: null`) and is prepended to the prompt the next time the orchestrator resumes that recipient's
@@ -441,6 +442,33 @@ The service applies `core/` decisions with CAS transitions; every flow is re-ent
 - **Fake mode**: the demo script (`demo.ts`) hits every human touch point once: one clarify question, a 3-task plan
   (T2 after T1), a tool approval (T3's coder), a major review finding on T2 fixed in the next round, the PR gate. The
   PR host is `FakePrHost({ push: false })`: nothing is pushed, GitHub is never called.
+
+### 8.4 The implementation lead (`orchestrator/lead.ts`)
+
+With `settings.lead.enabled` (default on) every run gets a **lead** once its plan is approved: one `coordinate`
+session (role `lead`, the run's planner engine, `settings.roles.lead`) that holds the approved plan as its ledger
+and coordinates the coders. The planner still plans (it reads the repo; a lead cannot); the lead takes over at
+approval.
+
+- **One attempt for the run's life.** The lead process stays alive and idle between turns. The lead loop wakes it
+  with one message per batch of news: queued messages (a coder's `ask_lead`), board changes (task status changes
+  since the last wake, with the report summary or error), and the human's answer to an amendment. A wake is sent only
+  after the previous turn ended; the lead ends each turn when it is done and never blocks in `wait_for_reply`.
+- **Dispatch waits for the lead.** Tasks are not dispatched until the lead attempt exists, so every coder (and
+  resolver) is opened with `parentAttemptId` set and its prompt names `ask_lead`. If the lead process dies, the loop
+  resumes its engine session as a new attempt and re-parents the children of the old one; `ask_lead` sends to the
+  caller's *current* parent (`to: "lead"`). After `MAX_LEAD_FAILURES` (3) consecutive failures without a completed
+  turn the lead is given up (`RunMeta.leadDisabled`) and the run goes on without one.
+- **Lead tools** (role `lead`): `plan_status` (the board), `add_task(node)`, `amend_task(node_id, patch)` and
+  `cancel_task(node_id, reason)` (the last two for tasks still blocked or queued). Each change is a new plan version
+  (source `agent`, markdown gets an "Amendment" section) validated with `validatePlan`. **Policy** (`core/lead.ts`):
+  a node applies at once when its risk is not `high` and every write touch stays inside a directory the approved plan
+  already writes to; otherwise the version waits as a `plan_signoff` inbox item (`RunMeta.amendment`), and
+  `runs.approvePlan` / `runs.requestPlanRevision` on that version apply or reject it (the lead hears the answer on
+  its next wake). Only one amendment may wait at a time. Applying inserts tasks for the new nodes; the scheduler
+  picks them up on the next tick.
+- Recovery: the lead attempt is `interrupted → failed` like other run-level attempts; the executing run's first
+  tick restarts the loop, which resumes the session.
 
 ## 9. Git & filesystem conventions
 

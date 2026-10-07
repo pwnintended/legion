@@ -79,6 +79,8 @@ export async function startHarness(options: {
   settings?: SettingsPatch;
   /** Make the fakes report the kind they stand in for (attempt rows say claude/codex, takeover works). */
   realKinds?: boolean;
+  /** Script for the implementation lead's turns (default: one short text turn, so `script` never sees `lead`). */
+  lead?: Script;
 }): Promise<Harness> {
   const repo = await makeRepo({ 'README.md': '# fixture\n', ...options.files });
   const origin = await makeBare(repo.scratch);
@@ -95,9 +97,12 @@ export async function startHarness(options: {
     return pty;
   };
 
+  const leadScript: Script = options.lead ?? (() => [{ kind: 'text', text: 'Standing by.' }]);
   const boot = async (script: Script) => {
-    const claude = new FakeEngine({ script: (ctx) => script(ctx, 'claude') });
-    const codex = new FakeEngine({ script: (ctx) => script(ctx, 'codex') });
+    const play = (ctx: FakeTurnContext, engine: EngineName) =>
+      ctx.opts.role === 'lead' ? leadScript(ctx, engine) : script(ctx, engine);
+    const claude = new FakeEngine({ script: (ctx) => play(ctx, 'claude') });
+    const codex = new FakeEngine({ script: (ctx) => play(ctx, 'codex') });
     const engine = await startEngine({
       dataDir,
       env: process.env,

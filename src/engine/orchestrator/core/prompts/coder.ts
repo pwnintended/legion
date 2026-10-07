@@ -39,6 +39,11 @@ function workspaceRules(tools: ToolNames, extra: readonly string[] = []): string
   ]);
 }
 
+/** Coders with an implementation lead: where to take questions the plan leaves open. */
+function leadRule(tools: ToolNames): string {
+  return `You report to an implementation lead that knows the whole plan and the other tasks. When the task brief leaves open something that affects other tasks (a shared name, shape, interface or behaviour) or that the plan decided, ask the lead with \`${tools.askLead}\` instead of guessing; it answers from the plan. Small local decisions are yours: make them and note them in your summary.`;
+}
+
 function finishInstructions(tools: ToolNames, structuredReport: boolean, commitHint: string): string {
   return join(
     numbered([
@@ -67,7 +72,7 @@ export function buildCoderPrompt(input: CoderPromptInput): AgentPrompt {
           ),
         )
       : null;
-  const systemPrompt = join(CODER_SYSTEM, section('Rules', workspaceRules(tools)));
+  const systemPrompt = join(CODER_SYSTEM, section('Rules', workspaceRules(tools, input.lead ? [leadRule(tools)] : [])));
   const prompt = join(
     `Implement task ${node.id}: ${node.title}.`,
     section('Plan summary', demoteHeadings(clipMiddle(input.planSummary.trim(), PROMPT_LIMITS.planChars))),

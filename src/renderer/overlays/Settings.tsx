@@ -27,6 +27,7 @@ const ROLES: { role: Role; label: string; note: string }[] = [
   { role: 'reviewer', label: 'Reviewer', note: 'Always the other engine than the coder.' },
   { role: 'resolver', label: 'Resolver', note: 'Resolves merge conflicts.' },
   { role: 'finalizer', label: 'Final review', note: 'Reviews base…integration before the PR.' },
+  { role: 'lead', label: 'Lead', note: 'Coordinates the coders after approval; talks, never touches files.' },
 ];
 const SECTIONS: { id: SettingsSection; label: string }[] = [
   { id: 'engines', label: 'Engines' },

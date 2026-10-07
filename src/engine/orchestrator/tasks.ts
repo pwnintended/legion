@@ -265,6 +265,7 @@ async function code(o: Orchestrator, run: Run, task: Task, mode: 'coder' | 'fixe
   const config = await o.config(run);
   const meta = taskMeta(o.store, task.id);
   const tools = o.toolNames(engine);
+  const leadAttemptId = o.leadAttemptId(run.id);
   const interrupted = o.store
     .listAttempts(run.id)
     .find(
@@ -318,6 +319,7 @@ async function code(o: Orchestrator, run: Run, task: Task, mode: 'coder' | 'fixe
       previousFailure: meta.previousFailure,
       tools,
       structuredReport: true,
+      lead: leadAttemptId !== null,
     });
     if (interrupted) {
       resume = meta.coderSessionId;
@@ -343,6 +345,7 @@ async function code(o: Orchestrator, run: Run, task: Task, mode: 'coder' | 'fixe
       reuseAttemptId,
       // A fresh coder session sees the run's attachments with its first message (resumes already have them).
       attachments: resumeSessionId ? null : o.runAttachments(run),
+      parentAttemptId: leadAttemptId,
     });
 
   let session: AgentRun | null = null;
@@ -366,6 +369,7 @@ async function code(o: Orchestrator, run: Run, task: Task, mode: 'coder' | 'fixe
               previousFailure: meta.previousFailure,
               tools,
               structuredReport: true,
+              lead: leadAttemptId !== null,
             })
           : prompt;
       session = await open(null, null, fresh);

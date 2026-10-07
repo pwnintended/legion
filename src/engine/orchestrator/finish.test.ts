@@ -354,6 +354,7 @@ describe('same-engine review fallback', () => {
     const attempts = harness.engine.store.listAttempts(run.id);
     expect(attempts.map((a) => [a.role, a.engine, a.model])).toEqual([
       ['planner', 'claude', null],
+      ['lead', 'claude', null],
       ['coder', 'claude', 'opus'],
       ['reviewer', 'claude', 'sonnet'],
       ['finalizer', 'claude', 'sonnet'],

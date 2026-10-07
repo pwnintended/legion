@@ -12,10 +12,11 @@ interface Calls {
   done: Array<[McpBinding, string, string]>;
   sent: Array<[McpBinding, SendMessageRequest]>;
   waits: Array<[McpBinding, string | null, number | null]>;
+  amend: Array<[string, string]>;
 }
 
 function fakeHost() {
-  const calls: Calls = { progress: [], ask: [], approve: [], done: [], sent: [], waits: [] };
+  const calls: Calls = { progress: [], ask: [], approve: [], done: [], sent: [], waits: [], amend: [] };
   const pendingAsks: Array<(a: string) => void> = [];
   const pendingWaits: Array<(m: AgentMessage | null) => void> = [];
   let messageSeq = 0;
@@ -62,6 +63,19 @@ function fakeHost() {
     awaitMessage: (b, f) => {
       calls.waits.push([b, f.replyTo, f.timeoutMs]);
       return new Promise<AgentMessage | null>((resolve) => pendingWaits.push(resolve));
+    },
+    planStatus: () => ({ runStatus: 'executing', paused: false, tasks: [], pendingAmendment: null }),
+    addTask: (_b, node) => {
+      calls.amend.push(['add', node.id]);
+      return { outcome: 'applied', planVersion: 2, reason: null };
+    },
+    amendTask: (_b, nodeId, patch) => {
+      calls.amend.push(['amend', `${nodeId}:${Object.keys(patch).join(',')}`]);
+      return { outcome: 'pending', planVersion: 3, reason: 'high risk' };
+    },
+    cancelTask: (_b, nodeId) => {
+      calls.amend.push(['cancel', nodeId]);
+      return { outcome: 'applied', planVersion: 3, reason: null };
     },
   };
   return { host, calls, pendingAsks, pendingWaits };
@@ -194,14 +208,78 @@ describe('legion mcp server', () => {
       expect((await timedOut).text).toBe('null');
     });
 
-    it('ask_lead sends a question to the parent and waits for its answer', async () => {
+    it('ask_lead sends a question to the current lead and waits for its answer', async () => {
       const c = await connect(srv.issueToken(ledCoder));
       const pending = call(c, 'ask_lead', { question: 'Which db?' });
       await vi_waitFor(() => f.calls.waits.length === 1);
-      expect(f.calls.sent).toEqual([[ledCoder, { to: 'lead1', kind: 'question', body: 'Which db?', replyTo: null }]]);
+      expect(f.calls.sent).toEqual([[ledCoder, { to: 'lead', kind: 'question', body: 'Which db?', replyTo: null }]]);
       expect(f.calls.waits[0]?.slice(1)).toEqual(['m1', null]);
       f.pendingWaits[0]?.(reply('m2', 'a3', 'm1', 'sqlite'));
       expect(JSON.parse((await pending).text)).toEqual({ answer: 'sqlite', message_id: 'm2' });
+    });
+  });
+
+  describe('lead tools', () => {
+    const lead: McpBinding = { runId: 'r1', taskId: null, attemptId: 'lead1', role: 'lead', parentAttemptId: null };
+    const nodeInput = {
+      id: 'T9',
+      title: 'Docs',
+      goal: 'Write the docs.',
+      kind: 'docs',
+      dependsOn: ['T1'],
+      acceptanceCriteria: [{ id: 'AC1', text: 'docs exist' }],
+      touches: [{ glob: 'docs/x.md', mode: 'create' }],
+      size: 'S',
+      verify: { commands: ['test -f docs/x.md'] },
+      contextHints: { files: [], notes: '' },
+      agent: { engine: 'claude', model: null, effort: null },
+      risk: 'low',
+    };
+
+    it('exist for the lead only, with the messaging tools and without ask_lead', async () => {
+      const names = (await (await connect(srv.issueToken(lead))).listTools()).tools.map((t) => t.name).sort();
+      expect(names).toEqual(
+        [
+          'add_task',
+          'amend_task',
+          'approve',
+          'cancel_task',
+          'list_agents',
+          'plan_status',
+          'report_progress',
+          'request_human_input',
+          'send_message',
+          'wait_for_reply',
+        ].sort(),
+      );
+      const coderNames = (await (await connect(srv.issueToken(ledCoder))).listTools()).tools.map((t) => t.name);
+      expect(coderNames).not.toContain('add_task');
+    });
+
+    it('validate the node shape and reach the host', async () => {
+      const c = await connect(srv.issueToken(lead));
+      expect(JSON.parse((await call(c, 'plan_status', {})).text)).toMatchObject({ runStatus: 'executing' });
+      expect(JSON.parse((await call(c, 'add_task', { node: nodeInput })).text)).toEqual({
+        outcome: 'applied',
+        planVersion: 2,
+        reason: null,
+      });
+      const bad = await call(c, 'add_task', { node: { ...nodeInput, kind: 'nope' } }).catch((e: Error) => ({
+        isError: true,
+        text: e.message,
+      }));
+      expect(bad.isError).toBe(true);
+      expect(
+        JSON.parse((await call(c, 'amend_task', { node_id: 'T2', patch: { title: 'New', risk: 'high' } })).text),
+      ).toEqual({ outcome: 'pending', planVersion: 3, reason: 'high risk' });
+      expect(JSON.parse((await call(c, 'cancel_task', { node_id: 'T3', reason: 'duplicate' })).text)).toMatchObject({
+        outcome: 'applied',
+      });
+      expect(f.calls.amend).toEqual([
+        ['add', 'T9'],
+        ['amend', 'T2:title,risk'],
+        ['cancel', 'T3'],
+      ]);
     });
   });
 

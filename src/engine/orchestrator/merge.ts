@@ -330,6 +330,7 @@ async function resolveConflicts(
           outputSchema: taskReportJsonSchema,
           cwd: path,
           allowedCommands: verifyCommands(node, config),
+          parentAttemptId: o.leadAttemptId(run.id),
         });
         const report = await coderTurn(o, session);
         if (report?.status !== 'done') {

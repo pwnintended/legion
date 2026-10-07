@@ -15,6 +15,10 @@ export const CLAUDE_TOOL_NAMES = {
   sendMessage: 'mcp__legion__send_message',
   waitForReply: 'mcp__legion__wait_for_reply',
   askLead: 'mcp__legion__ask_lead',
+  planStatus: 'mcp__legion__plan_status',
+  addTask: 'mcp__legion__add_task',
+  amendTask: 'mcp__legion__amend_task',
+  cancelTask: 'mcp__legion__cancel_task',
 } as const;
 
 /**

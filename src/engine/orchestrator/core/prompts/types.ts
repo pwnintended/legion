@@ -24,12 +24,26 @@ export interface ToolNames {
   readonly markTaskDone: string;
   readonly requestHumanInput: string;
   readonly reportProgress: string;
+  readonly askLead: string;
+  readonly listAgents: string;
+  readonly sendMessage: string;
+  readonly planStatus: string;
+  readonly addTask: string;
+  readonly amendTask: string;
+  readonly cancelTask: string;
 }
 
 export const DEFAULT_TOOL_NAMES: ToolNames = {
   markTaskDone: 'mark_task_done',
   requestHumanInput: 'request_human_input',
   reportProgress: 'report_progress',
+  askLead: 'ask_lead',
+  listAgents: 'list_agents',
+  sendMessage: 'send_message',
+  planStatus: 'plan_status',
+  addTask: 'add_task',
+  amendTask: 'amend_task',
+  cancelTask: 'cancel_task',
 };
 
 /** A file the human attached to the run (sent with the agent's first message by the adapter). */
@@ -117,6 +131,36 @@ export interface CoderPromptInput {
   readonly tools?: ToolNames;
   /** The session also has the task-report output schema; ask for it as the final message. */
   readonly structuredReport?: boolean;
+  /** The coder reports to an implementation lead it can ask (`ask_lead`). */
+  readonly lead?: boolean;
+}
+
+/** One task on the lead's board. */
+export interface BoardRow {
+  readonly nodeId: string;
+  readonly title: string;
+  readonly status: TaskStatus;
+  readonly dependsOn: readonly string[];
+  readonly progress: string | null;
+  readonly error: string | null;
+  /** The coder's latest report summary, when it finished a turn. */
+  readonly summary: string | null;
+}
+
+export interface LeadPromptInput {
+  readonly issue: IssueInput;
+  readonly planMarkdown: string;
+  readonly nodes: readonly TaskNode[];
+  readonly tools?: ToolNames;
+}
+
+export interface LeadWakeInput {
+  /** Rendered queued messages (`renderMessages`), or null. */
+  readonly messages: string | null;
+  /** One line per board change since the last wake. */
+  readonly changes: readonly string[];
+  readonly board: readonly BoardRow[];
+  readonly tools?: ToolNames;
 }
 
 export interface FixerPromptInput {

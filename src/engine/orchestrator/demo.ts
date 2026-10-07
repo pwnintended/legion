@@ -144,6 +144,9 @@ export const demoScript: FakeScript = (ctx) => {
       },
     ];
   }
+  if (role === 'lead') {
+    return [{ kind: 'text', text: ctx.turn === 0 ? 'Plan read; standing by for my coders.' : 'Noted.' }, usage(0.004)];
+  }
   if (role === 'planner') {
     return [
       ...attachmentSteps(ctx),

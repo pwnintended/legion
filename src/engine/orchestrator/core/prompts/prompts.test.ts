@@ -8,12 +8,15 @@ import {
   buildCoderPrompt,
   buildFinalizerPrompt,
   buildFixerPrompt,
+  buildLeadPrompt,
+  buildLeadWakePrompt,
   buildPlanPrompt,
   buildPrBody,
   buildPrTitle,
   buildResolverPrompt,
   buildReviewerPrompt,
   clipMiddle,
+  DEFAULT_TOOL_NAMES,
   demoteHeadings,
   fence,
   markdownSection,
@@ -136,7 +139,12 @@ describe('coder prompts', () => {
   });
 
   it('coder retry with custom tool names and a structured report', () => {
-    const tools = { markTaskDone: 'legion.done', requestHumanInput: 'legion.ask', reportProgress: 'legion.progress' };
+    const tools = {
+      ...DEFAULT_TOOL_NAMES,
+      markTaskDone: 'legion.done',
+      requestHumanInput: 'legion.ask',
+      reportProgress: 'legion.progress',
+    };
     const prompt = buildCoderPrompt({
       issue,
       repo,
@@ -366,5 +374,55 @@ describe('PR body', () => {
     const absurd = buildPrBody({ ...base, notes: Array.from({ length: 5_000 }, () => 'n'.repeat(100)) });
     expect(absurd.body.length).toBeLessThanOrEqual(PR_BODY_MAX_CHARS);
     expect(absurd.truncated).toBe(true);
+  });
+});
+
+describe('lead prompts', () => {
+  it('brief the lead with the plan and wake it with changes, messages and the board', () => {
+    const first = buildLeadPrompt({
+      issue,
+      planMarkdown: '# Plan\n\n## Summary\n\nShip CSV export.',
+      nodes: [contracts, node],
+    });
+    expect(first.systemPrompt).toContain('implementation lead');
+    expect(first.systemPrompt).toContain('`add_task`');
+    expect(first.systemPrompt).toContain('Never call `wait_for_reply`');
+    expect(first.prompt).toContain('## Approved plan');
+    expect(first.prompt).toContain('**T2** Implement CSV serialization (feature, M, risk low, after T1)');
+    const wake = buildLeadWakePrompt({
+      messages:
+        '## Messages from other agents (1)\n\n### Question from coder of T2 (att_1) · id msg_1\n\nWhich delimiter?',
+      changes: ['T1 running → merged: Defined the contract.'],
+      board: [
+        {
+          nodeId: 'T1',
+          title: 'Define the export contract',
+          status: 'merged',
+          dependsOn: [],
+          progress: null,
+          error: null,
+          summary: 'Defined the contract.',
+        },
+        {
+          nodeId: 'T2',
+          title: 'Implement CSV serialization',
+          status: 'running',
+          dependsOn: ['T1'],
+          progress: 'writing tests',
+          error: null,
+          summary: null,
+        },
+      ],
+    });
+    expect(wake.prompt).toContain('## Board changes\n\n- T1 running → merged: Defined the contract.');
+    expect(wake.prompt).toContain('Which delimiter?');
+    expect(wake.prompt).toContain('**T2** Implement CSV serialization (after T1): running — writing tests');
+    expect(wake.prompt).toContain('reply_to');
+  });
+
+  it('tells coders about ask_lead only when they have a lead', () => {
+    const base = { issue, repo, node, planSummary, upstream: [], attempt: 1 };
+    expect(buildCoderPrompt({ ...base, lead: true }).systemPrompt).toContain('`ask_lead`');
+    expect(buildCoderPrompt(base).systemPrompt).not.toContain('ask_lead');
   });
 });

@@ -16,6 +16,7 @@ import type {
   InboxItem,
   InboxKind,
   InboxResolution,
+  Role,
   Run,
   Settings,
   Task,
@@ -39,13 +40,17 @@ import type { Store } from '../db';
 import { integrationWorktreePath, type LegionConfig, loadLegionConfig, repoHash, taskWorktreePath } from '../git';
 import {
   type AgentPeer,
+  type AmendmentResult,
   type ApproveResult,
   CLAUDE_TOOL_NAMES,
   type McpBinding,
   type McpHost,
   type McpServerHandle,
+  type PlanStatus,
+  type TaskNodePatch,
 } from '../mcp';
 import type { TerminalService } from '../pty';
+import { deferred } from '../util/async-queue';
 import {
   type AgentPrompt,
   canMessage,
@@ -110,7 +115,7 @@ export type ParkReason = { kind: 'paused' } | { kind: 'rate'; engine: EngineKind
 export interface OpenSessionParams {
   run: Run;
   taskId: string | null;
-  role: 'planner' | 'coder' | 'reviewer' | 'resolver' | 'finalizer';
+  role: Role;
   /** Nominal engine (the registry maps it to an instance; may be a fake). */
   engine: EngineKind;
   model: string | null;
@@ -137,6 +142,11 @@ type Waiter = {
   resolve: (resolution: InboxResolution) => void;
   reject: (error: Error) => void;
 };
+
+/** The lead loop's wake signal: `wake` is replaced after each wake, so a loop awaits the one it captured. */
+export interface LeadLoopHandle {
+  wake: ReturnType<typeof deferred<void>>;
+}
 
 /** A blocked `wait_for_reply` / `ask_lead` of one attempt. */
 type MessageWaiter = {
@@ -179,6 +189,13 @@ export const CLAUDE_PROMPT_TOOLS: ToolNames = {
   markTaskDone: CLAUDE_TOOL_NAMES.markTaskDone,
   requestHumanInput: CLAUDE_TOOL_NAMES.requestHumanInput,
   reportProgress: CLAUDE_TOOL_NAMES.reportProgress,
+  askLead: CLAUDE_TOOL_NAMES.askLead,
+  listAgents: CLAUDE_TOOL_NAMES.listAgents,
+  sendMessage: CLAUDE_TOOL_NAMES.sendMessage,
+  planStatus: CLAUDE_TOOL_NAMES.planStatus,
+  addTask: CLAUDE_TOOL_NAMES.addTask,
+  amendTask: CLAUDE_TOOL_NAMES.amendTask,
+  cancelTask: CLAUDE_TOOL_NAMES.cancelTask,
 };
 
 export const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms).unref?.());
@@ -208,6 +225,8 @@ export class Orchestrator {
   readonly runJobs = new Set<string>();
   /** Takeover terminals by attempt id. */
   readonly takeovers = new Map<string, string>();
+  /** Implementation lead loops by run id (`lead.ts`). */
+  readonly leadLoops = new Map<string, LeadLoopHandle>();
   closed = false;
   /** Stopped on close (timers set up by the wiring, e.g. PR polling). */
   readonly disposers: (() => void)[] = [];
@@ -534,7 +553,7 @@ export class Orchestrator {
   }
 
   /** How other agents refer to an attempt: `coder of T3 (att_…)`. */
-  private agentName(attemptId: string): string {
+  agentName(attemptId: string): string {
     const attempt = this.store.getAttempt(attemptId);
     if (!attempt) return attemptId;
     return peerLabel(attempt, this.nodeIdOf(attempt));
@@ -548,10 +567,13 @@ export class Orchestrator {
     return { attemptId: attempt.id, role: attempt.role, nodeId: this.nodeIdOf(attempt), status: attempt.status };
   }
 
-  /** Hand `message` to a blocked wait of its recipient, if any; otherwise it stays queued. */
+  /** Hand `message` to a blocked wait of its recipient, if any; otherwise it stays queued (a lead is woken). */
   private deliverMessage(message: AgentMessage): void {
     const waiting = this.messageWaiters.get(message.toAttemptId);
-    if (!waiting) return;
+    if (!waiting) {
+      if (runMeta(this.store, message.runId).leadAttemptId === message.toAttemptId) this.wakeLead(message.runId);
+      return;
+    }
     const index = waiting.findIndex((w) => w.replyTo === null || w.replyTo === message.replyTo);
     if (index < 0) return;
     const [waiter] = waiting.splice(index, 1);
@@ -964,7 +986,56 @@ export class Orchestrator {
     driveTask(taskId: string): Promise<void>;
     mergeQueue(runId: string): Promise<void>;
     finalize(runId: string): Promise<void>;
+    lead(runId: string, loop: LeadLoopHandle): Promise<void>;
+    /** Whether a run gets a lead (settings, not given up). */
+    leadEnabled(runId: string): boolean;
+    leadTools: {
+      planStatus(binding: McpBinding): PlanStatus;
+      addTask(binding: McpBinding, node: TaskNode): Promise<AmendmentResult>;
+      amendTask(binding: McpBinding, nodeId: string, patch: TaskNodePatch): Promise<AmendmentResult>;
+      cancelTask(binding: McpBinding, nodeId: string, reason: string): Promise<AmendmentResult>;
+    };
   } | null = null;
+
+  /** Open the run's lead loop (no-op when one runs). */
+  startLead(runId: string): void {
+    if (this.closed || this.leadLoops.has(runId) || !this.flows) return;
+    const flows = this.flows;
+    const loop: LeadLoopHandle = { wake: deferred<void>() };
+    this.leadLoops.set(runId, loop);
+    this.background(`lead ${runId}`, () =>
+      flows.lead(runId, loop).finally(() => {
+        if (this.leadLoops.get(runId) === loop) this.leadLoops.delete(runId);
+      }),
+    );
+  }
+
+  /** Something the lead should see happened (a message, a board change, an amendment answer). */
+  wakeLead(runId: string): void {
+    const loop = this.leadLoops.get(runId);
+    if (!loop) return;
+    loop.wake.resolve();
+    loop.wake = deferred<void>();
+  }
+
+  /** The run's lead attempt, when its coders should report to one (null = none, none yet, or given up). */
+  leadAttemptId(runId: string): string | null {
+    const meta = runMeta(this.store, runId);
+    return meta.leadDisabled ? null : meta.leadAttemptId;
+  }
+
+  /** Pause between lead session failures (tests shorten it). */
+  leadBackoffMs = 5_000;
+
+  /**
+   * Dispatch waits for the lead: a run that gets a lead holds its tasks until the lead attempt exists, so every
+   * coder is opened with its parent set (otherwise the first coders would have no `ask_lead`).
+   */
+  private leadGate(run: Run): boolean {
+    if (!this.flows?.leadEnabled(run.id)) return false;
+    this.startLead(run.id);
+    return runMeta(this.store, run.id).leadAttemptId === null;
+  }
 
   startDriver(taskId: string): void {
     if (this.closed || this.drivers.has(taskId) || !this.flows) return;
@@ -1073,6 +1144,8 @@ export class Orchestrator {
   private tickRun(run: Run, settings: Settings, otherRunsInFlight: Partial<Record<EngineKind, number>>): void {
     const nodes = this.approvedNodes(run.id);
     if (nodes.length === 0) return;
+    if (this.leadGate(run)) return;
+    this.wakeLead(run.id);
     const now = this.now();
     const plan = planDispatch({
       nodes,
@@ -1187,7 +1260,9 @@ export class Orchestrator {
     sendMessage: (binding, request) => {
       this.assertOpen();
       const from = this.store.requireAttempt(binding.attemptId);
-      const to = this.store.getAttempt(request.to);
+      const target = request.to === 'lead' ? from.parentAttemptId : request.to;
+      if (!target) throw new Error('you have no lead');
+      const to = this.store.getAttempt(target);
       if (!to || !canMessage(from, to)) throw new Error(messageRefusal(from, to));
       if (request.replyTo !== null) {
         const original = this.store.getMessage(request.replyTo);
@@ -1240,7 +1315,17 @@ export class Orchestrator {
         }
       });
     },
+    planStatus: (binding) => this.leadTools().planStatus(binding),
+    addTask: (binding, node) => this.leadTools().addTask(binding, node),
+    amendTask: (binding, nodeId, patch) => this.leadTools().amendTask(binding, nodeId, patch),
+    cancelTask: (binding, nodeId, reason) => this.leadTools().cancelTask(binding, nodeId, reason),
   };
+
+  private leadTools(): NonNullable<Orchestrator['flows']>['leadTools'] {
+    this.assertOpen();
+    if (!this.flows) throw new Error('the lead tools are not wired');
+    return this.flows.leadTools;
+  }
 
   // -- shutdown ----------------------------------------------------------------------------------
 
@@ -1258,6 +1343,7 @@ export class Orchestrator {
     this.waiters.clear();
     for (const attemptId of [...this.messageWaiters.keys()])
       this.rejectMessageWaiters(attemptId, 'engine shutting down');
+    for (const loop of this.leadLoops.values()) loop.wake.resolve();
     await Promise.allSettled([...this.live.values()].map((run) => run.close()));
     await Promise.race([Promise.allSettled([...this.jobs]), sleep(5_000)]);
     await this.tickChain.catch(() => undefined);

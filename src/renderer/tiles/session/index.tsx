@@ -207,6 +207,7 @@ const ROLE_LABEL: Record<Attempt['role'], string> = {
   finalizer: 'final review · read-only',
   coder: 'coder',
   resolver: 'conflict resolver',
+  lead: 'lead · coordinates, no file access',
 };
 
 /**
