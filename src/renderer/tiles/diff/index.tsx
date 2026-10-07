@@ -90,8 +90,14 @@ function useDiffContext(runId: string, target: DiffTarget): Context {
 
 export default function DiffTile({ runId, params, focused, visible }: TileProps<'diff'>) {
   const target = params.target;
-  const ctx = useDiffContext(runId, target);
-  const diff = useDiff(target, ctx.version);
+  const runCtx = useDiffContext(runId, target);
+  const diff = useDiff(target, runCtx.version);
+  // A project commit (`git.show`): its subject and author head the diff.
+  const commit = (diff.data as { commit?: { subject: string; author: string; shortSha: string } } | null)?.commit;
+  const ctx = useMemo(
+    () => (commit ? { ...runCtx, title: `${commit.subject} · ${commit.author}` } : runCtx),
+    [runCtx, commit],
+  );
   const [mode, setMode] = useState<Mode>('all');
   const files = useMemo(() => {
     const all = diff.data?.files ?? [];

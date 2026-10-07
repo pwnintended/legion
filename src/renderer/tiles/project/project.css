@@ -137,11 +137,19 @@ mark {
 }
 .ph-stats {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  gap: 8px;
+  gap: 4px 8px;
   min-width: 0;
   font-size: 12px;
   color: var(--overlay2);
+}
+.ph-stats > span {
+  white-space: nowrap;
+}
+.ph-stats > span.truncate {
+  white-space: normal;
+  overflow: visible;
 }
 .ph-stats strong {
   color: var(--subtext1);
@@ -197,6 +205,20 @@ mark {
 .ph-actions-gap {
   flex: 1;
 }
+/* A narrow overview keeps the primary action labelled and turns the rest into icons. */
+.ph-hero {
+  container-type: inline-size;
+}
+@container (max-width: 470px) {
+  .ph-actions .btn-ghost:not(.btn-icon) .ph-label,
+  .ph-actions .btn-ghost:not(.btn-icon) .kbd {
+    display: none;
+  }
+  .ph-actions .btn-ghost:not(.btn-icon) {
+    width: 30px;
+    padding: 0;
+  }
+}
 .ph-warn-note {
   display: flex;
   align-items: center;
@@ -245,6 +267,8 @@ mark {
   font-size: 12.5px;
 }
 .md-repo-img {
+  max-height: 200px;
+  width: auto;
   max-width: 100%;
   height: auto;
   border-radius: 6px;
@@ -692,8 +716,9 @@ mark {
   left: 0;
   z-index: 1;
   flex: none;
-  width: var(--cv-gutter, 5ch);
-  padding-right: 14px;
+  box-sizing: content-box;
+  width: var(--cv-gutter, 4ch);
+  padding: 0 16px 0 10px;
   text-align: right;
   color: var(--surface2);
   background: var(--base);
@@ -715,7 +740,11 @@ mark {
 }
 .cv-bar {
   position: absolute;
-  right: 14px;
+  left: 50%;
+  bottom: 16px;
+  translate: -50% 0;
+  max-width: calc(100% - 24px);
+  white-space: nowrap;
   z-index: 3;
   display: flex;
   align-items: center;
@@ -824,6 +853,9 @@ mark {
 }
 .cv-mode {
   margin-right: 2px;
+}
+.cv-mode .seg[aria-checked="true"] {
+  color: var(--text);
 }
 .cv-mode .seg {
   height: 24px;

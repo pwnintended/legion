@@ -7,6 +7,11 @@ work in parallel, each in its own git worktree; every task is reviewed by the *o
 rounds, verified and squash-merged into one integration branch; a final holistic review precedes a single
 draft PR.
 
+Legion starts from your **projects**: add a repository and you land on its home (README, history, open pull
+requests, a file tree, a code viewer, `git grep` search, ⌘P to jump to a file) before you ever write a prompt.
+When you know what should change, start a run there (⌘N), or select lines in a file and "Start a run about
+this…".
+
 You stay in charge at a few gates: plan approval, tool approvals and questions the agents raise (all in one
 inbox), high-risk merges, and the PR itself. Everything is visible while it runs: a scrollable tiling
 workspace per run with live transcripts, diffs, review packs and terminals, and you can steer an agent or
@@ -44,7 +49,9 @@ pnpm test:packaged                         # packages, then launches Legion.app 
 ```
 
 `tests/e2e/full-run.spec.ts` drives a whole run through the UI in fake mode and writes screenshots of every
-stage to `test-results/full-run/`.
+stage to `test-results/full-run/`; `tests/e2e/project-home.spec.ts` does the same for adding a project and
+browsing it (`test-results/project-home/`). The renderer also runs on fixture data with `?demo=1` (or
+`localStorage['legion.demo'] = '1'`), projects included.
 
 ## Package
 

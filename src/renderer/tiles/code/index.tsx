@@ -216,16 +216,8 @@ function CodeView({
     }
   }, [path, sel]);
 
-  // The action bar floats above the first selected line (below the last when that's off the top).
-  let barTop: number | null = null;
-  if (sel) {
-    const above = (sel.start - 1) * LINE_H - view.top - 38;
-    const below = sel.end * LINE_H - view.top + 6;
-    barTop = above >= 6 ? above : below <= view.height - 40 ? below : 8;
-  }
-
   return (
-    <div className="cv" style={{ '--cv-gutter': `${digits + 2}ch` } as CSSProperties}>
+    <div className="cv" style={{ '--cv-gutter': `${Math.max(2, digits)}ch` } as CSSProperties}>
       {/* biome-ignore lint/a11y/noStaticElementInteractions: text selection maps to line selection */}
       <div
         ref={scrollRef}
@@ -265,8 +257,8 @@ function CodeView({
           </div>
         </div>
       </div>
-      {sel && barTop !== null ? (
-        <div className="cv-bar" style={{ top: barTop }} data-testid="code-selection-bar">
+      {sel ? (
+        <div className="cv-bar" data-testid="code-selection-bar">
           <span className="cv-bar-range mono">{rangeLabel(sel)}</span>
           <button
             type="button"

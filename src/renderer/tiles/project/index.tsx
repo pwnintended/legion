@@ -230,7 +230,7 @@ export default function ProjectTile({ params }: TileProps<'project'>) {
             title={commandTooltip('file.goto')}
           >
             <Icon name="file" size={13} />
-            Go to file
+            <span className="ph-label">Go to file</span>
             <CommandKbd id="file.goto" />
           </button>
           <button
@@ -240,7 +240,7 @@ export default function ProjectTile({ params }: TileProps<'project'>) {
             title={commandTooltip('project.search')}
           >
             <Icon name="search" size={13} />
-            Search
+            <span className="ph-label">Search</span>
             <CommandKbd id="project.search" />
           </button>
           <span className="ph-actions-gap" />

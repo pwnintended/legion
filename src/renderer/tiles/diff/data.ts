@@ -142,7 +142,12 @@ export class DiffCache {
   }
 }
 
-const diffs = new DiffCache((target) => rpc('diff.get', { target, contextLines: 3 }));
+// Commits come from `git.show`, which also carries the commit itself (subject, author) for the header.
+const diffs = new DiffCache((target) =>
+  target.kind === 'commit'
+    ? rpc('git.show', { projectId: target.projectId, sha: target.sha })
+    : rpc('diff.get', { target, contextLines: 3 }),
+);
 
 /** The diff for a target; `version` changes (e.g. the task's updatedAt) trigger a refetch. */
 export function useDiff(target: DiffTarget, version: string): DiffEntry & { refresh: () => void } {

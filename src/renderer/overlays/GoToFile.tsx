@@ -23,11 +23,14 @@ export function GoToFileOverlay() {
   const listId = useId();
   const project = useUi(() => currentProject());
   const [input, setInput] = useState('');
-  const [results, setResults] = useState<FileMatch[] | null>(null);
+  const [found, setFound] = useState<{ query: string; list: FileMatch[] } | null>(null);
   const [active, setActive] = useState(0);
   const listRef = useRef<HTMLDivElement>(null);
+  /** ⏎ pressed before the current query's results arrived: open the best one when they do (⌘ = new column). */
+  const pendingOpen = useRef<{ newColumn: boolean } | null>(null);
   const { query, line } = parseGoto(input);
   const projectId = project?.id ?? null;
+  const results = found?.list ?? null;
 
   useEffect(() => {
     if (!projectId) return;
@@ -35,8 +38,8 @@ export function GoToFileOverlay() {
     const timer = setTimeout(
       () => {
         rpc('files.find', { projectId, query, limit: 60 }).then(
-          (found) => !cancelled && setResults(found),
-          () => !cancelled && setResults([]),
+          (list) => !cancelled && setFound({ query, list }),
+          () => !cancelled && setFound({ query, list: [] }),
         );
       },
       query ? 50 : 0,
@@ -46,6 +49,16 @@ export function GoToFileOverlay() {
       clearTimeout(timer);
     };
   }, [projectId, query]);
+
+  // biome-ignore lint/correctness/useExhaustiveDependencies: fires when results for the current query land
+  useEffect(() => {
+    const pending = pendingOpen.current;
+    const best = found?.query === query ? found.list[0] : undefined;
+    if (!pending || !best || !projectId) return;
+    pendingOpen.current = null;
+    actions.closeOverlay();
+    openFile(projectId, best.path, { line, newColumn: pending.newColumn });
+  }, [found]);
 
   const items = useMemo(() => {
     if (!projectId) return [];
@@ -96,7 +109,9 @@ export function GoToFileOverlay() {
               setActive(Math.max(0, current - 1));
             } else if (event.key === 'Enter') {
               event.preventDefault();
-              open(current, event.metaKey || event.ctrlKey);
+              const newColumn = event.metaKey || event.ctrlKey;
+              if (query && found?.query !== query) pendingOpen.current = { newColumn };
+              else open(current, newColumn);
             }
           }}
           data-testid="goto-input"

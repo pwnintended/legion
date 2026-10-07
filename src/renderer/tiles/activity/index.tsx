@@ -19,7 +19,7 @@ import { Dot, Kbd, toneColor } from '../../chrome/ui';
 import { formatCost } from '../../layout/describe';
 import { previewTile } from '../../layout/project';
 import type { TileProps } from '../../layout/types';
-import { openUrl, relativeTime, SkeletonRows, useGitLog, usePrs } from '../project/kit';
+import { openUrl, relativeTime, SkeletonRows, useGitLog, useProjectInfo, usePrs } from '../project/kit';
 import { useListNav } from '../project/list-nav';
 
 const NO_RUNS: Run[] = [];
@@ -181,6 +181,8 @@ export default function ActivityTile({ params, tileId }: TileProps<'activity'>) 
   const runs = useData((s) => selectRailGroups(s).find((g) => g.key === projectId)?.runs ?? NO_RUNS);
   const log = useGitLog(projectId, 50);
   const prs = usePrs(projectId);
+  // Pull requests only make sense for a GitHub remote.
+  const onGithub = useProjectInfo(projectId).data?.github != null;
   const openSha = useUi((s) => {
     const layout = s.layouts[projectWorkspaceKey(projectId)];
     const tile = layout ? previewTile(layout, 'diff') : null;
@@ -227,7 +229,9 @@ export default function ActivityTile({ params, tileId }: TileProps<'activity'>) 
         ))
       )}
 
-      {prs.data && (prs.data.available ? prs.data.prs.length > 0 : prs.data.reason !== 'no GitHub remote') ? (
+      {onGithub &&
+      prs.data &&
+      (prs.data.available ? prs.data.prs.length > 0 : prs.data.reason !== 'no GitHub remote') ? (
         <>
           <SectionHead title="Pull requests" count={prs.data.available ? prs.data.prs.length : null} />
           {prs.data.available ? (

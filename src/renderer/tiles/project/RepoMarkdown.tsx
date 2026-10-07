@@ -9,22 +9,7 @@ import { openFile } from '../../app/project-actions';
 import { Markdown } from '../session/Markdown';
 import '../session/session.css';
 import { openUrl, useFile } from './kit';
-
-/** Resolve `rel` against the directory of `fromPath` (repo-relative); null when it leaves the repo or is a URL. */
-export function resolveRepoPath(fromPath: string, rel: string): string | null {
-  if (!rel || /^[a-z][a-z0-9+.-]*:/i.test(rel) || rel.startsWith('//') || rel.startsWith('#')) return null;
-  const clean = decodeURIComponent(rel.split('#')[0]?.split('?')[0] ?? '');
-  if (!clean) return null;
-  const segments = clean.startsWith('/') ? [] : fromPath.split('/').slice(0, -1);
-  for (const part of clean.split('/')) {
-    if (part === '' || part === '.') continue;
-    if (part === '..') {
-      if (segments.length === 0) return null;
-      segments.pop();
-    } else segments.push(part);
-  }
-  return segments.length ? segments.join('/') : null;
-}
+import { absolutizeRepoLinks, repoTarget } from './links';
 
 function RepoImage({ projectId, path, alt }: { projectId: string; path: string; alt: string }) {
   const file = useFile(projectId, path);
@@ -39,14 +24,14 @@ export function RepoMarkdown({ projectId, path, text }: { projectId: string; pat
       ({
         img: (props: React.ImgHTMLAttributes<HTMLImageElement>) => {
           const src = props.src;
-          const resolved = typeof src === 'string' ? resolveRepoPath(path, src) : null;
+          const resolved = typeof src === 'string' ? repoTarget(src, path) : null;
           const alt = typeof props.alt === 'string' ? props.alt : '';
           return resolved ? <RepoImage projectId={projectId} path={resolved} alt={alt} /> : null;
         },
         a: (props: React.AnchorHTMLAttributes<HTMLAnchorElement>) => {
           const href = typeof props.href === 'string' ? props.href : undefined;
           const children: ReactNode = props.children;
-          const target = href ? resolveRepoPath(path, href) : null;
+          const target = href ? repoTarget(href, path) : null;
           return (
             <a
               href={href}
@@ -64,5 +49,6 @@ export function RepoMarkdown({ projectId, path, text }: { projectId: string; pat
       }) as Partial<Components>,
     [projectId, path],
   );
-  return <Markdown text={text} streaming={false} caret={false} components={components} />;
+  const source = useMemo(() => absolutizeRepoLinks(text, path), [text, path]);
+  return <Markdown text={source} streaming={false} caret={false} components={components} />;
 }
