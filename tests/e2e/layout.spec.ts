@@ -260,7 +260,17 @@ test('settings, a failed task escalated to you, a finished run archived', async 
     await expect(t2.locator('.ss-attempt')).toHaveText(['coder', 'attempt 2', 'attempt 3']);
     await window.waitForTimeout(500);
     await window.screenshot({ path: join(shots, 'failed-task.png') });
-    // R retries it from the keyboard.
+    // "Start over…" (from scratch) asks first; Esc backs out without touching anything else.
+    await t2.getByTestId('escalation-restart').click();
+    const confirm = window.getByTestId('confirm');
+    await expect(confirm).toContainText('Start T2 over from scratch?');
+    await expect(confirm.getByTestId('confirm-ok')).toHaveText('Start over');
+    await window.waitForTimeout(300);
+    await window.screenshot({ path: join(shots, 'start-over-confirm.png') });
+    await window.keyboard.press('Escape');
+    await expect(confirm).toHaveCount(0);
+    await expect(t2.getByTestId('escalation-card')).toBeVisible();
+    // R retries it from the keyboard (holding it down sends one retry).
     await t2.locator('.tile-head').click();
     await window.keyboard.press('r');
     await expect(t2.getByTestId('escalation-card')).toHaveCount(0);
