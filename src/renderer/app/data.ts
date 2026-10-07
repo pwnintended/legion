@@ -80,7 +80,8 @@ export interface EnginesState {
 }
 
 export interface ConnectionInfo {
-  status: 'connecting' | 'connected' | 'disconnected';
+  /** `degraded`: the engine answers calls but the live event stream is down (being retried). */
+  status: 'connecting' | 'connected' | 'degraded' | 'disconnected';
   generation: number;
   /** A snapshot fetch is in flight. */
   syncing: boolean;

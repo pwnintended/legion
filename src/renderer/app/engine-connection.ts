@@ -3,13 +3,17 @@ import type { ServerEvent } from '@shared/events';
 import type { ProcedureName, RpcContract, RpcInput, RpcOutput } from '@shared/rpc';
 import { type CallOptions, createRpcClient, type RpcClient, RpcError } from '@shared/rpc-transport';
 
-export type ConnectionStatus = 'connecting' | 'connected' | 'disconnected';
+/** `degraded`: calls work but the event stream could not be started (retrying). */
+export type ConnectionStatus = 'connecting' | 'connected' | 'degraded' | 'disconnected';
 
 export interface ConnectionState {
   status: ConnectionStatus;
-  /** Increments every time a new engine port is attached (renderer reload, engine restart). */
+  /** Increments every time a stream is (re)established on an engine port (renderer reload, engine restart). */
   generation: number;
 }
+
+const SUBSCRIBE_RETRY_MS = 500;
+const SUBSCRIBE_RETRY_MAX_MS = 10_000;
 
 /**
  * The renderer's link to the engine. Gets a MessagePort from main (via the preload's window.postMessage),
@@ -22,6 +26,7 @@ export class EngineConnection {
   private state: ConnectionState = { status: 'connecting', generation: 0 };
   private lastSeq = 0;
   private waiters: (() => void)[] = [];
+  private retryTimer: ReturnType<typeof setTimeout> | null = null;
   private readonly statusListeners = new Set<() => void>();
   private readonly eventListeners = new Set<(events: ServerEvent[]) => void>();
   private readonly resetListeners = new Set<(fromSeq: number) => void>();
@@ -29,7 +34,7 @@ export class EngineConnection {
     if (event.source !== window) return;
     const data = event.data as { type?: unknown } | null;
     const port = event.ports[0];
-    if (data?.type === ENGINE_PORT_MESSAGE && port) this.attach(port);
+    if (data?.type === ENGINE_PORT_MESSAGE && port) this.attachPort(port);
   };
 
   constructor(bridge: LegionBridge) {
@@ -77,6 +82,8 @@ export class EngineConnection {
 
   dispose(): void {
     window.removeEventListener('message', this.onWindowMessage);
+    if (this.retryTimer) clearTimeout(this.retryTimer);
+    this.retryTimer = null;
     this.client?.close({ closePort: true });
     this.client = null;
     this.setState({ status: 'disconnected', generation: this.state.generation });
@@ -90,31 +97,54 @@ export class EngineConnection {
     });
   }
 
-  private attach(port: MessagePort): void {
+  /**
+   * Use a new engine port. Calls go through it right away; the connection reports `connected` (a new
+   * generation, which makes the stores refetch their snapshots) only once `subscribe` succeeded, so the
+   * refetch starts from the seq the stream resumes at. A failed `subscribe` leaves the connection
+   * `degraded` (calls work, no live updates) and is retried with backoff.
+   */
+  attachPort(port: MessagePort): void {
     this.client?.close({ closePort: true });
+    if (this.retryTimer) clearTimeout(this.retryTimer);
+    this.retryTimer = null;
     const client = createRpcClient<RpcContract, ServerEvent>(port);
     this.client = client;
     client.onEvents((events) => {
+      if (client !== this.client) return;
       const fresh = events.filter((event) => event.seq > this.lastSeq);
       const last = fresh.at(-1);
       if (!last) return;
       this.lastSeq = last.seq;
       for (const listener of this.eventListeners) listener(fresh);
     });
-    void client
-      .call('subscribe', { sinceSeq: this.lastSeq })
-      .then(({ headSeq, replayed }) => {
-        if (!replayed) {
-          const fromSeq = this.lastSeq;
-          this.lastSeq = Math.max(this.lastSeq, headSeq);
-          for (const listener of this.resetListeners) listener(fromSeq);
-        }
-      })
-      .catch((error: unknown) => console.error('[legion] subscribe failed', error));
-    this.setState({ status: 'connected', generation: this.state.generation + 1 });
+    if (this.state.status === 'connected') this.setState({ status: 'connecting', generation: this.state.generation });
+    this.subscribe(client, 0);
     const waiters = this.waiters;
     this.waiters = [];
     for (const wake of waiters) wake();
+  }
+
+  private subscribe(client: RpcClient<RpcContract, ServerEvent>, failures: number): void {
+    if (client !== this.client) return;
+    void client
+      .call('subscribe', { sinceSeq: this.lastSeq })
+      .then(({ headSeq, replayed }) => {
+        if (client !== this.client) return;
+        const fromSeq = this.lastSeq;
+        if (!replayed) this.lastSeq = Math.max(this.lastSeq, headSeq);
+        this.setState({ status: 'connected', generation: this.state.generation + 1 });
+        if (!replayed) for (const listener of this.resetListeners) listener(fromSeq);
+      })
+      .catch((error: unknown) => {
+        if (client !== this.client) return;
+        console.error('[legion] subscribe failed; retrying', error);
+        this.setState({ status: 'degraded', generation: this.state.generation });
+        const delay = Math.min(SUBSCRIBE_RETRY_MAX_MS, SUBSCRIBE_RETRY_MS * 2 ** failures);
+        this.retryTimer = setTimeout(() => {
+          this.retryTimer = null;
+          this.subscribe(client, failures + 1);
+        }, delay);
+      });
   }
 
   private setState(state: ConnectionState): void {

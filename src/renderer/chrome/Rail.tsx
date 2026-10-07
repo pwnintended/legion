@@ -203,7 +203,7 @@ function EnginesFooter() {
   const statusColor =
     connection.status === 'connected'
       ? 'var(--green)'
-      : connection.status === 'connecting'
+      : connection.status === 'connecting' || connection.status === 'degraded'
         ? 'var(--peach)'
         : 'var(--red)';
   return (
@@ -246,10 +246,17 @@ function EnginesFooter() {
         })
       )}
       <div className="faint flex items-center gap-2 px-1 pt-0.5 text-[11px]">
-        <Dot color={statusColor} live={connection.status === 'connecting' || connection.syncing} />
+        <Dot
+          color={statusColor}
+          live={connection.status === 'connecting' || connection.status === 'degraded' || connection.syncing}
+        />
         engine
-        <span className="mono ml-auto" data-testid="connection-status">
-          {connection.status}
+        <span
+          className="mono ml-auto"
+          data-testid="connection-status"
+          title={connection.status === 'degraded' ? 'No live updates from the engine; reconnecting…' : undefined}
+        >
+          {connection.status === 'degraded' ? 'no live updates' : connection.status}
         </span>
       </div>
     </div>

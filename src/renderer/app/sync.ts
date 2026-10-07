@@ -62,6 +62,8 @@ export class StoreSync {
   private generation = -1;
   private refreshing: Promise<void> | null = null;
   private refreshAgain = false;
+  /** Client seq the refresh in flight read its snapshots at. */
+  private refreshSeq = -1;
   private readonly snapshotRequests = new Map<string, Promise<void>>();
   private readonly transcriptRequests = new Map<string, Promise<void>>();
   /** attemptId → number of mounted views of its transcript. */
@@ -78,7 +80,9 @@ export class StoreSync {
     this.unsubscribe.push(
       this.client.onEvents((events) => this.update((s) => applyEvents(s, events))),
       this.client.onReset((fromSeq) => {
-        void this.refresh();
+        // The new stream generation usually started a refresh already, at the seq the stream resumes from:
+        // that one covers the gap, no need for a second.
+        if (!(this.refreshing && this.refreshSeq >= this.client.seq)) void this.refresh();
         this.topUpTranscripts(fromSeq);
       }),
       this.client.onStatus(() => this.onStatus()),
@@ -135,6 +139,7 @@ export class StoreSync {
     this.update((s) => ({ ...s, connection: { ...s.connection, syncing: true } }));
     try {
       const atSeq = this.client.seq;
+      this.refreshSeq = atSeq;
       const [list, inbox] = await Promise.all([
         // `includeArchived` is new on the engine side; older engines ignore the extra key.
         this.client.call(
