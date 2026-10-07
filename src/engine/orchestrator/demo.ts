@@ -109,11 +109,24 @@ const usage = (cost: number): FakeStep => ({
   costUsd: cost,
 });
 
+/** The demo agent says which attachments it received (the E2E test reads it in the planner's session). */
+function attachmentSteps(ctx: Parameters<FakeScript>[0]): FakeStep[] {
+  if (ctx.attachments.length === 0) return [];
+  const names = ctx.attachments.map((a) => `${a.name} (${a.kind})`).join(', ');
+  return [
+    {
+      kind: 'text',
+      text: `Received ${ctx.attachments.length} attachment${ctx.attachments.length === 1 ? '' : 's'}: ${names}.`,
+    },
+  ];
+}
+
 export const demoScript: FakeScript = (ctx) => {
   const props = schemaProps(ctx.opts.outputSchema);
   const role = ctx.opts.role;
   if (role === 'planner' && props.includes('questions')) {
     return [
+      ...attachmentSteps(ctx),
       { kind: 'reasoning', text: 'Skimming the repository layout.' },
       { kind: 'tool', name: 'Glob', toolKind: 'read', input: { pattern: '**/*' }, output: 'README.md' },
       usage(0.02),
@@ -133,6 +146,7 @@ export const demoScript: FakeScript = (ctx) => {
   }
   if (role === 'planner') {
     return [
+      ...attachmentSteps(ctx),
       { kind: 'text', text: 'Exploring the code base and drafting the task graph.' },
       { kind: 'tool', name: 'Read', toolKind: 'read', input: { path: 'README.md' }, output: '# readme' },
       usage(0.05),

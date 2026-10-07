@@ -28,7 +28,9 @@ export function registerOrchestratorHandlers(server: EngineRpcServer, o: Orchest
 
   server.implement('runs.get', ({ runId }) => store.runSnapshot(runId));
   server.implement('runs.create', (input) => createRun(o, input));
-  server.implement('runs.answerClarify', ({ runId, answers }) => answerClarify(o, runId, answers));
+  server.implement('runs.answerClarify', ({ runId, answers, attachmentIds }) =>
+    answerClarify(o, runId, answers, null, attachmentIds ?? null),
+  );
   server.implement('runs.updatePlan', (input) => updatePlan(o, input));
   server.implement('runs.approvePlan', ({ runId, planId }) => approvePlan(o, runId, planId));
   server.implement('runs.requestPlanRevision', ({ runId, planId, feedback }) =>
@@ -53,8 +55,8 @@ export function registerOrchestratorHandlers(server: EngineRpcServer, o: Orchest
   server.implement('inbox.list', (filter) => store.listInbox(filter));
   server.implement('inbox.resolve', ({ itemId, resolution }) => resolveInbox(o, itemId, resolution));
 
-  server.implement('sessions.send', async ({ attemptId, text, priority }) => {
-    await sendToSession(o, attemptId, text, priority);
+  server.implement('sessions.send', async ({ attemptId, text, priority, attachmentIds }) => {
+    await sendToSession(o, attemptId, text, priority, attachmentIds ?? null);
     return { ok: true };
   });
   server.implement('sessions.interrupt', async ({ attemptId }) => {

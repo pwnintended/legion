@@ -6,9 +6,10 @@ import { constants } from 'node:fs';
 import { access, lstat, mkdir, readlink, rm, symlink } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { delimiter, isAbsolute, join, resolve } from 'node:path';
-import type { SessionOptions } from '@shared/engine';
+import type { SessionAttachment, SessionOptions } from '@shared/engine';
 import { CODEX_TOOL_TIMEOUT_SEC } from '../../mcp/config';
 import { isAllowedCommand } from '../../util/shell';
+import { messageText, type ReadFile } from '../attachments';
 import type { JsonValue } from './protocol/serde_json/JsonValue';
 import type {
   CommandExecutionRequestApprovalParams,
@@ -180,12 +181,34 @@ export function threadResumeParams(threadId: string, opts: SessionOptions): Thre
   };
 }
 
-export function userInput(text: string): UserInput[] {
-  return [{ type: 'text', text, text_elements: [] }];
+/** What Codex takes natively: images, as `localImage` inputs (the app-server reads the file). */
+export const codexNative = (attachment: SessionAttachment): boolean => attachment.kind === 'image';
+
+/**
+ * A user message: one text input (text files inlined, PDFs and other files referenced by path) followed by
+ * a `localImage` input per image attachment.
+ */
+export function userInput(
+  text: string,
+  attachments?: readonly SessionAttachment[] | null,
+  read?: ReadFile,
+): UserInput[] {
+  const input: UserInput[] = [
+    { type: 'text', text: messageText(text, attachments, codexNative, read), text_elements: [] },
+  ];
+  for (const attachment of attachments ?? []) {
+    if (codexNative(attachment)) input.push({ type: 'localImage', path: attachment.path });
+  }
+  return input;
 }
 
-export function turnStartParams(threadId: string, text: string, opts: SessionOptions): TurnStartParams {
-  const params: TurnStartParams = { threadId, input: userInput(text) };
+export function turnStartParams(
+  threadId: string,
+  text: string,
+  opts: SessionOptions,
+  attachments?: readonly SessionAttachment[] | null,
+): TurnStartParams {
+  const params: TurnStartParams = { threadId, input: userInput(text, attachments) };
   // Legion's effort scale (low..max) is a subset of Codex's (low..max, ultra).
   if (opts.effort) params.effort = opts.effort;
   if (opts.outputSchema) params.outputSchema = opts.outputSchema as JsonValue;

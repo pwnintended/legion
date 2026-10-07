@@ -1,6 +1,7 @@
 /* Clarify tile. Option chips (.opt-chip) are shared with the inbox and live in overlays/overlays.css. */
 
 .cl {
+  position: relative;
   container-type: inline-size;
   display: flex;
   flex-direction: column;
@@ -92,6 +93,18 @@
 .cl-note:focus {
   border-color: var(--mauve);
 }
+.cl-attachments:not(:empty) {
+  flex: none;
+  padding: 10px 16px 2px;
+  border-top: 1px solid var(--hairline);
+}
+.cl-sent-attachments {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 18px;
+  font-size: 12px;
+}
 .cl-foot {
   flex: none;
   display: flex;
@@ -104,6 +117,12 @@
 .cl-progress {
   margin-right: auto;
   font-size: 12px;
+}
+.cl-attachments:not(:empty) + .cl-foot {
+  border-top: 0;
+}
+.cl-foot .at-attach {
+  margin-left: -6px;
 }
 @container (max-width: 420px) {
   .cl-progress-more {

@@ -1,7 +1,8 @@
 /**
  * Composer (⌘N): describe the work or paste a GitHub / Linear URL, pick a repository (recent, found on this
  * Mac, a typed path, Browse… ⌘O, or a folder dropped from Finder), a base branch and the planner engine, then
- * ⌘⏎ creates the run and focuses its workspace. The draft survives closing the overlay.
+ * ⌘⏎ creates the run and focuses its workspace. Screenshots and files attach by paste (⌘V), drop or the Attach
+ * button (⌘⇧A). The draft, attachments included, survives closing the overlay.
  */
 import type { EngineKind } from '@shared/domain';
 import type { EngineInfo } from '@shared/engine';
@@ -11,6 +12,17 @@ import { seededBase, seededText, takeComposerSeed } from '../app/composer-seed';
 import { rpc, useActiveRun, useEngines, useSettings } from '../app/hooks';
 import { adoptRun } from '../app/run-actions';
 import { actions } from '../app/store';
+import {
+  AttachButton,
+  AttachmentTray,
+  attachShortcut,
+  createDraft,
+  pasteInto,
+  splitDrop,
+  useDraft,
+  useFileDrop,
+} from '../attachments/Attachments';
+import { dragIntent } from '../attachments/model';
 import { Icon } from '../chrome/icons';
 import { Kbd } from '../chrome/ui';
 import { errorMessage } from '../tiles/session/actions';
@@ -26,6 +38,8 @@ interface Draft {
   clarify: boolean;
 }
 let saved: Draft = { text: '', repoPath: null, base: '', engine: null, clarify: true };
+/** The composer's attachments: kept (uploaded drafts) while the overlay is closed. */
+const savedAttachments = createDraft();
 
 export interface IssueLink {
   url: string;
@@ -96,16 +110,6 @@ type LegionWindow = Window & {
   };
 };
 
-/** The folder a drop carries: the File's real path (Electron), else a file:// URL. */
-function droppedPath(data: DataTransfer): string | null {
-  const file = data.files[0];
-  const fromFile = file ? ((window as LegionWindow).legion?.pathForFile?.(file) ?? '') : '';
-  if (fromFile) return fromFile;
-  return pathFromFileUrl(data.getData('text/uri-list'));
-}
-
-const hasFiles = (event: React.DragEvent) => [...event.dataTransfer.types].includes('Files');
-
 export function ComposerOverlay() {
   const ids = useId();
   const activeRun = useActiveRun();
@@ -129,9 +133,15 @@ export function ComposerOverlay() {
   const [attempted, setAttempted] = useState(false);
   const [creating, setCreating] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
-  const [dragging, setDragging] = useState(false);
-  const dragDepth = useRef(0);
   const textRef = useRef<HTMLTextAreaElement>(null);
+  const attachments = useDraft(savedAttachments);
+  const uploading = attachments.items.some((i) => i.status === 'uploading');
+  const drop = useFileDrop((data) => {
+    const { folders, files } = splitDrop(data);
+    const folder = folders[0] ?? (files.length === 0 ? pathFromFileUrl(data.getData('text/uri-list')) : null);
+    if (folder) selectRepo(folder);
+    if (files.length) void savedAttachments.addFiles(files);
+  });
 
   useEffect(() => {
     saved = { text, repoPath, base, engine, clarify };
@@ -241,7 +251,7 @@ export function ComposerOverlay() {
     engines.status === 'ready' && !engineState(engineInfo).ok
       ? `${engine === 'codex' ? 'Codex' : 'Claude Code'} is ${engineState(engineInfo).note}.`
       : null;
-  const ready = !textError && !repoError && !engineError && inspect.status !== 'loading';
+  const ready = !textError && !repoError && !engineError && inspect.status !== 'loading' && !uploading;
   const blocked = textError
     ? 'Describe the work first'
     : !repoPath
@@ -252,7 +262,9 @@ export function ComposerOverlay() {
           ? 'Pick a git repository first'
           : engineError
             ? engineError
-            : null;
+            : uploading
+              ? 'Attachments are still uploading…'
+              : null;
   const branchState = branches && branches.root === root ? branches.value : null;
 
   const submit = async () => {
@@ -273,8 +285,10 @@ export function ComposerOverlay() {
         plannerEngine: engine,
         plannerModel: null,
         skipClarify: !clarify,
+        attachmentIds: savedAttachments.ids,
       });
       saved = { text: '', repoPath, base: '', engine, clarify };
+      savedAttachments.clear();
       actions.closeOverlay();
       // Into the store first: the run's `run.updated` may still be on its way, and an active run the store
       // doesn't know is replaced by the first run of the list on the next data event.
@@ -302,34 +316,17 @@ export function ComposerOverlay() {
         } else if (event.key.toLowerCase() === 'o' && (event.metaKey || event.ctrlKey) && !event.shiftKey) {
           event.preventDefault();
           void chooseFolder();
+        } else {
+          attachShortcut(savedAttachments, event);
         }
       }}
     >
-      {/* biome-ignore lint/a11y/noStaticElementInteractions: a drop target for folders dragged from Finder */}
+      {/* A drop target for files (attachments) and folders (the repository) from Finder. */}
       <div
         className="cmp-root"
-        onDragEnter={(event) => {
-          if (!hasFiles(event)) return;
-          event.preventDefault();
-          dragDepth.current += 1;
-          setDragging(true);
-        }}
-        onDragOver={(event) => {
-          if (!hasFiles(event)) return;
-          event.preventDefault();
-          event.dataTransfer.dropEffect = 'link';
-        }}
-        onDragLeave={() => {
-          dragDepth.current = Math.max(0, dragDepth.current - 1);
-          if (dragDepth.current === 0) setDragging(false);
-        }}
-        onDrop={(event) => {
-          if (!hasFiles(event) && !event.dataTransfer.getData('text/uri-list')) return;
-          event.preventDefault();
-          dragDepth.current = 0;
-          setDragging(false);
-          const path = droppedPath(event.dataTransfer);
-          if (path) selectRepo(path);
+        {...drop.handlers}
+        onPaste={(event) => {
+          if (pasteInto(savedAttachments, event)) setSubmitError(null);
         }}
       >
         <div className="ovl-head ovl-head-plain">
@@ -364,7 +361,7 @@ export function ComposerOverlay() {
               value={text}
               data-autofocus
               spellCheck
-              placeholder="Describe an issue or feature, or paste a GitHub / Linear URL…"
+              placeholder="Describe an issue or feature, paste a GitHub / Linear URL or a screenshot…"
               aria-invalid={attempted && !!textError}
               aria-describedby={`${ids}-text-note`}
               onChange={(event) => setText(event.target.value)}
@@ -375,10 +372,12 @@ export function ComposerOverlay() {
                 {link.provider === 'github' ? 'GitHub' : 'Linear'} · {link.label}
               </span>
             ) : null}
+            <AttachButton draft={savedAttachments} label="Attach" className="cmp-attach" />
           </div>
           <span id={`${ids}-text-note`} className="cmp-error" hidden={!(attempted && textError)}>
             {textError}
           </span>
+          <AttachmentTray draft={savedAttachments} returnFocus={() => textRef.current?.focus()} />
 
           <div className="cmp-row">
             <div className="cmp-field cmp-repo">
@@ -502,17 +501,32 @@ export function ComposerOverlay() {
             for your sign-off. Nothing runs until you approve it.
           </p>
         </form>
-        {dragging ? (
-          <div className="cmp-drop" data-testid="composer-drop">
-            <span className="cmp-drop-mark">
-              <Icon name="folder" size={20} />
-            </span>
-            <span className="cmp-drop-title">Drop a folder to use it as the repository</span>
-            <span className="cmp-drop-sub">Any folder inside a git checkout works.</span>
-          </div>
-        ) : null}
+        {drop.dragging ? <DropHint intent={dragIntent(drop.dragging)} /> : null}
       </div>
     </OverlayPanel>
+  );
+}
+
+function DropHint({ intent }: { intent: 'files' | 'either' }) {
+  return (
+    <div className="cmp-drop" data-testid="composer-drop" data-intent={intent}>
+      <span className="cmp-drop-marks">
+        <span className="cmp-drop-mark">
+          <Icon name="paperclip" size={19} />
+        </span>
+        {intent === 'either' ? (
+          <span className="cmp-drop-mark cmp-drop-mark-alt">
+            <Icon name="folder" size={19} />
+          </span>
+        ) : null}
+      </span>
+      <span className="cmp-drop-title">{intent === 'files' ? 'Drop to attach' : 'Drop files or a folder'}</span>
+      <span className="cmp-drop-sub">
+        {intent === 'files'
+          ? 'Images up to 10 MB · text, code and PDFs up to 2 MB'
+          : 'Files are attached for the agents · a folder becomes the repository'}
+      </span>
+    </div>
   );
 }
 

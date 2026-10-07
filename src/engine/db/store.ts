@@ -10,6 +10,7 @@
  */
 
 import type { SQLInputValue } from 'node:sqlite';
+import type { AttachmentRef } from '@shared/attachments';
 import {
   ATTEMPT_TRANSITIONS,
   type Attempt,
@@ -103,6 +104,7 @@ const runs = new Table<Run>('runs', {
   prUrl: ['pr_url'],
   pr: ['pr', 'json'],
   archived: ['archived', 'bool'],
+  attachments: ['attachments', 'json'],
   error: ['error'],
   createdAt: ['created_at'],
   updatedAt: ['updated_at'],
@@ -231,7 +233,21 @@ export type NewRun = Pick<
   Run,
   'repoPath' | 'baseRef' | 'title' | 'issueText' | 'issueUrl' | 'plannerEngine' | 'plannerModel'
 > &
-  Partial<Pick<Run, 'id' | 'status' | 'projectId'>>;
+  Partial<Pick<Run, 'id' | 'status' | 'attachments' | 'projectId'>>;
+
+/** An `attachments` row: the ref plus who claimed it (null = a draft) and when it was added. */
+export type AttachmentRow = AttachmentRef & { runId: string | null; createdAt: number };
+
+const attachmentFromRow = (row: Row): AttachmentRow => ({
+  id: row.id as string,
+  name: row.name as string,
+  mime: row.mime as string,
+  kind: row.kind as AttachmentRef['kind'],
+  size: Number(row.size),
+  sha256: row.sha256 as string,
+  runId: (row.run_id as string | null) ?? null,
+  createdAt: Number(row.created_at),
+});
 export type NewPlan = Pick<Plan, 'runId' | 'markdown' | 'dag' | 'source' | 'feedback'> & Partial<Pick<Plan, 'id'>>;
 export type NewTask = Pick<Task, 'runId' | 'nodeId'> & Partial<Pick<Task, 'id' | 'status'>>;
 export type NewAttempt = Pick<Attempt, 'runId' | 'taskId' | 'role' | 'engine' | 'model' | 'effort'> &
@@ -511,6 +527,48 @@ export class Store {
     });
   }
 
+  // -- attachments ------------------------------------------------------------------------------
+
+  insertAttachment(ref: AttachmentRef): AttachmentRow {
+    const createdAt = this.now();
+    this.run(
+      'INSERT INTO attachments (id, sha256, name, mime, kind, size, created_at, run_id) VALUES (?, ?, ?, ?, ?, ?, ?, NULL)',
+      ref.id,
+      ref.sha256,
+      ref.name,
+      ref.mime,
+      ref.kind,
+      ref.size,
+      createdAt,
+    );
+    return { ...ref, runId: null, createdAt };
+  }
+
+  getAttachment(id: string): AttachmentRow | null {
+    const row = this.get('SELECT * FROM attachments WHERE id = ?', id);
+    return row ? attachmentFromRow(row) : null;
+  }
+
+  /** Mark drafts as used by a run (already claimed rows keep their run). */
+  claimAttachments(ids: readonly string[], runId: string): void {
+    this.transaction(() => {
+      for (const id of ids) this.run('UPDATE attachments SET run_id = ? WHERE id = ? AND run_id IS NULL', runId, id);
+    });
+  }
+
+  /** Delete drafts added before `before`; returns the sha256 values no row references any more. */
+  deleteDraftAttachments(before: number): string[] {
+    return this.transaction(() => {
+      const rows = this.all('SELECT DISTINCT sha256 FROM attachments WHERE run_id IS NULL AND created_at < ?', before);
+      this.run('DELETE FROM attachments WHERE run_id IS NULL AND created_at < ?', before);
+      return rows.map((r) => r.sha256 as string).filter((sha) => !this.attachmentShaInUse(sha));
+    });
+  }
+
+  attachmentShaInUse(sha256: string): boolean {
+    return this.get('SELECT 1 AS used FROM attachments WHERE sha256 = ? LIMIT 1', sha256) !== undefined;
+  }
+
   // -- recent repos -----------------------------------------------------------------------------
 
   touchRecentRepo(path: string, name: string): void {
@@ -623,6 +681,7 @@ export class Store {
         prUrl: null,
         pr: null,
         archived: false,
+        attachments: input.attachments?.length ? input.attachments : null,
         error: null,
         createdAt: now,
         updatedAt: now,

@@ -11,6 +11,7 @@
  * calling `subscribe`.
  */
 import { z } from 'zod';
+import { AttachmentRefSchema } from './attachments';
 import {
   AttemptSchema,
   EffortSchema,
@@ -422,6 +423,21 @@ export const ArchiveReportSchema = z.object({
 });
 export type ArchiveReport = z.infer<typeof ArchiveReportSchema>;
 
+/** `attachments.get`: the ref plus its content for previews (images as base64, text capped). */
+export const AttachmentContentSchema = z.object({
+  attachment: AttachmentRefSchema,
+  /** Images only. */
+  dataBase64: z.string().nullable(),
+  /** Text files only, at most `ATTACHMENT_LIMITS.previewChars` characters. */
+  text: z.string().nullable(),
+  /** The text was cut at the preview limit. */
+  truncated: z.boolean(),
+});
+export type AttachmentContent = z.infer<typeof AttachmentContentSchema>;
+
+/** Attachment ids for `runs.create`, `runs.answerClarify` and `sessions.send` (absent/null = none). */
+const AttachmentIds = z.array(IdSchema).max(10).nullish();
+
 // ---------------------------------------------------------------------------------------------
 // The contract
 // ---------------------------------------------------------------------------------------------
@@ -544,11 +560,13 @@ export const rpcContract = {
       plannerEngine: EngineKindSchema,
       plannerModel: z.string().nullable(),
       skipClarify: z.boolean(),
+      /** Draft attachments (`attachments.add`) for the planner, coders and reviewers. */
+      attachmentIds: AttachmentIds,
     }),
     output: RunSchema,
   },
   'runs.answerClarify': {
-    input: z.object({ runId: IdSchema, answers: z.array(QuestionAnswerSchema) }),
+    input: z.object({ runId: IdSchema, answers: z.array(QuestionAnswerSchema), attachmentIds: AttachmentIds }),
     output: RunSchema,
   },
   /** Human edit of the plan: stores a new plan version (source `user`) after DAG validation. */
@@ -639,7 +657,12 @@ export const rpcContract = {
 
   // live sessions -------------------------------------------------------------------------------
   'sessions.send': {
-    input: z.object({ attemptId: IdSchema, text: z.string().min(1), priority: z.enum(['now', 'next']) }),
+    input: z.object({
+      attemptId: IdSchema,
+      text: z.string().min(1),
+      priority: z.enum(['now', 'next']),
+      attachmentIds: AttachmentIds,
+    }),
     output: OkSchema,
   },
   'sessions.interrupt': { input: ByAttempt, output: OkSchema },
@@ -682,7 +705,32 @@ export const rpcContract = {
   'terminals.resize': { input: z.object({ terminalId: IdSchema, ...TerminalSize }), output: OkSchema },
   'terminals.close': { input: z.object({ terminalId: IdSchema }), output: OkSchema },
 
-  // event stream --------------------------------------------------------------------------------
+  // attachments ---------------------------------------------------------------------------------
+  /**
+   * Store a file as a draft attachment: bytes (`dataBase64`, e.g. a pasted screenshot) or a local file
+   * (`path`, from a drop or the file dialog). The type is sniffed from the content; images ≤ 10 MB, text /
+   * code / PDF ≤ 2 MB, anything else is refused (`bad_request`). Content-addressed under
+   * `<dataDir>/attachments/`; a draft nothing claims within a day is garbage-collected.
+   */
+  'attachments.add': {
+    input: z
+      .object({
+        name: z.string().min(1),
+        /** The clipboard's type, if known (informational: the content decides). */
+        mime: z.string().nullish(),
+        dataBase64: z.string().nullish(),
+        /** Absolute path of a local file. */
+        path: z.string().min(1).nullish(),
+      })
+      .refine((v) => (v.dataBase64 == null) !== (v.path == null), {
+        message: 'pass exactly one of dataBase64 and path',
+      }),
+    output: AttachmentRefSchema,
+  },
+  /** An attachment with its content for previews. */
+  'attachments.get': { input: z.object({ id: IdSchema }), output: AttachmentContentSchema },
+
+  // event stream ----------------------------------------------------------------------------------
   /**
    * Start (or resume) the push stream for this connection. The engine replays events with
    * seq > sinceSeq when it still can (`replayed: true`); otherwise (`replayed: false`) the client must

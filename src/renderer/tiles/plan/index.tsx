@@ -3,12 +3,14 @@
  * global verification and the estimate; the sign-off footer while the plan awaits approval, and a drift
  * indicator (work outside the plan's declared scope) once it executes.
  */
+
 import { checkScope } from '@engine/orchestrator/core/scope';
 import type { InboxItemOf, Plan, QuestionAnswer, Run } from '@shared/domain';
 import { useMemo, useRef, useState } from 'react';
 import { useShallow } from 'zustand/react/shallow';
 import { attemptsOfRun, tasksOfRun } from '../../app/data';
 import { useData, useLatestPlan, useRun } from '../../app/hooks';
+import { ChipList, chipOfRef } from '../../attachments/Attachments';
 import { Bar, Chip, EngineChip, Kbd } from '../../chrome/ui';
 import { ENGINE_LABEL, formatClock } from '../../layout/describe';
 import type { TileCardProps, TileProps } from '../../layout/types';
@@ -129,6 +131,11 @@ function Drafting({ run }: { run: Run }) {
             <div className="lg-sec">Issue</div>
             <Markdown>{run.issueText}</Markdown>
           </>
+        ) : null}
+        {run.attachments?.length ? (
+          <div className="mt-3" data-testid="run-attachments">
+            <ChipList chips={run.attachments.map((a) => chipOfRef(a))} size="sm" label="Attached to the issue" />
+          </div>
         ) : null}
         <div className="mt-5 flex flex-col gap-2.5" aria-hidden="true">
           {[86, 64, 92, 48].map((w) => (

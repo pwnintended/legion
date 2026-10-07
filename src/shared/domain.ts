@@ -7,6 +7,7 @@
  *   compare-and-set in the engine's repository layer, which appends an event in the same transaction.
  */
 import { z } from 'zod';
+import { AttachmentRefSchema } from './attachments';
 import { IdSchema, NodeIdSchema } from './ids';
 
 // ---------------------------------------------------------------------------------------------
@@ -269,7 +270,7 @@ export const RunSchema = z.object({
   id: IdSchema,
   repoPath: z.string(),
   /**
-   * The run's project (migration 003; backfilled from `repoPath`). Null when the project was removed. Always
+   * The run's project (migration 004; backfilled from `repoPath`). Null when the project was removed. Always
    * present on engine rows; optional in the type for older payloads and fixtures (see `pr`).
    */
   projectId: IdSchema.nullable().optional(),
@@ -292,6 +293,8 @@ export const RunSchema = z.object({
   pr: PullRequestSchema.nullable().optional(),
   /** Cleaned up and hidden from `runs.list` (`runs.archive`). Always present on engine rows (see `pr`). */
   archived: z.boolean().optional(),
+  /** Files attached when the run was created (`runs.create`); optional like `pr`, absent = none. */
+  attachments: z.array(AttachmentRefSchema).nullable().optional(),
   error: z.string().nullable(),
   createdAt: TimestampSchema,
   updatedAt: TimestampSchema,
@@ -539,7 +542,11 @@ export const InboxPayloadSchemas = {
 
 export const InboxResolutionSchemas = {
   approval: z.object({ decision: ApprovalDecisionSchema }),
-  question: z.object({ answers: z.array(QuestionAnswerSchema) }),
+  question: z.object({
+    answers: z.array(QuestionAnswerSchema),
+    /** Files attached to the answers (clarify); absent = none. */
+    attachments: z.array(AttachmentRefSchema).nullish(),
+  }),
   plan_signoff: z.object({ approved: z.boolean(), feedback: z.string().nullable() }),
   escalation: z.object({ action: EscalationResolutionActionSchema, note: z.string().nullable() }),
   pr_ready: z.object({ approved: z.boolean(), title: z.string().nullable(), body: z.string().nullable() }),

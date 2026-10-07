@@ -1,11 +1,26 @@
 /**
  * Clarify tile: the planner's questions before it drafts the plan. Each question offers option chips and a free
  * text note; answers go to `runs.answerClarify`. "Skip" tells the planner to make (and note) its own assumptions.
+ * Screenshots or files (paste, drop, Attach ⌘⇧A) travel with the answers to the planner.
  */
+import type { AttachmentRef } from '@shared/attachments';
 import type { InboxItemOf, QuestionAnswer } from '@shared/domain';
-import { useId, useState } from 'react';
+import { useId, useRef, useState } from 'react';
 import { rpc, useInboxItem, useRun } from '../../app/hooks';
 import { itemResolved, singleFlight, whenData } from '../../app/pending';
+import {
+  AttachButton,
+  AttachmentTray,
+  attachShortcut,
+  ChipList,
+  chipOfRef,
+  createDraft,
+  pasteInto,
+  splitDrop,
+  useDraft,
+  useFileDrop,
+} from '../../attachments/Attachments';
+import type { AttachmentDraft } from '../../attachments/model';
 import { Icon } from '../../chrome/icons';
 import { Chip, Kbd } from '../../chrome/ui';
 import type { TileCardProps, TileProps } from '../../layout/types';
@@ -13,6 +28,17 @@ import { errorMessage } from '../session/actions';
 import './clarify.css';
 
 export const ASSUME = 'No preference: make a reasonable assumption and note it in the plan.';
+
+/** Attachments for the answers, per question item (kept while the tile is closed). */
+const drafts = new Map<string, AttachmentDraft>();
+function answerDraft(itemId: string): AttachmentDraft {
+  let draft = drafts.get(itemId);
+  if (!draft) {
+    draft = createDraft();
+    drafts.set(itemId, draft);
+  }
+  return draft;
+}
 
 interface Answer {
   option: string | null;
@@ -44,6 +70,15 @@ function Questions({ item, runId, planner }: { item: InboxItemOf<'question'>; ru
     status: 'idle',
   });
   const answered = questions.filter((q) => composeAnswer(answers[q.id])).length;
+  const draft = answerDraft(item.id);
+  const { items } = useDraft(draft);
+  const uploading = items.some((i) => i.status === 'uploading');
+  const formRef = useRef<HTMLFormElement>(null);
+  const drop = useFileDrop((data) => {
+    const { folders, files } = splitDrop(data);
+    if (folders.length) draft.report("Folders can't be attached. Drop files instead.");
+    if (files.length) void draft.addFiles(files);
+  });
   const set = (id: string, patch: Partial<Answer>) =>
     setAnswers((all) => ({ ...all, [id]: { option: null, note: '', ...all[id], ...patch } }));
 
@@ -54,7 +89,13 @@ function Questions({ item, runId, planner }: { item: InboxItemOf<'question'>; ru
     once(async () => {
       setState({ status: 'sending' });
       try {
-        await rpc('runs.answerClarify', { runId, answers: list });
+        const attachmentIds = draft.ids;
+        await rpc('runs.answerClarify', {
+          runId,
+          answers: list,
+          ...(attachmentIds.length ? { attachmentIds } : {}),
+        });
+        draft.clear();
         // Stays "sending" until the question is resolved in the store (the tile then shows the answers).
         if (!(await whenData(itemResolved(item.id)))) setState({ status: 'idle' });
       } catch (error) {
@@ -64,17 +105,21 @@ function Questions({ item, runId, planner }: { item: InboxItemOf<'question'>; ru
   const submit = () =>
     send(questions.map((q) => ({ questionId: q.id, answer: composeAnswer(answers[q.id]) || ASSUME })));
   const skip = () => send(questions.map((q) => ({ questionId: q.id, answer: ASSUME })));
-  const busy = state.status === 'sending';
+  const busy = state.status === 'sending' || uploading;
 
   return (
     <form
+      ref={formRef}
       className="cl"
       data-testid="clarify"
+      {...drop.handlers}
+      onPaste={(event) => void pasteInto(draft, event)}
       onSubmit={(event) => {
         event.preventDefault();
         void submit();
       }}
       onKeyDown={(event) => {
+        if (attachShortcut(draft, event)) return;
         if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) {
           event.preventDefault();
           if (!event.repeat) void submit();
@@ -133,7 +178,15 @@ function Questions({ item, runId, planner }: { item: InboxItemOf<'question'>; ru
           })}
         </ol>
       </div>
+      <div className="cl-attachments">
+        <AttachmentTray
+          draft={draft}
+          size="sm"
+          returnFocus={() => formRef.current?.querySelector<HTMLElement>('.cl-note')?.focus()}
+        />
+      </div>
       <div className="cl-foot">
+        <AttachButton draft={draft} label="Attach" testId="clarify-attach" />
         <span className="faint cl-progress">
           {answered}/{questions.length} answered
           {answered < questions.length ? (
@@ -142,16 +195,24 @@ function Questions({ item, runId, planner }: { item: InboxItemOf<'question'>; ru
         </span>
         {state.status === 'error' ? <span className="cl-error">{state.message}</span> : null}
         <button type="submit" className="btn btn-primary" disabled={busy} data-testid="clarify-submit">
-          {busy ? 'Sending…' : 'Send answers'}
+          {state.status === 'sending' ? 'Sending…' : uploading ? 'Uploading…' : 'Send answers'}
           <Kbd>⌘⏎</Kbd>
         </button>
       </div>
+      {drop.dragging ? (
+        <div className="at-drop">
+          <Icon name="paperclip" size={16} />
+          Drop to attach to your answers
+        </div>
+      ) : null}
     </form>
   );
 }
 
 function Answered({ item }: { item: InboxItemOf<'question'> }) {
-  const answers = (item.resolution as { answers?: QuestionAnswer[] } | null)?.answers ?? [];
+  const resolution = item.resolution as { answers?: QuestionAnswer[]; attachments?: AttachmentRef[] | null } | null;
+  const answers = resolution?.answers ?? [];
+  const attachments = resolution?.attachments ?? [];
   return (
     <div className="cl-scroll cl-done">
       <div className="cl-intro">
@@ -174,6 +235,12 @@ function Answered({ item }: { item: InboxItemOf<'question'> }) {
           );
         })}
       </ol>
+      {attachments.length ? (
+        <div className="cl-sent-attachments">
+          <span className="faint">Attached</span>
+          <ChipList chips={attachments.map((a) => chipOfRef(a))} size="sm" label="Attached to the answers" />
+        </div>
+      ) : null}
     </div>
   );
 }

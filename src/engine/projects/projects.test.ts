@@ -398,12 +398,12 @@ describe('helpers', () => {
   });
 });
 
-describe('migration 003', () => {
+describe('migration 004', () => {
   it('backfills one project per repository of existing runs', () => {
     const path = join(dir.path, 'old.db');
     const db = new DatabaseSync(path);
-    for (const migration of MIGRATIONS.filter((m) => m.version <= 2)) db.exec(migration.up);
-    db.exec('PRAGMA user_version = 2');
+    for (const migration of MIGRATIONS.filter((m) => m.version <= 3)) db.exec(migration.up);
+    db.exec('PRAGMA user_version = 3');
     const insert = db.prepare(
       `INSERT INTO runs (id, repo_path, base_ref, title, issue_text, status, planner_engine, created_at, updated_at)
        VALUES (?, ?, 'main', 't', 'i', 'done', 'claude', ?, ?)`,

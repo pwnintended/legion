@@ -384,7 +384,13 @@
   color: var(--overlay2);
   line-height: 1.5;
 }
-/* Drag a folder from Finder onto the composer. */
+/* Attach (paperclip) in the text field's bottom-right corner; the issue-link chip sits bottom-left. */
+.cmp-attach {
+  position: absolute;
+  right: 7px;
+  bottom: 7px;
+}
+/* Drag files (attachments) or a folder (repository) from Finder onto the composer. */
 .cmp-drop {
   position: absolute;
   inset: 8px;
@@ -400,6 +406,14 @@
   backdrop-filter: blur(2px);
   pointer-events: none;
   animation: pk-in 0.14s var(--ease-out) both;
+}
+.cmp-drop-marks {
+  display: flex;
+  gap: 8px;
+}
+.cmp-drop-mark.cmp-drop-mark-alt {
+  background: color-mix(in srgb, var(--teal) 16%, transparent);
+  color: var(--teal);
 }
 .cmp-drop-mark {
   display: flex;

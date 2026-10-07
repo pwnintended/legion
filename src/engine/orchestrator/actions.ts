@@ -364,7 +364,7 @@ export async function resolveInbox(o: Orchestrator, itemId: string, resolution: 
       const question = item as InboxItemOf<'question'>;
       if (question.payload.source === 'clarify') {
         const resolved = o.store.resolveInboxItem(itemId, resolution);
-        answerClarify(o, item.runId, resolution.answers, resolved);
+        answerClarify(o, item.runId, resolution.answers, resolved, resolution.attachments?.map((a) => a.id) ?? null);
       } else {
         o.store.resolveInboxItem(itemId, resolution);
         o.deliverResolution(itemId, resolution);

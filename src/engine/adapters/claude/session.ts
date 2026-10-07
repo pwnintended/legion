@@ -5,7 +5,7 @@
  * messages; interrupts and permission answers go over the control protocol on the same pipe.
  */
 import type { Readable, Writable } from 'node:stream';
-import type { AgentSession, ApprovalDecision, SessionOptions } from '@shared/engine';
+import type { AgentSession, ApprovalDecision, SessionAttachment, SessionOptions } from '@shared/engine';
 import type { AgentEvent } from '@shared/events';
 import type { Logger } from '../../context';
 import { AsyncQueue, deferred } from '../../util/async-queue';
@@ -138,16 +138,21 @@ export class ClaudeSession implements AgentSession {
   }
 
   /** Writes the first prompt. Called by the engine right after spawning. */
-  begin(prompt: string): void {
+  begin(prompt: string, attachments?: readonly SessionAttachment[] | null): void {
     this.busy = true;
-    this.write(userMessage(prompt));
+    this.write(userMessage(prompt, undefined, attachments));
   }
 
-  async send(text: string, priority: 'now' | 'next' = 'next'): Promise<void> {
+  async send(
+    text: string,
+    priority: 'now' | 'next' = 'next',
+    attachments?: readonly SessionAttachment[] | null,
+  ): Promise<void> {
     if (this.exited || this.closing) throw new Error('session is closed');
+    const message = userMessage(text, priority, attachments);
     if (priority === 'now' && this.busy) this.parser.noteInterrupt();
     this.busy = true;
-    this.write(userMessage(text, priority));
+    this.write(message);
   }
 
   async interrupt(): Promise<void> {

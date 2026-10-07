@@ -175,6 +175,7 @@ async function finalReview(o: Orchestrator, run: Run): Promise<Review | null> {
         prompt,
         outputSchema: reviewOutputJsonSchema,
         cwd: integration,
+        attachments: o.runAttachments(run),
       });
       const output = await o.structuredTurn(session, ReviewOutputSchema);
       await o.finishAttempt(session, 'succeeded');
@@ -259,6 +260,7 @@ export function prText(o: Orchestrator, run: Run): PrText {
     verification: latestFinalVerify(o, run.id),
     minorFindings: minor,
     notes: skipped.length > 0 ? [`Skipped by a human: ${skipped.join(', ')}.`] : [],
+    attachments: o.attachmentRefs(run).map((a) => a.name),
   });
 }
 

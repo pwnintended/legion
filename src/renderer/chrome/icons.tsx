@@ -185,15 +185,26 @@ const PATHS = {
       <path d="M9 7h6" />
     </>
   ),
-  chevronDown: <path d="M6 9l6 6 6-6" />,
-  chevronRight: <path d="M9 6l6 6-6 6" />,
-  chevronUpDown: <path d="M8 9.5l4-4 4 4M8 14.5l4 4 4-4" />,
+  paperclip: (
+    <path d="M20.6 11.3l-8.4 8.4a5.5 5.5 0 01-7.8-7.8l8.6-8.6a3.7 3.7 0 015.2 5.2l-8.6 8.6a1.85 1.85 0 01-2.6-2.6l8-8" />
+  ),
   file: (
     <>
       <path d="M14 3H7a2 2 0 00-2 2v14a2 2 0 002 2h10a2 2 0 002-2V8z" />
       <path d="M14 3v5h5" />
     </>
   ),
+  image: (
+    <>
+      <rect x="3" y="4" width="18" height="16" rx="2.5" />
+      <circle cx="9" cy="10" r="1.8" />
+      <path d="M21 16l-5-5-9 9" />
+    </>
+  ),
+  chevronLeft: <path d="M15 6l-6 6 6 6" />,
+  chevronRight: <path d="M9 6l6 6-6 6" />,
+  chevronDown: <path d="M6 9l6 6 6-6" />,
+  chevronUpDown: <path d="M8 9.5l4-4 4 4M8 14.5l4 4 4-4" />,
   fileCode: (
     <>
       <path d="M14 3H7a2 2 0 00-2 2v14a2 2 0 002 2h10a2 2 0 002-2V8z" />
@@ -204,13 +215,6 @@ const PATHS = {
     <>
       <path d="M14 3H7a2 2 0 00-2 2v14a2 2 0 002 2h10a2 2 0 002-2V8z" />
       <path d="M14 3v5h5M9 13h6M9 17h4" />
-    </>
-  ),
-  image: (
-    <>
-      <rect x="3" y="4" width="18" height="16" rx="2" />
-      <circle cx="9" cy="10" r="1.6" />
-      <path d="M21 16l-5-5-9 9" />
     </>
   ),
   folderOpen: (

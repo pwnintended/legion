@@ -39,6 +39,7 @@ test('launches, connects the renderer to the engine over MessagePort RPC, and sh
         'openExternal',
         'pathForFile',
         'pickDirectory',
+        'pickFiles',
         'platform',
         'requestEnginePort',
         'showItemInFolder',

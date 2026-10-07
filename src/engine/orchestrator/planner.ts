@@ -15,7 +15,7 @@ import {
   type Run,
   type TaskNode,
 } from '@shared/domain';
-import type { JsonSchema } from '@shared/engine';
+import type { JsonSchema, SessionAttachment } from '@shared/engine';
 import type { RpcInput } from '@shared/rpc';
 import { RpcError } from '@shared/rpc-transport';
 import {
@@ -89,19 +89,25 @@ export async function createRun(o: Orchestrator, input: RpcInput<'runs.create'>)
   }
   const usable = o.registry.usable(input.plannerEngine);
   if (!usable.ok) throw new RpcError('failed_precondition', usable.reason);
+  const attachments = o.attachments.refs(input.attachmentIds);
 
   // The run belongs to the project of its checkout (added on the fly when it's new).
   const projectPath = await realpath(root).catch(() => root);
-  const project = o.store.ensureProject(projectPath, basename(projectPath));
-  const created = o.store.createRun({
-    repoPath: root,
-    projectId: project.id,
-    baseRef,
-    title: input.title?.trim() || deriveTitle(input.issueText),
-    issueText: input.issueText,
-    issueUrl: input.issueUrl,
-    plannerEngine: input.plannerEngine,
-    plannerModel: input.plannerModel,
+  const created = o.store.transaction(() => {
+    const project = o.store.ensureProject(projectPath, basename(projectPath));
+    const run = o.store.createRun({
+      repoPath: root,
+      projectId: project.id,
+      baseRef,
+      title: input.title?.trim() || deriveTitle(input.issueText),
+      issueText: input.issueText,
+      issueUrl: input.issueUrl,
+      plannerEngine: input.plannerEngine,
+      plannerModel: input.plannerModel,
+      attachments,
+    });
+    o.attachments.claim(attachments, run.id);
+    return run;
   });
   patchRunMeta(o.store, created.id, { baseSha });
   o.store.touchRecentRepo(root, basename(root));
@@ -133,6 +139,8 @@ async function plannerStep<T>(
   jsonSchema: JsonSchema,
   schema: z.ZodType<T>,
   check: (output: T, session: AgentRun) => Promise<T> = async (output) => output,
+  /** Sent with the prompt when the planner session is resumed (a fresh session gets all of the run's). */
+  followUpAttachments: readonly SessionAttachment[] = [],
 ): Promise<T | null> {
   let failures = 0;
   for (;;) {
@@ -155,6 +163,7 @@ async function plannerStep<T>(
         outputSchema: jsonSchema,
         cwd,
         resumeSessionId: meta.plannerSessionId,
+        attachments: meta.plannerSessionId ? followUpAttachments : o.runAttachments(run),
       });
       if (session.sessionId) patchRunMeta(o.store, runId, { plannerSessionId: session.sessionId });
       const output = await check(await o.structuredTurn(session, schema), session);
@@ -219,6 +228,7 @@ export function answerClarify(
   runId: string,
   answers: readonly QuestionAnswer[],
   resolvedItem: InboxItem | null = null,
+  attachmentIds: readonly string[] | null = null,
 ): Run {
   const run = o.store.requireRun(runId);
   if (run.status !== 'clarifying') throw new RpcError('conflict', `run ${runId} is ${run.status}, not clarifying`);
@@ -232,9 +242,21 @@ export function answerClarify(
     question: q.question,
     answer: answers.find((a) => a.questionId === q.id)?.answer.trim() || '(no answer: use your judgement)',
   }));
+  const attachments = o.attachments.refs(attachmentIds);
   const next = o.store.transaction(() => {
-    if (!resolvedItem) o.store.resolveInboxItem(item.id, { kind: 'question', answers: [...answers] });
-    patchRunMeta(o.store, runId, { answers: [...runMeta(o.store, runId).answers, ...pairs] });
+    if (!resolvedItem) {
+      o.store.resolveInboxItem(item.id, {
+        kind: 'question',
+        answers: [...answers],
+        ...(attachments.length ? { attachments } : {}),
+      });
+    }
+    const meta = runMeta(o.store, runId);
+    o.attachments.claim(attachments, runId);
+    patchRunMeta(o.store, runId, {
+      answers: [...meta.answers, ...pairs],
+      answerAttachments: [...meta.answerAttachments, ...attachments],
+    });
     return o.store.transitionRun(runId, 'clarifying', 'planning');
   });
   startPlanner(o, runId);
@@ -289,6 +311,8 @@ export async function runPlan(o: Orchestrator, runId: string, revision: PlanRevi
         current = await o.structuredTurn(session, PlanOutputSchema);
       }
     },
+    // The planner session saw the run's attachments in the clarify step; the answers may add some.
+    revision ? [] : o.attachments.forSession(runMeta(o.store, runId).answerAttachments),
   );
   if (!output) return;
   const result: ValidationResult = validation ?? validatePlan({ nodes: output.dag.nodes }, options);

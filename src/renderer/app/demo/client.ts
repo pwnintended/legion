@@ -4,6 +4,7 @@
  * Mutating procedures (inbox.resolve, runs.pause/resume, runs.approvePlan) update the world and push the
  * resulting events, so the UI behaves as it would against the real engine.
  */
+import { type AttachmentRef, cleanName, extensionOf, sizeProblem, sniffAttachment } from '@shared/attachments';
 import {
   type Attempt,
   applySettingsPatch,
@@ -64,6 +65,8 @@ export class DemoClient implements EngineClient {
   private timer: ReturnType<typeof setInterval> | null = null;
   private scriptIndex = 0;
   private created = 0;
+  /** Attachments added in this demo session (in memory). */
+  private readonly attachments = new Map<string, { ref: AttachmentRef; dataBase64: string | null }>();
 
   constructor(options: { live?: boolean; now?: number } = {}) {
     const now = options.now ?? Date.now();
@@ -329,9 +332,22 @@ export class DemoClient implements EngineClient {
       case 'runs.create':
         return this.createRun(input as unknown as RpcInput<'runs.create'>);
       case 'runs.answerClarify':
-        return this.answerClarify(input.runId as string, input.answers as QuestionAnswer[]);
+        return this.answerClarify(
+          input.runId as string,
+          input.answers as QuestionAnswer[],
+          this.attachmentRefs(input.attachmentIds),
+        );
       case 'sessions.send':
-        return this.steer(input.attemptId as string, input.text as string, input.priority as 'now' | 'next');
+        return this.steer(
+          input.attemptId as string,
+          input.text as string,
+          input.priority as 'now' | 'next',
+          this.attachmentRefs(input.attachmentIds),
+        );
+      case 'attachments.add':
+        return this.addAttachment(input as unknown as RpcInput<'attachments.add'>);
+      case 'attachments.get':
+        return this.getAttachment(input.id as string);
       case 'sessions.interrupt':
         return this.interruptSession(input.attemptId as string);
       case 'sessions.takeover':
@@ -488,12 +504,82 @@ export class DemoClient implements EngineClient {
     return { type: 'agent.event', runId: attempt.runId, taskId: attempt.taskId, attemptId: attempt.id, event };
   }
 
-  private steer(attemptId: string, text: string, priority: 'now' | 'next'): { ok: true } {
+  /**
+   * Demo `attachments.add`: the same validation as the engine (sniffed bytes, size limits), kept in memory.
+   * A picked path has no bytes here: it is accepted by its extension, without a preview.
+   */
+  private addAttachment(input: RpcInput<'attachments.add'>): AttachmentRef {
+    const name = cleanName(input.name);
+    let ref: Omit<AttachmentRef, 'id'>;
+    let dataBase64: string | null = null;
+    if (input.dataBase64) {
+      const binary = atob(input.dataBase64);
+      const bytes = Uint8Array.from(binary, (c) => c.charCodeAt(0));
+      const sniffed = sniffAttachment(bytes, name);
+      if (!sniffed.ok) throw new RpcError('bad_request', sniffed.reason);
+      const tooBig = sizeProblem(name, sniffed.kind, bytes.length);
+      if (tooBig) throw new RpcError('bad_request', tooBig);
+      ref = {
+        name,
+        mime: sniffed.mime,
+        kind: sniffed.kind,
+        size: bytes.length,
+        sha256: `demo${this.attachments.size}`,
+      };
+      dataBase64 = sniffed.kind === 'file' ? null : input.dataBase64;
+    } else {
+      const ext = extensionOf(name);
+      const image = ['png', 'jpg', 'jpeg', 'gif', 'webp'].includes(ext);
+      ref = {
+        name,
+        mime: image ? `image/${ext === 'jpg' ? 'jpeg' : ext}` : ext === 'pdf' ? 'application/pdf' : 'text/plain',
+        kind: image ? 'image' : ext === 'pdf' ? 'file' : 'text',
+        size: 48_213,
+        sha256: `demo${this.attachments.size}`,
+      };
+    }
+    const full: AttachmentRef = { id: `file_demo${String(this.attachments.size + 1).padStart(8, '0')}`, ...ref };
+    this.attachments.set(full.id, { ref: full, dataBase64 });
+    return structuredClone(full);
+  }
+
+  private getAttachment(id: string): RpcOutput<'attachments.get'> {
+    const stored = this.attachments.get(id);
+    if (!stored) throw new RpcError('not_found', `attachment ${id} not found`);
+    const { ref, dataBase64 } = stored;
+    if (ref.kind === 'text') {
+      const text = dataBase64
+        ? new TextDecoder().decode(Uint8Array.from(atob(dataBase64), (c) => c.charCodeAt(0)))
+        : '(demo mode: picked files are not read)';
+      return { attachment: ref, dataBase64: null, text, truncated: false };
+    }
+    return { attachment: ref, dataBase64: ref.kind === 'image' ? dataBase64 : null, text: null, truncated: false };
+  }
+
+  private attachmentRefs(ids: unknown): AttachmentRef[] {
+    if (!Array.isArray(ids)) return [];
+    return ids.map((id) => {
+      const stored = this.attachments.get(String(id));
+      if (!stored) throw new RpcError('not_found', `attachment ${String(id)} not found`);
+      return structuredClone(stored.ref);
+    });
+  }
+
+  private steer(
+    attemptId: string,
+    text: string,
+    priority: 'now' | 'next',
+    attachments: AttachmentRef[] = [],
+  ): { ok: true } {
     const attempt = this.world.attempts.find((a) => a.id === attemptId);
     if (attempt?.status !== 'running') throw new RpcError('conflict', 'session is not running');
     setTimeout(() => {
+      const files = attachments.length
+        ? ` I have ${attachments.map((a) => `\`${a.name}\``).join(', ')} open as well.`
+        : '';
       const reply =
-        priority === 'now' ? `Stopping here to follow your note: "${text}".` : `Noted for the next step: "${text}".`;
+        (priority === 'now' ? `Stopping here to follow your note: "${text}".` : `Noted for the next step: "${text}".`) +
+        files;
       // The current turn ends (or is cut short) before the agent picks the note up.
       this.emit([
         this.attemptEvent(attempt, {
@@ -557,6 +643,7 @@ export class DemoClient implements EngineClient {
       plannerModel: input.plannerModel ?? null,
       integrationBranch: null,
       prUrl: null,
+      attachments: this.attachmentRefs(input.attachmentIds),
       error: null,
       createdAt: now,
       updatedAt: now,
@@ -568,12 +655,15 @@ export class DemoClient implements EngineClient {
     return structuredClone(run);
   }
 
-  private answerClarify(runId: string, answers: QuestionAnswer[]): Run {
+  private answerClarify(runId: string, answers: QuestionAnswer[], attachments: AttachmentRef[] = []): Run {
     const item = this.world.inbox.find(
       (i) => i.runId === runId && i.kind === 'question' && i.payload.source === 'clarify' && i.resolvedAt === null,
     );
     if (!item) throw new RpcError('conflict', 'no open clarify questions');
-    Object.assign(item, { resolvedAt: Date.now(), resolution: { answers } });
+    Object.assign(item, {
+      resolvedAt: Date.now(),
+      resolution: { answers, ...(attachments.length ? { attachments } : {}) },
+    });
     const bodies: ServerEventBody[] = [{ type: 'inbox.updated', item: structuredClone(item) }];
     const planner = this.world.attempts.find(
       (a) => a.runId === runId && a.role === 'planner' && a.status === 'running',
@@ -582,7 +672,11 @@ export class DemoClient implements EngineClient {
       bodies.push(
         this.attemptEvent(planner, {
           type: 'message',
-          text: `Thanks. Drafting the plan with ${answers.filter((a) => a.answer.trim()).length} answers.`,
+          text: `Thanks. Drafting the plan with ${answers.filter((a) => a.answer.trim()).length} answers${
+            attachments.length
+              ? ` and ${attachments.length} attachment${attachments.length === 1 ? '' : 's'} (${attachments.map((a) => a.name).join(', ')})`
+              : ''
+          }.`,
         }),
       );
     this.emit(bodies);
