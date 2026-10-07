@@ -11,7 +11,7 @@ the control-protocol shapes follow the published `@anthropic-ai/claude-agent-sdk
 | `args.ts` | pure flag builder: model/effort/system prompt/`--json-schema`, permission profile → flags, config isolation, child env scrubbing |
 | `parser.ts` | pure stream-json → `AgentEvent` normalizer (+ control frames as `ParserOutput`) |
 | `protocol.ts` | stdin messages: user turns, interrupt, `can_use_tool` answers |
-| `read-only-policy.ts` | host-side answers for read-only roles' `can_use_tool` requests: version/help probes and plain reads pass (chains parsed strictly), the rest is denied with a message; no human involved |
+| `read-only-policy.ts` | host-side answers for read-only roles' `can_use_tool` requests: read tools, version/help probes and plain reads pass (chains parsed strictly), the rest is denied with a message; no human involved. `READ_ONLY_GUIDE` states the rules in the system prompt |
 | `session.ts` | one process = one `AgentSession`: stdin open for the session's lifetime, delta coalescing, interrupt/close escalation |
 | `engine.ts` | `ClaudeEngine`: binary resolution, `probe()` (`--version` + `auth status --json`), `start`/`resume` |
 | `testing.ts` | test-only: `FakeChild`, fixture replay, recording spawn |

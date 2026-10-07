@@ -1,6 +1,7 @@
 import { permissionProfileFor, type SessionOptions } from '@shared/engine';
 import { describe, expect, it } from 'vitest';
 import { bashRules, buildClaudeArgs, childEnv, flagSettings, mcpConfig, permissionArgs } from './args';
+import { READ_ONLY_GUIDE } from './read-only-policy';
 
 const base = (overrides: Partial<SessionOptions> = {}): SessionOptions => ({
   role: 'reviewer',
@@ -46,7 +47,7 @@ describe('buildClaudeArgs', () => {
     });
     expect(flag(args, '--model')).toBe('haiku');
     expect(flag(args, '--effort')).toBe('low');
-    expect(flag(args, '--append-system-prompt')).toBe('Be terse.');
+    expect(flag(args, '--append-system-prompt')).toBe(`Be terse.\n\n${READ_ONLY_GUIDE}`);
     expect(flag(args, '--json-schema')).toBe('{"type":"object"}');
     expect(flag(args, '--permission-mode')).toBe('default');
     expect(flag(args, '--permission-prompt-tool')).toBe('stdio');
@@ -71,6 +72,7 @@ describe('buildClaudeArgs', () => {
     });
     expect(flag(args, '--resume')).toBe('old-session');
     expect(args).not.toContain('--session-id');
+    expect(args).not.toContain('--append-system-prompt');
     expect(flag(args, '--permission-mode')).toBe('acceptEdits');
     expect(flag(args, '--permission-prompt-tool')).toBe('stdio');
     expect(args).not.toContain('--permission-prompts');

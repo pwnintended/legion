@@ -7,6 +7,7 @@
 import type { McpServer } from '@shared/domain';
 import { type McpConnection, type PermissionProfile, type SessionOptions, sessionExtras } from '@shared/engine';
 import { hasShellMeta } from '../../util/shell';
+import { READ_ONLY_GUIDE } from './read-only-policy';
 
 /** Name of the Legion MCP server inside `--mcp-config`; its tools are `mcp__legion__<tool>`. */
 export const LEGION_MCP_SERVER = 'legion';
@@ -210,7 +211,10 @@ export function buildClaudeArgs({
 
   if (opts.model) args.push('--model', opts.model);
   if (opts.effort) args.push('--effort', opts.effort);
-  if (opts.systemPrompt) args.push('--append-system-prompt', opts.systemPrompt);
+  // A read-only session is told the policy that answers its prompts (`read-only-policy.ts`) before it runs anything.
+  const guide = opts.permission.mode === 'read_only' ? READ_ONLY_GUIDE : null;
+  const systemPrompt = [opts.systemPrompt, guide].filter(Boolean).join('\n\n');
+  if (systemPrompt) args.push('--append-system-prompt', systemPrompt);
   if (opts.outputSchema) args.push('--json-schema', JSON.stringify(opts.outputSchema));
 
   const extras = sessionExtras(opts);
