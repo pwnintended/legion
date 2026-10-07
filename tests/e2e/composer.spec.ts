@@ -267,6 +267,25 @@ test('composer: repository picker, status line, base branch, at three sizes', as
       await window.waitForTimeout(250);
       await window.screenshot({ path: join(shots, `selected-${tag}.png`) });
 
+      // A long prompt grows the text box; ⌘⇧E expands the composer, and the choice is remembered.
+      const textarea = composer.locator('textarea');
+      const short = await textarea.inputValue();
+      const long = Array.from({ length: 40 }, (_, i) => `${i + 1}. Requirement line for a long, detailed prompt.`);
+      await textarea.fill(`${short}\n\n${long.join('\n')}`);
+      const grownHeight = (await textarea.boundingBox())?.height ?? 0;
+      expect(grownHeight).toBeGreaterThan(236);
+      await window.waitForTimeout(150);
+      await window.screenshot({ path: join(shots, `long-${tag}.png`) });
+      const narrowWidth = (await composer.boundingBox())?.width ?? 0;
+      await window.keyboard.press('Meta+Shift+E');
+      await expect(composer.getByTestId('composer-expand')).toHaveAttribute('aria-pressed', 'true');
+      await window.waitForTimeout(400);
+      expect((await composer.boundingBox())?.width ?? 0).toBeGreaterThanOrEqual(narrowWidth);
+      await window.screenshot({ path: join(shots, `expanded-${tag}.png`) });
+      await composer.getByTestId('composer-expand').click();
+      await expect(composer.getByTestId('composer-expand')).toHaveAttribute('aria-pressed', 'false');
+      await textarea.fill(short);
+
       await composer.getByTestId('branch-picker').click();
       await window.waitForTimeout(250);
       await window.screenshot({ path: join(shots, `branch-open-${tag}.png`) });

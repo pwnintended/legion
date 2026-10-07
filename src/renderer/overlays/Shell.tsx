@@ -24,7 +24,8 @@ export function OverlayPanel({
 }: {
   label: string;
   placement: Placement;
-  width: number;
+  /** A px number or any CSS width (e.g. `min(920px, 100%)`). */
+  width: number | string;
   /** Distance from the top of the window in px; shrinks on short windows so the panel stays on screen. */
   top: number;
   children: ReactNode;

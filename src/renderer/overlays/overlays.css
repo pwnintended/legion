@@ -178,9 +178,18 @@
 }
 .cmp-text {
   resize: none;
-  line-height: 1.5;
-  min-height: 112px;
-  padding-bottom: 30px;
+  line-height: 1.55;
+  /* Grows with the prompt, from ~10 lines up to what the window can hold, then scrolls. */
+  field-sizing: content;
+  min-height: 236px;
+  max-height: max(236px, calc(100vh - 430px));
+  overflow-y: auto;
+  padding-bottom: 34px;
+}
+.cmp-root[data-expanded] .cmp-text {
+  /* Expanded: the prompt takes the room the rest of the composer leaves. */
+  min-height: max(236px, calc(100vh - 400px));
+  max-height: max(236px, calc(100vh - 400px));
 }
 .cmp-link {
   position: absolute;

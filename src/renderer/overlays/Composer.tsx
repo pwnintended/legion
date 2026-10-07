@@ -48,6 +48,17 @@ export interface IssueLink {
 }
 
 /** A GitHub issue/PR or Linear issue URL in the text, if any. */
+
+const EXPANDED_KEY = 'legion.composer.expanded';
+
+function readExpanded(): boolean {
+  try {
+    return localStorage.getItem(EXPANDED_KEY) === '1';
+  } catch {
+    return false;
+  }
+}
+
 export function detectIssueLink(text: string): IssueLink | null {
   const gh = /https:\/\/github\.com\/([\w.-]+)\/([\w.-]+)\/(issues|pull)\/(\d+)/.exec(text);
   if (gh) return { url: gh[0], provider: 'github', label: `${gh[1]}/${gh[2]}#${gh[4]}` };
@@ -134,6 +145,7 @@ export function ComposerOverlay() {
   const [creating, setCreating] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const textRef = useRef<HTMLTextAreaElement>(null);
+  const [expanded, setExpanded] = useState(readExpanded);
   const attachments = useDraft(savedAttachments);
   const uploading = attachments.items.some((i) => i.status === 'uploading');
   const drop = useFileDrop((data) => {
@@ -301,18 +313,32 @@ export function ComposerOverlay() {
     }
   };
 
+  const toggleExpanded = () => {
+    setExpanded((value) => {
+      const next = !value;
+      try {
+        localStorage.setItem(EXPANDED_KEY, next ? '1' : '0');
+      } catch {}
+      return next;
+    });
+    textRef.current?.focus();
+  };
+
   const statusId = `${ids}-repo-status`;
   return (
     <OverlayPanel
       label="New run"
       placement="center"
-      width={680}
-      top={110}
+      width={expanded ? 'min(1240px, 100%)' : 'min(920px, 100%)'}
+      top={expanded ? 40 : 90}
       testId="composer"
       onKeyDown={(event) => {
         if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) {
           event.preventDefault();
           void submit();
+        } else if (event.key.toLowerCase() === 'e' && (event.metaKey || event.ctrlKey) && event.shiftKey) {
+          event.preventDefault();
+          toggleExpanded();
         } else if (event.key.toLowerCase() === 'o' && (event.metaKey || event.ctrlKey) && !event.shiftKey) {
           event.preventDefault();
           void chooseFolder();
@@ -324,6 +350,7 @@ export function ComposerOverlay() {
       {/* A drop target for files (attachments) and folders (the repository) from Finder. */}
       <div
         className="cmp-root"
+        data-expanded={expanded || undefined}
         {...drop.handlers}
         onPaste={(event) => {
           if (pasteInto(savedAttachments, event)) setSubmitError(null);
@@ -336,6 +363,17 @@ export function ComposerOverlay() {
             type="button"
             className="btn btn-ghost btn-icon"
             style={{ marginLeft: 'auto' }}
+            aria-label={expanded ? 'Shrink the composer' : 'Expand the composer'}
+            aria-pressed={expanded}
+            title={expanded ? 'Shrink  ⌘⇧E' : 'Expand  ⌘⇧E'}
+            data-testid="composer-expand"
+            onClick={toggleExpanded}
+          >
+            <Icon name={expanded ? 'minimize' : 'maximize'} size={14} />
+          </button>
+          <button
+            type="button"
+            className="btn btn-ghost btn-icon"
             aria-label="Close"
             onClick={() => actions.closeOverlay()}
           >
@@ -357,7 +395,7 @@ export function ComposerOverlay() {
               id={`${ids}-text`}
               ref={textRef}
               className="field cmp-text"
-              rows={5}
+              rows={10}
               value={text}
               data-autofocus
               spellCheck
