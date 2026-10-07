@@ -145,7 +145,8 @@ export function Progress({ run }: { run: Run }) {
           <span className="ch-progress-line" data-tone={lineTone}>
             <span className={lineTone === 'live' ? 'dot live' : 'dot'} aria-hidden="true" />
             {line}
-            {run.status === 'planning' || run.status === 'clarifying' ? (
+            {/* How long the planner has been at it; once it waits on the human, the clock is theirs, not its. */}
+            {(run.status === 'planning' || run.status === 'clarifying') && lineTone === 'live' ? (
               <span className="ch-dim"> · {formatDuration(now - run.updatedAt)}</span>
             ) : null}
           </span>

@@ -25,7 +25,7 @@ import { actions, jumpToNextDecision } from '../app/store';
 import { ChipList, chipOfRef } from '../attachments/Attachments';
 import { Icon } from '../chrome/icons';
 import { Chip } from '../chrome/ui';
-import { formatClock, formatCost, formatDuration } from '../layout/describe';
+import { formatCost, formatDuration, formatStamp } from '../layout/describe';
 import { useSentMessages } from '../tiles/session/actions';
 import { Markdown } from '../tiles/session/Markdown';
 import '../tiles/session/session.css';
@@ -239,7 +239,7 @@ function Conversation({ run }: { run: Run }) {
             <p className="ch-sub">
               <span className="mono">{run.repoPath.split('/').filter(Boolean).at(-1)}</span> ·{' '}
               <span className="mono">{run.baseRef}</span> · started{' '}
-              <span className="mono">{formatClock(run.createdAt)}</span>
+              <span className="mono">{formatStamp(run.createdAt)}</span>
             </p>
           </header>
           {loading && thread.length === 0 ? (
@@ -336,7 +336,7 @@ function Row({ item }: { item: ThreadItem }) {
           ) : (
             <span>{item.text}</span>
           )}
-          <time className="ch-time">{formatClock(item.ts)}</time>
+          <time className="ch-time">{formatStamp(item.ts)}</time>
           <span className="ch-event-rule" aria-hidden="true" />
         </div>
       );
@@ -481,7 +481,7 @@ function Assistant({ item }: { item: Extract<ThreadItem, { kind: 'assistant' }> 
             <Icon name="spark" size={12} strokeWidth={2} />
           </span>
           <span className="ch-as-name">Assistant</span>
-          <time className="ch-time">{formatClock(item.ts)}</time>
+          <time className="ch-time">{formatStamp(item.ts)}</time>
         </div>
       )}
       <div className="ch-as-body">
@@ -526,7 +526,7 @@ function SourceMessage({ attemptId, body, ts }: { attemptId: string; body: strin
     <div className="ch-source">
       <div className="ch-source-head">
         <AgentName agent={agent} />
-        <time className="ch-time">{formatClock(ts)}</time>
+        <time className="ch-time">{formatStamp(ts)}</time>
       </div>
       <div className="ch-source-body">
         <Markdown text={body} streaming={false} caret={false} />
@@ -551,7 +551,7 @@ function Update({ item }: { item: Extract<ThreadItem, { kind: 'update' }> }) {
       >
         <AgentName agent={agent} />
         <span className="ch-update-text">{headline}</span>
-        <time className="ch-time">{formatClock(item.ts)}</time>
+        <time className="ch-time">{formatStamp(item.ts)}</time>
       </button>
       {open && more ? (
         <div className="ch-update-body">

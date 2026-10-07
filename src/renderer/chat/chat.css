@@ -639,8 +639,11 @@
   white-space: nowrap;
 }
 .ch-plan-meta {
-  font-size: 11px;
+  font-size: 11.5px;
   color: var(--overlay1);
+}
+.ch-plan-meta .mono {
+  font-size: 11px;
 }
 .ch-embed .cl {
   height: auto;
@@ -655,6 +658,12 @@
 }
 .ch-embed .cl-foot {
   padding: 12px 0 0;
+}
+.ch-embed .cl-intro > .chip {
+  display: none;
+}
+.ch-embed .cl-intro-subject {
+  display: inline;
 }
 .ch-embed .cl-note {
   background: var(--base);

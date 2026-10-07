@@ -130,8 +130,8 @@ function Questions({ item, runId, planner }: { item: InboxItemOf<'question'>; ru
         <div className="cl-intro">
           <Chip tone={planner === 'codex' ? 'codex' : 'claude'}>{planner} planner</Chip>
           <span className="muted">
-            read the repo and has {questions.length} question{questions.length === 1 ? '' : 's'} before drafting the
-            plan.
+            <span className="cl-intro-subject">It </span>read the repo and has {questions.length} question
+            {questions.length === 1 ? '' : 's'} before drafting the plan.
           </span>
           <button type="button" className="cl-skip" disabled={busy} onClick={() => void skip()}>
             Skip, let the planner assume

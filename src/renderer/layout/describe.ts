@@ -60,7 +60,8 @@ export function formatDuration(ms: number): string {
   const m = Math.floor(s / 60);
   if (m < 60) return `${m}m`;
   const h = Math.floor(m / 60);
-  return `${h}h ${m % 60}m`;
+  if (h < 24) return `${h}h ${m % 60}m`;
+  return `${Math.floor(h / 24)}d ${h % 24}h`;
 }
 
 export function formatCost(usd: number): string {
@@ -70,6 +71,19 @@ export function formatCost(usd: number): string {
 export function formatClock(ts: number): string {
   const d = new Date(ts);
   return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+}
+
+const WEEKDAY = new Intl.DateTimeFormat(undefined, { weekday: 'short' });
+const DAY_MONTH = new Intl.DateTimeFormat(undefined, { day: 'numeric', month: 'short' });
+
+/** A clock time that says which day when it isn't today ("Tue 22:05", "3 Oct 22:05"), for threads that span days. */
+export function formatStamp(ts: number, now = Date.now()): string {
+  const clock = formatClock(ts);
+  const day = new Date(ts);
+  const today = new Date(now);
+  if (day.toDateString() === today.toDateString()) return clock;
+  const days = (new Date(today.toDateString()).getTime() - new Date(day.toDateString()).getTime()) / 86_400_000;
+  return `${days > 0 && days < 7 ? WEEKDAY.format(day) : DAY_MONTH.format(day)} ${clock}`;
 }
 
 export function formatTokens(n: number): string {

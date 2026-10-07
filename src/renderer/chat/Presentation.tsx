@@ -9,7 +9,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { useShallow } from 'zustand/react/shallow';
 import { rpc, useData } from '../app/hooks';
 import { type ChipData, ChipList, chipOfRef, imageUrl, isMarkdownChip, openPreview } from '../attachments/Attachments';
-import { formatClock } from '../layout/describe';
+import { formatStamp } from '../layout/describe';
 import { Markdown } from '../tiles/session/Markdown';
 import { type AgentLabel, agentLabel } from './labels';
 
@@ -51,7 +51,7 @@ export function Presentation({ presentation }: { presentation: PresentationRow }
       <header className="ch-card-head">
         <AgentName agent={agent} />
         <span className="ch-dim">shared</span>
-        <time className="ch-time">{formatClock(presentation.createdAt)}</time>
+        <time className="ch-time">{formatStamp(presentation.createdAt)}</time>
       </header>
       <h3 className="ch-show-title">{presentation.title}</h3>
       {presentation.caption ? (

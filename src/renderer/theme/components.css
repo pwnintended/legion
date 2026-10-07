@@ -602,6 +602,11 @@ body {
 .rail-action:focus-visible {
   opacity: 1;
 }
+/* While the action shows, the run's title ellipsizes before it instead of running underneath. */
+.rail-row:has(.rail-action):hover .rr-title,
+.rail-row:has(.rail-action:focus-visible) .rr-title {
+  padding-right: 26px;
+}
 .rail-toggle {
   all: unset;
   box-sizing: border-box;

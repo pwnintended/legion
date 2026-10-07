@@ -12,7 +12,7 @@ import { rpc, useData } from '../app/hooks';
 import { useReducedMotionPref } from '../app/prefs';
 import { Icon } from '../chrome/icons';
 import { Chip, Kbd } from '../chrome/ui';
-import { formatClock, formatCost, type Tone } from '../layout/describe';
+import { formatCost, formatStamp, type Tone } from '../layout/describe';
 import { jumpToItem } from '../overlays/nav';
 import ClarifyTile from '../tiles/clarify/index';
 import { approvePlan, requestRevision, useSignoff } from '../tiles/plan/actions';
@@ -99,7 +99,7 @@ function Receipt({ item }: { item: InboxItem }) {
         <Icon name={tone === 'bad' ? 'close' : tone === 'ok' ? 'check' : 'clock'} size={11} strokeWidth={2.6} />
       </span>
       <span className="ch-receipt-text">{receiptText(item, task)}</span>
-      <time className="ch-time">{formatClock(item.resolvedAt ?? item.createdAt)}</time>
+      <time className="ch-time">{formatStamp(item.resolvedAt ?? item.createdAt)}</time>
     </div>
   );
 }
@@ -117,7 +117,7 @@ function DecisionCard({ item }: { item: InboxItem }) {
       <header className="ch-card-head">
         <Chip tone={KIND_TONE[item.kind]}>{DECISION_TITLE[item.kind]}</Chip>
         {agent ? <AgentName agent={agent} /> : null}
-        <time className="ch-time">{formatClock(item.createdAt)}</time>
+        <time className="ch-time">{formatStamp(item.createdAt)}</time>
         <button
           type="button"
           className="ch-icon-btn"
@@ -272,8 +272,12 @@ function PlanBody({ item }: { item: InboxItemOf<'plan_signoff'> }) {
             <li key={node.id}>
               <span className="ch-plan-id mono">{node.id}</span>
               <span className="ch-plan-title">{node.title}</span>
-              <span className="ch-plan-meta mono">
-                {node.dependsOn.length ? `after ${node.dependsOn.join(', ')}` : ''}
+              <span className="ch-plan-meta">
+                {node.dependsOn.length ? (
+                  <>
+                    after <span className="mono">{node.dependsOn.join(', ')}</span>
+                  </>
+                ) : null}
               </span>
             </li>
           ))}
@@ -478,8 +482,11 @@ function PrBody({ item }: { item: InboxItemOf<'pr_ready'> }) {
   return (
     <div className="ch-card-body">
       <p className="ch-lede">{item.payload.title}</p>
-      <p className="ch-note mono">
-        {counts.merged}/{counts.total} tasks merged · {item.payload.integrationBranch}
+      <p className="ch-note">
+        <span className="mono">
+          {counts.merged}/{counts.total}
+        </span>{' '}
+        tasks merged into <span className="mono">{item.payload.integrationBranch}</span>
       </p>
       {body ? (
         <div className="ch-pr-body" data-open={open}>

@@ -128,7 +128,7 @@ function RailRun({ run, index, active }: { run: Run; index: number | null; activ
       >
         <span className="ws rr-ws">{index !== null ? index + 1 : <Icon name="archive" size={11} />}</span>
         <span className="flex min-w-0 flex-1 flex-col gap-[2px]">
-          <span className="flex min-w-0 items-center gap-1.5">
+          <span className="rr-title flex min-w-0 items-center gap-1.5">
             <span className="truncate text-[12.5px] font-medium">{run.title}</span>
           </span>
           <span className="flex min-w-0 items-center gap-1.5 text-[11px]" style={{ color: toneColor(line.tone) }}>
@@ -443,7 +443,7 @@ function EnginesFooter() {
             >
               <Dot color={problem ? 'var(--red)' : `var(--${engine.kind === 'codex' ? 'teal' : 'mauve'})`} />
               {ENGINE_NAME[engine.kind]}
-              <span className={`mono ml-auto text-[11px] ${problem ? 'text-red' : 'faint'}`}>
+              <span className={`ml-auto text-[11px] ${problem ? 'text-red' : 'mono faint'}`}>
                 {problem ?? engine.version ?? '?'}
               </span>
             </button>
@@ -457,7 +457,7 @@ function EnginesFooter() {
         />
         engine
         <span
-          className="mono ml-auto"
+          className="ml-auto"
           data-testid="connection-status"
           title={connection.status === 'degraded' ? 'No live updates from the engine; reconnecting…' : undefined}
         >
