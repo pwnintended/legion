@@ -13,7 +13,7 @@ import type { ProcedureName, RpcInput, RpcOutput } from '@shared/rpc';
 import { useCallback, useEffect, useState } from 'react';
 import { useStore } from 'zustand';
 import { useShallow } from 'zustand/react/shallow';
-import { describeTile, type TileMeta } from '../layout/describe';
+import { describeTile, type TileMeta, tileDiffStatKey } from '../layout/describe';
 import type { LayoutTile, Workspace } from '../layout/tree';
 import {
   attemptsOfRun,
@@ -207,7 +207,8 @@ export function useLayout(runId: string | null | undefined): Workspace | null {
 
 /** Header/card metadata for a tile. Pass `now` to tick durations. */
 export function useTileMeta(runId: string, tile: LayoutTile, now?: number): TileMeta {
-  // describeTile builds a new object; select its inputs and memoize on them instead.
+  // describeTile builds a new object; select its inputs and memoize on them instead. Diff stats change on
+  // every `file_change` of any agent: only the tile's own part of them is selected (a primitive).
   const deps = useData(
     useShallow((s) => [
       s.runs[runId],
@@ -218,7 +219,7 @@ export function useTileMeta(runId: string, tile: LayoutTile, now?: number): Tile
       s.inbox,
       s.merges,
       s.verifications,
-      s.diffstats,
+      tileDiffStatKey(s, tile),
     ]),
   );
   const [cache] = useState(() => ({
