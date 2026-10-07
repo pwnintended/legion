@@ -393,8 +393,14 @@ The service applies `core/` decisions with CAS transitions; every flow is re-ent
   `git worktree prune`, which would drop the user's worktrees on unmounted volumes.
 - Recovery on engine start (`orchestrator/recovery.ts`): attempts in `running` → `interrupted`; coder attempts of
   running/fixing tasks are resumed in the same row with a "Legion was restarted" prompt, the others fail and their
-  step reruns. Approval and agent-question items are dismissed (their sessions are gone). `pending` merges are rolled
-  back (`resetIntegration(preSha)`, merge `reverted`) and the task is merged again. `git worktree list` is reconciled
+  step reruns. Approval and agent-question items are dismissed (their sessions are gone). `pending` merges are settled
+  (`settlePendingMerges`, also run before the merge queue merges anything): only the newest pending row is rolled
+  back (`resetIntegration(preSha)`), and only when integration's HEAD is its squash commit (the `postSha` recorded
+  right after the squash, or a commit whose parent is `preSha`) and no later merge completed; every pending row ends
+  `reverted`, never resetting over later merges. The task is merged again; an empty re-merge after such a row is
+  still verified. A merge row stays `pending` until integration is back at a known state: a failed post-merge
+  verify resets integration first and then writes `verify_failed` → `reverted`; an exception after the squash
+  resets integration and closes the row before escalating. `git worktree list` is reconciled
   with the DB: missing worktrees are restored from their branch, else the task is re-queued without charging the
   attempt; unknown worktrees under Legion's directory are only logged. Conflict merges left in progress are aborted.
   Planner and finalize jobs restart; dispatch resumes. Before every integration merge record the pre-merge SHA.

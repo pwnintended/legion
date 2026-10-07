@@ -914,6 +914,18 @@ export class Store {
     });
   }
 
+  /** Record the squash commit of a still-pending merge (recovery uses it to recognise its own commit). */
+  recordMergeCommit(id: string, postSha: string): Merge {
+    return this.transaction(() => {
+      const ok = this.patchRow(merges, id, { postSha } as Partial<Merge>, ['pending']);
+      const merge = this.select(merges, id);
+      if (!merge) throw notFound('merge', id);
+      if (!ok) throw new RpcError('conflict', `merge ${id} is already ${merge.status}`);
+      this.append({ type: 'merge.updated', merge });
+      return merge;
+    });
+  }
+
   /** Mark a merged merge as reverted (integration reset to preSha after a failed post-merge verify). */
   revertMerge(id: string, error: string | null): Merge {
     return this.transaction(() => {

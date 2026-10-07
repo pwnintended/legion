@@ -17,20 +17,13 @@ import {
   TASK_TRANSITIONS,
   type TaskStatus,
 } from '@shared/domain';
-import {
-  abortMerge,
-  branchExists,
-  integrationBranchName,
-  isMergeInProgress,
-  reconcile,
-  repoHash,
-  resetIntegration,
-} from '../git';
+import { abortMerge, branchExists, integrationBranchName, isMergeInProgress, reconcile, repoHash } from '../git';
 import { SLOT_STATUSES, taskStatusPath } from './core';
+import { settlePendingMerges } from './merge';
 import { taskMeta } from './meta';
 import type { Orchestrator } from './orchestrator';
 import { type PlanRevision, startPlanner } from './planner';
-import { ensureIntegrationWorktree, ensureWorktree, integrationKeep } from './worktrees';
+import { ensureIntegrationWorktree, ensureWorktree } from './worktrees';
 
 const WORKTREE_STATUSES: ReadonlySet<TaskStatus> = new Set([...SLOT_STATUSES, 'approved', 'awaiting_human', 'merging']);
 
@@ -109,15 +102,10 @@ async function recoverRun(o: Orchestrator, run: Run): Promise<void> {
   }
 }
 
-/** Reset integration to the pre-merge sha of every merge that never finished. */
+/** Settle merges that never finished (`settlePendingMerges`: roll back the newest only if it is HEAD). */
 async function rollBackMerges(o: Orchestrator, run: Run): Promise<void> {
-  const pending = o.store.listMerges(run.id).filter((m) => m.status === 'pending');
-  if (pending.length === 0) return;
-  const integration = await ensureIntegrationWorktree(o, run);
-  for (const merge of pending.reverse()) {
-    await resetIntegration(integration, merge.preSha, integrationKeep(o, run));
-    o.store.finishMerge(merge.id, 'reverted', { error: 'the engine stopped during this merge; rolled back' });
-  }
+  if (!o.store.listMerges(run.id).some((m) => m.status === 'pending')) return;
+  await settlePendingMerges(o, run, await ensureIntegrationWorktree(o, run));
 }
 
 async function recoverExecution(o: Orchestrator, run: Run): Promise<void> {

@@ -15,6 +15,7 @@ import {
   commitPaths,
   finishMerge,
   forecastMerge,
+  gitText,
   headSha,
   installCommand,
   integrationBranchName,
@@ -99,6 +100,8 @@ async function mergeTask(o: Orchestrator, run: Run, task: Task): Promise<Outcome
   if (!branch) throw new Error(`task ${task.nodeId} has no branch`);
   const message = `${node.id}: ${node.title}`;
   const keep = integrationKeep(o, run);
+  // A merge left pending by an earlier failure must be settled before anything is merged on top of it.
+  await settlePendingMerges(o, run, integration);
   for (;;) {
     o.assertOpen();
     if (o.store.requireRun(run.id).status !== 'executing') return 'park';
@@ -125,24 +128,41 @@ async function mergeTask(o: Orchestrator, run: Run, task: Task): Promise<Outcome
       return outcome;
     }
 
+    if (!result.empty) o.store.recordMergeCommit(merge.id, result.mergedSha);
+    // An empty re-merge after an unfinished earlier merge of this task means its content may already be in
+    // integration without ever having passed verification: verify it anyway.
+    const earlier = o.store
+      .listMerges(run.id)
+      .some((m) => m.taskId === task.id && m.id !== merge.id && m.status !== 'conflict');
     let failed: Awaited<ReturnType<typeof runVerification>>['results'] = [];
-    if (!result.empty) {
-      const changed = touchedPaths(await changedFiles(integration, preSha, result.mergedSha));
-      const install = changed.some(isLockfilePath) ? await installCommand(integration, config) : null;
-      const commands = [...(install ? [install] : []), ...verifyCommands(node, config)];
-      const outcome = await runVerification(o, {
-        run,
-        task,
-        attemptId: null,
-        phase: 'post_merge',
-        commands,
-        cwd: integration,
+    try {
+      if (!result.empty || earlier) {
+        const changed = touchedPaths(await changedFiles(integration, preSha, result.mergedSha));
+        const install = changed.some(isLockfilePath) ? await installCommand(integration, config) : null;
+        const commands = [...(install ? [install] : []), ...verifyCommands(node, config)];
+        const outcome = await runVerification(o, {
+          run,
+          task,
+          attemptId: null,
+          phase: 'post_merge',
+          commands,
+          cwd: integration,
+        });
+        failed = outcome.ok ? [] : outcome.results.filter((r) => r.exitCode !== 0);
+        // Whatever the verify commands wrote must not wedge the next merge.
+        if (failed.length === 0) await cleanWorktree(integration, keep);
+      }
+      o.assertOpen();
+    } catch (error) {
+      // Shutdown: the row stays pending and recovery rolls it back. Anything else: undo the squash now and
+      // close the row, so nothing unverified stays on integration while the run goes on.
+      if (o.closed || error instanceof Closed) throw error;
+      await resetIntegration(integration, preSha, keep);
+      o.store.finishMerge(merge.id, 'reverted', {
+        error: `merge aborted (${(error as Error).message}); integration reset to the pre-merge sha`,
       });
-      failed = outcome.ok ? [] : outcome.results.filter((r) => r.exitCode !== 0);
-      // Whatever the verify commands wrote must not wedge the next merge.
-      if (failed.length === 0) await cleanWorktree(integration, keep);
+      throw error;
     }
-    o.assertOpen();
     const current = o.store.requireTask(task.id);
     const meta = taskMeta(o.store, task.id);
     if (failed.length === 0) {
@@ -155,12 +175,15 @@ async function mergeTask(o: Orchestrator, run: Run, task: Task): Promise<Outcome
       });
       return 'done';
     }
-    o.store.finishMerge(merge.id, 'verify_failed', {
-      postSha: result.mergedSha,
-      error: `post-merge verification failed: ${failed.map((f) => f.command).join(', ')}`,
-    });
+    // The row stays pending until integration is back at preSha: a crash in between is rolled back by recovery.
     await resetIntegration(integration, preSha, keep);
-    o.store.revertMerge(merge.id, 'post-merge verification failed; integration reset to the pre-merge sha');
+    o.store.transaction(() => {
+      o.store.finishMerge(merge.id, 'verify_failed', {
+        postSha: result.mergedSha,
+        error: `post-merge verification failed: ${failed.map((f) => f.command).join(', ')}`,
+      });
+      o.store.revertMerge(merge.id, 'post-merge verification failed; integration reset to the pre-merge sha');
+    });
     const decision = decideAfterMerge(current, 'verify_failed', meta.resolverAttempts, o.limits());
     if (decision.action === 'fix') {
       patchTaskMeta(o.store, task.id, {
@@ -178,6 +201,38 @@ async function mergeTask(o: Orchestrator, run: Run, task: Task): Promise<Outcome
     });
     return 'done';
   }
+}
+
+/**
+ * Close the run's `pending` merge rows (a crash, or a failed rollback, cut them off). Only the newest one can
+ * still be integration's HEAD: it is rolled back to its pre-merge sha when HEAD is its squash commit (the
+ * recorded `postSha`, or a commit whose parent is `preSha`) and no later merge was completed on top of it.
+ * Everything else is closed without touching git, so a later merge is never reset away.
+ */
+export async function settlePendingMerges(o: Orchestrator, run: Run, integration: string): Promise<void> {
+  const merges = o.store.listMerges(run.id);
+  const pending = merges.filter((m) => m.status === 'pending');
+  const newest = pending.at(-1);
+  if (!newest) return;
+  for (const merge of pending.slice(0, -1)) {
+    o.store.finishMerge(merge.id, 'reverted', { error: 'superseded by a later merge; not rolled back' });
+  }
+  const later = merges.slice(merges.indexOf(newest) + 1).some((m) => m.status === 'merged');
+  const head = await headSha(integration);
+  let ours = false;
+  if (!later && head !== newest.preSha) {
+    ours = newest.postSha
+      ? head === newest.postSha
+      : (await gitText(integration, ['rev-parse', '--verify', '-q', `${head}^1`]).catch(() => '')) === newest.preSha;
+  }
+  if (ours) await resetIntegration(integration, newest.preSha, integrationKeep(o, run));
+  o.store.finishMerge(newest.id, 'reverted', {
+    error: ours
+      ? 'the merge did not finish; integration rolled back to the pre-merge sha'
+      : head === newest.preSha
+        ? 'the merge did not finish; nothing was committed'
+        : 'the merge did not finish; integration moved on, not rolled back',
+  });
 }
 
 /** Already merged nodes whose writes can touch the conflicted files (context for the resolver). */
