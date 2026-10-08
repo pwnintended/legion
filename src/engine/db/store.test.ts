@@ -5,6 +5,7 @@ import { RpcError } from '@shared/rpc-transport';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { tempDir } from '../test/helpers';
 import { MIGRATIONS, migrate, type OpenedStore, openStore, pragma, type Store, schemaVersion } from './index';
+import { capOutput, VERIFICATION_OUTPUT_CAP } from './store';
 
 let dir: ReturnType<typeof tempDir>;
 let opened: OpenedStore;
@@ -69,6 +70,7 @@ describe('database', () => {
       'recent_repos',
       'merges',
       'verifications',
+      'verification_outputs',
       'messages',
     ]) {
       expect(tables).toContain(table);
@@ -245,6 +247,94 @@ describe('store', () => {
     expect(snapshot.verifications).toHaveLength(1);
     expect(snapshot.merges[0]).toMatchObject({ status: 'merged', postSha: 'def' });
     expect(store.listRunSummaries()[0]?.taskCounts).toEqual({ blocked: 1 });
+  });
+
+  describe('verifications', () => {
+    const base = (runId: string) => ({
+      runId,
+      taskId: null,
+      attemptId: null,
+      phase: 'task' as const,
+      command: 'pnpm test',
+      exitCode: 1,
+      outputTail: 'tail',
+      durationMs: 42,
+    });
+
+    it('round-trips the gate fields and keeps the full output out of rows and events', () => {
+      const run = newRun();
+      const events: ServerEvent[] = [];
+      store.onEvents((batch) => events.push(...batch));
+      const v = store.insertVerification({
+        ...base(run.id),
+        gate: 'test',
+        kind: 'command',
+        status: 'fail',
+        summary: '2 tests failed',
+        blocking: true,
+        output: 'full output',
+      });
+      const nonBlocking = store.insertVerification({
+        ...base(run.id),
+        command: '',
+        exitCode: 0,
+        gate: 'scope',
+        kind: 'scope',
+        status: 'pass',
+        summary: 'all in scope',
+        blocking: false,
+      });
+      expect(v).toMatchObject({ gate: 'test', kind: 'command', status: 'fail', summary: '2 tests failed' });
+      expect(v.blocking).toBe(true);
+      expect(v).not.toHaveProperty('output');
+      expect(store.listVerifications(run.id)).toEqual([v, nonBlocking]);
+      expect(nonBlocking.blocking).toBe(false);
+      expect(store.listVerifications(run.id)[1]?.blocking).toBe(false);
+      for (const row of store.listVerifications(run.id)) expect(row).not.toHaveProperty('output');
+      expect(store.runSnapshot(run.id).verifications).toEqual([v, nonBlocking]);
+      const created = events.find((e) => e.type === 'verification.created');
+      expect(created).toMatchObject({ type: 'verification.created', verification: v });
+      expect(JSON.stringify(events)).not.toContain('full output');
+    });
+
+    it('reads a legacy row (no gate fields, no output) back with nulls', () => {
+      const run = newRun();
+      const v = store.insertVerification(base(run.id));
+      const [row] = store.listVerifications(run.id);
+      expect(row).toEqual(v);
+      expect(row).toMatchObject({ gate: null, kind: null, status: null, summary: null, blocking: null });
+      expect(store.verificationOutput(v.id)).toBeNull();
+    });
+
+    it('returns the stored output, capped to the tail', () => {
+      const run = newRun();
+      const v = store.insertVerification({ ...base(run.id), gate: 'lint', output: 'line 1\nline 2\n' });
+      expect(store.verificationOutput(v.id)).toBe('line 1\nline 2\n');
+      expect(store.verificationOutput('verification_missing')).toBeNull();
+
+      const big = `${'a'.repeat(VERIFICATION_OUTPUT_CAP)}THE END`;
+      const capped = store.insertVerification({ ...base(run.id), output: big });
+      const stored = store.verificationOutput(capped.id);
+      expect(stored).toHaveLength(VERIFICATION_OUTPUT_CAP);
+      expect(stored?.endsWith('THE END')).toBe(true);
+    });
+
+    it('caps on whole characters', () => {
+      expect(capOutput('abc', 3)).toBe('abc');
+      expect(capOutput('abcdef', 3)).toBe('def');
+      expect(capOutput('xé€', 4)).toBe('€'); // never a split character
+    });
+
+    it('deletes the output with its run', () => {
+      const run = newRun();
+      const v = store.insertVerification({ ...base(run.id), output: 'gone soon' });
+      expect(store.verificationOutput(v.id)).toBe('gone soon');
+      opened.db.prepare('DELETE FROM runs WHERE id = ?').run(run.id);
+      expect(store.listVerifications(run.id)).toEqual([]);
+      expect(store.verificationOutput(v.id)).toBeNull();
+      const left = opened.db.prepare('SELECT COUNT(*) AS n FROM verification_outputs').get() as { n: number };
+      expect(Number(left.n)).toBe(0);
+    });
   });
 
   it('stores agent events and pages transcripts', () => {

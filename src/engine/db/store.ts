@@ -230,10 +230,7 @@ const presentations = new Table<Presentation>('presentations', {
   createdAt: ['created_at'],
 });
 
-/** The gate fields have no columns yet (read back as absent). */
-type VerificationRow = Omit<Verification, 'gate' | 'kind' | 'status' | 'summary' | 'blocking'>;
-
-const verifications = new Table<VerificationRow>('verifications', {
+const verifications = new Table<Verification>('verifications', {
   id: ['id'],
   runId: ['run_id'],
   taskId: ['task_id'],
@@ -244,7 +241,24 @@ const verifications = new Table<VerificationRow>('verifications', {
   outputTail: ['output_tail'],
   durationMs: ['duration_ms'],
   createdAt: ['created_at'],
+  gate: ['gate'],
+  kind: ['kind'],
+  status: ['status'],
+  summary: ['summary'],
+  blocking: ['blocking', 'bool'],
 });
+
+/** Cap of a stored full gate output (`verification_outputs`), in UTF-8 bytes; the tail is kept. */
+export const VERIFICATION_OUTPUT_CAP = 1024 * 1024;
+
+/** The last `cap` bytes of `output` (whole characters only). */
+export function capOutput(output: string, cap = VERIFICATION_OUTPUT_CAP): string {
+  const bytes = Buffer.from(output, 'utf8');
+  if (bytes.length <= cap) return output;
+  let start = bytes.length - cap;
+  while (start < bytes.length && ((bytes[start] ?? 0) & 0xc0) === 0x80) start++; // skip a split character's tail
+  return bytes.subarray(start).toString('utf8');
+}
 
 // ---------------------------------------------------------------------------------------------
 // Inputs
@@ -293,7 +307,8 @@ export type NewInboxItem<K extends InboxKind = InboxKind> = {
   payload: InboxPayload<K>;
 };
 export type NewMerge = Pick<Merge, 'runId' | 'taskId' | 'preSha'>;
-export type NewVerification = Omit<Verification, 'id' | 'createdAt'>;
+/** A verification plus, optionally, its full output (stored apart, capped, never in snapshots or events). */
+export type NewVerification = Omit<Verification, 'id' | 'createdAt'> & { output?: string | null };
 
 export interface StoreOptions {
   now?: () => number;
@@ -1203,10 +1218,26 @@ export class Store {
     return this.selectWhere(merges, 'run_id = ?', 'created_at, id', runId);
   }
 
-  insertVerification(input: NewVerification): Verification {
+  insertVerification({ output, ...input }: NewVerification): Verification {
     return this.transaction(() => {
-      const verification: Verification = { id: newId('verification'), ...input, createdAt: this.now() };
+      const verification: Verification = {
+        id: newId('verification'),
+        ...input,
+        gate: input.gate ?? null,
+        kind: input.kind ?? null,
+        status: input.status ?? null,
+        summary: input.summary ?? null,
+        blocking: input.blocking ?? null,
+        createdAt: this.now(),
+      };
       this.insert(verifications, verification);
+      if (output != null) {
+        this.run(
+          'INSERT INTO verification_outputs (verification_id, output) VALUES (?, ?)',
+          verification.id,
+          capOutput(output),
+        );
+      }
       this.append({ type: 'verification.created', verification });
       return verification;
     });
@@ -1214,5 +1245,11 @@ export class Store {
 
   listVerifications(runId: string): Verification[] {
     return this.selectWhere(verifications, 'run_id = ?', 'created_at, id', runId);
+  }
+
+  /** The stored full output of a verification, or null (none recorded, a legacy row, or unknown id). */
+  verificationOutput(id: string): string | null {
+    const row = this.get('SELECT output FROM verification_outputs WHERE verification_id = ?', id);
+    return row ? (row.output as string) : null;
   }
 }

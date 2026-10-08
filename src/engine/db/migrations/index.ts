@@ -5,6 +5,7 @@ import { up as projects } from './004_projects';
 import { up as messages } from './005_messages';
 import { up as presentations } from './006_presentations';
 import { up as localMerge } from './007_local_merge';
+import { up as gates } from './008_gates';
 
 export interface Migration {
   version: number;
@@ -21,4 +22,5 @@ export const MIGRATIONS: readonly Migration[] = [
   { version: 5, name: 'messages', up: messages },
   { version: 6, name: 'presentations', up: presentations },
   { version: 7, name: 'local_merge', up: localMerge },
+  { version: 8, name: 'gates', up: gates },
 ];
