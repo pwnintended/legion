@@ -4,13 +4,18 @@
  * Mutating procedures (inbox.resolve, runs.pause/resume, runs.approvePlan) update the world and push the
  * resulting events, so the UI behaves as it would against the real engine.
  */
+import { resolveGateSettings, resolveGates } from '@engine/orchestrator/core/gates';
 import { type AttachmentRef, cleanName, extensionOf, sizeProblem, sniffAttachment } from '@shared/attachments';
 import {
   type Attempt,
   applySettingsPatch,
   type EngineKind,
+  type GateSpec,
+  type GatesConfig,
+  GatesConfigSchema,
   type InboxItem,
   type Project,
+  type ProjectGates,
   type QuestionAnswer,
   type Run,
   type SettingsPatch,
@@ -33,7 +38,7 @@ import type { ConnectionState } from '../engine-connection';
 import type { EngineClient } from '../sync';
 import { withBoardDemo } from './board';
 import { DEMO_FILES, drawDemoShot, withConversationDemo } from './conversation';
-import { createDemoWorld, type DemoWorld, LIVE_SCRIPT, snapshotOf } from './fixtures';
+import { createDemoWorld, DEMO_GATE_OUTPUT, type DemoWorld, LIVE_SCRIPT, snapshotOf } from './fixtures';
 import { extra, withLifecycleDemo } from './lifecycle';
 import { type DemoRpcContext, extendDemoWorld, handlePlanReviewRpc, isHandled } from './plan-review';
 import {
@@ -58,6 +63,19 @@ const SCRIPT = withSessionLive(LIVE_SCRIPT);
 
 const SNAPSHOT_SEQ = 1000;
 
+interface DemoGateConfig {
+  revision: number;
+  gates: GatesConfig | null;
+  verify: string[];
+}
+
+/** What detection finds in the demo repos' package.json scripts. */
+const DEMO_DETECTED_GATES: GateSpec[] = [
+  { name: 'test', command: 'pnpm test', blocking: true, source: 'detected' },
+  { name: 'typecheck', command: 'pnpm typecheck', blocking: true, source: 'detected' },
+  { name: 'lint', command: 'pnpm lint', blocking: true, source: 'detected' },
+];
+
 export class DemoClient implements EngineClient {
   private readonly world: DemoWorld;
   private readonly projects: DemoProjects;
@@ -73,6 +91,7 @@ export class DemoClient implements EngineClient {
   private created = 0;
   /** Attachments added in this demo session (in memory). */
   private readonly attachments = new Map<string, { ref: AttachmentRef; dataBase64: string | null }>();
+  private readonly gateConfigs = new Map<string, DemoGateConfig>();
 
   constructor(options: { live?: boolean; now?: number } = {}) {
     const now = options.now ?? Date.now();
@@ -318,6 +337,15 @@ export class DemoClient implements EngineClient {
         return (input.projectId ? [this.project(input.projectId as string)] : this.projects.list).map(demoStatus);
       case 'projects.info':
         return demoInfo(this.project(input.projectId as string), this.now);
+      case 'projects.gates':
+        return this.projectGates(input.projectId as string);
+      case 'projects.setGates':
+        return this.setProjectGates(input);
+      case 'verifications.output': {
+        const v = w.verifications.find((r) => r.id === input.verificationId);
+        if (!v) throw new RpcError('not_found', 'verification not found');
+        return { output: DEMO_GATE_OUTPUT[v.id] ?? v.outputTail };
+      }
       case 'projects.checkouts':
         return this.demoCheckouts(input.projectId as string);
       case 'files.list':
@@ -511,6 +539,53 @@ export class DemoClient implements EngineClient {
     const project = this.projects.byId.get(projectId);
     if (!project) throw new RpcError('not_found', `project ${projectId} not found`);
     return project;
+  }
+
+  /** legion.json `gates` / `verify` per project, edited in memory by Settings → Gates. */
+  private gateConfig(projectId: string): DemoGateConfig {
+    const project = this.project(projectId);
+    let config = this.gateConfigs.get(project.id);
+    if (!config) {
+      config = {
+        revision: 1,
+        gates: { commands: { 'db:migrate:check': 'pnpm db:migrate:check' }, scope: 'block' },
+        verify: ['pnpm e2e --smoke'],
+      };
+      this.gateConfigs.set(project.id, config);
+    }
+    return config;
+  }
+
+  private projectGates(projectId: string): ProjectGates {
+    const project = this.project(projectId);
+    const config = this.gateConfig(project.id);
+    const detected = DEMO_DETECTED_GATES.map((g) => ({ ...g }));
+    return {
+      path: `${project.path}/legion.json`,
+      exists: true,
+      revision: `demo-${config.revision}`,
+      error: null,
+      gates: structuredClone(config.gates),
+      verify: [...config.verify],
+      detected,
+      packageManager: 'pnpm',
+      resolved: resolveGates({ config, detected, taskCommands: [] }),
+      settings: resolveGateSettings(config),
+    };
+  }
+
+  private setProjectGates(input: Record<string, unknown>): ProjectGates {
+    const projectId = input.projectId as string;
+    const config = this.gateConfig(projectId);
+    const parsed = GatesConfigSchema.nullable().safeParse(input.gates ?? null);
+    if (!parsed.success) throw new RpcError('bad_request', parsed.error.issues.map((i) => i.message).join('; '));
+    if (input.revision !== `demo-${config.revision}`) {
+      throw new RpcError('conflict', 'legion.json changed since it was read; reload and try again');
+    }
+    config.gates = parsed.data;
+    if (Array.isArray(input.verify)) config.verify = input.verify.map(String);
+    config.revision += 1;
+    return this.projectGates(projectId);
   }
 
   private addProject(path: string): Project {

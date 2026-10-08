@@ -9,7 +9,7 @@
  */
 import type { Attempt, InboxItem, Merge, Plan, Run, Task, TaskNode, Verification } from '@shared/domain';
 import type { AgentEvent } from '@shared/events';
-import type { DemoWorld } from './fixtures';
+import { builtinGates, type DemoWorld, gateRows, projectGates } from './fixtures';
 
 const MIN = 60_000;
 const HOUR = 60 * MIN;
@@ -288,32 +288,82 @@ export function withLifecycleDemo(world: DemoWorld, now: number): DemoWorld {
       createdAt: t.updatedAt - 50_000,
       endedAt: t.updatedAt,
     });
-    verifications.push({
-      id: `ver_${t.id.slice(-10)}pm`,
-      runId: t.runId,
-      taskId: t.id,
-      attemptId: null,
-      phase: 'post_merge',
-      command: t.runId === F ? 'pnpm typecheck && pnpm test' : 'pnpm test jobs',
-      exitCode: 0,
-      outputTail: `✓ ${180 + i * 7} passed`,
-      durationMs: 31_000 + i * 1_800,
-      createdAt: t.updatedAt + 1,
-    });
+    const coder = [...attemptsE, ...attemptsF].find((a) => a.taskId === t.id && a.role === 'coder')?.id ?? null;
+    verifications.push(
+      ...gateRows(
+        {
+          idPrefix: `ver_${t.id.slice(-10)}g`,
+          runId: t.runId,
+          taskId: t.id,
+          attemptId: coder,
+          phase: 'task',
+          createdAt: t.updatedAt - 3 * MIN,
+        },
+        [
+          ...(t.runId === F
+            ? projectGates(`✓ ${54 + i * 4} passed (4.${i}s)`)
+            : projectGates('✓ 18 passed (2.7s)', { test: { command: 'pnpm test jobs', durationMs: 2_700 } })),
+          ...builtinGates(2 + (i % 3), 40 + i * 17),
+        ],
+      ),
+      ...gateRows(
+        {
+          idPrefix: `ver_${t.id.slice(-10)}pm`,
+          runId: t.runId,
+          taskId: t.id,
+          attemptId: null,
+          phase: 'post_merge',
+          createdAt: t.updatedAt + 1,
+        },
+        [
+          ...(t.runId === F
+            ? [{ gate: 'typecheck', command: 'pnpm typecheck', summary: 'tsc --noEmit · 0 errors', durationMs: 8_100 }]
+            : []),
+          {
+            gate: 'test',
+            command: t.runId === F ? 'pnpm test' : 'pnpm test jobs',
+            summary: `✓ ${180 + i * 7} passed`,
+            durationMs: 23_000 + i * 1_800,
+          },
+        ],
+      ),
+    );
   }
-  for (const [i, command] of ['pnpm typecheck', 'pnpm lint', 'pnpm test'].entries())
-    verifications.push({
-      id: `ver_darkfinal${i}`,
-      runId: F,
-      taskId: null,
-      attemptId: null,
-      phase: 'final',
-      command,
-      exitCode: 0,
-      outputTail: ['tsc --noEmit · 0 errors', 'Checked 311 files · 0 problems', '✓ 201 passed'][i] ?? '',
-      durationMs: [8_200, 1_100, 19_400][i] ?? 0,
-      createdAt: createdF + 6 * HOUR + i,
-    });
+  verifications.push(
+    ...gateRows(
+      {
+        idPrefix: 'ver_darkfinal',
+        runId: F,
+        taskId: null,
+        attemptId: null,
+        phase: 'final',
+        createdAt: createdF + 6 * HOUR,
+      },
+      [
+        ...projectGates('✓ 201 passed', {
+          test: { durationMs: 19_400 },
+          typecheck: { durationMs: 8_200 },
+          lint: { summary: 'Checked 311 files · 0 problems', durationMs: 1_100 },
+        }),
+      ],
+    ),
+  );
+
+  // The archived run's task passed the same gates before it merged.
+  for (const t of tasksG)
+    verifications.push(
+      ...gateRows(
+        {
+          idPrefix: `ver_${t.id.slice(-10)}g`,
+          runId: t.runId,
+          taskId: t.id,
+          attemptId: null,
+          phase: 'task',
+          createdAt: t.updatedAt - 3 * MIN,
+        },
+        [...projectGates('✓ 143 passed (11.2s)'), ...builtinGates(4, 12)],
+      ),
+    );
 
   // Every finished task carries the coder's structured report (the review pack's "Agent reports").
   for (const t of [...tasksE.filter((t) => t.status === 'merged'), ...tasksF, ...tasksG])

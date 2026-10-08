@@ -15,7 +15,7 @@ import type { AgentEvent, ServerEventBody } from '@shared/events';
 import type { DiffTarget, ProcedureName } from '@shared/rpc';
 import { RpcError } from '@shared/rpc-transport';
 import { demoDiffs } from './diffs';
-import type { DemoWorld } from './fixtures';
+import { builtinGates, type DemoWorld, gateRows, projectGates } from './fixtures';
 
 const MIN = 60_000;
 const A = 'run_authv2demo01';
@@ -235,21 +235,6 @@ function extendI18n(world: DemoWorld, now: number): void {
 // Passkeys run (A): T4's review pack
 // ---------------------------------------------------------------------------------------------
 
-function verification(
-  id: string,
-  runId: string,
-  taskId: string | null,
-  attemptId: string | null,
-  phase: Verification['phase'],
-  command: string,
-  outputTail: string,
-  durationMs: number,
-  createdAt: number,
-  exitCode: number | null = 0,
-): Verification {
-  return { id, runId, taskId, attemptId, phase, command, exitCode, outputTail, durationMs, createdAt };
-}
-
 function extendPasskeys(world: DemoWorld, now: number, stage: DemoStage): void {
   const plan = world.plans.find((p) => p.runId === A);
   const t4 = world.tasks.find((t) => t.runId === A && t.nodeId === 'T4');
@@ -298,64 +283,25 @@ function extendPasskeys(world: DemoWorld, now: number, stage: DemoStage): void {
     ];
   }
 
-  const verifyRound = (attemptId: string, at: number, round: 1 | 2) => [
-    verification(
-      `ver_t4r${round}test`,
-      A,
-      t4.id,
-      attemptId,
-      'task',
-      'pnpm vitest run db',
-      round === 1 ? '✓ 9 passed (2.1s)' : '✓ 10 passed (2.3s)',
-      2_300,
-      at,
-    ),
-    verification(
-      `ver_t4r${round}mig`,
-      A,
-      t4.id,
-      attemptId,
-      'task',
-      'pnpm db:migrate:check',
-      'up ✓ · down ✓ · up ✓ (0042_passkeys)',
-      4_800,
-      at + 1,
-    ),
-    verification(
-      `ver_t4r${round}tsc`,
-      A,
-      t4.id,
-      attemptId,
-      'task',
-      'pnpm typecheck',
-      'tsc --noEmit · 0 errors',
-      9_100,
-      at + 2,
-    ),
-    verification(
-      `ver_t4r${round}lint`,
-      A,
-      t4.id,
-      attemptId,
-      'task',
-      'pnpm lint',
-      'Checked 412 files · 0 problems',
-      1_200,
-      at + 3,
-    ),
-    verification(
-      `ver_t4r${round}sec`,
-      A,
-      t4.id,
-      attemptId,
-      'task',
-      'gitleaks detect --no-git --redact',
-      'no leaks found',
-      900,
-      at + 4,
-    ),
-  ];
-  world.verifications = world.verifications.filter((v) => v.id !== 'ver_authv2t4vf01');
+  // The engine's gates for T4: the repo's test/typecheck/lint, the node's migration check, scope and secrets.
+  const verifyRound = (attemptId: string, at: number, round: 1 | 2) =>
+    gateRows({ idPrefix: `ver_t4r${round}`, runId: A, taskId: t4.id, attemptId, phase: 'task', createdAt: at }, [
+      {
+        gate: 'test',
+        command: 'pnpm vitest run db',
+        summary: round === 1 ? '✓ 9 passed (2.1s)' : '✓ 10 passed (2.3s)',
+        durationMs: 2_300,
+      },
+      {
+        gate: 'db:migrate:check',
+        command: 'pnpm db:migrate:check',
+        summary: 'up ✓ · down ✓ · up ✓ (0042_passkeys)',
+        durationMs: 4_800,
+      },
+      ...projectGates('').filter((g) => g.gate !== 'test'),
+      ...builtinGates(4, round === 1 ? 82 : 90),
+    ]);
+  world.verifications = world.verifications.filter((v) => v.attemptId !== 'att_authv2t4code');
   world.verifications.push(...verifyRound('att_authv2t4code', now - 12 * MIN, 1));
 
   if (stage === 'fixing') {
@@ -499,53 +445,49 @@ function extendPdf(world: DemoWorld, now: number): void {
       createdAt: at - 40_000,
       endedAt: at,
     });
+    const coder = world.attempts.find((a) => a.taskId === task.id && a.role === 'coder')?.id ?? null;
     verifications.push(
-      verification(
-        `ver_pdfpm${i}`,
-        B,
-        task.id,
-        null,
-        'post_merge',
-        'pnpm typecheck && pnpm test',
-        `✓ ${212 + i * 9} passed`,
-        38_000 + i * 2_100,
-        at + 1,
+      ...gateRows(
+        {
+          idPrefix: `ver_pdft${i}`,
+          runId: B,
+          taskId: task.id,
+          attemptId: coder,
+          phase: 'task',
+          createdAt: at - 9 * MIN,
+        },
+        [...projectGates(`✓ ${48 + i * 6} passed (3.${i}s)`), ...builtinGates(2 + i, 60 + i * 23)],
+      ),
+      ...gateRows(
+        {
+          idPrefix: `ver_pdfpm${i}`,
+          runId: B,
+          taskId: task.id,
+          attemptId: null,
+          phase: 'post_merge',
+          createdAt: at + 1,
+        },
+        [
+          {
+            gate: 'typecheck',
+            command: 'pnpm typecheck',
+            summary: 'tsc --noEmit · 0 errors',
+            durationMs: 9_100 + i * 200,
+          },
+          { gate: 'test', command: 'pnpm test', summary: `✓ ${212 + i * 9} passed`, durationMs: 28_000 + i * 2_100 },
+        ],
       ),
     );
   });
   verifications.push(
-    verification(
-      'ver_pdffinal1',
-      B,
-      null,
-      null,
-      'final',
-      'pnpm typecheck',
-      'tsc --noEmit · 0 errors',
-      9_400,
-      now - 40 * MIN,
-    ),
-    verification(
-      'ver_pdffinal2',
-      B,
-      null,
-      null,
-      'final',
-      'pnpm lint',
-      'Checked 398 files · 0 problems',
-      1_300,
-      now - 40 * MIN + 1,
-    ),
-    verification(
-      'ver_pdffinal3',
-      B,
-      null,
-      null,
-      'final',
-      'pnpm test',
-      '✓ 248 passed (21.7s)',
-      21_700,
-      now - 40 * MIN + 2,
+    ...gateRows(
+      { idPrefix: 'ver_pdffinal', runId: B, taskId: null, attemptId: null, phase: 'final', createdAt: now - 40 * MIN },
+      [
+        ...projectGates('✓ 248 passed (21.7s)', {
+          test: { durationMs: 21_700 },
+          lint: { summary: 'Checked 398 files · 0 problems' },
+        }),
+      ],
     ),
   );
   world.merges.push(...merges);
@@ -761,21 +703,24 @@ export function handlePlanReviewRpc(ctx: DemoRpcContext, method: ProcedureName, 
       ctx.emit([{ type: 'merge.updated', merge: clone(merge) }]);
       ctx.later(1400, () => {
         Object.assign(merge, { status: 'merged', postSha: 'd41c9a0', endedAt: Date.now() });
-        const v = verification(
-          `ver_${task.id.slice(-8)}pm`,
-          task.runId,
-          task.id,
-          null,
-          'post_merge',
-          'pnpm typecheck && pnpm test',
-          '✓ 224 passed',
-          43_000,
-          Date.now(),
+        const rows = gateRows(
+          {
+            idPrefix: `ver_${task.id.slice(-8)}pm`,
+            runId: task.runId,
+            taskId: task.id,
+            attemptId: null,
+            phase: 'post_merge',
+            createdAt: Date.now(),
+          },
+          [
+            { gate: 'typecheck', command: 'pnpm typecheck', summary: 'tsc --noEmit · 0 errors', durationMs: 9_300 },
+            { gate: 'test', command: 'pnpm test', summary: '✓ 224 passed', durationMs: 33_700 },
+          ],
         );
-        w.verifications.push(v);
+        w.verifications.push(...rows);
         ctx.emit([
           { type: 'merge.updated', merge: clone(merge) },
-          { type: 'verification.created', verification: clone(v) },
+          ...rows.map((v) => ({ type: 'verification.created' as const, verification: clone(v) })),
         ]);
         setTask(ctx, task, { status: 'merged', mergedSha: 'd41c9a0' });
       });
