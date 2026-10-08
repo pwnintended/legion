@@ -13,6 +13,8 @@ export interface TitleBarColors {
 export interface MainPlatform {
   readonly os: Os;
   readonly titleBar: TitleBarSpec;
+  /** One-time setup at startup, before any window or notification (Windows: the app's taskbar / toast identity). */
+  init(): void;
   /** Frame and title bar options for every BrowserWindow (merged into the window's own options). */
   windowOptions(colors: TitleBarColors): BrowserWindowConstructorOptions;
   /** Recolour the native window controls after a theme change (a no-op where they don't take colours). */
@@ -22,6 +24,11 @@ export interface MainPlatform {
    * the user's shell environment, so this is where PATH (and the login shell, `SHELL`) are put right.
    */
   resolveChildEnv(base: Readonly<Record<string, string>>): Promise<Record<string, string>>;
+  /**
+   * Show how many things need the user on the app's icon (Dock badge, launcher count, taskbar overlay); 0 clears it.
+   * `window` is the main window, where the OS badges a window rather than the app.
+   */
+  setBadge(count: number, window: BrowserWindow | null): void;
   /** Quit once the last window is closed (macOS keeps the app alive in the Dock instead). */
   readonly quitWhenAllWindowsClosed: boolean;
 }

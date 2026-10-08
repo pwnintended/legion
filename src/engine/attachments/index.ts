@@ -7,7 +7,7 @@
 import { createHash } from 'node:crypto';
 import { mkdirSync, statSync } from 'node:fs';
 import { open, readdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
-import { join } from 'node:path';
+import { isAbsolute, join } from 'node:path';
 import {
   ATTACHMENT_LIMITS,
   type AttachmentRef,
@@ -214,7 +214,7 @@ function decodeBase64(data: string): Buffer {
 }
 
 async function readLocalFile(path: string, name: string): Promise<Buffer> {
-  if (!path.startsWith('/')) throw new RpcError('bad_request', 'path must be absolute');
+  if (!isAbsolute(path)) throw new RpcError('bad_request', 'path must be absolute');
   const info = await stat(path).catch(() => null);
   if (!info) throw new RpcError('not_found', `${name} doesn't exist any more`);
   if (info.isDirectory()) throw new RpcError('bad_request', `${name} is a folder. Attach files, not folders.`);

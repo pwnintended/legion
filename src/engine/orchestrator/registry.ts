@@ -8,6 +8,7 @@
  * new path takes effect for the next session without a restart. Live sessions keep the engine instance
  * they were started with; models and `enabled` are read from the settings at each session start anyway.
  */
+import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { type EngineKind, REAL_ENGINE_KINDS, type RealEngineKind, type Settings } from '@shared/domain';
 import type { AgentEngine, EngineInfo } from '@shared/engine';
@@ -51,7 +52,7 @@ export class EngineRegistry {
     const settings = options.settings();
     const overrides = options.overrides ?? {};
     const fake = overrides.fake ?? new FakeEngine({ script: demoScript, stepDelayMs: options.fakeStepDelayMs ?? 120 });
-    this.paths = { claude: settings.engines.claude.path, codex: settings.engines.codex.path };
+    this.paths = { claude: expandHome(settings.engines.claude.path), codex: expandHome(settings.engines.codex.path) };
     this.engines = {
       fake,
       claude: overrides.claude ?? (options.fake ? fake : this.build('claude', this.paths.claude)),
@@ -79,7 +80,7 @@ export class EngineRegistry {
     const settings = this.options.settings();
     const rebuilt: RealEngineKind[] = [];
     for (const kind of REAL_ENGINE_KINDS) {
-      const path = settings.engines[kind].path;
+      const path = expandHome(settings.engines[kind].path);
       if (path === this.paths[kind]) continue;
       this.paths[kind] = path;
       if (this.options.fake || this.options.overrides?.[kind]) continue;
@@ -181,4 +182,9 @@ export class EngineRegistry {
   private listedKinds(): EngineKind[] {
     return KINDS.filter((k) => k !== 'fake' || this.options.fake || this.options.overrides?.fake !== undefined);
   }
+}
+
+/** A settings path with `~` (`~/…`, `~\…`) put in for the home directory. */
+function expandHome(path: string | null): string | null {
+  return path ? path.replace(/^~(?=$|[\\/])/, homedir()) : path;
 }

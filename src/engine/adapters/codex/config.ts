@@ -8,6 +8,7 @@ import { join, resolve } from 'node:path';
 import { type SessionAttachment, type SessionOptions, sessionExtras } from '@shared/engine';
 import { CODEX_TOOL_TIMEOUT_SEC } from '../../mcp/config';
 import { enginePlatform } from '../../platform';
+import { isPermissionError } from '../../util/links';
 import { isAllowedCommand } from '../../util/shell';
 import { messageText, type ReadFile } from '../attachments';
 import type { JsonValue } from './protocol/serde_json/JsonValue';
@@ -69,6 +70,8 @@ export interface CodexHome {
   path: string;
   /** False when we had to fall back to the user's own CODEX_HOME. */
   isolated: boolean;
+  /** Why it fell back, when the user should hear about it (not for the expected keyring / API-key cases). */
+  fallback?: string;
 }
 
 /**
@@ -80,7 +83,7 @@ export interface CodexHome {
  * the same home.
  *
  * Falls back to the user's own home (not isolated; hooks etc. are still disabled via `-c features.*`)
- * when the user has no auth.json (keyring credential store or API-key env auth).
+ * when the user has no auth.json (keyring credential store or API-key env auth), or the OS refuses the symlink.
  */
 export async function prepareCodexHome(
   legionHome: string | null,
@@ -102,7 +105,19 @@ export async function prepareCodexHome(
     const current = await readlink(link).catch(() => null);
     if (current !== userAuth) {
       await rm(link, { force: true });
-      await symlink(userAuth, link);
+      try {
+        await symlink(userAuth, link, 'file');
+      } catch (error) {
+        // Windows refuses file symlinks without Developer Mode. A copy would split the login (token refreshes in
+        // one file invalidate the other), so use the user's own home instead.
+        if (isPermissionError(error))
+          return {
+            path: userHome,
+            isolated: false,
+            fallback: `can't link auth.json into Legion's CODEX_HOME (${(error as Error).message}); using ${userHome}`,
+          };
+        throw error;
+      }
     }
   }
   return { path: home, isolated: true };

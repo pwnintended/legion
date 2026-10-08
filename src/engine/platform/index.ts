@@ -6,15 +6,14 @@
 import { type Os, osOf } from '@shared/platform';
 import { posixPlatform } from './posix';
 import type { EnginePlatform } from './types';
+import { windowsPlatform } from './windows';
 
 export type * from './types';
 
 const IMPLEMENTATIONS: Record<Os, () => EnginePlatform> = {
   mac: () => posixPlatform('mac'),
   linux: () => posixPlatform('linux'),
-  // Not supported yet (docs/architecture.md §3). A Windows implementation needs PATHEXT lookup (`claude.exe`,
-  // `codex.cmd`) and a shell that exists there; the POSIX one keeps the engine loading, nothing more.
-  windows: () => posixPlatform('linux'),
+  windows: () => windowsPlatform(),
 };
 
 let current: EnginePlatform | null = null;

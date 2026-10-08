@@ -9,11 +9,11 @@ import { DEFAULT_TITLE_BAR_COLORS, isHexColor, mainPlatform, type TitleBarColors
 
 /**
  * `LEGION_HOME` overrides the data dir (tests); default `<appData>/Legion`: ~/Library/Application Support/Legion on
- * macOS, ~/.config/Legion on Linux.
+ * macOS, ~/.config/Legion on Linux, %APPDATA%\Legion on Windows.
  */
 function resolveDataDir(): string {
   const override = process.env.LEGION_HOME;
-  if (override) return resolve(override.replace(/^~(?=$|\/)/, homedir()));
+  if (override) return resolve(override.replace(/^~(?=$|[\\/])/, homedir()));
   return join(app.getPath('appData'), 'Legion');
 }
 
@@ -31,6 +31,7 @@ if (!app.requestSingleInstanceLock()) {
 
 async function main(): Promise<void> {
   const platform = mainPlatform();
+  platform.init();
   let childEnv: Promise<Record<string, string>> | null = null;
   const supervisor = new EngineSupervisor({
     entry: join(import.meta.dirname, 'engine.js'),
@@ -67,7 +68,7 @@ async function main(): Promise<void> {
         }
         break;
       case 'badge':
-        app.setBadgeCount(message.count);
+        platform.setBadge(message.count, mainWindow);
         break;
       case 'power':
         if (message.preventSleep && powerBlocker === null) {

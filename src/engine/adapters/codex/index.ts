@@ -13,6 +13,7 @@ import {
   type SessionOptions,
   sessionExtras,
 } from '@shared/engine';
+import { enginePlatform } from '../../platform';
 import { appServerArgs, prepareCodexHome, resolveBinary } from './config';
 import { JsonRpcPeer, LineSplitter } from './json-rpc';
 import type { ClientMethod, ClientMethods } from './methods';
@@ -43,6 +44,9 @@ const PROBE_TIMEOUT_MS = 20_000;
 export class CodexEngine implements AgentEngine {
   readonly kind = 'codex' as const;
 
+  /** Told the user once that Codex runs in their own CODEX_HOME (see `CodexHome.fallback`). */
+  private reportedFallback = false;
+
   constructor(private readonly options: CodexEngineOptions) {}
 
   start(opts: SessionOptions): Promise<AgentSession> {
@@ -58,6 +62,10 @@ export class CodexEngine implements AgentEngine {
     const command = resolveBinary(binary, opts.env);
     if (!command) throw new Error(`${binary} not found on PATH`);
     const home = await prepareCodexHome(this.options.codexHome, opts.env);
+    if (home.fallback && !this.reportedFallback) {
+      this.reportedFallback = true;
+      this.options.onStderr?.(`[legion] ${home.fallback}`);
+    }
     const { skills } = sessionExtras(opts);
     let tempDir: string | null = null;
     let skillsRoot: string | null = null;
@@ -128,7 +136,13 @@ async function probeAppServer(
   env: Record<string, string>,
   options: CodexEngineOptions,
 ): Promise<Pick<EngineInfo, 'version' | 'loggedIn' | 'account' | 'models' | 'error'>> {
-  const child = spawn(command, appServerArgs(), { env, stdio: ['pipe', 'pipe', 'pipe'] });
+  const launch = enginePlatform().launch(command, appServerArgs(), env);
+  const child = spawn(launch.cmd, launch.args, {
+    env,
+    stdio: ['pipe', 'pipe', 'pipe'],
+    windowsHide: true,
+    windowsVerbatimArguments: launch.verbatim ?? false,
+  });
   const gone = new Promise<void>((resolve) => {
     child.once('exit', () => resolve());
     child.once('error', () => resolve());
@@ -180,7 +194,7 @@ async function probeAppServer(
   } finally {
     rpc.close();
     child.stdin.end();
-    const timer = setTimeout(() => child.kill('SIGKILL'), 2_000);
+    const timer = setTimeout(() => enginePlatform().kill(child, 'SIGKILL'), 2_000);
     await gone;
     clearTimeout(timer);
   }

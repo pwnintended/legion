@@ -27,3 +27,12 @@ linux:
   syncDesktopName: true
   target:
     - target: AppImage
+win:
+  # `pnpm package` builds the unpacked dir (dist/win[-arm64]-unpacked/Legion.exe); `pnpm dist` an NSIS installer.
+  # Unsigned: SmartScreen warns on first launch until there is a code-signing certificate.
+  target:
+    - target: nsis
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true

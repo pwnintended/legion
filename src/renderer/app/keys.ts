@@ -7,7 +7,7 @@
  * `Mod` (⌘⌃ on macOS): then it is Ctrl+Super. And Ctrl is what terminals and vim run on, so inside them a bare
  * Ctrl+<letter> is theirs, not Legion's (`yieldsToControlKeys`).
  */
-import { IS_MAC } from './platform';
+import { IS_MAC, OS } from './platform';
 
 export { IS_MAC };
 
@@ -101,14 +101,25 @@ const SYMBOLS: Record<string, string> = {
   ' ': 'Space',
 };
 
-/** `Mod+Alt+H` → `⌘⌥H` (mac) / `Ctrl+Alt+H`; `Mod+Ctrl+H` → `⌃⌘H` / `Ctrl+Super+H`. */
+/** The Meta key's name off macOS. */
+const META_NAME = OS === 'windows' ? 'Win' : 'Super';
+
+/**
+ * Is AltGr held? Windows reports AltGr as Ctrl+Alt, so typing `@`, `{` or `ę` on many keyboards would otherwise
+ * match Legion's Ctrl+Alt chords. Those keys are characters, never commands.
+ */
+export function isAltGraph(event: { getModifierState?: (key: string) => boolean }): boolean {
+  return typeof event.getModifierState === 'function' && event.getModifierState('AltGraph');
+}
+
+/** `Mod+Alt+H` → `⌘⌥H` (mac) / `Ctrl+Alt+H`; `Mod+Ctrl+H` → `⌃⌘H` / `Ctrl+Super+H` (`Ctrl+Win+H`). */
 export function formatChord(binding: string, mac = IS_MAC): string {
   const chord = parseChord(binding);
   const key = SYMBOLS[chord.key] ?? chord.key;
   if (mac)
     return `${chord.ctrl ? '⌃' : ''}${chord.alt ? '⌥' : ''}${chord.shift ? '⇧' : ''}${chord.mod ? '⌘' : ''}${key}`;
   const { ctrl, meta } = physicalModifiers(chord, mac);
-  return [ctrl ? 'Ctrl' : '', meta ? 'Super' : '', chord.alt ? 'Alt' : '', chord.shift ? 'Shift' : '', key]
+  return [ctrl ? 'Ctrl' : '', meta ? META_NAME : '', chord.alt ? 'Alt' : '', chord.shift ? 'Shift' : '', key]
     .filter(Boolean)
     .join('+');
 }

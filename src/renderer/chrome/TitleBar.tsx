@@ -6,11 +6,13 @@
  * A conversation's agents are not a view of the switch: they are the inside of one conversation, so Chat stays
  * lit there and the crumb grows `/ Agents`, its run title leading back to the board.
  */
+
+import { pathSegments } from '@shared/paths';
 import { motion } from 'motion/react';
 import type { CSSProperties } from 'react';
 import { commandTooltip, executeCommand } from '../app/commands';
 import { useActiveRun, useData, useInbox, useUi } from '../app/hooks';
-import { TITLE_BAR } from '../app/platform';
+import { OS, TITLE_BAR } from '../app/platform';
 import { useReducedMotionPref } from '../app/prefs';
 import { openProject } from '../app/project-actions';
 import { actions, activeProjectOf, type View } from '../app/store';
@@ -37,7 +39,7 @@ const titleBarStyle: CSSProperties & Record<'--tb-end-fallback', string> = {
 };
 
 export function repoLabel(path: string): string {
-  return path.split('/').filter(Boolean).slice(-2).join('/');
+  return pathSegments(path, OS).slice(-2).join('/');
 }
 
 export function TitleBar() {

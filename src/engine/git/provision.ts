@@ -1,9 +1,11 @@
 import { createHash } from 'node:crypto';
-import { access, copyFile, mkdir, readdir, readFile, symlink } from 'node:fs/promises';
+import { access, copyFile, mkdir, readdir, readFile } from 'node:fs/promises';
 import { dirname, join, relative, resolve, sep } from 'node:path';
 import { tail } from '@shared/util';
 import { execa } from 'execa';
 import { z } from 'zod';
+import { enginePlatform } from '../platform';
+import { linkOrCopy } from '../util/links';
 import { globToRegExp } from './glob';
 
 // ---------------------------------------------------------------------------------------------
@@ -207,8 +209,9 @@ export async function provisionFiles(
         await copyFile(src, dest);
         result.copied.push(rel);
       } else {
-        await symlink(src, dest);
-        result.symlinked.push(rel);
+        // A copy where the OS refuses file symlinks (Windows without Developer Mode).
+        if ((await linkOrCopy(src, dest)) === 'linked') result.symlinked.push(rel);
+        else result.copied.push(rel);
       }
     }
   };
@@ -269,10 +272,12 @@ export interface RunCommandOptions {
 /** Run one command through the shell in `cwd`. Never throws for non-zero exit. */
 export async function runShellCommand(command: string, opts: RunCommandOptions): Promise<CommandResult> {
   const started = Date.now();
+  const env = legionEnv(opts.env);
   const r = await execa(command, {
-    shell: true,
+    // sh on macOS / Linux, Git Bash on Windows: legion.json commands are written once for every OS.
+    shell: enginePlatform().scriptShell({ ...process.env, ...env }),
     cwd: opts.cwd,
-    env: legionEnv(opts.env),
+    env,
     extendEnv: true,
     reject: false,
     all: true,

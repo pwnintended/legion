@@ -1,0 +1,6 @@
+# LF everywhere, also in Windows checkouts: Biome formats with LF, and the shell scripts run in Linux containers.
+* text=auto eol=lf
+*.png binary
+*.jpg binary
+*.ico binary
+*.icns binary

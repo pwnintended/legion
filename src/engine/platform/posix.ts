@@ -1,4 +1,4 @@
-/** macOS and Linux: `$SHELL -l` for terminals, executables are files with an execute bit on PATH. */
+/** macOS and Linux: `$SHELL -l` for terminals, executables are files with an execute bit on PATH, signals work. */
 import { accessSync, constants, statSync } from 'node:fs';
 import { delimiter, isAbsolute, join } from 'node:path';
 import type { Os } from '@shared/platform';
@@ -17,6 +17,10 @@ export function posixPlatform(os: Exclude<Os, 'windows'>): EnginePlatform {
       }
       return null;
     },
+    launch: (path, args) => ({ cmd: path, args: [...args] }),
+    kill: (child, signal) => void child.kill(signal),
+    scriptShell: () => true,
+    echo: (text) => ({ cmd: '/bin/echo', args: [text] }),
   };
 }
 

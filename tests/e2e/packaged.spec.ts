@@ -1,8 +1,7 @@
 /**
- * The packaged app (`pnpm package` → dist/mac[-arm64]/Legion.app, dist/linux[-arm64]-unpacked/legion) starts, its
- * engine utilityProcess loads
- * node:sqlite and node-pty from the asar / asar.unpacked paths (engine self-test, `LEGION_SELFTEST=1`), and
- * the renderer connects. Opt-in: `pnpm test:packaged` (packages first); skipped in `pnpm test:e2e`.
+ * The packaged app (`pnpm package` → dist/mac[-arm64]/Legion.app, dist/linux[-arm64]-unpacked/legion,
+ * dist/win[-arm64]-unpacked/Legion.exe) starts, its engine utilityProcess loads node:sqlite and node-pty from the
+ * asar / asar.unpacked paths (engine self-test, `LEGION_SELFTEST=1`), and the renderer connects. Opt-in: `pnpm test:packaged` (packages first); skipped in `pnpm test:e2e`.
  */
 import { existsSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -22,6 +21,10 @@ function packagedLayout(): { binary: string; resources: string } {
   if (process.platform === 'linux') {
     const dir = join(root, 'dist', `linux${arch}-unpacked`);
     return { binary: join(dir, 'legion'), resources: join(dir, 'resources') };
+  }
+  if (process.platform === 'win32') {
+    const dir = join(root, 'dist', `win${arch}-unpacked`);
+    return { binary: join(dir, 'Legion.exe'), resources: join(dir, 'resources') };
   }
   throw new Error(`no packaged layout for ${process.platform}`);
 }

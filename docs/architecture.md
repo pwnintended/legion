@@ -1,6 +1,6 @@
 # Legion architecture
 
-Legion is a desktop app for macOS and Linux (Electron + TypeScript) that takes an issue through
+Legion is a desktop app for macOS, Linux and Windows (Electron + TypeScript) that takes an issue through
 **clarify → plan → task DAG → parallel coding agents → cross-engine review → integration branch → draft PR**,
 driving both **Claude Code** and **Codex** through their own CLIs. The UI is a niri-style scrollable tiling
 workspace. Background research lives in `docs/research/`; the visual reference is the mockup at
@@ -13,7 +13,7 @@ document disagree, fix one of them in the same change.
 
 | Topic | Decision |
 |---|---|
-| Platform | macOS and Linux (arm64 + x64). Windows is not supported yet; OS-specific behaviour goes behind the platform interfaces (§3 "Platforms") so it can be added as one more implementation. |
+| Platform | macOS and Linux (arm64 + x64), tested in CI-style runs (`pnpm test:linux`). Windows (x64 + arm64) is implemented but not yet verified on a Windows machine (`docs/windows-testing.md`). OS-specific behaviour goes behind the platform interfaces (§3 "Platforms"). |
 | Claude Code | Spawn the user's installed `claude` CLI: `claude -p --input-format stream-json --output-format stream-json --verbose --include-partial-messages`. No Agent SDK. Auth = the user's own login (never touch tokens). |
 | Codex | Spawn `codex app-server` (JSON-RPC 2.0 over stdio). Types generated with `codex app-server generate-ts --experimental` and committed. Auth = the user's own `codex login`. |
 | Approvals | In-band for both engines, surfaced as `approval_request` events → inbox → `session.respond()`. Claude: `--permission-prompt-tool stdio` → `can_use_tool` control requests on stdout, answered with a `control_response` on stdin. Codex: `item/*/requestApproval` server requests. |
@@ -117,9 +117,9 @@ controls are drawn over its end with Window Controls Overlay, and the renderer k
 
 | Process | Interface | Covers | Implementations |
 |---|---|---|---|
-| main | `MainPlatform` (`main/platform/`) | BrowserWindow chrome, recolouring overlay controls on theme change, the child environment (login-shell `PATH` + `SHELL`), quit on last window | `mac.ts`, `linux.ts` |
-| engine | `EnginePlatform` (`engine/platform/`) | the interactive shell a terminal tile opens, finding executables (`claude`, `codex`, settings paths) | `posix.ts` (macOS + Linux) |
-| renderer | `app/platform.ts` + `app/keys.ts` | `OS`/`IS_MAC`, the title bar spec, how UI copy names the file manager; chord matching and labels | constants per `Os` |
+| main | `MainPlatform` (`main/platform/`) | startup identity (Windows app id), BrowserWindow chrome, recolouring overlay controls on theme change, the child environment (login-shell `PATH` + `SHELL`; on Windows one `PATH` key and git long paths), the icon badge (taskbar overlay dot on Windows), quit on last window | `mac.ts`, `linux.ts`, `windows.ts` |
+| engine | `EnginePlatform` (`engine/platform/`) | the interactive shell a terminal tile opens, finding executables (PATHEXT on Windows), launching them without a shell (an npm `.cmd` shim runs as `node <script>`), stopping process trees, the shell `legion.json` commands run in (Git Bash on Windows), the self-test's echo | `posix.ts` (macOS + Linux), `windows.ts` |
+| renderer | `app/platform.ts` + `app/keys.ts` | `OS`/`IS_MAC`, the title bar spec, how UI copy names the file manager and writes paths; chord matching and labels | constants per `Os` |
 
 Keyboard: bindings are written once (`Mod+K`); `Mod` is ⌘ on macOS and Ctrl elsewhere, a binding's own `Ctrl` is
 ⌃ on macOS and Ctrl elsewhere, and `Mod+Ctrl` becomes Ctrl+Super off macOS. Off macOS Ctrl is also what shells and
@@ -127,12 +127,23 @@ vim run on, so a focused terminal (or an element marked `data-ctrl-keys`, the vi
 (`yieldsToControlKeys`); the terminal copies and pastes with Ctrl+Shift+C/V. UI copy never spells a chord out:
 `<Kbd chord="Mod+Enter" />`, `formatChord`, `formatModifiers`.
 
-Adding an OS (Windows is the open one): implement `MainPlatform` and `EnginePlatform`, map the `Os` in each
-`IMPLEMENTATIONS` table (Windows maps to the Linux / POSIX ones until then), add an `electron-builder.yml` section
-and a `packagedLayout()` case in `tests/e2e/packaged.spec.ts`. Known Windows work outside these seams: `.cmd` shims
-can't be spawned without a shell, process trees must be killed explicitly (no signals), skill and `auth.json`
-symlinks need junctions or Developer Mode, `legion.json` commands assume `sh`, and absolute paths aren't always
-`/…`. `scripts/linux/check.sh [unit|e2e|packaged|all]` runs the Linux checks in Docker from any host.
+Paths: the engine uses `node:path` and compares paths after `realpath` (git prints `C:/…`, Node `C:\…`); the
+renderer, which has no `node:path`, uses `shared/paths.ts` (`isAbsolutePath`, `normalizePath`, `abbreviateHome`, …
+per `Os`). Links go through `engine/util/links.ts`: directories become junctions on Windows (no privilege needed),
+files a symlink or, where Windows refuses one, a copy; Codex's `auth.json` falls back to the user's own
+`CODEX_HOME` instead, since a copied login would split on token refresh. Off macOS, AltGr (Ctrl+Alt on Windows)
+never triggers a command.
+
+Adding an OS: implement `MainPlatform` and `EnginePlatform`, map the `Os` in each `IMPLEMENTATIONS` table, add an
+`electron-builder.yml` section and a `packagedLayout()` case in `tests/e2e/packaged.spec.ts`. Write the
+implementation against injected filesystem access and that OS's `node:path` flavour (as `windows.ts` does with
+`path.win32`) so its tests run on every host. `scripts/linux/check.sh [unit|e2e|packaged|all]` runs the Linux
+checks in Docker from any host.
+
+Known Windows gaps: Codex wraps commands in PowerShell, which `util/shell.ts` doesn't unwrap, so a read-only Codex
+agent's shell commands fail the allowlist and ask for approval instead (safe, noisy); arguments can't hold newlines
+through the `cmd.exe` fallback (only for `.cmd` files that aren't npm/pnpm shims); a command killed on timeout under
+Git Bash or `shell: true` leaves its grandchildren running (as on POSIX).
 
 ## 4. Stack
 

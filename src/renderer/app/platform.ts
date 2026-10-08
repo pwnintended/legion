@@ -20,6 +20,9 @@ export const IS_MAC = OS === 'mac';
 /** How main drew the window's title bar; the title bar component keeps clear of the native controls. */
 export const TITLE_BAR: TitleBarSpec = titleBarFor(OS);
 
+/** How a full path starts here, for hints ("Paste a full path (/… or ~/…)"). */
+export const PATH_FORMS: string = OS === 'windows' ? 'C:\\… or ~\\…' : '/… or ~/…';
+
 /** The system file manager, as UI copy names it ("Reveal in Finder"). */
 export const FILE_MANAGER: string = { mac: 'Finder', linux: 'the file manager', windows: 'File Explorer' }[OS];
 

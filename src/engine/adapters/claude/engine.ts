@@ -74,15 +74,34 @@ export function parseAuthStatus(output: string): { loggedIn: boolean | null; acc
   }
 }
 
-const defaultSpawn: SpawnFn = (command, args, options) =>
-  nodeSpawn(command, [...args], { cwd: options.cwd, env: options.env, stdio: ['pipe', 'pipe', 'pipe'] });
+const defaultSpawn: SpawnFn = (command, args, options) => {
+  const launch = enginePlatform().launch(command, args, options.env);
+  return nodeSpawn(launch.cmd, launch.args, {
+    cwd: options.cwd,
+    env: options.env,
+    stdio: ['pipe', 'pipe', 'pipe'],
+    windowsHide: true,
+    windowsVerbatimArguments: launch.verbatim ?? false,
+  });
+};
 
 const defaultExec: ExecFn = (command, args, options) =>
   new Promise((resolve) => {
-    execFile(command, [...args], { env: options.env, timeout: options.timeoutMs }, (error, stdout, stderr) => {
-      const code = error ? (typeof error.code === 'number' ? error.code : null) : 0;
-      resolve({ code, stdout: String(stdout), stderr: String(stderr || (error && !stdout ? error.message : '')) });
-    });
+    const launch = enginePlatform().launch(command, args, options.env);
+    execFile(
+      launch.cmd,
+      launch.args,
+      {
+        env: options.env,
+        timeout: options.timeoutMs,
+        windowsHide: true,
+        windowsVerbatimArguments: launch.verbatim ?? false,
+      },
+      (error, stdout, stderr) => {
+        const code = error ? (typeof error.code === 'number' ? error.code : null) : 0;
+        resolve({ code, stdout: String(stdout), stderr: String(stderr || (error && !stdout ? error.message : '')) });
+      },
+    );
   });
 
 export class ClaudeEngine implements AgentEngine {

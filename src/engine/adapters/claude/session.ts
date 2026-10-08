@@ -8,6 +8,7 @@ import type { Readable, Writable } from 'node:stream';
 import type { AgentSession, ApprovalDecision, Approvals, SessionAttachment, SessionOptions } from '@shared/engine';
 import type { AgentEvent } from '@shared/events';
 import type { Logger } from '../../context';
+import { enginePlatform } from '../../platform';
 import { AsyncQueue, deferred } from '../../util/async-queue';
 import { ClaudeStreamParser, LineBuffer, type ParserOutput } from './parser';
 import {
@@ -185,7 +186,7 @@ export class ClaudeSession implements AgentSession {
     this.write(interruptRequest(requestId));
     if (await within(turnEnded, this.timing.interruptTimeoutMs)) return;
     this.log.warn('claude: interrupt request timed out, sending SIGINT');
-    this.child.kill('SIGINT');
+    enginePlatform().kill(this.child, 'SIGINT');
     if (await within(turnEnded, this.timing.interruptTimeoutMs)) return;
     // Give up on the process; the transcript on disk stays resumable with `resume(sessionId)`.
     this.log.warn('claude: SIGINT did not end the turn, killing the process');
@@ -227,9 +228,9 @@ export class ClaudeSession implements AgentSession {
 
   private async terminate(): Promise<void> {
     if (this.exited) return;
-    this.child.kill('SIGTERM');
+    enginePlatform().kill(this.child, 'SIGTERM');
     if (await within(this.exitedSignal.promise, this.timing.killTimeoutMs)) return;
-    this.child.kill('SIGKILL');
+    enginePlatform().kill(this.child, 'SIGKILL');
     await this.exitedSignal.promise;
   }
 

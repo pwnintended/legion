@@ -2,6 +2,7 @@ import type { DiscoveredRepo, RecentRepo } from '@shared/rpc';
 import { describe, expect, it } from 'vitest';
 import {
   abbreviatePath,
+  baseName,
   buildBranchOptions,
   buildRepoPickerView,
   expandPath,
@@ -178,5 +179,24 @@ describe('keyboard model', () => {
     for (const key of ['Enter', ' ', 'ArrowDown', 'ArrowUp']) expect(opensPicker({ key })).toBe(true);
     expect(opensPicker({ key: 'Enter', metaKey: true })).toBe(false);
     expect(opensPicker({ key: 'a' })).toBe(false);
+  });
+});
+
+describe('repository paths on Windows', () => {
+  const home = 'C:\\Users\\me';
+  it('takes typed, quoted and Explorer-copied paths', () => {
+    expect(looksLikePath('C:\\src', 'windows')).toBe(true);
+    expect(looksLikePath('~\\src', 'windows')).toBe(true);
+    expect(looksLikePath('src\\app', 'windows')).toBe(false);
+    expect(expandPath('"C:\\Users\\me\\My Repo\\"', home, 'windows')).toBe('C:\\Users\\me\\My Repo');
+    expect(expandPath('~\\src\\app', home, 'windows')).toBe('C:\\Users\\me\\src\\app');
+    expect(expandPath('/Users/me', home, 'windows')).toBeNull();
+    expect(abbreviatePath('C:\\Users\\me\\src', home, 'windows')).toBe('~\\src');
+    expect(baseName('C:\\Users\\me\\app', 'windows')).toBe('app');
+  });
+
+  it('reads drive and network paths from dropped file URLs', () => {
+    expect(pathFromFileUrl('file:///C:/Users/me/My%20Repo/', 'windows')).toBe('C:\\Users\\me\\My Repo');
+    expect(pathFromFileUrl('file://server/share/repo', 'windows')).toBe('\\\\server\\share\\repo');
   });
 });

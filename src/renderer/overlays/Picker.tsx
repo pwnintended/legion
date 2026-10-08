@@ -7,7 +7,7 @@
 import type { RepoBranches } from '@shared/rpc';
 import { type ReactNode, useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { FILE_MANAGER } from '../app/platform';
+import { FILE_MANAGER, PATH_FORMS } from '../app/platform';
 import { Icon } from '../chrome/icons';
 import { Kbd } from '../chrome/ui';
 import { Glyph } from '../tiles/session/glyphs';
@@ -337,7 +337,7 @@ export function RepoPicker(props: RepoPickerProps) {
           <span>
             No repositories match <span className="pk-q">“{query.trim()}”</span>
           </span>
-          <span className="faint">Paste a full path (/… or ~/…), or browse for a folder.</span>
+          <span className="faint">Paste a full path ({PATH_FORMS}), or browse for a folder.</span>
         </div>
       );
     } else {

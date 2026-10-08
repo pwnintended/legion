@@ -6,7 +6,7 @@
 import type { DiscoveredRepo, RecentRepo } from '@shared/rpc';
 import { useEffect, useId, useMemo, useRef, useState } from 'react';
 import { rpc, useData } from '../app/hooks';
-import { FILE_MANAGER } from '../app/platform';
+import { FILE_MANAGER, PATH_FORMS } from '../app/platform';
 import { addProject, openProject, pickFolder } from '../app/project-actions';
 import { selectProjects } from '../app/projects';
 import { actions } from '../app/store';
@@ -273,7 +273,7 @@ export function AddProjectOverlay() {
                   <span>
                     No repositories match <span className="pk-q">“{query.trim()}”</span>
                   </span>
-                  <span className="faint">Paste a full path (/… or ~/…), or browse for a folder.</span>
+                  <span className="faint">Paste a full path ({PATH_FORMS}), or browse for a folder.</span>
                 </>
               ) : (
                 <>

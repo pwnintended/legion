@@ -4,9 +4,10 @@
  * per-session plugin (`--plugin-dir`), the bundled skills are switched off, and repo skills that are not
  * allowed are turned off by name.
  */
-import { mkdirSync, symlinkSync, writeFileSync } from 'node:fs';
+import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { SessionSkills } from '@shared/engine';
+import { linkDirectorySync } from '../../util/links';
 import { CLAUDE_PROJECT_SKILLS, skillsIn } from '../../util/skills';
 import { SKILLS_PLUGIN_NAME } from './args';
 
@@ -34,6 +35,6 @@ export async function prepareSkills(skills: SessionSkills, cwd: string, tempDir:
     join(pluginDir, '.claude-plugin', 'plugin.json'),
     JSON.stringify({ name: SKILLS_PLUGIN_NAME, version: '0.0.0', description: 'Skills this Legion session may use' }),
   );
-  for (const skill of allowedUser) symlinkSync(skill.dir, join(pluginDir, 'skills', folderName(skill.name)));
+  for (const skill of allowedUser) linkDirectorySync(skill.dir, join(pluginDir, 'skills', folderName(skill.name)));
   return { pluginDir, disabled };
 }

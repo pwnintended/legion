@@ -2,62 +2,62 @@
  * Pure models behind the composer's repository and base-branch pickers: path helpers, filtering and
  * sectioning, and the keyboard model. No React here so it can be unit tested.
  */
+import { abbreviateHome, expandHome, isAbsolutePath, isHomePath, normalizePath, pathSegments } from '@shared/paths';
+import type { Os } from '@shared/platform';
 import type { DiscoveredRepo, RecentRepo, RepoBranches } from '@shared/rpc';
+import { OS } from '../app/platform';
 
 // ---------------------------------------------------------------------------------------------
 // Paths
 // ---------------------------------------------------------------------------------------------
 
-/** `/Users/me/src/app` → `~/src/app` when under `home`. */
-export function abbreviatePath(path: string, home: string | null | undefined): string {
-  if (!home) return path;
-  const h = home.endsWith('/') ? home.slice(0, -1) : home;
-  if (path === h) return '~';
-  return path.startsWith(`${h}/`) ? `~${path.slice(h.length)}` : path;
+/** `/Users/me/src/app` → `~/src/app` (`C:\Users\me\src` → `~\src`) when under `home`. */
+export function abbreviatePath(path: string, home: string | null | undefined, os: Os = OS): string {
+  return abbreviateHome(path, home, os);
 }
 
-/** Does the text look like a filesystem path the user typed or pasted (`/…`, `~`, `~/…`)? */
-export function looksLikePath(text: string): boolean {
+/** Does the text look like a filesystem path the user typed or pasted (`/…`, `C:\…`, `~`, `~/…`)? */
+export function looksLikePath(text: string, os: Os = OS): boolean {
   const t = text.trim();
-  return t.startsWith('/') || t === '~' || t.startsWith('~/');
+  return isAbsolutePath(t, os) || isHomePath(t, os);
 }
 
 /**
- * An absolute, normalised path from typed text (`~` expanded, quotes from a Finder copy and trailing
- * slashes removed), or null when it isn't one.
+ * An absolute, normalised path from typed text (`~` expanded, quotes from a Finder or Explorer copy and trailing
+ * separators removed), or null when it isn't one.
  */
-export function expandPath(text: string, home: string | null | undefined): string | null {
+export function expandPath(text: string, home: string | null | undefined, os: Os = OS): string | null {
   let t = text.trim();
   if ((t.startsWith("'") && t.endsWith("'")) || (t.startsWith('"') && t.endsWith('"'))) t = t.slice(1, -1).trim();
-  // Shell-escaped spaces from a Terminal copy.
-  t = t.replace(/\\ /g, ' ');
-  if (t === '~' || t.startsWith('~/')) {
-    if (!home) return null;
-    t = home.replace(/\/$/, '') + t.slice(1);
-  }
-  if (!t.startsWith('/')) return null;
-  t = t.replace(/\/{2,}/g, '/');
-  return t.length > 1 ? t.replace(/\/+$/, '') : t;
+  // Shell-escaped spaces from a Terminal copy (on Windows a backslash is a separator).
+  if (os !== 'windows') t = t.replace(/\\ /g, ' ');
+  const expanded = expandHome(t, home, os);
+  if (expanded === null || !isAbsolutePath(expanded, os)) return null;
+  return normalizePath(expanded, os);
 }
 
-/** A filesystem path from a `file://` URL (Finder drags carry one in `text/uri-list`). */
-export function pathFromFileUrl(uriList: string): string | null {
+/** A filesystem path from a `file://` URL (file-manager drags carry one in `text/uri-list`). */
+export function pathFromFileUrl(uriList: string, os: Os = OS): string | null {
   const line = uriList
     .split(/\r?\n/)
     .map((l) => l.trim())
     .find((l) => l && !l.startsWith('#'));
   if (!line?.startsWith('file://')) return null;
   try {
-    const path = decodeURIComponent(new URL(line).pathname);
-    return path.length > 1 ? path.replace(/\/+$/, '') : path;
+    const url = new URL(line);
+    const pathname = decodeURIComponent(url.pathname);
+    // file:///C:/Users/me → C:\Users\me; file://server/share/x → \\server\share\x.
+    const path =
+      os !== 'windows' ? pathname : url.host ? `\\\\${url.host}${pathname}` : pathname.replace(/^\/(?=[A-Za-z]:)/, '');
+    return normalizePath(path, os);
   } catch {
     return null;
   }
 }
 
 /** The last path segment, for a display name. */
-export function baseName(path: string): string {
-  return path.split('/').filter(Boolean).at(-1) ?? path;
+export function baseName(path: string, os: Os = OS): string {
+  return pathSegments(path, os).at(-1) ?? path;
 }
 
 // ---------------------------------------------------------------------------------------------

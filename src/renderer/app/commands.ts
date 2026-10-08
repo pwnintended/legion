@@ -25,6 +25,7 @@ import { type DataState, hasAgents, TERMINAL_RUN_STATUSES } from './data';
 import { rpc } from './hooks';
 import {
   formatChord,
+  isAltGraph,
   isTerminal,
   isTextInput,
   matchesChord,
@@ -253,7 +254,7 @@ export function handleKeyDown(event: KeyboardEvent): boolean {
   if (event.defaultPrevented || event.isComposing) return false;
   // A confirm dialog is up: it owns every key (Esc must not close the overlay underneath).
   if (isConfirmOpen()) return false;
-  if (['Meta', 'Control', 'Alt', 'Shift'].includes(event.key)) return false;
+  if (['Meta', 'Control', 'Alt', 'Shift', 'AltGraph'].includes(event.key) || isAltGraph(event)) return false;
   // A popover (picker list) owns its plain keys: Esc closes it, not the overlay underneath.
   if (!event.metaKey && !event.ctrlKey && ownsPlainKeys(event.target)) return false;
   const inInput = isTextInput(event.target);

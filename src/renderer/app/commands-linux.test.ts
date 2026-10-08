@@ -87,4 +87,12 @@ describe('key dispatch off macOS', () => {
     expect(handleKeyDown(ctrl('S', vimEditor))).toBe(true);
     expect(ran).toEqual(['test.find', 'test.stations', 'test.save']);
   });
+
+  it('ignores AltGr, which Windows reports as Ctrl+Alt: it types characters', () => {
+    const altGrJ = Object.assign(keydown({ key: 'j', code: 'KeyJ', ctrlKey: true, altKey: true, target: plain }), {
+      getModifierState: (key: string) => key === 'AltGraph',
+    });
+    expect(handleKeyDown(altGrJ)).toBe(false);
+    expect(ran).toEqual([]);
+  });
 });

@@ -7,15 +7,14 @@ import { type Os, osOf } from '@shared/platform';
 import { linuxPlatform } from './linux';
 import { macPlatform } from './mac';
 import type { MainPlatform } from './types';
+import { windowsPlatform } from './windows';
 
 export * from './types';
 
 const IMPLEMENTATIONS: Record<Os, () => MainPlatform> = {
   mac: macPlatform,
   linux: linuxPlatform,
-  // Not supported yet (docs/architecture.md §3): Linux's choices (overlay controls, quit on last window) are
-  // the Windows conventions too, so it runs, but nothing Windows-specific has been done or tested.
-  windows: linuxPlatform,
+  windows: windowsPlatform,
 };
 
 let current: MainPlatform | null = null;
