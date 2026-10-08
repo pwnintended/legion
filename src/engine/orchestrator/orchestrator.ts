@@ -53,6 +53,7 @@ import {
   type McpServerHandle,
   type PlanStatus,
   type PresentRequest,
+  type RevisePlanResult,
   type SpawnResearchRequest,
   type StartImplementationRequest,
   type TaskNodePatch,
@@ -223,6 +224,7 @@ export const CLAUDE_PROMPT_TOOLS: ToolNames = {
   waitForReply: CLAUDE_TOOL_NAMES.waitForReply,
   startImplementation: CLAUDE_TOOL_NAMES.startImplementation,
   runStatus: CLAUDE_TOOL_NAMES.runStatus,
+  revisePlan: CLAUDE_TOOL_NAMES.revisePlan,
   present: CLAUDE_TOOL_NAMES.present,
 };
 
@@ -1126,6 +1128,8 @@ export class Orchestrator {
     assistantTools: {
       startImplementation(binding: McpBinding, request: StartImplementationRequest): { runId: string; status: string };
       runStatus(binding: McpBinding): AssistantRunStatus;
+      readPlan(binding: McpBinding, section: string | null): string;
+      revisePlan(binding: McpBinding, changes: string): Promise<RevisePlanResult>;
     };
   } | null = null;
 
@@ -1494,6 +1498,7 @@ export class Orchestrator {
     },
     planStatus: (binding) => this.leadTools().planStatus(binding),
     readPlan: (binding, section) => {
+      if (binding.role === 'assistant') return this.assistantTools().readPlan(binding, section);
       const plan = this.approvedPlan(binding.runId);
       if (!plan) throw new Error('the run has no approved plan yet');
       return planDocument({ version: plan.version, markdown: plan.markdown, nodes: plan.dag.nodes }, section);
@@ -1511,16 +1516,19 @@ export class Orchestrator {
       if (!this.flows) throw new Error('the assistant is not wired');
       return this.flows.assistantTools.startImplementation(binding, request);
     },
-    runStatus: (binding) => {
-      this.assertOpen();
-      if (!this.flows) throw new Error('the assistant is not wired');
-      return this.flows.assistantTools.runStatus(binding);
-    },
+    runStatus: (binding) => this.assistantTools().runStatus(binding),
+    revisePlan: (binding, changes) => this.assistantTools().revisePlan(binding, changes),
     present: (binding: McpBinding, request: PresentRequest) => {
       this.assertOpen();
       return present(this, binding, request);
     },
   };
+
+  private assistantTools(): NonNullable<Orchestrator['flows']>['assistantTools'] {
+    this.assertOpen();
+    if (!this.flows) throw new Error('the assistant is not wired');
+    return this.flows.assistantTools;
+  }
 
   private leadTools(): NonNullable<Orchestrator['flows']>['leadTools'] {
     this.assertOpen();

@@ -83,6 +83,17 @@ export interface AssistantRunStatus {
   error: string | null;
 }
 
+/** `revise_plan` for the assistant: what became of the changes. */
+export interface RevisePlanResult {
+  /**
+   * `steered`: passed into the planner's running turn. `queued`: the planner reads it in its next step.
+   * `revising`: the plan waited for sign-off; that card is withdrawn and the planner drafts the next version.
+   */
+  outcome: 'steered' | 'queued' | 'revising';
+  /** The plan the changes apply to (null while the first one is drafted). */
+  planVersion: number | null;
+}
+
 export interface StartImplementationRequest {
   title: string;
   brief: string;
@@ -140,7 +151,10 @@ export interface McpHost {
   ): Promise<AgentMessage | null>;
   /** Lead tools (role `lead`): the board and plan amendments. */
   planStatus(binding: McpBinding): PlanStatus | Promise<PlanStatus>;
-  /** The whole approved plan (markdown and every task), or the part under `section`. */
+  /**
+   * The whole plan (markdown and every task), or the part under `section`: the approved one for the lead, the
+   * latest version (draft, approved or proposed) for the assistant.
+   */
   readPlan(binding: McpBinding, section: string | null): string | Promise<string>;
   addTask(binding: McpBinding, node: TaskNode): AmendmentResult | Promise<AmendmentResult>;
   amendTask(binding: McpBinding, nodeId: string, patch: TaskNodePatch): AmendmentResult | Promise<AmendmentResult>;
@@ -151,6 +165,8 @@ export interface McpHost {
     request: StartImplementationRequest,
   ): { runId: string; status: string } | Promise<{ runId: string; status: string }>;
   runStatus(binding: McpBinding): AssistantRunStatus | Promise<AssistantRunStatus>;
+  /** Get the human's changes into the plan before it is signed off (steer the planner, or start a revision). */
+  revisePlan(binding: McpBinding, changes: string): RevisePlanResult | Promise<RevisePlanResult>;
   /** Show files / a document to the human in the run's conversation. */
   present(binding: McpBinding, request: PresentRequest): Promise<{ id: string; files: number }>;
   /** Open a research agent as the caller's child; its report arrives later as a `report` message. */
@@ -543,6 +559,33 @@ function registerAssistantTools(server: McpServer, binding: McpBinding, host: Mc
       inputSchema: {},
     },
     guard('run_status', async () => host.runStatus(binding)),
+  );
+  server.registerTool(
+    'read_plan',
+    {
+      description:
+        'The plan in full: its approach and contracts, then every task (goal, acceptance criteria, files, verify ' +
+        'commands). The latest version, whether it is a draft waiting for sign-off, approved, or a change the lead ' +
+        'proposed; the heading says which. With section (a heading, e.g. "Approach" or "T3: Combat"), only that ' +
+        'part. Read it before you answer the human about what the plan does or does not include.',
+      inputSchema: { section: z.string().optional().describe('A heading of the plan; omit for the whole plan.') },
+    },
+    guard('read_plan', async ({ section }: { section?: string }) => ({
+      markdown: await host.readPlan(binding, section ?? null),
+    })),
+  );
+  server.registerTool(
+    'revise_plan',
+    {
+      description:
+        'Get changes the human asked for (or agreed to) in this conversation into the plan, until it is signed ' +
+        'off. While the planner drafts, the changes reach it as it works. When a plan waits for sign-off, its card ' +
+        'is withdrawn and the planner drafts the next version with your changes; the human then signs that off. ' +
+        'State the decisions themselves, completely: the planner cannot ask you back. Once the plan is approved, ' +
+        'brief the lead instead. Returns {outcome: "steered" | "queued" | "revising", planVersion}.',
+      inputSchema: { changes: z.string().min(1).describe('What the plan should change, and why (markdown).') },
+    },
+    guard('revise_plan', async ({ changes }: { changes: string }) => host.revisePlan(binding, changes)),
   );
 }
 

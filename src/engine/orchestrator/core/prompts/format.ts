@@ -140,19 +140,18 @@ function inlineList(values: readonly string[] | undefined): string {
 export const PLAN_FILE = '.legion/plan.md';
 
 /**
- * The whole approved plan as one document (the coders' `.legion/plan.md`, the lead's `read_plan`): its
- * markdown with every contract, then every task's spec. With `section`, only the part under that heading.
+ * The whole approved plan as one document (the coders' `.legion/plan.md`, the lead's and the assistant's
+ * `read_plan`): its markdown with every contract, then every task's spec. With `section`, only the part under
+ * that heading. `title` replaces the heading for a plan that is not (yet) approved.
  */
 export function planDocument(
   plan: { version: number; markdown: string; nodes: readonly TaskNode[] },
   section: string | null = null,
+  title = `Approved plan (v${plan.version})`,
 ): string {
-  const doc = [
-    `# Approved plan (v${plan.version})`,
-    plan.markdown.trim(),
-    '## Tasks',
-    ...plan.nodes.map((node) => formatNodeSpec(node)),
-  ].join('\n\n');
+  const doc = [`# ${title}`, plan.markdown.trim(), '## Tasks', ...plan.nodes.map((node) => formatNodeSpec(node))].join(
+    '\n\n',
+  );
   if (!section?.trim()) return `${doc}\n`;
   return markdownSection(doc, section) ?? `No section "${section}" in the plan. Its headings:\n\n${headings(doc)}`;
 }

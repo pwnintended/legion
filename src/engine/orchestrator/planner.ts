@@ -428,7 +428,14 @@ function pendingAmendment(o: Orchestrator, run: Run, planId: string): Plan | nul
   return plan && plan.approvedAt === null ? plan : null;
 }
 
-export function requestPlanRevision(o: Orchestrator, runId: string, planId: string, feedback: string): Run {
+/** Turn down the latest plan (or the lead's pending change) with feedback; `by` the assistant on the human's word. */
+export function requestPlanRevision(
+  o: Orchestrator,
+  runId: string,
+  planId: string,
+  feedback: string,
+  by: 'human' | 'assistant' = 'human',
+): Run {
   const run = o.store.requireRun(runId);
   const amendment = pendingAmendment(o, run, planId);
   if (amendment) {
@@ -440,7 +447,12 @@ export function requestPlanRevision(o: Orchestrator, runId: string, planId: stri
   const next = o.store.transaction(() => {
     for (const item of o.store.listInbox({ runId, includeResolved: false })) {
       if (item.kind === 'plan_signoff') {
-        o.store.resolveInboxItem(item.id, { kind: 'plan_signoff', approved: false, feedback });
+        o.store.resolveInboxItem(item.id, {
+          kind: 'plan_signoff',
+          approved: false,
+          feedback,
+          ...(by === 'assistant' ? { by } : {}),
+        });
       }
     }
     return o.store.transitionRun(runId, 'awaiting_approval', 'planning');

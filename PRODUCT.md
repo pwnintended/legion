@@ -47,7 +47,7 @@ Legion is a local orchestrator for the coding agents the user already pays for a
 - **Roles:** assistant, planner, lead, coder, reviewer, resolver, finalizer, researcher, research_lead.
   - Coordinators (assistant, lead, research_lead) only talk; they have no tools.
   - Messages flow along parent↔child edges only.
-- **Agent tools** (via the Legion MCP server): report_progress, request_human_input, send_message / wait_for_reply / ask_lead, spawn_research, and the lead's plan amendment tools.
+- **Agent tools** (via the Legion MCP server): report_progress, request_human_input, send_message / wait_for_reply / ask_lead, spawn_research, the lead's plan amendment tools, and the assistant's read_plan / revise_plan (it reads the plan and revises it on the human's word until sign-off).
 - **Attachments:** image, text and file, at most 10 per message. They currently flow from the user to agents only.
 - **Fake mode:** `LEGION_FAKE_ENGINES=1`. Demo fixtures: `?demo=1`.
 - **Requirements:** macOS only, git ≥ 2.38, `gh` for PRs.

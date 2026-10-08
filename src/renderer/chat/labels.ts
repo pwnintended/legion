@@ -97,7 +97,9 @@ export function receiptText(item: InboxItem, taskLabel: string | null): string {
         : `plan v${item.payload.version}`;
       if (!resolution) return `Sign-off of ${name} closed`;
       if (resolution.approved) return `Approved ${name}`;
-      return resolution.feedback ? `Asked for changes to ${name}: “${resolution.feedback}”` : `Turned down ${name}`;
+      if (!resolution.feedback) return `Turned down ${name}`;
+      const who = resolution.by === 'assistant' ? 'The assistant asked' : 'Asked';
+      return `${who} for changes to ${name}: “${resolution.feedback}”`;
     }
     case 'escalation': {
       const action = resolutionOf(item)?.action;
