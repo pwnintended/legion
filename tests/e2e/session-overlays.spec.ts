@@ -52,7 +52,7 @@ test('session tiles, approvals, composer, decisions, palette, clarify', async ()
     await window.waitForTimeout(500);
     await window.screenshot({ path: join(shots, 'station-T2.png') });
     // T3, the next station down the map (⌘⌥J), waits on an approval.
-    await window.keyboard.press('Meta+Alt+j');
+    await window.keyboard.press('ControlOrMeta+Alt+j');
     await expect.poll(() => station(window)).toBe('task:T3');
     await expect.poll(() => focusedTile(window)).toBe('session:T3');
     await expect(t3.getByTestId('approval-card')).toBeVisible();
@@ -63,7 +63,7 @@ test('session tiles, approvals, composer, decisions, palette, clarify', async ()
     // Six decisions wait across runs (the title bar's count). ⌘U shows the first one in the run on screen as a card
     // in its chat: T3's approval; ⌘E goes back to the agents and gives focus back to the tile.
     await expect(window.getByTestId('needs-you').locator('.tb-needs-count')).toHaveText('6');
-    await window.keyboard.press('Meta+u');
+    await window.keyboard.press('ControlOrMeta+u');
     const chat = window.getByTestId('chat');
     await expect(chat).toBeVisible();
     const approvalCard = chat.locator('[data-testid="chat-decision"][data-kind="approval"]');
@@ -72,7 +72,7 @@ test('session tiles, approvals, composer, decisions, palette, clarify', async ()
     await expect(window.locator('[data-highlight]')).toHaveAttribute('data-thread-key', 'inbox:inb_authv2appr01');
     await window.waitForTimeout(450);
     await window.screenshot({ path: join(shots, 'decision.png') });
-    await window.keyboard.press('Meta+e');
+    await window.keyboard.press('ControlOrMeta+e');
     await expect(chat).toHaveCount(0);
     await expect.poll(() => station(window)).toBe('task:T3');
     await expect.poll(() => focusedTile(window)).toBe('session:T3');
@@ -91,11 +91,11 @@ test('session tiles, approvals, composer, decisions, palette, clarify', async ()
     await t3.screenshot({ path: join(shots, 'approval-accepted.png') });
 
     // Composer (⌘⇧N; ⌘N is a new conversation tile on the board): validation, repo inspection, issue link detection.
-    await window.keyboard.press('Meta+Shift+n');
+    await window.keyboard.press('ControlOrMeta+Shift+n');
     const composer = window.getByTestId('composer');
     await expect(composer).toBeVisible();
     await expect(composer.getByTestId('repo-status')).toContainText('erudiet/app');
-    await window.keyboard.press('Meta+Enter');
+    await window.keyboard.press('ControlOrMeta+Enter');
     await expect(composer.getByText('Describe the work or paste an issue URL.')).toBeVisible();
     await window.keyboard.type('Add audit logging to admin actions https://github.com/erudiet/app/issues/512');
     await expect(composer.getByTestId('composer-link')).toContainText('erudiet/app#512');
@@ -104,7 +104,7 @@ test('session tiles, approvals, composer, decisions, palette, clarify', async ()
     // Overlays own their keys: ⌘⏎ with focus on a button inside the composer submits it (it does not reach the
     // tile behind it).
     await composer.locator('[data-engine="codex"]').focus();
-    await window.keyboard.press('Meta+Enter');
+    await window.keyboard.press('ControlOrMeta+Enter');
     await expect(composer).toHaveCount(0);
     await expect(window.getByTestId('titlebar')).toContainText('Add audit logging to admin actions');
     await expect(chat).toBeVisible();
@@ -120,7 +120,7 @@ test('session tiles, approvals, composer, decisions, palette, clarify', async ()
     await expect(question).toHaveCount(1);
     await expect(chat.getByTestId('chat-needs-you')).toContainText('1 waiting for you');
     // ⌘U answers what is in front of you first.
-    await window.keyboard.press('Meta+u');
+    await window.keyboard.press('ControlOrMeta+u');
     await expect(window.locator('[data-highlight]')).toHaveAttribute('data-thread-key', 'inbox:inb_rlclarify001');
     await expect(window.getByTestId('titlebar')).toContainText('Rate-limit the public API');
 
@@ -141,9 +141,9 @@ test('session tiles, approvals, composer, decisions, palette, clarify', async ()
     await expect(window.getByTestId('needs-you').locator('.tb-needs-count')).toHaveText('4');
 
     // Palette (⌘K): fuzzy task ids, jump (to the agents view).
-    await window.keyboard.press('Meta+1');
+    await window.keyboard.press('ControlOrMeta+1');
     await expect(window.getByTestId('titlebar')).toContainText('Add passkey (WebAuthn) login');
-    await window.keyboard.press('Meta+k');
+    await window.keyboard.press('ControlOrMeta+k');
     const palette = window.getByTestId('palette');
     await expect(palette).toBeVisible();
     await window.waitForTimeout(400);
@@ -159,8 +159,8 @@ test('session tiles, approvals, composer, decisions, palette, clarify', async ()
     await expect(window.getByTestId('route-row-T4')).toHaveAttribute('aria-current', 'true');
 
     // A busy session, two stations up the map (⌘⌥K twice): T2, the whole pane.
-    await window.keyboard.press('Meta+Alt+k');
-    await window.keyboard.press('Meta+Alt+k');
+    await window.keyboard.press('ControlOrMeta+Alt+k');
+    await window.keyboard.press('ControlOrMeta+Alt+k');
     await expect.poll(() => station(window)).toBe('task:T2');
     await expect.poll(() => focusedTile(window)).toBe('session:T2');
     await window.waitForTimeout(500);

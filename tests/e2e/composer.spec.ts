@@ -133,7 +133,7 @@ test('composer: repository picker, status line, base branch, at three sizes', as
     const status = composer.getByTestId('repo-status');
 
     // ⌘⇧N: the issue field has focus; nothing is picked on a fresh install.
-    await window.keyboard.press('Meta+Shift+n');
+    await window.keyboard.press('ControlOrMeta+Shift+n');
     await expect(composer).toBeVisible();
     await expect.poll(() => window.evaluate(() => document.activeElement?.tagName)).toBe('TEXTAREA');
     await expect(picker).toContainText('Choose a repository…');
@@ -229,7 +229,7 @@ test('composer: repository picker, status line, base branch, at three sizes', as
     // Recent now lists what was used; ⌘O browses straight from the list.
     await picker.click();
     await expect(list.getByText('Recent')).toBeVisible();
-    await window.keyboard.press('Meta+o');
+    await window.keyboard.press('ControlOrMeta+o');
     await expect(list).toHaveCount(0);
     await expect(picker).toHaveAttribute('title', widgets);
     await window.keyboard.press('Escape');
@@ -239,7 +239,7 @@ test('composer: repository picker, status line, base branch, at three sizes', as
     for (const size of SIZES) {
       const tag = `${size[0]}x${size[1]}`;
       await setSize(app, window, size);
-      await window.keyboard.press('Meta+Shift+n');
+      await window.keyboard.press('ControlOrMeta+Shift+n');
       await expect(composer).toBeVisible();
       // Empty: no text yet (the draft keeps the last repo).
       await composer.locator('textarea').fill('');
@@ -277,7 +277,7 @@ test('composer: repository picker, status line, base branch, at three sizes', as
       await window.waitForTimeout(150);
       await window.screenshot({ path: join(shots, `long-${tag}.png`) });
       const narrowWidth = (await composer.boundingBox())?.width ?? 0;
-      await window.keyboard.press('Meta+Shift+E');
+      await window.keyboard.press('ControlOrMeta+Shift+E');
       await expect(composer.getByTestId('composer-expand')).toHaveAttribute('aria-pressed', 'true');
       await window.waitForTimeout(400);
       expect((await composer.boundingBox())?.width ?? 0).toBeGreaterThanOrEqual(narrowWidth);
@@ -308,8 +308,8 @@ test('composer: repository picker, status line, base branch, at three sizes', as
 
       // The other overlays: centred and fully on screen.
       for (const [key, id] of [
-        ['Meta+k', 'palette'],
-        ['Meta+,', 'settings'],
+        ['ControlOrMeta+k', 'palette'],
+        ['ControlOrMeta+,', 'settings'],
       ] as const) {
         await window.keyboard.press(key);
         const panel = window.getByTestId(id);

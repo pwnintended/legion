@@ -163,7 +163,7 @@ body {
   overflow: hidden;
 }
 
-/* Draggable window chrome (hiddenInset title bar). Interactive children opt out with .no-drag. */
+/* Draggable window chrome (the title bar). Interactive children opt out with .no-drag. */
 .drag {
   -webkit-app-region: drag;
 }

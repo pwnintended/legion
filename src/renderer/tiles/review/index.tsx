@@ -512,7 +512,7 @@ function Actions({
               data-testid="approve-merge"
             >
               {approve.pending ? 'Approving…' : 'Approve & merge'}
-              <Kbd>⌘⏎</Kbd>
+              <Kbd chord="Mod+Enter" />
             </button>
             <button type="button" className="btn lg-btn-lg" onClick={() => setRequesting(true)}>
               Request changes <Kbd>R</Kbd>

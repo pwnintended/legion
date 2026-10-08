@@ -5,6 +5,7 @@
 import type { FileMatch } from '@shared/rpc';
 import { useEffect, useId, useMemo, useRef, useState } from 'react';
 import { rpc, useUi } from '../app/hooks';
+import { formatChord } from '../app/keys';
 import { currentProject, openFile, recentFiles } from '../app/project-actions';
 import { actions } from '../app/store';
 import { Icon } from '../chrome/icons';
@@ -159,7 +160,7 @@ export function GoToFileOverlay() {
       <div className="ovl-foot">
         <span>↑↓ select</span>
         <span>⏎ open</span>
-        <span>⌘⏎ new column</span>
+        <span>{formatChord('Mod+Enter')} new column</span>
         <span>esc close</span>
       </div>
     </OverlayPanel>

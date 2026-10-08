@@ -3,6 +3,9 @@
  * `SettingsSchema`, shared/domain.ts) and small derived notes. Kept free of React so it is unit-tested.
  */
 import type { EngineInfo } from '@shared/engine';
+import { examplePath, isAbsolutePath, isHomePath } from '@shared/paths';
+import type { Os } from '@shared/platform';
+import { OS } from '../app/platform';
 
 export type Parsed<T> = { ok: true; value: T } | { ok: false; message: string };
 
@@ -27,12 +30,12 @@ export function parseBudget(text: string): Parsed<number | null> {
 }
 
 /** An absolute binary path, or empty to auto-detect from PATH. `~/` is allowed (the engine expands it). */
-export function parseBinaryPath(text: string): Parsed<string | null> {
+export function parseBinaryPath(text: string, os: Os = OS): Parsed<string | null> {
   const trimmed = text.trim();
   if (trimmed === '') return { ok: true, value: null };
-  if (!trimmed.startsWith('/') && !trimmed.startsWith('~/'))
-    return { ok: false, message: 'Use an absolute path, e.g. /opt/homebrew/bin/claude.' };
-  if (/\s$/.test(text) || trimmed.endsWith('/')) return { ok: false, message: 'Point at the binary, not a folder.' };
+  if ((!isAbsolutePath(trimmed, os) && !isHomePath(trimmed, os)) || trimmed === '~')
+    return { ok: false, message: `Use an absolute path, e.g. ${examplePath(os, 'binary')}.` };
+  if (/\s$/.test(text) || /[\\/]$/.test(trimmed)) return { ok: false, message: 'Point at the binary, not a folder.' };
   return { ok: true, value: trimmed };
 }
 

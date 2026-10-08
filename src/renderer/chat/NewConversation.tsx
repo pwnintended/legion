@@ -189,7 +189,7 @@ export function NewConversation({
                 data-testid="new-conversation-send"
               >
                 {state.status === 'sending' ? 'Starting…' : viaAssistant ? 'Start' : 'Plan it'}
-                <Kbd>⌘⏎</Kbd>
+                <Kbd chord="Mod+Enter" />
               </button>
             </div>
             {drop.dragging ? (

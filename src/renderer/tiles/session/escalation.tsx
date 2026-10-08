@@ -178,7 +178,7 @@ export function EscalationCard({ item, focused, label }: { item: EscalationItem;
                 : pending === 'edit'
                   ? 'Retrying…'
                   : 'Retry with note'}
-              <Kbd>⌘⏎</Kbd>
+              <Kbd chord="Mod+Enter" />
             </button>
             <button type="button" className="btn btn-ghost btn-sm" onClick={() => setEditing(false)}>
               Cancel

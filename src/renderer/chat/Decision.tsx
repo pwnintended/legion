@@ -310,7 +310,7 @@ function PlanBody({ item }: { item: InboxItemOf<'plan_signoff'> }) {
           <div className="ch-actions">
             <button type="submit" className="btn btn-sm" disabled={!feedback.trim() || busy}>
               {signoff.pending === 'revise' ? 'Sending…' : 'Ask for changes'}
-              <Kbd>⌘⏎</Kbd>
+              <Kbd chord="Mod+Enter" />
             </button>
             <button type="button" className="btn btn-ghost btn-sm" onClick={() => setRevising(false)}>
               Cancel

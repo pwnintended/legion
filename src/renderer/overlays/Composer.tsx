@@ -6,10 +6,13 @@
  */
 import type { EngineKind } from '@shared/domain';
 import type { EngineInfo } from '@shared/engine';
+import { examplePath, separator } from '@shared/paths';
 import type { DiscoveredRepo, RecentRepo, RepoBranches, RepoInspection } from '@shared/rpc';
 import { type ReactNode, useEffect, useId, useMemo, useRef, useState } from 'react';
 import { seededBase, seededText, takeComposerSeed } from '../app/composer-seed';
 import { rpc, useActiveRun, useEngines, useSettings } from '../app/hooks';
+import { formatChord } from '../app/keys';
+import { OS } from '../app/platform';
 import { adoptRun } from '../app/run-actions';
 import { actions } from '../app/store';
 import {
@@ -108,7 +111,7 @@ export function repoProblem(inspection: RepoInspection): string {
         ? 'Not a folder. Pick or drop a folder.'
         : "That folder doesn't exist. Pick another one.";
     case 'path must be absolute':
-      return 'Use a full path, starting with / or ~/.';
+      return `Use a full path, like ${examplePath(OS, 'folder')} or ~${separator(OS)}src.`;
     default:
       return inspection.error ?? 'Not a git repository. Pick another folder.';
   }
@@ -402,7 +405,7 @@ export function ComposerOverlay() {
             style={{ marginLeft: 'auto' }}
             aria-label={expanded ? 'Shrink the composer' : 'Expand the composer'}
             aria-pressed={expanded}
-            title={expanded ? 'Shrink  ⌘⇧E' : 'Expand  ⌘⇧E'}
+            title={`${expanded ? 'Shrink' : 'Expand'}  ${formatChord('Mod+Shift+E')}`}
             data-testid="composer-expand"
             onClick={toggleExpanded}
           >
@@ -576,7 +579,7 @@ export function ComposerOverlay() {
                 data-testid="composer-submit"
               >
                 {creating ? 'Creating…' : viaAssistant ? 'Ask' : 'Plan it'}
-                <Kbd>⌘⏎</Kbd>
+                <Kbd chord="Mod+Enter" />
               </button>
               {blocked && !creating ? (
                 <span id={`${ids}-blocked`} role="tooltip" className="cmp-tip" data-testid="composer-blocked">

@@ -5,12 +5,15 @@ import type { EngineToMainMessage } from '@shared/host-protocol';
 import { app, BrowserWindow, dialog, ipcMain, Notification, powerSaveBlocker, shell } from 'electron';
 import { EngineSupervisor } from './engine-supervisor';
 import { type CommandBus, createCommandBus, installAppMenu, registerGlobalShortcuts } from './menu';
-import { resolveLoginShellPath } from './shell-env';
+import { DEFAULT_TITLE_BAR_COLORS, isHexColor, mainPlatform, type TitleBarColors } from './platform';
 
-/** `LEGION_HOME` overrides the data dir (tests); default ~/Library/Application Support/Legion. */
+/**
+ * `LEGION_HOME` overrides the data dir (tests); default `<appData>/Legion`: ~/Library/Application Support/Legion on
+ * macOS, ~/.config/Legion on Linux, %APPDATA%\Legion on Windows.
+ */
 function resolveDataDir(): string {
   const override = process.env.LEGION_HOME;
-  if (override) return resolve(override.replace(/^~(?=$|\/)/, homedir()));
+  if (override) return resolve(override.replace(/^~(?=$|[\\/])/, homedir()));
   return join(app.getPath('appData'), 'Legion');
 }
 
@@ -27,18 +30,21 @@ if (!app.requestSingleInstanceLock()) {
 }
 
 async function main(): Promise<void> {
-  let pathPromise: Promise<string> | null = null;
+  const platform = mainPlatform();
+  platform.init();
+  let childEnv: Promise<Record<string, string>> | null = null;
   const supervisor = new EngineSupervisor({
     entry: join(import.meta.dirname, 'engine.js'),
     dataDir,
     version: app.getVersion(),
-    env: async () => {
-      pathPromise ??= resolveLoginShellPath();
-      const PATH = await pathPromise;
-      const env: Record<string, string> = {};
-      for (const [key, value] of Object.entries(process.env)) if (value !== undefined) env[key] = value;
-      delete env.ELECTRON_RUN_AS_NODE;
-      return { ...env, PATH };
+    env: () => {
+      if (!childEnv) {
+        const env: Record<string, string> = {};
+        for (const [key, value] of Object.entries(process.env)) if (value !== undefined) env[key] = value;
+        delete env.ELECTRON_RUN_AS_NODE;
+        childEnv = platform.resolveChildEnv(env);
+      }
+      return childEnv;
     },
   });
 
@@ -62,7 +68,7 @@ async function main(): Promise<void> {
         }
         break;
       case 'badge':
-        app.dock?.setBadge(message.count > 0 ? String(message.count) : '');
+        platform.setBadge(message.count, mainWindow);
         break;
       case 'power':
         if (message.preventSleep && powerBlocker === null) {
@@ -120,6 +126,14 @@ async function main(): Promise<void> {
   ipcMain.on(IPC.showItemInFolder, (_event, path: string) => {
     if (typeof path === 'string') shell.showItemInFolder(path);
   });
+  // The renderer reports its theme's title bar colours; the native window controls follow (new windows too).
+  let titleBarColors: TitleBarColors = DEFAULT_TITLE_BAR_COLORS;
+  ipcMain.on(IPC.setTitleBarColors, (event, colors: Partial<TitleBarColors> | null) => {
+    if (!isHexColor(colors?.background) || !isHexColor(colors?.symbols)) return;
+    titleBarColors = { background: colors.background, symbols: colors.symbols };
+    const window = BrowserWindow.fromWebContents(event.sender);
+    if (window) platform.setTitleBarColors(window, titleBarColors);
+  });
 
   let mainWindow: BrowserWindow | null = null;
   const createWindow = (): BrowserWindow => {
@@ -130,10 +144,7 @@ async function main(): Promise<void> {
       minHeight: 600,
       show: false,
       title: 'Legion',
-      titleBarStyle: 'hiddenInset',
-      trafficLightPosition: { x: 16, y: 14 },
-      vibrancy: 'under-window',
-      visualEffectState: 'active',
+      ...platform.windowOptions(titleBarColors),
       backgroundColor: '#11111b',
       webPreferences: {
         preload: join(import.meta.dirname, '../preload/index.cjs'),
@@ -168,7 +179,7 @@ async function main(): Promise<void> {
   });
 
   app.on('window-all-closed', () => {
-    if (process.platform !== 'darwin') app.quit();
+    if (platform.quitWhenAllWindowsClosed) app.quit();
   });
 
   let quitting = false;

@@ -2,6 +2,7 @@
 import type { EngineKind } from '@shared/domain';
 import type { ReactNode } from 'react';
 import { commandTooltip, shortcutFor } from '../app/commands';
+import { formatChord } from '../app/keys';
 import { ENGINE_LABEL, engineTone, type StatusChip, type Tone } from '../layout/describe';
 
 const TONE_COLOR: Record<Tone, string> = {
@@ -54,8 +55,9 @@ export function Dot({ color, live }: { color: string; live?: boolean }) {
   return <span className={live ? 'dot live' : 'dot'} style={{ color }} />;
 }
 
-export function Kbd({ children }: { children: ReactNode }) {
-  return <span className="kbd">{children}</span>;
+/** A key cap: `chord` is a binding (`Mod+Enter`) shown the way this OS writes it, or pass the text as children. */
+export function Kbd({ children, chord }: { children?: ReactNode; chord?: string }) {
+  return <span className="kbd">{chord ? formatChord(chord) : children}</span>;
 }
 
 /** The key cap for a registered command, if it has a binding. */

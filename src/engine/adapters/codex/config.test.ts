@@ -2,7 +2,21 @@ import { chmod, lstat, mkdir, mkdtemp, readlink, rm, writeFile } from 'node:fs/p
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { permissionProfileFor, type SessionOptions } from '@shared/engine';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+
+const refuseSymlinks = vi.hoisted(() => ({ on: false }));
+vi.mock('node:fs/promises', async (importOriginal) => {
+  const real = await importOriginal<typeof import('node:fs/promises')>();
+  return {
+    ...real,
+    // Windows without Developer Mode refuses file symlinks.
+    symlink: (target: string, path: string, type?: string) =>
+      refuseSymlinks.on
+        ? Promise.reject(Object.assign(new Error('EPERM: operation not permitted, symlink'), { code: 'EPERM' }))
+        : real.symlink(target, path, type as never),
+  };
+});
+
 import {
   appServerArgs,
   childEnv,
@@ -223,10 +237,10 @@ describe('binary resolution', () => {
     await writeFile(join(bin, 'codex'), '#!/bin/sh\n');
     await writeFile(join(bin, 'plain'), '');
     await chmod(join(bin, 'codex'), 0o755);
-    expect(await resolveBinary('codex', { PATH: `/nonexistent:${bin}` })).toBe(join(bin, 'codex'));
-    expect(await resolveBinary('plain', { PATH: bin })).toBeNull();
-    expect(await resolveBinary('codex', { PATH: '' })).toBeNull();
-    expect(await resolveBinary(join(bin, 'codex'), {})).toBe(join(bin, 'codex'));
+    expect(resolveBinary('codex', { PATH: `/nonexistent:${bin}` })).toBe(join(bin, 'codex'));
+    expect(resolveBinary('plain', { PATH: bin })).toBeNull();
+    expect(resolveBinary('codex', { PATH: '' })).toBeNull();
+    expect(resolveBinary(join(bin, 'codex'), {})).toBe(join(bin, 'codex'));
   });
 });
 
@@ -249,6 +263,20 @@ describe('CODEX_HOME isolation', () => {
     await writeFile(join(legion, 'auth.json'), '{"stale":true}');
     await prepareCodexHome(legion, env);
     expect(await readlink(join(legion, 'auth.json'))).toBe(join(userHome, 'auth.json'));
+  });
+
+  it("falls back to the user's own home, and says why, when the OS refuses to link auth.json", async () => {
+    const userHome = join(dir, 'user-codex');
+    await mkdir(userHome);
+    await writeFile(join(userHome, 'auth.json'), '{}');
+    refuseSymlinks.on = true;
+    try {
+      const home = await prepareCodexHome(join(dir, 'legion'), { CODEX_HOME: userHome });
+      expect(home).toMatchObject({ path: userHome, isolated: false });
+      expect(home.fallback).toMatch(/can't link auth\.json .*EPERM/);
+    } finally {
+      refuseSymlinks.on = false;
+    }
   });
 
   it('falls back to the user home without auth.json (keyring) and when disabled', async () => {

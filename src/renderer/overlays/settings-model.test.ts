@@ -26,6 +26,10 @@ describe('settings validation', () => {
     expect(parseBinaryPath('~/bin/codex')).toEqual({ ok: true, value: '~/bin/codex' });
     expect(parseBinaryPath('claude').ok).toBe(false);
     expect(parseBinaryPath('/usr/local/bin/').ok).toBe(false);
+    expect(parseBinaryPath('C:\\Tools\\claude.exe', 'windows')).toEqual({ ok: true, value: 'C:\\Tools\\claude.exe' });
+    expect(parseBinaryPath('~\\bin\\codex.cmd', 'windows').ok).toBe(true);
+    expect(parseBinaryPath('C:\\Tools\\', 'windows').ok).toBe(false);
+    expect(parseBinaryPath('/opt/claude', 'windows').ok).toBe(false);
   });
 
   it('treats an empty model as the CLI default', () => {

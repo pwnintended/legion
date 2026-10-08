@@ -218,5 +218,14 @@ export function Editor({
     return () => clearInterval(timer);
   }, [visible, tabId]);
 
-  return <div ref={host} className="ed" data-testid="code-editor" data-read-only={readOnly || undefined} />;
+  return (
+    <div
+      ref={host}
+      className="ed"
+      data-testid="code-editor"
+      data-read-only={readOnly || undefined}
+      // vim runs on Ctrl keys: off macOS, Legion's Ctrl chords give way to it in here (keys.ts).
+      data-ctrl-keys={vimOn || undefined}
+    />
+  );
 }

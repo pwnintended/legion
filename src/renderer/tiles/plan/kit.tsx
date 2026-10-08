@@ -174,7 +174,7 @@ export function InlineComposer({
           onClick={() => void submit()}
         >
           {pending ? 'Sending…' : submitLabel}
-          <Kbd>⌘⏎</Kbd>
+          <Kbd chord="Mod+Enter" />
         </button>
         <button type="button" className="btn btn-ghost" onClick={onCancel}>
           Cancel

@@ -293,12 +293,12 @@ test('project home: add a project, browse, go to file, search, a commit, start a
     await expect(code.getByTestId('code-markdown')).toContainText('never own layout');
     // Still one tab: browsing reuses the preview tab. ⌘-click keeps a file as a tab of its own.
     await expect(tabs).toHaveCount(1);
-    await files.locator('[data-path="README.md"]').click({ modifiers: ['Meta'] });
+    await files.locator('[data-path="README.md"]').click({ modifiers: ['ControlOrMeta'] });
     await expect(tabs).toHaveCount(2);
     await expect(tabs.nth(1)).toHaveAttribute('data-pinned', 'true');
 
     // ⌘P: fuzzy go to file.
-    await window.keyboard.press('Meta+p');
+    await window.keyboard.press('ControlOrMeta+p');
     const goto = window.getByTestId('goto-file');
     await expect(goto).toBeVisible();
     await window.keyboard.type('spark');
@@ -310,7 +310,7 @@ test('project home: add a project, browse, go to file, search, a commit, start a
     await expect(code.getByTestId('code-tile')).toHaveAttribute('data-path', 'src/sparkline.ts');
 
     // ⌘⇧F: the panel's search, the caret in its field; open a hit at its line.
-    await window.keyboard.press('Meta+Shift+f');
+    await window.keyboard.press('ControlOrMeta+Shift+f');
     await expect(window.getByTestId('code-panel')).toHaveAttribute('data-section', 'search');
     const search = window.getByTestId('project-search');
     await expect(search).toBeVisible();
@@ -347,10 +347,10 @@ test('project home: add a project, browse, go to file, search, a commit, start a
     const editor = code.getByTestId('code-editor');
     await expect(editor).toContainText('export const a = 1;');
     await editor.locator('.cm-content').click();
-    await window.keyboard.press('Meta+ArrowDown');
+    await window.keyboard.press('ControlOrMeta+ArrowDown');
     await window.keyboard.type('export const b = 2;');
     await expect(code.locator('.cv-state')).toHaveText('Unsaved');
-    await window.keyboard.press('Meta+s');
+    await window.keyboard.press('ControlOrMeta+s');
     await expect.poll(() => readFileSync(scratchFile, 'utf8')).toContain('export const b = 2;');
     await expect(code.locator('.cv-state')).toHaveCount(0);
     writeFileSync(scratchFile, 'export const c = 3;\n');
@@ -389,7 +389,7 @@ test('project home: add a project, browse, go to file, search, a commit, start a
     // ⌘⇧N from the home preselects the project too; the run shows up under it in the rail.
     await window.keyboard.press('Escape');
     await expect(composer).toHaveCount(0);
-    await window.keyboard.press('Meta+Shift+n');
+    await window.keyboard.press('ControlOrMeta+Shift+n');
     await expect(composer).toBeVisible();
     await composer.locator('textarea').fill('Make truncate count graphemes');
     await expect(composer.getByTestId('repo-status')).toHaveAttribute('data-state', 'ok', { timeout: 15_000 });
@@ -451,7 +451,7 @@ test('project home in demo mode: a project with runs, PRs and history', async ()
     await shotAt(app, window, 'demo-home');
     // ⌘P in demo mode too.
     await setSize(app, window, [1280, 800]);
-    await window.keyboard.press('Meta+p');
+    await window.keyboard.press('ControlOrMeta+p');
     await window.keyboard.type('passkeylist');
     await expect(window.getByTestId('goto-option').first()).toContainText('PasskeyList.tsx');
     await window.keyboard.press('Enter');

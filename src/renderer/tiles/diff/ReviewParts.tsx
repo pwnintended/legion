@@ -111,7 +111,7 @@ export function ComposeBox({ taskId, path, hunk }: { taskId: string; path: strin
         </button>
         <button type="button" className="btn btn-primary btn-sm" disabled={!text.trim()} onClick={add}>
           Add comment
-          <Kbd>⌘⏎</Kbd>
+          <Kbd chord="Mod+Enter" />
         </button>
       </div>
     </div>

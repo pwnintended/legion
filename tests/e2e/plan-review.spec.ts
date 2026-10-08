@@ -54,7 +54,7 @@ test('plan sign-off: plan document, editable DAG with an auto-serialized overlap
   const { app, window, home } = await launchDemo();
   try {
     // ⌘3: the i18n run waits for its plan sign-off; the route map lands on the Plan station, its Plan tab.
-    await window.keyboard.press('Meta+3');
+    await window.keyboard.press('ControlOrMeta+3');
     await expect(window.getByTestId('titlebar')).toContainText('Extract UI strings for i18n');
     await expect.poll(() => station(window)).toBe('plan');
     await expect(window.getByTestId('station-tab-plan')).toHaveAttribute('aria-selected', 'true');
@@ -67,7 +67,7 @@ test('plan sign-off: plan document, editable DAG with an auto-serialized overlap
     await window.screenshot({ path: join(shots, 'plan-document.png') });
 
     // The Graph tab (⌘⌥L): the DAG, validated, with the overlap it serialized called out.
-    await window.keyboard.press('Meta+Alt+l');
+    await window.keyboard.press('ControlOrMeta+Alt+l');
     await expect(window.getByTestId('station-tab-graph')).toHaveAttribute('aria-selected', 'true');
     const dag = window.getByTestId('dag-tile');
     await expect(dag.getByTestId('dag-validation')).toContainText('acyclic');
@@ -94,11 +94,11 @@ test('plan sign-off: plan document, editable DAG with an auto-serialized overlap
     await window.screenshot({ path: join(shots, 'plan-edited.png') });
 
     // Back on the Plan tab (⌘⌥H): the new version; ⌘⏎ on the shown plan approves it.
-    await window.keyboard.press('Meta+Alt+h');
+    await window.keyboard.press('ControlOrMeta+Alt+h');
     await expect(window.getByTestId('station-tab-plan')).toHaveAttribute('aria-selected', 'true');
     await expect(plan).toContainText('v2 · edited by you');
     await expect.poll(() => focusedTile(window)).toBe('plan');
-    await window.keyboard.press('Meta+Enter');
+    await window.keyboard.press('ControlOrMeta+Enter');
     await expect(plan).toContainText('Approved', { timeout: 10_000 });
     await expect(window.getByTestId('route-plan')).not.toContainText('Waiting for your sign-off');
   } finally {
@@ -144,7 +144,7 @@ test('review pack: gates, verdict, findings across rounds, diff with inline find
 
     // ⌘⏎ on the task's shown diff (or review) approves the merge; the Review tab shows the merge.
     await expect.poll(() => focusedTile(window)).toBe('diff');
-    await window.keyboard.press('Meta+Enter');
+    await window.keyboard.press('ControlOrMeta+Enter');
     await window.getByTestId('station-tab-review').click();
     await expect(review.getByTestId('review-actions')).toContainText('Merged into integration', { timeout: 10_000 });
   } finally {
@@ -157,7 +157,7 @@ test('PR: final review, generated PR body, create the draft PR', async () => {
   const { app, window, home } = await launchDemo();
   try {
     // ⌘2: the PDF run's PR is ready; the route map lands on the PR station.
-    await window.keyboard.press('Meta+2');
+    await window.keyboard.press('ControlOrMeta+2');
     await expect(window.getByTestId('titlebar')).toContainText('Invoice PDF export');
     await expect.poll(() => station(window)).toBe('pr');
     await expect(window.getByTestId('route-pr')).toContainText('Ready for you');

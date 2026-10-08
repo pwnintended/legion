@@ -4,3 +4,6 @@ allowBuilds:
   node-pty: true
   '@biomejs/biome': true
   electron-winstaller: false
+
+# Run package.json scripts in pnpm's cross-platform shell, so `VAR=1 cmd` and `&&` work in cmd.exe too.
+shellEmulator: true

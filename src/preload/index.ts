@@ -38,6 +38,7 @@ const bridge: LegionBridge = {
     await ipcRenderer.invoke(IPC.openExternal, url);
   },
   showItemInFolder: (path) => ipcRenderer.send(IPC.showItemInFolder, path),
+  setTitleBarColors: (colors) => ipcRenderer.send(IPC.setTitleBarColors, colors),
 };
 
 contextBridge.exposeInMainWorld('legion', bridge);

@@ -6,9 +6,10 @@
  * Found skills: the repo's `.agents/skills`, and `<CODEX_HOME>/skills` (user skills; the `.system` folder holds
  * the ones Codex ships).
  */
-import { mkdirSync, symlinkSync } from 'node:fs';
+import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import type { SessionSkills } from '@shared/engine';
+import { linkDirectorySync } from '../../util/links';
 import { CODEX_PROJECT_SKILLS, skillsIn } from '../../util/skills';
 
 export interface PreparedCodexSkills {
@@ -36,6 +37,6 @@ export async function prepareCodexSkills(
   if (allowedUser.length === 0) return { extraRoot: null, disabled };
   const extraRoot = join(tempDir, 'skills');
   mkdirSync(extraRoot, { recursive: true });
-  for (const skill of allowedUser) symlinkSync(skill.dir, join(extraRoot, folderName(skill.name)));
+  for (const skill of allowedUser) linkDirectorySync(skill.dir, join(extraRoot, folderName(skill.name)));
   return { extraRoot, disabled };
 }

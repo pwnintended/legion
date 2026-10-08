@@ -4,9 +4,9 @@
  */
 import { execFile, spawn as nodeSpawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { accessSync, constants, mkdtempSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { delimiter, isAbsolute, join } from 'node:path';
+import { join } from 'node:path';
 import {
   type AgentEngine,
   type AgentSession,
@@ -15,6 +15,7 @@ import {
   sessionExtras,
 } from '@shared/engine';
 import { type Logger, silentLogger } from '../../context';
+import { enginePlatform } from '../../platform';
 import { buildClaudeArgs, childEnv, mcpConfig } from './args';
 import { type ChildProcessLike, ClaudeSession, type SessionTiming } from './session';
 import { prepareSkills } from './skills';
@@ -49,22 +50,7 @@ const PROBE_TIMEOUT_MS = 10_000;
 
 /** First executable `claude` on `env.PATH`, or `override` if it is executable. */
 export function resolveClaudeBinary(env: Readonly<Record<string, string>>, override?: string | null): string | null {
-  if (override) return isExecutable(override) ? override : null;
-  for (const dir of (env.PATH ?? '').split(delimiter)) {
-    if (!dir || !isAbsolute(dir)) continue;
-    const candidate = join(dir, 'claude');
-    if (isExecutable(candidate)) return candidate;
-  }
-  return null;
-}
-
-function isExecutable(path: string): boolean {
-  try {
-    accessSync(path, constants.X_OK);
-    return statSync(path).isFile();
-  } catch {
-    return false;
-  }
+  return enginePlatform().findExecutable(override || 'claude', env);
 }
 
 /** `2.1.289 (Claude Code)` → `2.1.289`. */
@@ -88,15 +74,34 @@ export function parseAuthStatus(output: string): { loggedIn: boolean | null; acc
   }
 }
 
-const defaultSpawn: SpawnFn = (command, args, options) =>
-  nodeSpawn(command, [...args], { cwd: options.cwd, env: options.env, stdio: ['pipe', 'pipe', 'pipe'] });
+const defaultSpawn: SpawnFn = (command, args, options) => {
+  const launch = enginePlatform().launch(command, args, options.env);
+  return nodeSpawn(launch.cmd, launch.args, {
+    cwd: options.cwd,
+    env: options.env,
+    stdio: ['pipe', 'pipe', 'pipe'],
+    windowsHide: true,
+    windowsVerbatimArguments: launch.verbatim ?? false,
+  });
+};
 
 const defaultExec: ExecFn = (command, args, options) =>
   new Promise((resolve) => {
-    execFile(command, [...args], { env: options.env, timeout: options.timeoutMs }, (error, stdout, stderr) => {
-      const code = error ? (typeof error.code === 'number' ? error.code : null) : 0;
-      resolve({ code, stdout: String(stdout), stderr: String(stderr || (error && !stdout ? error.message : '')) });
-    });
+    const launch = enginePlatform().launch(command, args, options.env);
+    execFile(
+      launch.cmd,
+      launch.args,
+      {
+        env: options.env,
+        timeout: options.timeoutMs,
+        windowsHide: true,
+        windowsVerbatimArguments: launch.verbatim ?? false,
+      },
+      (error, stdout, stderr) => {
+        const code = error ? (typeof error.code === 'number' ? error.code : null) : 0;
+        resolve({ code, stdout: String(stdout), stderr: String(stderr || (error && !stdout ? error.message : '')) });
+      },
+    );
   });
 
 export class ClaudeEngine implements AgentEngine {

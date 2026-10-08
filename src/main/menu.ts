@@ -1,6 +1,7 @@
 import { type CommandId, IPC } from '@shared/bridge';
 import { app, BrowserWindow, globalShortcut, Menu } from 'electron';
 import { buildMenuTemplate } from './menu-template';
+import { mainPlatform } from './platform';
 
 /** Global shortcut that brings Legion forward and opens the composer. */
 export const GLOBAL_COMPOSER_SHORTCUT = 'Alt+CommandOrControl+L';
@@ -42,7 +43,7 @@ export function createCommandBus(getWindow: () => BrowserWindow | null, createWi
 export function installAppMenu(bus: CommandBus): void {
   const template = buildMenuTemplate({
     appName: app.getName(),
-    isMac: process.platform === 'darwin',
+    isMac: mainPlatform().os === 'mac',
     isDev: !app.isPackaged,
     send: (command) => bus.send(command),
   });

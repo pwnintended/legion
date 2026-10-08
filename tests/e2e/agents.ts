@@ -7,7 +7,7 @@ import { expect, type Page } from '@playwright/test';
 export async function openAgents(window: Page): Promise<void> {
   const map = window.getByTestId('route-map');
   await expect(async () => {
-    if (!(await map.isVisible())) await window.keyboard.press('Meta+e');
+    if (!(await map.isVisible())) await window.keyboard.press('ControlOrMeta+e');
     await expect(map).toBeVisible({ timeout: 1_000 });
   }).toPass({ timeout: 30_000 });
 }

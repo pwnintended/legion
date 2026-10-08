@@ -421,7 +421,7 @@ function PlanFooter({
             data-testid="approve-plan"
           >
             {signoff.pending === 'approve' ? 'Starting…' : 'Approve & start'}
-            <Kbd>⌘⏎</Kbd>
+            <Kbd chord="Mod+Enter" />
           </button>
           <button type="button" className="btn lg-btn-lg" onClick={() => setRevising(true)}>
             Ask for revision

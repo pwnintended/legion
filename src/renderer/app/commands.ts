@@ -23,7 +23,17 @@ import { canArchive, isArchived, runPr } from './compat';
 import { isConfirmOpen } from './confirm';
 import { type DataState, hasAgents, TERMINAL_RUN_STATUSES } from './data';
 import { rpc } from './hooks';
-import { formatChord, isTerminal, isTextInput, matchesChord, ownsPlainKeys, parseChord } from './keys';
+import {
+  formatChord,
+  isAltGraph,
+  isTerminal,
+  isTextInput,
+  matchesChord,
+  ownsControlKeys,
+  ownsPlainKeys,
+  parseChord,
+  yieldsToControlKeys,
+} from './keys';
 import {
   addProjectFromDialog,
   newRunInProject,
@@ -56,6 +66,11 @@ export interface Command {
   inInput?: boolean;
   /** The binding also fires while an overlay is open (default: overlays own the keyboard; see module doc). */
   inOverlay?: boolean;
+  /**
+   * Off macOS, the binding still fires inside a terminal or vim editor, which otherwise keep their bare Ctrl keys
+   * (keys.ts `yieldsToControlKeys`). For chords those have no use for, like Save.
+   */
+  overControlKeys?: boolean;
   /** Available right now? Disabled commands are skipped by keys and greyed out in the palette. */
   when?: (ctx: CommandContext) => boolean;
   run: (ctx: CommandContext) => unknown;
@@ -239,15 +254,18 @@ export function handleKeyDown(event: KeyboardEvent): boolean {
   if (event.defaultPrevented || event.isComposing) return false;
   // A confirm dialog is up: it owns every key (Esc must not close the overlay underneath).
   if (isConfirmOpen()) return false;
-  if (['Meta', 'Control', 'Alt', 'Shift'].includes(event.key)) return false;
+  if (['Meta', 'Control', 'Alt', 'Shift', 'AltGraph'].includes(event.key) || isAltGraph(event)) return false;
   // A popover (picker list) owns its plain keys: Esc closes it, not the overlay underneath.
   if (!event.metaKey && !event.ctrlKey && ownsPlainKeys(event.target)) return false;
   const inInput = isTextInput(event.target);
   const inTerminal = isTerminal(event.target);
+  const ctrlKeysOwned = ownsControlKeys(event.target);
   const ctx = context();
   for (const { command, chords } of parsedBindings()) {
     for (const chord of chords) {
       if (!matchesChord(chord, event)) continue;
+      // Off macOS, a terminal or vim editor keeps its Ctrl keys (it handles the event; the menu doesn't fire).
+      if (ctrlKeysOwned && !command.overControlKeys && yieldsToControlKeys(chord)) continue;
       if (!keyGuard(command, ctx, { modChord: chord.mod || chord.ctrl, inInput, inTerminal })) continue;
       event.preventDefault();
       event.stopPropagation();

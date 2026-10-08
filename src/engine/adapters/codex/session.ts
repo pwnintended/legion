@@ -7,6 +7,7 @@
 import { type ChildProcess, spawn } from 'node:child_process';
 import type { AgentSession, ApprovalDecision, SessionAttachment, SessionOptions } from '@shared/engine';
 import type { AgentEvent } from '@shared/events';
+import { enginePlatform } from '../../platform';
 import { AsyncQueue, deferred } from '../../util/async-queue';
 import { childEnv, isPreapproved, threadResumeParams, threadStartParams, turnStartParams, userInput } from './config';
 import { JSON_RPC_ERROR, JsonRpcError, JsonRpcPeer, LineSplitter, type RequestOptions } from './json-rpc';
@@ -68,10 +69,14 @@ export class CodexSession implements AgentSession {
   ) {
     this.normalizer = new CodexNormalizer({ cwd: opts.cwd, structuredOutput: Boolean(opts.outputSchema) });
     this.turnDone.resolve();
-    this.child = spawn(spec.command, [...spec.args], {
+    const env = childEnv(opts, spec.codexHome);
+    const launch = enginePlatform().launch(spec.command, spec.args, env);
+    this.child = spawn(launch.cmd, launch.args, {
       cwd: opts.cwd,
-      env: childEnv(opts, spec.codexHome),
+      env,
       stdio: ['pipe', 'pipe', 'pipe'],
+      windowsHide: true,
+      windowsVerbatimArguments: launch.verbatim ?? false,
     });
     this.rpc = new JsonRpcPeer({
       write: (line) => {
@@ -201,10 +206,10 @@ export class CodexSession implements AgentSession {
       await Promise.race([this.exited.promise, sleep(EXIT_GRACE_MS)]);
     }
     if (!this.hasExited) {
-      this.child.kill('SIGTERM');
+      enginePlatform().kill(this.child, 'SIGTERM');
       await Promise.race([this.exited.promise, sleep(EXIT_GRACE_MS)]);
     }
-    if (!this.hasExited) this.child.kill('SIGKILL');
+    if (!this.hasExited) enginePlatform().kill(this.child, 'SIGKILL');
     await this.exited.promise;
   }
 

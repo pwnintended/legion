@@ -79,7 +79,7 @@ test('the run is a conversation: updates, presentations, decisions, the agents o
     const card = chat.getByTestId('chat-decision').filter({ hasText: 'Approval' });
     await expect(card).toContainText('@simplewebauthn/browser');
     await expect(chat.getByTestId('chat-needs-you')).toContainText('waiting for you');
-    await window.keyboard.press('Meta+u');
+    await window.keyboard.press('ControlOrMeta+u');
     await expect(card).toBeInViewport();
     await window.waitForTimeout(400);
     await shot(window, 'decision');
@@ -111,7 +111,7 @@ test('the run is a conversation: updates, presentations, decisions, the agents o
     await shot(window, 'agents-route-map');
 
     // ⌘E back to the conversation; a reply goes to the assistant and shows at once.
-    await window.keyboard.press('Meta+e');
+    await window.keyboard.press('ControlOrMeta+e');
     await expect(chat).toBeVisible();
     await chat.getByTestId('chat-input').fill('Ship it behind a feature flag, please.');
     await window.keyboard.press('Enter');
@@ -128,7 +128,7 @@ test('the run is a conversation: updates, presentations, decisions, the agents o
     const board = window.getByTestId('board');
     await expect(board.getByTestId('board-tile')).toHaveCount(2);
     await shot(window, 'board');
-    await window.keyboard.press('Meta+n');
+    await window.keyboard.press('ControlOrMeta+n');
     const page = window.getByTestId('new-conversation');
     await expect(page).toBeVisible();
     await expect(page.getByTestId('new-conversation-input')).toBeFocused();

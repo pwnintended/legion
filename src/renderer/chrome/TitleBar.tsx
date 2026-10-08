@@ -1,13 +1,18 @@
 /**
- * Title bar (hiddenInset window): drag region with room for the traffic lights, project / run breadcrumb (the
+ * Title bar (drawn by Legion; see TITLE_BAR): drag region with room for the native window controls (the traffic
+ * lights at the start on macOS, the overlay controls elsewhere), project / run breadcrumb (the
  * project opens its home), the Chat | Code switch, and the Commands / needs-you / New run buttons.
  *
  * A conversation's agents are not a view of the switch: they are the inside of one conversation, so Chat stays
  * lit there and the crumb grows `/ Agents`, its run title leading back to the board.
  */
+
+import { pathSegments } from '@shared/paths';
 import { motion } from 'motion/react';
+import type { CSSProperties } from 'react';
 import { commandTooltip, executeCommand } from '../app/commands';
 import { useActiveRun, useData, useInbox, useUi } from '../app/hooks';
+import { OS, TITLE_BAR } from '../app/platform';
 import { useReducedMotionPref } from '../app/prefs';
 import { openProject } from '../app/project-actions';
 import { actions, activeProjectOf, type View } from '../app/store';
@@ -27,8 +32,14 @@ const VIEWS: { view: View; label: string; icon: IconName; command: string; tip: 
   },
 ];
 
+const titleBarStyle: CSSProperties & Record<'--tb-end-fallback', string> = {
+  height: TITLE_BAR.height,
+  ...(TITLE_BAR.style === 'inset' ? { paddingLeft: TITLE_BAR.startInset } : {}),
+  '--tb-end-fallback': `${TITLE_BAR.endInsetFallback}px`,
+};
+
 export function repoLabel(path: string): string {
-  return path.split('/').filter(Boolean).slice(-2).join('/');
+  return pathSegments(path, OS).slice(-2).join('/');
 }
 
 export function TitleBar() {
@@ -49,8 +60,10 @@ export function TitleBar() {
   const lit: View = view === 'agents' ? 'chat' : view;
   return (
     <header
-      className="drag flex h-11 flex-none items-center gap-3 border-b border-[var(--chrome-line)] bg-mantle pr-2.5"
-      style={{ paddingLeft: 84 }}
+      className={`drag flex flex-none items-center gap-3 border-b border-[var(--chrome-line)] bg-mantle ${
+        TITLE_BAR.style === 'overlay' ? 'tb-overlay' : 'pr-2.5'
+      }`}
+      style={titleBarStyle}
       data-testid="titlebar"
     >
       <div className="flex min-w-0 flex-1 items-center gap-2">

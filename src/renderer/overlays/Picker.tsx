@@ -7,6 +7,7 @@
 import type { RepoBranches } from '@shared/rpc';
 import { type ReactNode, useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
+import { FILE_MANAGER, PATH_FORMS } from '../app/platform';
 import { Icon } from '../chrome/icons';
 import { Kbd } from '../chrome/ui';
 import { Glyph } from '../tiles/session/glyphs';
@@ -336,7 +337,7 @@ export function RepoPicker(props: RepoPickerProps) {
           <span>
             No repositories match <span className="pk-q">“{query.trim()}”</span>
           </span>
-          <span className="faint">Paste a full path (/… or ~/…), or browse for a folder.</span>
+          <span className="faint">Paste a full path ({PATH_FORMS}), or browse for a folder.</span>
         </div>
       );
     } else {
@@ -344,7 +345,7 @@ export function RepoPicker(props: RepoPickerProps) {
         <div className="pk-empty pk-empty-col">
           <span>No repositories found yet</span>
           <span className="faint">
-            Browse for a folder, paste a path, or drop a folder from Finder onto this window.
+            Browse for a folder, paste a path, or drop a folder from {FILE_MANAGER} onto this window.
           </span>
         </div>
       );
@@ -476,9 +477,9 @@ export function RepoPicker(props: RepoPickerProps) {
                 </span>
                 <span className="pk-main">
                   <span className="pk-name">Browse…</span>
-                  <span className="pk-path">Choose a folder in Finder</span>
+                  <span className="pk-path">Choose a folder in {FILE_MANAGER}</span>
                 </span>
-                <Kbd>⌘O</Kbd>
+                <Kbd chord="Mod+O" />
               </div>
             );
           })()}

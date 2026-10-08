@@ -2,6 +2,7 @@ import { statSync } from 'node:fs';
 import type { TerminalTarget } from '@shared/rpc';
 import { RpcError, toEndpoint } from '@shared/rpc-transport';
 import type { EngineContext } from '../context';
+import { enginePlatform } from '../platform';
 import type { EngineRpcServer } from '../rpc/server';
 import { PtyManager, type PtyOpenOptions } from './manager';
 import { createNodePtySpawn } from './node-pty';
@@ -58,8 +59,8 @@ export function registerTerminalHandlers(
   const resolveTarget = (target: TerminalTarget): Omit<PtyOpenOptions, 'cols' | 'rows'> => {
     if (target.kind === 'shell') {
       assertDirectory(target.cwd);
-      const shell = ctx.env.SHELL || process.env.SHELL || '/bin/zsh';
-      return { cmd: shell, args: ['-l'], cwd: target.cwd, env: ptyEnv(ctx.env), detachedTtlMs: shellTtl };
+      const shell = enginePlatform().interactiveShell(ctx.env);
+      return { ...shell, cwd: target.cwd, env: ptyEnv(ctx.env), detachedTtlMs: shellTtl };
     }
     return (options.resolveAttempt ?? defaultResolveAttempt(ctx))(target.attemptId);
   };
@@ -121,6 +122,11 @@ function defaultResolveAttempt(ctx: EngineContext): (attemptId: string) => Omit<
     assertDirectory(cwd);
     if (attempt.engine === 'fake') throw new RpcError('failed_precondition', 'fake sessions cannot be resumed');
     const args = attempt.engine === 'claude' ? ['--resume', attempt.sessionId] : ['resume', attempt.sessionId];
-    return { cmd: attempt.engine, args, cwd, env: ptyEnv(ctx.env), key: `attempt:${attemptId}` };
+    // A full path (and `node <script>` for an npm shim on Windows): node-pty runs it with no shell or PATHEXT.
+    const platform = enginePlatform();
+    const binary = platform.findExecutable(attempt.engine, ctx.env);
+    if (!binary) throw new RpcError('failed_precondition', `${attempt.engine} not found on PATH`);
+    const { cmd, args: launchArgs } = platform.launch(binary, args, ctx.env);
+    return { cmd, args: launchArgs, cwd, env: ptyEnv(ctx.env), key: `attempt:${attemptId}` };
   };
 }

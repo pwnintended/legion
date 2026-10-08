@@ -1,5 +1,5 @@
 import { readFile, stat } from 'node:fs/promises';
-import { isAbsolute, join } from 'node:path';
+import { isAbsolute, join, resolve } from 'node:path';
 import type { RepoInspection } from '@shared/rpc';
 import { execa } from 'execa';
 import { z } from 'zod';
@@ -90,8 +90,13 @@ export async function inspectRepo(path: string, env: Readonly<Record<string, str
   const info = await stat(path).catch(() => null);
   if (!info?.isDirectory()) return { ...base, error: 'not a directory' };
 
-  const [root, hasGh] = await Promise.all([git(path, env, ['rev-parse', '--show-toplevel']), hasExecutable('gh', env)]);
-  if (root === null) return { ...base, exists: true, hasGh, error: 'not a git repository' };
+  const [toplevel, hasGh] = await Promise.all([
+    git(path, env, ['rev-parse', '--show-toplevel']),
+    hasExecutable('gh', env),
+  ]);
+  if (toplevel === null) return { ...base, exists: true, hasGh, error: 'not a git repository' };
+  // git prints `C:/Users/…` on Windows; Legion stores and compares the OS's own form (`C:\Users\…`).
+  const root = resolve(toplevel);
 
   const [currentBranch, headSha, remotesRaw, originHead, status, legionConfig, ghAuthenticated] = await Promise.all([
     git(root, env, ['symbolic-ref', '--short', '-q', 'HEAD']),

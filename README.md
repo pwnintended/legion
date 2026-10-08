@@ -1,6 +1,6 @@
 # Legion
 
-Legion is a macOS desktop app that takes an issue all the way to a draft pull request by orchestrating the
+Legion is a desktop app for macOS, Linux and Windows that takes an issue all the way to a draft pull request by orchestrating the
 coding agents you already use: **Claude Code** and **Codex**, driven through their own CLIs with your own
 logins. A planner asks clarifying questions and drafts a plan plus a task DAG for your sign-off; coders then
 work in parallel, each in its own git worktree; every task is reviewed by the *other* engine, fixed in
@@ -20,9 +20,15 @@ one). The agents themselves are one key away (⌘E): a scrollable tiling workspa
 diffs, review packs and terminals, where you can steer an agent or take its session over in a terminal at any
 time.
 
+Shortcuts here are written the macOS way; on Linux and Windows ⌘ is Ctrl (the app shows each OS its own).
+
 ## Requirements
 
-- macOS (arm64 or x64), Node ≥ 24, pnpm 11
+- macOS, Linux or Windows (arm64 or x64), Node ≥ 24, pnpm 11. On Linux, `pnpm install` compiles node-pty: it
+  needs `python3`, `make` and a C++ compiler. Windows support is new and not yet verified on a Windows machine
+  ([docs/windows-testing.md](docs/windows-testing.md)).
+- Windows: [Git for Windows](https://gitforwindows.org/). Claude Code needs its Git Bash, and Legion runs
+  `legion.json` commands in it, so they are written once for every OS.
 - `claude` (Claude Code) and/or `codex` installed and logged in (`claude` / `codex login`). With only one of
   them, reviews run on the same engine with a different model (`settings.engines.<kind>.fallbackReviewModel`).
 - `gh` logged in, for the PR step (GitHub only)
@@ -41,7 +47,8 @@ pushes or calls GitHub (the PR link is `https://github.invalid/...`). Point it a
 through a scripted assistant that hands the request to the planner, one clarify question, a 3-task plan with a
 dependency, one tool approval, one review with a major finding fixed in the next round, a screenshot and a
 document presented by coders, the lead's status update on every merge, and the PR gate. `LEGION_HOME=<dir>`
-keeps the data (DB, worktrees) out of `~/Library/Application Support/Legion`.
+keeps the data (DB, worktrees) out of `~/Library/Application Support/Legion` (`~/.config/Legion` on Linux,
+`%APPDATA%\Legion` on Windows).
 
 ## Test
 
@@ -49,7 +56,8 @@ keeps the data (DB, worktrees) out of `~/Library/Application Support/Legion`.
 pnpm typecheck && pnpm lint && pnpm test   # unit + integration (plain Node, scripted fake engines)
 pnpm test:e2e                              # builds, then Playwright against the Electron app
 pnpm test:live                             # real claude/codex sessions (cheapest models; costs a little)
-pnpm test:packaged                         # packages, then launches Legion.app (native modules, sqlite)
+pnpm test:packaged                         # packages, then launches the packaged app (native modules, sqlite)
+pnpm test:linux [unit|e2e|packaged|all]    # the same checks on Linux, in Docker (works from a Mac)
 ```
 
 `tests/e2e/full-run.spec.ts` drives a whole run through the UI in fake mode and writes screenshots of every
@@ -60,7 +68,9 @@ browsing it (`test-results/project-home/`). The renderer also runs on fixture da
 ## Package
 
 ```sh
-pnpm package    # dist/mac-<arch>/Legion.app (unsigned)
+pnpm package    # this OS, unpacked: dist/mac[-arm64]/Legion.app (unsigned), dist/linux[-arm64]-unpacked/legion,
+                #   dist/win[-arm64]-unpacked/Legion.exe
+pnpm dist       # this OS's distributables: the same .app on macOS, an AppImage on Linux, an NSIS installer on Windows
 ```
 
 ## `legion.json`
