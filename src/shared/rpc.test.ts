@@ -23,6 +23,7 @@ const REQUIRED = [
   'runs.resume',
   'runs.cancel',
   'runs.createPr',
+  'runs.mergeLocally',
   'tasks.retry',
   'tasks.skip',
   'tasks.approveMerge',

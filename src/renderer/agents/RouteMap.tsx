@@ -444,9 +444,11 @@ function Terminus({
       const caption = ready
         ? 'Ready for you'
         : status === 'done'
-          ? run.pr?.number
-            ? `#${run.pr.number} ${run.pr.state}`
-            : 'Opened'
+          ? run.merged
+            ? `Merged into ${run.merged.into}`
+            : run.pr?.number
+              ? `#${run.pr.number} ${run.pr.state}`
+              : 'Opened'
           : 'A draft for your review';
       return { state, title: 'Pull request', caption };
     }),

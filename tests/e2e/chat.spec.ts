@@ -133,11 +133,11 @@ test('the run is a conversation: updates, presentations, decisions, the agents o
     await expect(page).toBeVisible();
     await expect(page.getByTestId('new-conversation-input')).toBeFocused();
     await shot(window, 'new-conversation');
-    // The project's code is the third view.
+    // The project's code is the other view: its main checkout, a shell in it.
     await expect(window.getByTestId('view-code')).toHaveText('Code');
     await window.getByTestId('view-code').click();
     await expect(window.getByTestId('view-code')).toHaveAttribute('aria-pressed', 'true');
-    await expect(window.getByTestId('project-overview')).toBeVisible();
+    await expect(window.getByTestId('code-terminal')).toHaveCount(1);
     await shot(window, 'code');
   } finally {
     await app.close();

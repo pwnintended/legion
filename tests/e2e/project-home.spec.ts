@@ -1,12 +1,14 @@
 /**
  * Projects as the home, against the real engine (no demo data): a fresh install shows onboarding that leads with
  * "Add a project"; adding one (Browse… answered by `LEGION_E2E_PICK_DIR`) lands on its page (a new conversation),
- * not the composer; its Code view is the project's home. Then: browse the tree, open a file, ⌘P go to file,
- * ⌘⇧F search and open a hit at its line, open a commit's diff from the history, select lines and "Start a run about
- * this…" (composer with the project and a `path:lines` reference). Screenshots at 1280×800 and 1728×1117 go to test-results/project-home/.
+ * not the composer; its Code view opens on the project's main checkout (a shell, the files in the side panel).
+ * Then: browse the tree, open a file, ⌘P go to file, ⌘⇧F search and open a hit at its line, open a commit's diff
+ * from the history, edit a file and save it (and see changes made on disk show up, or flagged under unsaved
+ * edits), select lines and "Start a run about this…" (composer with the project and a `path:lines` reference).
+ * Screenshots at 1280×800 and 1728×1117 go to test-results/project-home/.
  */
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { type ElectronApplication, _electron as electron, expect, type Page, test } from '@playwright/test';
@@ -170,8 +172,8 @@ async function shotAt(
   }
 }
 
-const focusedTileId = (window: Page) =>
-  window.locator('[data-workspace] [data-focused="true"]').first().getAttribute('data-tile-id');
+/** The viewer's tab on show. */
+const shownTab = (window: Page) => window.getByTestId('code-viewer').locator('.cw-tab-body:not([hidden])');
 
 test('project home: add a project, browse, go to file, search, a commit, start a run from a selection', async () => {
   test.setTimeout(240_000);
@@ -180,6 +182,9 @@ test('project home: add a project, browse, go to file, search, a commit, start a
   const scratch = realpathSync(mkdtempSync(join(tmpdir(), 'legion-e2e-project-')));
   const projects = join(scratch, 'Projects');
   const repo = makeRepo(join(projects, 'widgets'));
+  // An untracked file to edit (saving it leaves the tracked files clean).
+  const scratchFile = join(repo, 'src', 'scratch.ts');
+  writeFileSync(scratchFile, 'export const a = 1;\n');
   execFileSync('git', ['init', '-q', '-b', 'main', join(projects, 'gateway')], { env: { ...process.env, ...gitEnv } });
 
   const env: Record<string, string> = {};
@@ -234,23 +239,12 @@ test('project home: add a project, browse, go to file, search, a commit, start a
     await window.screenshot({ path: join(shots, '02b-new-conversation-1280x800.png') });
     await window.getByTestId('view-code').click();
     await expect(window.getByTestId('view-code')).toHaveAttribute('aria-pressed', 'true');
-    await expect(window.getByTestId('mode-pill')).toHaveText('NORMAL');
-    const overview = window.getByTestId('project-overview');
-    await expect(overview).toBeVisible();
-    await expect(overview).toContainText('widgets');
-    const readme = window.getByTestId('project-readme');
-    await expect(readme).toContainText('Small, sharp UI widgets');
-    // Repository-relative links survive the renderer's URL hardening.
-    await expect(readme).not.toContainText('[blocked]');
-    await expect(readme.getByRole('link', { name: 'the design notes' })).toBeVisible();
+    await expect(window.getByTestId('code-panel')).toHaveAttribute('data-section', 'files');
+    // Terminal-first: a shell in the main checkout.
+    await expect(window.getByTestId('code-terminal')).toHaveCount(1);
+    await expect(window.getByTestId('code-terminal')).toContainText('widgets');
     await expect(window.getByTestId('rail-project')).toHaveCount(1);
     await expect(window.getByTestId('titlebar-project')).toHaveText('widgets');
-    // Activity: no runs yet, the history with decorations.
-    const activity = window.getByTestId('project-activity');
-    await expect(activity.getByTestId('activity-commit')).toHaveCount(6);
-    await expect(activity.getByTestId('activity-commit').first()).toContainText('Gauge widget (draft)');
-    await expect(activity.getByTestId('activity-commit').first()).toContainText('feat/gauge');
-    await expect(activity).toContainText('No runs in this project yet.');
     // Files: ignored files are not there, untracked ones are.
     const files = window.getByTestId('project-files');
     await expect(files.getByTestId('file-row')).toHaveText([
@@ -261,16 +255,30 @@ test('project home: add a project, browse, go to file, search, a commit, start a
       /package\.json/,
       /README\.md/,
     ]);
+    // The README renders in a viewer beside the shell; repository-relative links survive the URL hardening.
+    await files.locator('[data-path="README.md"]').click();
+    const readme = window.getByTestId('code-viewer').getByTestId('code-markdown');
+    await expect(readme).toContainText('Small, sharp UI widgets');
+    await expect(readme).not.toContainText('[blocked]');
+    await expect(readme.getByRole('link', { name: 'the design notes' })).toBeVisible();
+    // Activity (the panel's clock): no runs yet, the history with decorations.
+    await window.getByTestId('code-section-activity').click();
+    const activity = window.getByTestId('project-activity');
+    await expect(activity.getByTestId('activity-commit')).toHaveCount(6);
+    await expect(activity.getByTestId('activity-commit').first()).toContainText('Gauge widget (draft)');
+    await expect(activity.getByTestId('activity-commit').first()).toContainText('feat/gauge');
+    await expect(activity).toContainText('No runs in this project yet.');
+    await window.getByTestId('code-section-files').click();
     await shotAt(app, window, '03-home');
 
     // Browse the tree and open a file (keyboard: → expands, ↓ moves, ⏎ opens).
     await files.locator('[data-path="src"]').click();
     await files.locator('[data-path="src/util"]').click();
     await files.locator('[data-path="src/util/strings.ts"]').click();
-    const code = window.locator('[data-tile-kind="code"]');
+    const code = shownTab(window);
     await expect(code.getByTestId('code-tile')).toHaveAttribute('data-path', 'src/util/strings.ts');
-    await expect(code.getByTestId('code-view')).toContainText('toUpperCase');
-    await expect.poll(() => focusedTileId(window)).toMatch(/^code:/);
+    await expect(code.getByTestId('code-editor')).toContainText('toUpperCase');
+    const tabs = window.getByTestId('code-viewer').getByTestId('code-tab');
     await window.waitForTimeout(600);
     await shotAt(app, window, '04-file');
 
@@ -283,8 +291,11 @@ test('project home: add a project, browse, go to file, search, a commit, start a
     await window.screenshot({ path: join(shots, '04b-image-1280x800.png') });
     await files.locator('[data-path="docs/design.md"]').click();
     await expect(code.getByTestId('code-markdown')).toContainText('never own layout');
-    // Still one code column: files reuse the preview column.
-    await expect(code).toHaveCount(1);
+    // Still one tab: browsing reuses the preview tab. ⌘-click keeps a file as a tab of its own.
+    await expect(tabs).toHaveCount(1);
+    await files.locator('[data-path="README.md"]').click({ modifiers: ['Meta'] });
+    await expect(tabs).toHaveCount(2);
+    await expect(tabs.nth(1)).toHaveAttribute('data-pinned', 'true');
 
     // ⌘P: fuzzy go to file.
     await window.keyboard.press('Meta+p');
@@ -298,8 +309,9 @@ test('project home: add a project, browse, go to file, search, a commit, start a
     await expect(goto).toHaveCount(0);
     await expect(code.getByTestId('code-tile')).toHaveAttribute('data-path', 'src/sparkline.ts');
 
-    // ⌘⇧F: search, open a hit at its line.
+    // ⌘⇧F: the panel's search, the caret in its field; open a hit at its line.
     await window.keyboard.press('Meta+Shift+f');
+    await expect(window.getByTestId('code-panel')).toHaveAttribute('data-section', 'search');
     const search = window.getByTestId('project-search');
     await expect(search).toBeVisible();
     await expect
@@ -312,31 +324,57 @@ test('project home: add a project, browse, go to file, search, a commit, start a
     await window.keyboard.press('ArrowDown');
     await window.keyboard.press('Enter');
     await expect(code.getByTestId('code-tile')).toHaveAttribute('data-path', 'src/util/strings.ts');
-    await expect(code.locator('.cv-line[data-sel]')).toHaveAttribute('data-line', '7');
+    await expect(code.getByTestId('code-selection-bar')).toContainText('L7');
     await window.waitForTimeout(500);
     await shotAt(app, window, '06-search');
 
-    // A commit from the history opens as a diff next to the activity.
+    // A commit from the history opens as a diff in the viewer.
     await setSize(app, window, [1280, 800]);
+    await window.getByTestId('code-section-activity').click();
     await activity.getByTestId('activity-commit').nth(4).click();
-    const diff = window.locator('[data-tile-kind="diff"]');
+    const diff = window.getByTestId('code-viewer').locator('.cw-tab-body:not([hidden])[data-kind="diff"]');
     await expect(diff).toBeVisible();
-    await expect(diff).toContainText('Commit');
+    await expect(tabs.filter({ hasText: /Commit|[0-9a-f]{7}/ })).toHaveCount(1);
     await expect(diff).toContainText('src/util/strings.ts');
     await window.waitForTimeout(600);
     await shotAt(app, window, '07-commit');
 
-    // Select lines in the code viewer → "Start a run about this…" → the composer with this project.
+    // Edit and save (⌘S): the file on disk changes. A change made on disk shows up in an untouched editor; under
+    // unsaved edits it is flagged, and "Take theirs" takes it.
     await setSize(app, window, [1280, 800]);
+    await window.getByTestId('code-section-files').click();
+    await files.locator('[data-path="src/scratch.ts"]').click();
+    const editor = code.getByTestId('code-editor');
+    await expect(editor).toContainText('export const a = 1;');
+    await editor.locator('.cm-content').click();
+    await window.keyboard.press('Meta+ArrowDown');
+    await window.keyboard.type('export const b = 2;');
+    await expect(code.locator('.cv-state')).toHaveText('Unsaved');
+    await window.keyboard.press('Meta+s');
+    await expect.poll(() => readFileSync(scratchFile, 'utf8')).toContain('export const b = 2;');
+    await expect(code.locator('.cv-state')).toHaveCount(0);
+    writeFileSync(scratchFile, 'export const c = 3;\n');
+    await expect(editor).toContainText('export const c = 3;', { timeout: 8000 });
+    await editor.locator('.cm-content').click();
+    await window.keyboard.type('// mine');
+    writeFileSync(scratchFile, 'export const d = 4;\n');
+    await expect(code.getByTestId('code-conflict')).toBeVisible({ timeout: 8000 });
+    await window.waitForTimeout(300);
+    await shotAt(app, window, '07b-conflict', [[1280, 800]]);
+    await code.getByRole('button', { name: 'Take theirs' }).click();
+    await expect(editor).toContainText('export const d = 4;');
+    await expect(code.getByTestId('code-conflict')).toHaveCount(0);
+    await expect(code.locator('.cv-state')).toHaveCount(0);
+
+    // Select lines in the editor → "Start a run about this…" → the composer with this project.
     await files.locator('[data-path="src/util/strings.ts"]').click();
-    await code.locator('.cv-line[data-line="6"] .cv-ln').click();
-    await code.locator('.cv-line[data-line="9"] .cv-ln').click({ modifiers: ['Shift'] });
+    await code.locator('.cm-line').nth(5).click();
+    await code
+      .locator('.cm-line')
+      .nth(8)
+      .click({ modifiers: ['Shift'] });
     const bar = code.getByTestId('code-selection-bar');
     await expect(bar).toContainText('L6–9');
-    // Playwright scrolled the strip to click; let the layout reveal the focused column again.
-    await window.keyboard.press('Meta+Alt+h');
-    await window.keyboard.press('Meta+Alt+l');
-    await expect.poll(() => focusedTileId(window)).toMatch(/^code:/);
     await window.waitForTimeout(300);
     await shotAt(app, window, '08-selection');
     await setSize(app, window, [1280, 800]);
@@ -359,20 +397,15 @@ test('project home: add a project, browse, go to file, search, a commit, start a
     await expect(composer).toHaveCount(0);
     await expect(window.getByTestId('rail-run')).toHaveCount(1);
     await expect(window.getByTestId('titlebar')).toContainText('widgets');
-    // The run opens on its chat, a tile of the project's board; the Code view lists it under the activity.
+    // The run opens on its chat, a tile of the project's board. Code still belongs to the project: the same
+    // workspace, as you left it.
     await expect(window.getByTestId('chat')).toBeVisible();
-    await window.getByTestId('titlebar-project').click();
-    await expect(window.getByTestId('board-tile')).toContainText('Make truncate count graphemes');
     await window.getByTestId('view-code').click();
     await expect(window.getByTestId('view-code')).toHaveAttribute('aria-pressed', 'true');
-    await expect(window.getByTestId('project-overview')).toBeVisible();
+    await expect(window.getByTestId('code-space')).toHaveCount(1);
+    await expect(tabs).not.toHaveCount(0);
+    await window.getByTestId('code-section-activity').click();
     await expect(activity.getByTestId('activity-run')).toHaveCount(1);
-    // ⌘⌥H walks focus back to the activity column (the strip scrolls with it).
-    for (let i = 0; i < 6 && (await focusedTileId(window)) !== 'activity'; i++) {
-      await window.keyboard.press('Meta+Alt+h');
-      await window.waitForTimeout(120);
-    }
-    await expect.poll(() => focusedTileId(window)).toBe('activity');
     await window.waitForTimeout(500);
     await shotAt(app, window, '10-home-with-run');
   } finally {
@@ -405,13 +438,16 @@ test('project home in demo mode: a project with runs, PRs and history', async ()
     await expect(window.getByTestId('board').getByTestId('board-tile')).toHaveCount(2);
     await window.getByTestId('view-code').click();
     await expect(window.getByTestId('view-code')).toHaveAttribute('aria-pressed', 'true');
-    await expect(window.getByTestId('project-overview')).toContainText('app');
+    await expect(window.getByTestId('code-terminal')).toHaveCount(1);
+    await window.getByTestId('code-section-activity').click();
     const activity = window.getByTestId('project-activity');
     await expect(activity.getByTestId('activity-run')).toHaveCount(2);
     await expect(activity.getByTestId('activity-pr')).toHaveCount(2);
     await expect(activity.getByTestId('activity-commit').first()).toContainText('Passkeys: enrollment UI');
     // The README's relative image is loaded from the project.
-    await expect(window.getByTestId('project-readme').locator('img.md-repo-img')).toHaveCount(1);
+    await window.getByTestId('code-section-files').click();
+    await window.getByTestId('project-files').locator('[data-path="README.md"]').click();
+    await expect(window.getByTestId('code-markdown').locator('img.md-repo-img')).toHaveCount(1);
     await shotAt(app, window, 'demo-home');
     // ⌘P in demo mode too.
     await setSize(app, window, [1280, 800]);
@@ -419,7 +455,7 @@ test('project home in demo mode: a project with runs, PRs and history', async ()
     await window.keyboard.type('passkeylist');
     await expect(window.getByTestId('goto-option').first()).toContainText('PasskeyList.tsx');
     await window.keyboard.press('Enter');
-    await expect(window.locator('[data-tile-kind="code"]').getByTestId('code-view')).toContainText('PasskeyList');
+    await expect(shownTab(window).getByTestId('code-editor')).toContainText('PasskeyList');
     await window.waitForTimeout(600);
     await shotAt(app, window, 'demo-file');
   } finally {

@@ -11,6 +11,7 @@ import { rpc } from '../../app/hooks';
 import { itemResolved, whenData } from '../../app/pending';
 import { actions, dataStore } from '../../app/store';
 import type { ChipData } from '../../attachments/Attachments';
+import { openTerminal } from '../../code/actions';
 import {
   allocateId,
   allTiles,
@@ -252,14 +253,13 @@ export function openTaskDiff(runId: string, taskId: string, anchorTileId: string
 
 /**
  * Take over a session: stop the structured session and resume it in a PTY (`sessions.takeover`), then open a
- * terminal tile for that attempt in the Code view (terminals live with the project's code, not on the map).
+ * terminal tile for that attempt in the run's Code workspace (terminals live with the code, not on the map).
  */
 export async function takeOver(attempt: Attempt, size = { cols: 120, rows: 36 }): Promise<boolean> {
   try {
     const { terminalId } = await rpc('sessions.takeover', { attemptId: attempt.id, ...size });
     const cwd = attempt.taskId ? (dataStore.getState().tasks[attempt.taskId]?.worktreePath ?? null) : null;
-    actions.setActiveRun(attempt.runId);
-    actions.openInCode({ kind: 'terminal', params: { terminalId, cwd, attemptId: attempt.id } });
+    openTerminal({ terminalId, cwd, attemptId: attempt.id }, attempt.runId);
     clearNotice(attempt.id);
     return true;
   } catch (error) {

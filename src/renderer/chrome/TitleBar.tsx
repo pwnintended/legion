@@ -18,7 +18,13 @@ import { CommandKbd } from './ui';
 
 const VIEWS: { view: View; label: string; icon: IconName; command: string; tip: string }[] = [
   { view: 'chat', label: 'Chat', icon: 'chat', command: 'view.chat', tip: 'The conversations' },
-  { view: 'code', label: 'Code', icon: 'fileCode', command: 'view.code', tip: "The project's code and terminals" },
+  {
+    view: 'code',
+    label: 'Code',
+    icon: 'fileCode',
+    command: 'view.code',
+    tip: "Workspaces: the project's and each run's files, diffs and terminals",
+  },
 ];
 
 export function repoLabel(path: string): string {

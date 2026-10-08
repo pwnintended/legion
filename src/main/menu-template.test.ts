@@ -47,12 +47,10 @@ describe('menu template', () => {
       'composer.open': 'CmdOrCtrl+Shift+N',
       'inbox.open': 'CmdOrCtrl+I',
       'palette.open': 'CmdOrCtrl+K',
-      'layout.focus': 'CmdOrCtrl+Return',
-      'layout.overview': 'CmdOrCtrl+Shift+O',
-      'layout.pipeline': 'CmdOrCtrl+G',
       'focus.nextUrgent': 'CmdOrCtrl+U',
-      'column.cycleMode': 'CmdOrCtrl+W',
-      'mode.resize': 'CmdOrCtrl+R',
+      'view.code': 'CmdOrCtrl+Shift+E',
+      'code.panel': 'CmdOrCtrl+B',
+      'code.close': 'CmdOrCtrl+W',
       'settings.open': 'CmdOrCtrl+,',
       'project.add': 'CmdOrCtrl+O',
       'file.goto': 'CmdOrCtrl+P',
@@ -70,13 +68,13 @@ describe('menu template', () => {
     expect(settings(other, 'File')).toMatchObject({ accelerator: 'CmdOrCtrl+,' });
   });
 
-  it('routes ⌘W and ⌘R to Legion commands, not to close/reload', () => {
+  it('routes ⌘W to a Legion command, not to close, and leaves ⌘R unbound', () => {
     for (const isDev of [false, true]) {
       const list = accelerators(buildMenuTemplate({ appName: 'Legion', isMac: true, isDev, send: () => {} }));
       expect(list.filter((a) => a.accelerator === 'CmdOrCtrl+W').map((a) => a.label)).toEqual([
-        'Toggle Tabbed / Stacked Column',
+        'Close Tab or Terminal',
       ]);
-      expect(list.filter((a) => a.accelerator === 'CmdOrCtrl+R').map((a) => a.label)).toEqual(['Resize Mode']);
+      expect(list.filter((a) => a.accelerator === 'CmdOrCtrl+R')).toEqual([]);
     }
     let roles: unknown[] = [];
     walk(template, (item) => {

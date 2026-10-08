@@ -84,7 +84,8 @@ export type RunStatus = z.infer<typeof RunStatusSchema>;
  * Run lifecycle. `paused` is a separate flag, not a status.
  * - integrating: every task is terminal; full verify on the integration branch.
  * - finalizing: final holistic review over base...integration.
- * - pr_ready: waiting for the human PR gate; `runs.createPr` pushes and opens the draft PR → done.
+ * - pr_ready: waiting for the human PR gate; `runs.createPr` pushes and opens the draft PR → done, or
+ *   `runs.mergeLocally` merges into the local base branch (no remote needed) → done.
  */
 export const RUN_TRANSITIONS: TransitionTable<RunStatus> = {
   // chatting: a conversation with the assistant (§8.6); `start_implementation` moves it on.
@@ -265,6 +266,16 @@ export const PullRequestSchema = z.object({
 });
 export type PullRequest = z.infer<typeof PullRequestSchema>;
 
+/** The run's work merged into its local base branch instead of a PR (`runs.mergeLocally`). */
+export const LocalMergeSchema = z.object({
+  /** The base branch it landed on. */
+  into: z.string(),
+  /** The merge commit (`into`'s new tip). */
+  sha: z.string(),
+  at: TimestampSchema,
+});
+export type LocalMerge = z.infer<typeof LocalMergeSchema>;
+
 /** The coder's final report of a task (structured task report or `mark_task_done`). */
 export const TaskReportInfoSchema = z.object({ summary: z.string(), commitMessage: z.string() });
 export type TaskReportInfo = z.infer<typeof TaskReportInfoSchema>;
@@ -308,6 +319,8 @@ export const RunSchema = z.object({
    * type only so older event-log payloads and fixtures stay valid (treat `undefined` as `null`).
    */
   pr: PullRequestSchema.nullable().optional(),
+  /** Merged into the local base branch (null unless `runs.mergeLocally`); optional like `pr`. */
+  merged: LocalMergeSchema.nullable().optional(),
   /** Cleaned up and hidden from `runs.list` (`runs.archive`). Always present on engine rows (see `pr`). */
   archived: z.boolean().optional(),
   /** Files attached when the run was created (`runs.create`); optional like `pr`, absent = none. */
@@ -623,7 +636,13 @@ export const InboxResolutionSchemas = {
   }),
   plan_signoff: z.object({ approved: z.boolean(), feedback: z.string().nullable() }),
   escalation: z.object({ action: EscalationResolutionActionSchema, note: z.string().nullable() }),
-  pr_ready: z.object({ approved: z.boolean(), title: z.string().nullable(), body: z.string().nullable() }),
+  pr_ready: z.object({
+    approved: z.boolean(),
+    title: z.string().nullable(),
+    body: z.string().nullable(),
+    /** How it lands: a draft PR (`runs.createPr`) or a local merge into the base (`runs.mergeLocally`). Absent = pr. */
+    action: z.enum(['pr', 'merge']).nullish(),
+  }),
   conflict: z.object({ action: z.enum(['retry', 'skip', 'abort']), note: z.string().nullable() }),
   budget: z.object({ action: z.enum(['raise', 'stop']), newLimitUsd: z.number().nullable() }),
 } as const;

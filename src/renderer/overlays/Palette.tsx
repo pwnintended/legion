@@ -1,12 +1,14 @@
 /**
  * Command palette (⌘K, cmdk): every registered command with its shortcut, plus entries derived from run data:
  * switch run, jump to a task by id ("T3"), take over / interrupt a session, open the diff,
- * reveal or copy a worktree, open a planner/reviewer session. With an empty query it leads with what the
- * focused task can do.
+ * reveal or copy a worktree, open a planner/reviewer session, and every window of the project's Code
+ * workspaces by name. With an empty query it leads with what the focused task can do (in the Code view: the
+ * windows).
  */
 import type { Attempt, Task } from '@shared/domain';
 import { Command, defaultFilter } from 'cmdk';
 import { type ReactNode, useMemo, useState } from 'react';
+import { useStore } from 'zustand';
 import { type CommandView, executeCommand, useCommands } from '../app/commands';
 import { attemptsOfRun, latestPlan, tasksOfRun } from '../app/data';
 import { useActiveRunId, useData, useLayout, useUi } from '../app/hooks';
@@ -16,6 +18,8 @@ import { selectProjects, selectWorkspaceRuns } from '../app/projects';
 import { TASK_SHORT } from '../app/status-words';
 import { actions } from '../app/store';
 import { Icon, type IconName } from '../chrome/icons';
+import { codeStore, projectCode } from '../code/state';
+import { listWindows } from '../code/windows';
 import { displayEngine } from '../layout/describe';
 import { focusedTile } from '../layout/tree';
 import { errorMessage, interrupt, openTaskDiff, sessionTileOf, takeOver } from '../tiles/session/actions';
@@ -148,9 +152,25 @@ function useEntries(): { contextual: Entry[]; data: Entry[] } {
   const layout = useLayout(activeRunId);
   const state = useData((s) => s);
   const view = useUi((s) => s.view);
+  const projectId = useUi((s) => s.activeProjectId);
+  const code = useStore(codeStore, (s) => (projectId ? s.projects[projectId] : undefined));
   return useMemo(() => {
     const contextual: Entry[] = [];
     const data: Entry[] = [];
+    // Windows of the Code workspaces: in the Code view they lead; elsewhere they are found by name.
+    if (projectId) {
+      for (const w of listWindows(state, projectId, code ?? projectCode(projectId))) {
+        (view === 'code' ? contextual : data).push({
+          id: w.id,
+          group: 'Windows',
+          title: w.title,
+          value: `window ${w.title} ${w.where}`,
+          hint: w.where,
+          icon: w.icon,
+          run: closeThen(w.open),
+        });
+      }
+    }
     // Projects
     for (const project of selectProjects(state)) {
       data.push({
@@ -239,7 +259,7 @@ function useEntries(): { contextual: Entry[]; data: Entry[] } {
       });
     }
     return { contextual, data };
-  }, [state, activeRunId, layout, view]);
+  }, [state, activeRunId, layout, view, projectId, code]);
 }
 
 function CommandRow({ entry }: { entry: Entry }) {
@@ -265,16 +285,15 @@ const COMMAND_ICON: Record<string, IconName> = {
   'view.chat': 'session',
   'view.agents': 'agents',
   'view.agents.leave': 'chat',
-  'layout.strip': 'strip',
-  'layout.focus': 'focus',
-  'layout.overview': 'overview',
-  'layout.pipeline': 'pipeline',
+  'view.code': 'fileCode',
   'run.pause': 'pause',
   'run.resume': 'play',
   'tile.newTerminal': 'terminal',
-  'tile.close': 'close',
-  'column.maximize': 'maximize',
-  'column.toggleCollapse': 'collapse',
+  'code.close': 'close',
+  'code.monocle': 'maximize',
+  'code.panel': 'sidebar',
+  'code.promote': 'focus',
+  'code.pin': 'pin',
   'settings.open': 'settings',
   'run.archive': 'archive',
   'run.refreshPr': 'refresh',
@@ -289,11 +308,9 @@ const COMMAND_ICON: Record<string, IconName> = {
 };
 const CATEGORY_ICON: Record<string, IconName> = {
   Focus: 'arrowRight',
-  Column: 'strip',
-  Mode: 'maximize',
   Workspace: 'layers',
   Project: 'repo',
-  Layout: 'strip',
+  Layout: 'focus',
   Run: 'play',
   Tile: 'session',
   Overlay: 'search',

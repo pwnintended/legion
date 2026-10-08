@@ -520,7 +520,40 @@ export function demoReadFile(project: Project, path: string): FileContent {
     };
   }
   const text = files[rel] ?? '';
-  return { path: rel, size: bytes(text), kind: 'text', text, encoding: 'utf-8', truncated: false, image: null };
+  return {
+    path: rel,
+    size: bytes(text),
+    kind: 'text',
+    text,
+    encoding: 'utf-8',
+    truncated: false,
+    image: null,
+    version: demoVersion(project, rel),
+  };
+}
+
+/** Demo files are edited in memory (for this session); each save bumps the file's version. */
+const versions = new Map<string, number>();
+function demoVersion(project: Project, rel: string): string {
+  return `demo:${versions.get(`${project.name}:${rel}`) ?? 0}`;
+}
+
+export function demoStatFile(project: Project, path: string) {
+  const rel = clean(path);
+  const text = filesOf(project)[rel];
+  return { path: rel, version: text === undefined ? null : demoVersion(project, rel), size: bytes(text ?? '') };
+}
+
+export function demoWriteFile(project: Project, path: string, text: string, expectedVersion: string) {
+  const rel = clean(path);
+  const files = filesOf(project);
+  if (!(rel in files)) throw new RpcError('not_found', `${rel} is not one of the project's files`);
+  if (demoVersion(project, rel) !== expectedVersion)
+    throw new RpcError('conflict', `${rel} changed on disk since it was opened`);
+  files[rel] = text;
+  const key = `${project.name}:${rel}`;
+  versions.set(key, (versions.get(key) ?? 0) + 1);
+  return demoStatFile(project, rel);
 }
 
 export function demoFind(project: Project, query: string, limit: number) {

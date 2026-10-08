@@ -13,20 +13,17 @@ export interface MenuTemplateOptions {
  * Accelerators mirror the renderer's command registry (`src/renderer/app/commands.ts`), which stays the source of
  * truth: the renderer handles a chord first and calls preventDefault, so a menu accelerator only fires when the
  * renderer didn't (focus in a terminal, command unavailable), and then routes the same command id back to it.
- * ⌘W and ⌘R are bound here on purpose so Electron's defaults (close window, reload) never swallow
- * `column.cycleMode` / `mode.resize`. ⌘1–9 belong to the renderer's workspace switching and are never bound here.
+ * ⌘W is bound here on purpose so Electron's default (close window) never swallows `code.close` / the board's hide.
+ * ⌘1–9 belong to the renderer's workspace switching and are never bound here.
  */
 export const MENU_ACCELERATORS: Partial<Record<CommandId, string>> = {
   'composer.open': 'CmdOrCtrl+Shift+N',
   'inbox.open': 'CmdOrCtrl+I',
   'palette.open': 'CmdOrCtrl+K',
-  'layout.focus': 'CmdOrCtrl+Return',
-  // ⌘⇥ is taken by the macOS app switcher; the registry's second binding is the one that works.
-  'layout.overview': 'CmdOrCtrl+Shift+O',
-  'layout.pipeline': 'CmdOrCtrl+G',
   'focus.nextUrgent': 'CmdOrCtrl+U',
-  'column.cycleMode': 'CmdOrCtrl+W',
-  'mode.resize': 'CmdOrCtrl+R',
+  'view.code': 'CmdOrCtrl+Shift+E',
+  'code.panel': 'CmdOrCtrl+B',
+  'code.close': 'CmdOrCtrl+W',
   'settings.open': 'CmdOrCtrl+,',
   'project.add': 'CmdOrCtrl+O',
   'file.goto': 'CmdOrCtrl+P',
@@ -105,19 +102,15 @@ export function buildMenuTemplate({ appName, isMac, isDev, send }: MenuTemplateO
   const view: MenuItemConstructorOptions = {
     label: 'View',
     submenu: [
-      item('Strip Layout', 'layout.strip'),
-      item('Focus Layout', 'layout.focus'),
-      item('Overview', 'layout.overview'),
-      item('Pipeline', 'layout.pipeline'),
-      { type: 'separator' },
-      item('Toggle Tabbed / Stacked Column', 'column.cycleMode'),
-      item('Resize Mode', 'mode.resize'),
+      item('Code', 'view.code'),
+      item('Side Panel', 'code.panel'),
+      item('Close Tab or Terminal', 'code.close'),
       { type: 'separator' },
       { role: 'togglefullscreen' },
       ...(isDev
         ? ([
             { type: 'separator' },
-            // ⌘R is resize mode; keep reload reachable on ⇧⌘R.
+            // Reload stays off ⌘R (too close to everyday chords); ⇧⌘R.
             { role: 'reload', accelerator: 'CmdOrCtrl+Shift+R' },
             { role: 'toggleDevTools' },
           ] as MenuItemConstructorOptions[])
@@ -125,7 +118,7 @@ export function buildMenuTemplate({ appName, isMac, isDev, send }: MenuTemplateO
     ],
   };
 
-  // Not `role: 'windowMenu'`: its Close item owns ⌘W, which is column.cycleMode here.
+  // Not `role: 'windowMenu'`: its Close item owns ⌘W, which closes a tab or terminal here.
   const windowMenu: MenuItemConstructorOptions = {
     label: 'Window',
     ...(isMac ? { role: 'window' as const } : {}),

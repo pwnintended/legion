@@ -14,7 +14,7 @@ import {
 } from '@shared/domain';
 import { RpcError } from '@shared/rpc-transport';
 import { decideEscalation, decideHumanGate, taskStatusPath } from './core';
-import { createPr, enterPrReady } from './finalize';
+import { createPr, enterPrReady, mergeLocally } from './finalize';
 import { patchRunMeta, patchTaskMeta, taskMeta } from './meta';
 import { dismissal, type Orchestrator } from './orchestrator';
 import { answerClarify, approvePlan, requestPlanRevision } from './planner';
@@ -334,7 +334,10 @@ export async function resolveInbox(o: Orchestrator, itemId: string, resolution: 
       break;
     }
     case 'pr_ready':
-      if (resolution.approved) await createPr(o, item.runId, resolution.title, resolution.body);
+      if (resolution.approved) {
+        const land = resolution.action === 'merge' ? mergeLocally : createPr;
+        await land(o, item.runId, resolution.title, resolution.body);
+      }
       resolveIfOpen(o, itemId, resolution);
       break;
     case 'question': {

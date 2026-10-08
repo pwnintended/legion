@@ -1,0 +1,408 @@
+{
+  "tool": "build-phase",
+  "version": 2,
+  "startedAt": "2026-10-07T20:29:39.336Z",
+  "comp": ".impeccable/mocks/decision/assigned-dense.png",
+  "direction": null,
+  "breakpoint": "1536x1024",
+  "artifact": null,
+  "phase": "review",
+  "phases": {
+    "comps": {
+      "status": "skipped",
+      "openedAt": null,
+      "closedAt": null,
+      "attempts": 0,
+      "notes": [
+        {
+          "at": "2026-10-07T20:29:39.336Z",
+          "text": "started with an approved comp; the comp round happened before this state (surface round or manual)"
+        }
+      ],
+      "gate": null,
+      "forced": null
+    },
+    "spec": {
+      "status": "closed",
+      "openedAt": "2026-10-07T20:29:39.336Z",
+      "closedAt": "2026-10-07T20:30:54.503Z",
+      "attempts": 3,
+      "notes": [],
+      "gate": {
+        "ok": true,
+        "reasons": [],
+        "summary": "11 regions, 0 plates, 7 text regions measured",
+        "at": "2026-10-07T20:30:54.503Z"
+      },
+      "forced": null
+    },
+    "plates": {
+      "status": "closed",
+      "openedAt": "2026-10-07T20:30:54.503Z",
+      "closedAt": "2026-10-07T20:30:56.958Z",
+      "attempts": 1,
+      "notes": [],
+      "gate": {
+        "ok": true,
+        "reasons": [],
+        "summary": "no plates owed",
+        "at": "2026-10-07T20:30:56.958Z"
+      },
+      "forced": null
+    },
+    "hero": {
+      "status": "closed",
+      "openedAt": "2026-10-07T20:30:56.958Z",
+      "closedAt": "2026-10-07T21:28:57.630Z",
+      "attempts": 8,
+      "notes": [
+        {
+          "at": "2026-10-07T20:50:10.818Z",
+          "text": "Hero measured with the project rail hidden: the user decided in shape to keep the rail (\"keep the rail, no pinning, overview goes to Code\"), which the comp omits; the rail is shared app chrome outside this surface. The shipped app shows the rail."
+        }
+      ],
+      "gate": {
+        "ok": false,
+        "reasons": [
+          "hero overall 66.5% < 72% (structure 70%, color 93%, detail 42%)",
+          "region transcript-bottom is missing (detail 0%, structure 83%): the comp shows material the build does not",
+          "region composer is missing (detail 5%, structure 94%): the comp shows material the build does not"
+        ],
+        "summary": "hero 66% (drift)",
+        "score": 0.6647,
+        "verdict": "drift",
+        "report": ".impeccable/review/diff/hero/report.json",
+        "sideBySide": "/Users/bas/Projects/erudiet/legion/.impeccable/review/diff/hero/side-by-side.png",
+        "worst": [
+          "titlebar drift 53%",
+          "map-wave drift 61%",
+          "map-top drift 62%"
+        ],
+        "worstIds": [
+          "titlebar",
+          "map-wave",
+          "map-top"
+        ],
+        "worstCrops": [
+          {
+            "id": "titlebar",
+            "verdict": "drift",
+            "score": {
+              "overall": 0.5329,
+              "structure": 0.6927,
+              "color": 0.8275,
+              "colorIntersection": 0.6427,
+              "paletteMatch": 0.9269,
+              "detail": 0.0705,
+              "detailRaw": 0.2475,
+              "detailAdded": 0.3542,
+              "bands": 0.44
+            },
+            "file": ".impeccable/review/diff/hero/regions/titlebar.png"
+          },
+          {
+            "id": "map-wave",
+            "verdict": "drift",
+            "score": {
+              "overall": 0.6104,
+              "structure": 0.4563,
+              "color": 0.8172,
+              "colorIntersection": 0.7082,
+              "paletteMatch": 0.8759,
+              "detail": 0.5198,
+              "detailRaw": 0.5875,
+              "detailAdded": 0.1354,
+              "bands": 1
+            },
+            "file": ".impeccable/review/diff/hero/regions/map-wave.png"
+          },
+          {
+            "id": "map-top",
+            "verdict": "drift",
+            "score": {
+              "overall": 0.6163,
+              "structure": 0.6198,
+              "color": 0.9285,
+              "colorIntersection": 0.8665,
+              "paletteMatch": 0.962,
+              "detail": 0.2475,
+              "detailRaw": 0.3778,
+              "detailAdded": 0.2604,
+              "bands": 0.3714
+            },
+            "file": ".impeccable/review/diff/hero/regions/map-top.png"
+          }
+        ],
+        "advisories": [
+          "(advisory, unchanged for 3+ attempts) text map-wave: letter-spacing is wider than the comp's (gap 0.161 vs 0.089 of the cap height); set letter-spacing to close it by about 1px",
+          "(advisory, unchanged for 3+ attempts) text map-next: letter-spacing is wider than the comp's (gap 0.243 vs 0.093 of the cap height); set letter-spacing to close it by about 2px",
+          "(advisory, unchanged for 3+ attempts) text map-termini: cap height 10.3px in the build, 24.8px in the comp (-58%); set font-size so the cap height renders at 24.8px (font-match ranked Crushed 400 at 36px)",
+          "(advisory, unchanged for 3+ attempts) text transcript-top: cap height 9.5px in the build, 12.2px in the comp (-22%); set font-size so the cap height renders at 12.2px",
+          "(advisory, unchanged for 3+ attempts) text map-top: 1 line in the build, 4 in the comp; the measure (max-width, font-size, letter-spacing) wraps it differently, so the block is a different shape",
+          "(advisory, unchanged for 3+ attempts) text map-wave: 6 lines in the build, 5 in the comp; the measure (max-width, font-size, letter-spacing) wraps it differently, so the block is a different shape",
+          "(advisory, unchanged for 3+ attempts) text map-next: 2 lines in the build, 3 in the comp; the measure (max-width, font-size, letter-spacing) wraps it differently, so the block is a different shape",
+          "(advisory, unchanged for 3+ attempts) text transcript-top: 2 lines in the build, 7 in the comp; the measure (max-width, font-size, letter-spacing) wraps it differently, so the block is a different shape",
+          "(advisory, unchanged for 3+ attempts) text map-wave: the face renders 94% heavier than the comp's (ink density 1.00 vs 0.51); drop a weight step or use the ranked face",
+          "(advisory, unchanged for 3+ attempts) text map-next: the face renders 46% lighter than the comp's (ink density 0.34 vs 0.63); raise a weight step or use the ranked face",
+          "(advisory, unchanged for 3+ attempts) text map-termini: ink is #f8f8f8 in the build, #cd9ef8 in the comp; use the comp's colour",
+          "(advisory, unchanged for 3+ attempts) chrome titlebar: its rule sits 57px into the box in the comp and 29px in the build (-28px), so the strip is shorter than the comp's; match the height, not only the position"
+        ],
+        "regionVerdicts": {
+          "titlebar": "drift",
+          "map-top": "drift",
+          "map-wave": "drift",
+          "map-next": "drift",
+          "map-termini": "drift",
+          "pane-header": "drift",
+          "stage-tabs": "drift",
+          "transcript-top": "drift",
+          "transcript-bottom": "missing",
+          "composer": "missing",
+          "statusbar": "drift"
+        },
+        "at": "2026-10-07T21:28:57.628Z"
+      },
+      "forced": {
+        "at": "2026-10-07T21:28:57.630Z",
+        "reason": "The user chose, in answer to 'Can I treat the comp as a reference from here on, rather than a pixel contract the build must measure against?': \"Yes, reference only. The comp guides the look; the build follows your later decisions (tree view, rail, shared title bar).\"",
+        "reasons": [
+          "region titlebar has been the worst region for three attempts and the score moved less than 3 points: value edits are not reaching it. Open .impeccable/review/diff/hero/regions/titlebar.png and rebuild that region from the comp crop (place its plate, or produce one with /Users/bas/.claude/skills/impeccable/scripts/impeccable generate-image --ref <crop.png> --prompt-file <prompt.txt> --out <plate.png>, or re-derive its structure from the spec box), then recapture.",
+          "hero overall 66.5% < 72% (structure 70%, color 93%, detail 42%)",
+          "region transcript-bottom is missing (detail 0%, structure 83%): the comp shows material the build does not",
+          "region composer is missing (detail 5%, structure 94%): the comp shows material the build does not"
+        ]
+      },
+      "readingsSeen": {
+        "text map-top: cap height 35.5px in the build, 11.8px in the comp (+201%); set font-size so the cap height renders at 11.8px": 2,
+        "text map-wave: cap height 17.5px in the build, 10.8px in the comp (+62%); set font-size so the cap height renders at 10.8px": 2,
+        "text map-next: letter-spacing is wider than the comp's (gap 0.166 vs 0.093 of the cap height); set letter-spacing to close it by about 1px": 2,
+        "text map-termini: cap height 10.3px in the build, 24.8px in the comp (-58%); set font-size so the cap height renders at 24.8px (font-match ranked Crushed 400 at 36px)": 6,
+        "text map-top: 2 lines in the build, 4 in the comp; the measure (max-width, font-size, letter-spacing) wraps it differently, so the block is a different shape": 3,
+        "text map-wave: 4 lines in the build, 5 in the comp; the measure (max-width, font-size, letter-spacing) wraps it differently, so the block is a different shape": 4,
+        "text map-next: 4 lines in the build, 3 in the comp; the measure (max-width, font-size, letter-spacing) wraps it differently, so the block is a different shape": 2,
+        "text transcript-top: 2 lines in the build, 7 in the comp; the measure (max-width, font-size, letter-spacing) wraps it differently, so the block is a different shape": 8,
+        "text transcript-bottom: 7 lines in the build, 2 in the comp; the measure (max-width, font-size, letter-spacing) wraps it differently, so the block is a different shape": 2,
+        "text map-next: the face renders 27% lighter than the comp's (ink density 0.45 vs 0.63); raise a weight step or use the ranked face": 2,
+        "text map-termini: ink is #f8f8f8 in the build, #cd9ef8 in the comp; use the comp's colour": 9,
+        "chrome titlebar: its rule sits 57px into the box in the comp and 29px in the build (-28px), so the strip is shorter than the comp's; match the height, not only the position": 9,
+        "text map-wave: letter-spacing is wider than the comp's (gap 0.161 vs 0.089 of the cap height); set letter-spacing to close it by about 1px": 6,
+        "text map-next: letter-spacing is wider than the comp's (gap 0.224 vs 0.093 of the cap height); set letter-spacing to close it by about 1px": 2,
+        "text map-termini: cap height 8.7px in the build, 24.8px in the comp (-65%); set font-size so the cap height renders at 24.8px (font-match ranked Crushed 400 at 36px)": 1,
+        "text map-top: 1 line in the build, 4 in the comp; the measure (max-width, font-size, letter-spacing) wraps it differently, so the block is a different shape": 6,
+        "text map-next: 1 line in the build, 3 in the comp; the measure (max-width, font-size, letter-spacing) wraps it differently, so the block is a different shape": 2,
+        "text transcript-top: 1 line in the build, 7 in the comp; the measure (max-width, font-size, letter-spacing) wraps it differently, so the block is a different shape": 1,
+        "text map-next: the face renders 32% lighter than the comp's (ink density 0.43 vs 0.63); raise a weight step or use the ranked face": 1,
+        "text map-top: cap height 24.6px in the build, 11.8px in the comp (+108%); set font-size so the cap height renders at 11.8px": 1,
+        "text map-termini: cap height 9.1px in the build, 24.8px in the comp (-63%); set font-size so the cap height renders at 24.8px (font-match ranked Crushed 400 at 36px)": 1,
+        "text transcript-top: cap height 9.5px in the build, 12.2px in the comp (-22%); set font-size so the cap height renders at 12.2px": 5,
+        "text map-next: the face renders 31% lighter than the comp's (ink density 0.43 vs 0.63); raise a weight step or use the ranked face": 1,
+        "text map-wave: cap height 13.5px in the build, 10.8px in the comp (+25%); set font-size so the cap height renders at 10.8px": 1,
+        "text map-next: letter-spacing is wider than the comp's (gap 0.244 vs 0.093 of the cap height); set letter-spacing to close it by about 2px": 1,
+        "text map-termini: cap height 9.5px in the build, 24.8px in the comp (-62%); set font-size so the cap height renders at 24.8px (font-match ranked Crushed 400 at 36px)": 1,
+        "text map-next: 2 lines in the build, 3 in the comp; the measure (max-width, font-size, letter-spacing) wraps it differently, so the block is a different shape": 5,
+        "text map-next: letter-spacing is wider than the comp's (gap 0.243 vs 0.093 of the cap height); set letter-spacing to close it by about 2px": 4,
+        "text map-wave: 6 lines in the build, 5 in the comp; the measure (max-width, font-size, letter-spacing) wraps it differently, so the block is a different shape": 4,
+        "text map-wave: the face renders 94% heavier than the comp's (ink density 1.00 vs 0.51); drop a weight step or use the ranked face": 4,
+        "text map-next: the face renders 46% lighter than the comp's (ink density 0.34 vs 0.63); raise a weight step or use the ranked face": 4
+      },
+      "records": 1,
+      "history": [
+        {
+          "at": "2026-10-07T20:49:46.869Z",
+          "score": 0.6464,
+          "worstIds": [
+            "map-wave",
+            "map-top",
+            "map-termini"
+          ],
+          "regionVerdicts": {
+            "titlebar": "drift",
+            "map-top": "contradicted",
+            "map-wave": "drift",
+            "map-next": "contradicted",
+            "map-termini": "missing",
+            "pane-header": "drift",
+            "stage-tabs": "drift",
+            "transcript-top": "drift",
+            "transcript-bottom": "missing",
+            "composer": "drift",
+            "statusbar": "drift"
+          },
+          "artifactHash": null
+        },
+        {
+          "at": "2026-10-07T20:50:11.429Z",
+          "score": 0.6627,
+          "worstIds": [
+            "titlebar",
+            "map-termini",
+            "map-wave"
+          ],
+          "regionVerdicts": {
+            "titlebar": "drift",
+            "map-top": "drift",
+            "map-wave": "drift",
+            "map-next": "drift",
+            "map-termini": "drift",
+            "pane-header": "drift",
+            "stage-tabs": "drift",
+            "transcript-top": "drift",
+            "transcript-bottom": "missing",
+            "composer": "drift",
+            "statusbar": "drift"
+          },
+          "artifactHash": null
+        },
+        {
+          "at": "2026-10-07T20:50:44.854Z",
+          "score": 0.6741,
+          "worstIds": [
+            "titlebar",
+            "map-wave",
+            "map-next"
+          ],
+          "regionVerdicts": {
+            "titlebar": "drift",
+            "map-top": "drift",
+            "map-wave": "drift",
+            "map-next": "drift",
+            "map-termini": "drift",
+            "pane-header": "drift",
+            "stage-tabs": "drift",
+            "transcript-top": "drift",
+            "transcript-bottom": "missing",
+            "composer": "drift",
+            "statusbar": "drift"
+          },
+          "artifactHash": null
+        },
+        {
+          "at": "2026-10-07T20:51:19.755Z",
+          "score": 0.6706,
+          "worstIds": [
+            "titlebar",
+            "map-next",
+            "map-top"
+          ],
+          "regionVerdicts": {
+            "titlebar": "drift",
+            "map-top": "drift",
+            "map-wave": "drift",
+            "map-next": "drift",
+            "map-termini": "drift",
+            "pane-header": "drift",
+            "stage-tabs": "drift",
+            "transcript-top": "drift",
+            "transcript-bottom": "missing",
+            "composer": "drift",
+            "statusbar": "drift"
+          },
+          "artifactHash": null
+        },
+        {
+          "at": "2026-10-07T21:28:57.630Z",
+          "score": 0.6647,
+          "worstIds": [
+            "titlebar",
+            "map-wave",
+            "map-top"
+          ],
+          "regionVerdicts": {
+            "titlebar": "drift",
+            "map-top": "drift",
+            "map-wave": "drift",
+            "map-next": "drift",
+            "map-termini": "drift",
+            "pane-header": "drift",
+            "stage-tabs": "drift",
+            "transcript-top": "drift",
+            "transcript-bottom": "missing",
+            "composer": "missing",
+            "statusbar": "drift"
+          },
+          "artifactHash": null
+        }
+      ]
+    },
+    "sections": {
+      "status": "closed",
+      "openedAt": "2026-10-07T21:28:57.630Z",
+      "closedAt": "2026-10-07T21:29:02.629Z",
+      "attempts": 1,
+      "notes": [],
+      "gate": {
+        "ok": true,
+        "reasons": [],
+        "summary": "no mechanical gate",
+        "at": "2026-10-07T21:29:02.629Z"
+      },
+      "forced": null
+    },
+    "motion": {
+      "status": "closed",
+      "openedAt": "2026-10-07T21:29:02.629Z",
+      "closedAt": "2026-10-07T21:29:08.307Z",
+      "attempts": 1,
+      "notes": [],
+      "gate": {
+        "ok": true,
+        "reasons": [],
+        "summary": "no mechanical gate",
+        "at": "2026-10-07T21:29:08.307Z"
+      },
+      "forced": null
+    },
+    "responsive": {
+      "status": "closed",
+      "openedAt": "2026-10-07T21:29:08.307Z",
+      "closedAt": "2026-10-07T21:30:48.159Z",
+      "attempts": 2,
+      "notes": [
+        {
+          "at": "2026-10-07T21:30:42.206Z",
+          "text": "mobile.png is the app's minimum window (960x600, BrowserWindow minWidth): an Electron desktop app has no 390px class. The route map folds into a bar under 900px."
+        }
+      ],
+      "gate": {
+        "ok": false,
+        "reasons": [
+          "the desktop capture (1440x900; the top 1536x1024 rows scaled to the comp's width are compared, a full-page capture is fine) scores 64% against the comp, under 65%: the first viewport does not survive a common desktop width. The hero passed at 1536x1024; the layout must hold from ~1280 up, not only at the comp's exact width (grid columns in fr / minmax, not fixed px that overflow and wrap).",
+          "at desktop width, region titlebar is missing",
+          "at desktop width, region map-top (text) is contradicted (structure 46%)",
+          "at desktop width, region map-wave (text) is contradicted (structure 37%)",
+          "at desktop width, region map-next (text) is contradicted (structure 48%)"
+        ],
+        "summary": "desktop 64% (drift)",
+        "score": 0.6366,
+        "sideBySide": "/Users/bas/Projects/erudiet/legion/.impeccable/review/diff/desktop/side-by-side.png",
+        "at": "2026-10-07T21:30:48.155Z"
+      },
+      "forced": {
+        "at": "2026-10-07T21:30:48.159Z",
+        "reason": "The user chose, in answer to 'Can I treat the comp as a reference from here on, rather than a pixel contract the build must measure against?': \"Yes, reference only. The comp guides the look; the build follows your later decisions (tree view, rail, shared title bar).\" The desktop capture carries the rail the user kept (\"keep the rail\"); the comp omits it.",
+        "reasons": [
+          "the desktop capture (1440x900; the top 1536x1024 rows scaled to the comp's width are compared, a full-page capture is fine) scores 64% against the comp, under 65%: the first viewport does not survive a common desktop width. The hero passed at 1536x1024; the layout must hold from ~1280 up, not only at the comp's exact width (grid columns in fr / minmax, not fixed px that overflow and wrap).",
+          "at desktop width, region titlebar is missing",
+          "at desktop width, region map-top (text) is contradicted (structure 46%)",
+          "at desktop width, region map-wave (text) is contradicted (structure 37%)",
+          "at desktop width, region map-next (text) is contradicted (structure 48%)"
+        ]
+      }
+    },
+    "review": {
+      "status": "closed",
+      "openedAt": "2026-10-07T21:30:48.159Z",
+      "closedAt": "2026-10-07T21:49:38.674Z",
+      "attempts": 0,
+      "notes": [],
+      "gate": null,
+      "forced": null
+    }
+  },
+  "finish": {
+    "disposition": "ship",
+    "at": "2026-10-07T21:49:38.674Z",
+    "phaseAtFinish": "review"
+  },
+  "plates": {}
+}

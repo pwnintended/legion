@@ -295,9 +295,6 @@ body {
 .tile:focus {
   outline: none;
 }
-.tile[data-dim="true"] {
-  opacity: 0.86;
-}
 .tile[data-focused="true"] {
   border-color: var(--mauve);
   box-shadow: var(--glow-focus);
@@ -377,81 +374,6 @@ body {
   position: relative;
   overflow: hidden;
 }
-/* Stacked column: inactive tiles show only their header. */
-.tile[data-collapsed="true"] {
-  flex: none;
-}
-.tile[data-collapsed="true"] .tile-head {
-  border-bottom: none;
-}
-
-/* Thin collapsed column */
-.thin {
-  width: 44px;
-  height: 100%;
-  cursor: pointer;
-}
-.thin-inner {
-  all: unset;
-  box-sizing: border-box;
-  cursor: pointer;
-  height: 100%;
-  width: 100%;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  padding: 12px 0;
-  gap: 10px;
-}
-.thin-inner:focus-visible {
-  outline: 2px solid var(--mauve);
-  outline-offset: -3px;
-  border-radius: var(--radius);
-}
-.vt {
-  writing-mode: vertical-rl;
-  transform: rotate(180deg);
-  font-size: 12px;
-  white-space: nowrap;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  overflow: hidden;
-  min-height: 0;
-}
-
-/* Tabs in tabbed columns */
-.tabs {
-  display: flex;
-  gap: 2px;
-  padding: 4px;
-  border-bottom: 1px solid var(--hairline);
-  flex: none;
-  overflow-x: auto;
-}
-.tab {
-  all: unset;
-  box-sizing: border-box;
-  cursor: pointer;
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  height: 26px;
-  padding: 0 10px;
-  border-radius: 6px;
-  font-size: 12px;
-  color: var(--subtext0);
-  white-space: nowrap;
-}
-.tab:hover {
-  color: var(--text);
-  background: color-mix(in srgb, var(--surface0) 50%, transparent);
-}
-.tab[aria-selected="true"] {
-  background: var(--surface0);
-  color: var(--text);
-}
-
 /* DAG edges ---------------------------------------------------------------------------------- */
 .flow {
   stroke-dasharray: 4 6;
@@ -850,38 +772,7 @@ body {
   opacity: 1;
 }
 
-/* Ghost "+" column */
-.ghost {
-  all: unset;
-  box-sizing: border-box;
-  cursor: pointer;
-  width: 120px;
-  flex: none;
-  border: var(--border-w) dashed var(--surface1);
-  border-radius: var(--radius);
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
-  color: var(--overlay2);
-  font-size: 12px;
-  transition:
-    border-color 0.2s,
-    color 0.2s,
-    background-color 0.2s;
-}
-.ghost:hover {
-  border-color: var(--overlay0);
-  color: var(--text);
-  background: color-mix(in srgb, var(--base) 50%, transparent);
-}
-.ghost:focus-visible {
-  outline: 2px solid var(--mauve);
-  outline-offset: 2px;
-}
-
-/* Skeleton for virtualized columns */
+/* Loading skeleton */
 .placeholder {
   background: linear-gradient(
     180deg,
@@ -890,19 +781,6 @@ body {
   );
   border: var(--border-w) solid var(--surface0);
   border-radius: var(--radius);
-}
-
-/* No scroll snapping: the strip scrolls programmatically, minimally (niri), and snap points would drag a
-   right-aligned focused column back to the nearest column start and cut it off. */
-.strip {
-  scrollbar-width: none;
-}
-.strip::-webkit-scrollbar {
-  display: none;
-}
-.strip-col {
-  content-visibility: auto;
-  contain-intrinsic-size: auto 600px;
 }
 
 @keyframes lg-pulse {

@@ -1,0 +1,794 @@
+{
+  "tool": "comp-spec",
+  "version": 1,
+  "createdAt": "2026-10-07T20:30:13.854Z",
+  "comp": ".impeccable/mocks/decision/assigned-dense.png",
+  "warnings": [],
+  "uncoveredInkCells": [],
+  "compSize": {
+    "width": 1536,
+    "height": 1024
+  },
+  "aspect": 1.5,
+  "orientation": "landscape",
+  "palette": [
+    {
+      "hex": "#181828",
+      "coverage": 0.9618
+    },
+    {
+      "hex": "#353c51",
+      "coverage": 0.0157
+    },
+    {
+      "hex": "#8f99b9",
+      "coverage": 0.0079
+    },
+    {
+      "hex": "#bbc6e4",
+      "coverage": 0.0076
+    },
+    {
+      "hex": "#626887",
+      "coverage": 0.007
+    }
+  ],
+  "bands": [
+    {
+      "y": 0.0353,
+      "strength": 0.4019
+    },
+    {
+      "y": 0.0824,
+      "strength": 0.2563
+    },
+    {
+      "y": 0.2824,
+      "strength": 0.2156
+    },
+    {
+      "y": 0.3882,
+      "strength": 0.2271
+    },
+    {
+      "y": 0.4118,
+      "strength": 0.2117
+    },
+    {
+      "y": 0.9882,
+      "strength": 0.2285
+    }
+  ],
+  "regions": [
+    {
+      "id": "titlebar",
+      "kind": "chrome",
+      "note": "title bar: crumb, Chat | Agents | Code switch, Commands, Needs you 1, New run; map title row",
+      "grid": "A0:J0",
+      "box": {
+        "x": 0,
+        "y": 0,
+        "w": 1,
+        "h": 0.1
+      },
+      "px": {
+        "x": 0,
+        "y": 0,
+        "w": 1536,
+        "h": 102
+      },
+      "aspect": 15.0588,
+      "palette": [
+        {
+          "hex": "#191927",
+          "coverage": 0.8796
+        },
+        {
+          "hex": "#273341",
+          "coverage": 0.0523
+        },
+        {
+          "hex": "#ca99f8",
+          "coverage": 0.0294
+        },
+        {
+          "hex": "#201f40",
+          "coverage": 0.0292
+        },
+        {
+          "hex": "#dde7f8",
+          "coverage": 0.0096
+        }
+      ],
+      "detail": {
+        "energy": 24.077
+      },
+      "medium": "semantic",
+      "plate": null,
+      "text": null
+    },
+    {
+      "id": "map-top",
+      "kind": "text",
+      "note": "map counts (22 tasks, 6 working, 1 waiting, 1 failed), Plan terminus, folded Wave 1, Wave 2 label on the trunk",
+      "grid": "A1:C2",
+      "snap": false,
+      "box": {
+        "x": 0,
+        "y": 0.1,
+        "w": 0.3,
+        "h": 0.2
+      },
+      "px": {
+        "x": 0,
+        "y": 102,
+        "w": 461,
+        "h": 205
+      },
+      "aspect": 2.2488,
+      "palette": [
+        {
+          "hex": "#181828",
+          "coverage": 0.9603
+        },
+        {
+          "hex": "#45496a",
+          "coverage": 0.0114
+        },
+        {
+          "hex": "#979fc6",
+          "coverage": 0.0111
+        },
+        {
+          "hex": "#b3c0e0",
+          "coverage": 0.0096
+        },
+        {
+          "hex": "#707799",
+          "coverage": 0.0077
+        }
+      ],
+      "detail": {
+        "energy": 18.5361
+      },
+      "medium": "semantic",
+      "plate": null,
+      "text": null,
+      "type": {
+        "comp": {
+          "lines": 4,
+          "glyphs": 91,
+          "capHeightPx": 11.8,
+          "inkIsDark": false,
+          "allCaps": false,
+          "advance": 0.6098,
+          "advTall": 0.6098,
+          "advX": 0.5922,
+          "gap": 0.1161,
+          "xRatio": 0.6988,
+          "stemW": 0.1475,
+          "contrast": 1.0623,
+          "serif": 0.6162,
+          "densTall": 0.4556,
+          "densX": 0.5196,
+          "weight": 0.4556
+        },
+        "widthClass": "normal",
+        "weightClass": "regular"
+      }
+    },
+    {
+      "id": "map-wave",
+      "kind": "text",
+      "note": "open wave: folded 4 merged line, rows T7 to T14 hanging off the bus, T9 selected with a mauve outline",
+      "grid": "A3:C5",
+      "snap": false,
+      "box": {
+        "x": 0,
+        "y": 0.3,
+        "w": 0.3,
+        "h": 0.3
+      },
+      "px": {
+        "x": 0,
+        "y": 307,
+        "w": 461,
+        "h": 307
+      },
+      "aspect": 1.5016,
+      "palette": [
+        {
+          "hex": "#171827",
+          "coverage": 0.9511
+        },
+        {
+          "hex": "#40425c",
+          "coverage": 0.0154
+        },
+        {
+          "hex": "#deadf5",
+          "coverage": 0.0134
+        },
+        {
+          "hex": "#d4dbeb",
+          "coverage": 0.0113
+        },
+        {
+          "hex": "#a3aac2",
+          "coverage": 0.0088
+        }
+      ],
+      "detail": {
+        "energy": 27.9862
+      },
+      "medium": "semantic",
+      "plate": null,
+      "text": null,
+      "type": {
+        "comp": {
+          "lines": 5,
+          "glyphs": 116,
+          "capHeightPx": 10.8,
+          "inkIsDark": false,
+          "allCaps": false,
+          "advance": 0.5932,
+          "advTall": 0.6053,
+          "advX": 0.5959,
+          "gap": 0.0894,
+          "xRatio": 0.707,
+          "stemW": 0.1645,
+          "contrast": 1.0329,
+          "serif": 1.0075,
+          "densTall": 0.5131,
+          "densX": 0.5664,
+          "weight": 0.5131
+        },
+        "widthClass": "normal",
+        "weightClass": "medium"
+      }
+    },
+    {
+      "id": "map-next",
+      "kind": "text",
+      "note": "Wave 3 rows T15 to T17 dimmed, folded Then 2 waves line",
+      "grid": "A6:C7",
+      "snap": false,
+      "box": {
+        "x": 0,
+        "y": 0.6,
+        "w": 0.3,
+        "h": 0.2
+      },
+      "px": {
+        "x": 0,
+        "y": 614,
+        "w": 461,
+        "h": 205
+      },
+      "aspect": 2.2488,
+      "palette": [
+        {
+          "hex": "#171827",
+          "coverage": 0.9646
+        },
+        {
+          "hex": "#929abf",
+          "coverage": 0.0171
+        },
+        {
+          "hex": "#424460",
+          "coverage": 0.0091
+        },
+        {
+          "hex": "#6c7096",
+          "coverage": 0.005
+        },
+        {
+          "hex": "#bfc8e6",
+          "coverage": 0.0042
+        }
+      ],
+      "detail": {
+        "energy": 17.4736
+      },
+      "medium": "semantic",
+      "plate": null,
+      "text": null,
+      "type": {
+        "comp": {
+          "lines": 3,
+          "glyphs": 73,
+          "capHeightPx": 11.4,
+          "inkIsDark": false,
+          "allCaps": false,
+          "advance": 0.5891,
+          "advTall": 0.4233,
+          "advX": 0.6025,
+          "gap": 0.0927,
+          "xRatio": 0.7141,
+          "stemW": 0.1658,
+          "contrast": 1.038,
+          "serif": 0.6375,
+          "densTall": 0.625,
+          "densX": 0.5734,
+          "weight": 0.625
+        },
+        "widthClass": "normal",
+        "weightClass": "bold"
+      }
+    },
+    {
+      "id": "map-termini",
+      "kind": "text",
+      "note": "Integration and Pull request termini, dashed rings",
+      "grid": "A8:C9",
+      "snap": false,
+      "box": {
+        "x": 0,
+        "y": 0.8,
+        "w": 0.3,
+        "h": 0.2
+      },
+      "px": {
+        "x": 0,
+        "y": 819,
+        "w": 461,
+        "h": 205
+      },
+      "aspect": 2.2488,
+      "palette": [
+        {
+          "hex": "#171827",
+          "coverage": 0.9702
+        },
+        {
+          "hex": "#cd9ef8",
+          "coverage": 0.0122
+        },
+        {
+          "hex": "#91a0c2",
+          "coverage": 0.0062
+        },
+        {
+          "hex": "#5b5e7e",
+          "coverage": 0.0059
+        },
+        {
+          "hex": "#302d4d",
+          "coverage": 0.0055
+        }
+      ],
+      "detail": {
+        "energy": 11.3069
+      },
+      "medium": "semantic",
+      "plate": null,
+      "text": null,
+      "type": {
+        "comp": {
+          "lines": 1,
+          "glyphs": 6,
+          "capHeightPx": 24.8,
+          "inkIsDark": false,
+          "allCaps": false,
+          "advance": 2.6256,
+          "advTall": 2.6256,
+          "advX": null,
+          "gap": 0.0404,
+          "xRatio": 0.5719,
+          "stemW": 0.0992,
+          "contrast": 1.1824,
+          "serif": null,
+          "densTall": 0.8581,
+          "densX": null,
+          "weight": 0.8581
+        },
+        "widthClass": "wide",
+        "weightClass": "black",
+        "chosen": {
+          "family": "Crushed",
+          "weight": 400,
+          "fontSizePx": 36,
+          "source": "index",
+          "fp": {
+            "lines": 1,
+            "glyphs": 13,
+            "capHeightPx": 24.9,
+            "inkIsDark": true,
+            "allCaps": true,
+            "advance": 0.1603,
+            "advTall": 0.1603,
+            "advX": null,
+            "gap": 0.2205,
+            "xRatio": null,
+            "stemW": 0.1328,
+            "contrast": 1.151,
+            "serif": 1.1598,
+            "densTall": 0.8286,
+            "densX": null,
+            "weight": 0.8286
+          },
+          "stamp": "3227d8e7f1aa"
+        }
+      }
+    },
+    {
+      "id": "pane-header",
+      "kind": "text",
+      "note": "T9 id chip, Tax rates sync title, engine chips claude coder / codex reviewer, fixing 1/2 chip, goal caption",
+      "grid": "D1:J1",
+      "snap": false,
+      "box": {
+        "x": 0.3,
+        "y": 0.1,
+        "w": 0.7,
+        "h": 0.1
+      },
+      "px": {
+        "x": 461,
+        "y": 102,
+        "w": 1075,
+        "h": 102
+      },
+      "aspect": 10.5392,
+      "palette": [
+        {
+          "hex": "#181929",
+          "coverage": 0.9251
+        },
+        {
+          "hex": "#344051",
+          "coverage": 0.033
+        },
+        {
+          "hex": "#b9c5e6",
+          "coverage": 0.0186
+        },
+        {
+          "hex": "#2d2a4a",
+          "coverage": 0.0128
+        },
+        {
+          "hex": "#102020",
+          "coverage": 0.0105
+        }
+      ],
+      "detail": {
+        "energy": 17.9482
+      },
+      "medium": "semantic",
+      "plate": null,
+      "text": null,
+      "type": {
+        "comp": {
+          "lines": 1,
+          "glyphs": 78,
+          "capHeightPx": 12.9,
+          "inkIsDark": false,
+          "allCaps": false,
+          "advance": 0.5816,
+          "advTall": 0.3877,
+          "advX": 0.5816,
+          "gap": 0.1551,
+          "xRatio": 0.7175,
+          "stemW": 0.1428,
+          "contrast": 1.0931,
+          "serif": 0.4139,
+          "densTall": 0.4592,
+          "densX": 0.4914,
+          "weight": 0.4592
+        },
+        "widthClass": "condensed",
+        "weightClass": "regular",
+        "chosen": {
+          "family": "Assistant",
+          "weight": 300,
+          "fontSizePx": 18,
+          "source": "index",
+          "fp": {
+            "lines": 1,
+            "glyphs": 11,
+            "capHeightPx": 12.6,
+            "inkIsDark": true,
+            "allCaps": false,
+            "advance": 0.5829,
+            "advTall": 0.4239,
+            "advX": 0.5829,
+            "gap": 0.0927,
+            "xRatio": 0.7537,
+            "stemW": 0.148,
+            "contrast": 1.1638,
+            "serif": null,
+            "densTall": 0.4703,
+            "densX": 0.5069,
+            "weight": 0.4703
+          },
+          "stamp": "d63a3aefa322"
+        }
+      }
+    },
+    {
+      "id": "stage-tabs",
+      "kind": "control",
+      "note": "stage track Code, Review, Fix 1/2, Verify, Merge, and tabs Transcript, Changes, Review, Messages",
+      "grid": "D2:J2",
+      "snap": false,
+      "box": {
+        "x": 0.3,
+        "y": 0.2,
+        "w": 0.7,
+        "h": 0.1
+      },
+      "px": {
+        "x": 461,
+        "y": 205,
+        "w": 1075,
+        "h": 102
+      },
+      "aspect": 10.5392,
+      "palette": [
+        {
+          "hex": "#181828",
+          "coverage": 0.9889
+        },
+        {
+          "hex": "#3b3b58",
+          "coverage": 0.0039
+        },
+        {
+          "hex": "#9d78b8",
+          "coverage": 0.0027
+        },
+        {
+          "hex": "#6d7393",
+          "coverage": 0.0023
+        },
+        {
+          "hex": "#adbddd",
+          "coverage": 0.0022
+        }
+      ],
+      "detail": {
+        "energy": 10.6557
+      },
+      "medium": "semantic",
+      "plate": null,
+      "text": null
+    },
+    {
+      "id": "transcript-top",
+      "kind": "text",
+      "note": "transcript: claude turn with edit row, codex finding box",
+      "grid": "D3:J5",
+      "snap": false,
+      "box": {
+        "x": 0.3,
+        "y": 0.3,
+        "w": 0.7,
+        "h": 0.3
+      },
+      "px": {
+        "x": 461,
+        "y": 307,
+        "w": 1075,
+        "h": 307
+      },
+      "aspect": 3.5016,
+      "palette": [
+        {
+          "hex": "#181829",
+          "coverage": 0.94
+        },
+        {
+          "hex": "#4f546f",
+          "coverage": 0.017
+        },
+        {
+          "hex": "#293942",
+          "coverage": 0.0156
+        },
+        {
+          "hex": "#9da7c4",
+          "coverage": 0.0152
+        },
+        {
+          "hex": "#c9d5ed",
+          "coverage": 0.0122
+        }
+      ],
+      "detail": {
+        "energy": 18.6985
+      },
+      "medium": "semantic",
+      "plate": null,
+      "text": null,
+      "type": {
+        "comp": {
+          "lines": 7,
+          "glyphs": 472,
+          "capHeightPx": 12.2,
+          "inkIsDark": false,
+          "allCaps": false,
+          "advance": 0.579,
+          "advTall": 0.4209,
+          "advX": 0.5844,
+          "gap": 0.1241,
+          "xRatio": 0.724,
+          "stemW": 0.159,
+          "contrast": 1.0614,
+          "serif": 0.5623,
+          "densTall": 0.5147,
+          "densX": 0.5522,
+          "weight": 0.5147
+        },
+        "widthClass": "condensed",
+        "weightClass": "medium"
+      }
+    },
+    {
+      "id": "transcript-bottom",
+      "kind": "text",
+      "note": "transcript: claude reply, running vitest command block",
+      "grid": "D6:J8",
+      "snap": false,
+      "box": {
+        "x": 0.3,
+        "y": 0.6,
+        "w": 0.7,
+        "h": 0.3
+      },
+      "px": {
+        "x": 461,
+        "y": 614,
+        "w": 1075,
+        "h": 307
+      },
+      "aspect": 3.5016,
+      "palette": [
+        {
+          "hex": "#181828",
+          "coverage": 0.9592
+        },
+        {
+          "hex": "#373950",
+          "coverage": 0.0193
+        },
+        {
+          "hex": "#666f8c",
+          "coverage": 0.011
+        },
+        {
+          "hex": "#8c96b2",
+          "coverage": 0.0065
+        },
+        {
+          "hex": "#182828",
+          "coverage": 0.004
+        }
+      ],
+      "detail": {
+        "energy": 10.9434
+      },
+      "medium": "semantic",
+      "plate": null,
+      "text": null,
+      "type": {
+        "comp": {
+          "lines": 2,
+          "glyphs": 115,
+          "capHeightPx": 11.4,
+          "inkIsDark": false,
+          "allCaps": false,
+          "advance": 0.6111,
+          "advTall": 0.6111,
+          "advX": 0.6175,
+          "gap": 0.1074,
+          "xRatio": 0.7338,
+          "stemW": 0.1697,
+          "contrast": 1.0503,
+          "serif": 0.3393,
+          "densTall": 0.5097,
+          "densX": 0.5883,
+          "weight": 0.5097
+        },
+        "widthClass": "normal",
+        "weightClass": "medium"
+      }
+    },
+    {
+      "id": "composer",
+      "kind": "control",
+      "note": "steer composer at the bottom of the pane",
+      "grid": "D9:J9",
+      "snap": false,
+      "box": {
+        "x": 0.3,
+        "y": 0.9,
+        "w": 0.7,
+        "h": 0.1
+      },
+      "px": {
+        "x": 461,
+        "y": 922,
+        "w": 1075,
+        "h": 102
+      },
+      "aspect": 10.5392,
+      "palette": [
+        {
+          "hex": "#191927",
+          "coverage": 0.9596
+        },
+        {
+          "hex": "#283645",
+          "coverage": 0.0322
+        },
+        {
+          "hex": "#313151",
+          "coverage": 0.0032
+        },
+        {
+          "hex": "#98a8c8",
+          "coverage": 0.0026
+        },
+        {
+          "hex": "#80f4e4",
+          "coverage": 0.0025
+        }
+      ],
+      "detail": {
+        "energy": 9.3333
+      },
+      "medium": "semantic",
+      "plate": null,
+      "text": null
+    },
+    {
+      "id": "statusbar",
+      "kind": "chrome",
+      "note": "status bar: key mode pill, spend, engine meters",
+      "grid": "A9:J9",
+      "box": {
+        "x": 0,
+        "y": 0.9,
+        "w": 1,
+        "h": 0.1
+      },
+      "px": {
+        "x": 0,
+        "y": 922,
+        "w": 1536,
+        "h": 102
+      },
+      "aspect": 15.0588,
+      "palette": [
+        {
+          "hex": "#181927",
+          "coverage": 0.9504
+        },
+        {
+          "hex": "#293745",
+          "coverage": 0.0321
+        },
+        {
+          "hex": "#cc9ff8",
+          "coverage": 0.0089
+        },
+        {
+          "hex": "#232040",
+          "coverage": 0.0057
+        },
+        {
+          "hex": "#8f9fbf",
+          "coverage": 0.0029
+        }
+      ],
+      "detail": {
+        "energy": 11.8964
+      },
+      "medium": "semantic",
+      "plate": null,
+      "text": null
+    }
+  ]
+}

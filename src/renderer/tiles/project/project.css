@@ -646,8 +646,9 @@ mark {
   color: var(--overlay2);
 }
 
-/* Code viewer ------------------------------------------------------------------------------------------ */
+/* Code editor ------------------------------------------------------------------------------------------ */
 .cv-wrap {
+  position: relative;
   display: flex;
   flex-direction: column;
   height: 100%;
@@ -681,62 +682,58 @@ mark {
   min-height: 0;
   position: relative;
 }
-.cv {
+.ed {
   position: absolute;
   inset: 0;
 }
-.cv-scroll {
+.ed .cm-editor {
   height: 100%;
-  overflow: auto;
-  font-family: var(--font-code);
-  font-size: 12px;
-  font-feature-settings:
-    "liga" 0,
-    "calt" 0;
-  user-select: text;
 }
-.cv-inner {
-  position: relative;
-  min-width: max-content;
-}
-.cv-rows {
-  will-change: transform;
-}
-.cv-line {
-  display: flex;
-  height: 20px;
-  line-height: 20px;
-  white-space: pre;
-}
-.cv-line[data-sel] {
-  background: color-mix(in srgb, var(--mauve) 11%, transparent);
-}
-.cv-ln {
-  position: sticky;
-  left: 0;
-  z-index: 1;
-  flex: none;
-  box-sizing: content-box;
-  width: var(--cv-gutter, 4ch);
-  padding: 0 16px 0 10px;
-  text-align: right;
-  color: var(--surface2);
-  background: var(--base);
-  cursor: pointer;
-  user-select: none;
-  font-variant-numeric: tabular-nums;
-}
-.cv-ln:hover {
+/* Unsaved, saving, read-only: said in the path bar, before the size. */
+.cv-state {
+  margin-left: 10px;
+  font-family: var(--font-ui);
+  font-size: 11.5px;
   color: var(--subtext0);
 }
-.cv-line[data-sel] .cv-ln {
-  color: var(--mauve);
-  background: color-mix(in srgb, var(--mauve) 11%, var(--base));
-  box-shadow: inset 2px 0 0 var(--mauve);
-}
-.cv-tx {
-  padding-right: 24px;
+.cv-state[data-state="dirty"] {
   color: var(--text);
+}
+.cv-state[data-state="dirty"]::before {
+  content: "";
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  margin-right: 6px;
+  border-radius: 50%;
+  background: var(--text);
+  vertical-align: 1px;
+}
+.cv-state[data-state="locked"] {
+  color: var(--peach);
+}
+/* The file changed on disk under unsaved edits. */
+.cv-conflict {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px 6px 14px;
+  font-size: 12px;
+  color: var(--text);
+  background: color-mix(in srgb, var(--peach) 10%, var(--mantle));
+  border-bottom: 1px solid color-mix(in srgb, var(--peach) 30%, var(--surface0));
+}
+.cv-conflict > svg {
+  flex: none;
+  color: var(--peach);
+}
+.cv-conflict-text {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .cv-bar {
   position: absolute;

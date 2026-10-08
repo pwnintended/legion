@@ -129,9 +129,10 @@ function runCaption(station: StationKey, run: Run, plan: ReturnType<typeof lates
       if (run.status === 'pr_ready' || run.status === 'done') return 'Every task merged and the checks passed.';
       return 'Runs once every task has merged into the integration branch.';
     case 'pr':
-      if (run.status === 'pr_ready') return 'The draft pull request is ready for you to open.';
-      if (run.status === 'done') return run.pr?.url ?? 'Opened.';
-      return 'One draft pull request, after integration and the final review.';
+      if (run.status === 'pr_ready') return 'Ready for you: open a draft pull request, or merge it locally.';
+      if (run.status === 'done')
+        return run.merged ? `Merged into ${run.merged.into} locally.` : (run.pr?.url ?? 'Opened.');
+      return 'One draft pull request (or a local merge), after integration and the final review.';
     default:
       return 'The agents that coordinate the run, and the messages between them.';
   }

@@ -66,7 +66,8 @@ const HUMAN_ITEM_LINES: Partial<Record<InboxItem['kind'], (item: InboxItem) => s
       : '',
   escalation: (item) =>
     item.kind === 'escalation' ? `needs the human: ${item.payload.summary} (a card in your conversation)` : '',
-  pr_ready: () => 'the work is ready for a pull request; the human opens it from the card in your conversation',
+  pr_ready: () =>
+    'the work is ready to land; the human opens a draft pull request or merges it locally from the card in your conversation',
   conflict: () => 'a merge conflict waits for the human (a card in your conversation)',
   budget: () => 'the budget was reached; the human decides on the card in your conversation',
 };
@@ -78,7 +79,7 @@ const STATUS_LINE: Partial<Record<RunStatus, string>> = {
   executing: 'the plan was approved; coders are working under the implementation lead',
   integrating: 'every task is merged; the integration branch is being verified',
   finalizing: 'final review',
-  pr_ready: 'ready for a pull request',
+  pr_ready: 'ready to land (a pull request or a local merge)',
   done: 'done',
   failed: 'the run failed',
   cancelled: 'the run was cancelled',

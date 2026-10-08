@@ -1,41 +1,34 @@
 /**
- * Code viewer: one file of the project, read-only. Shiki highlighting (the diff tile's worker), line numbers,
- * virtualized rows (large files stay smooth), guards for binary / oversized / truncated files, image preview,
- * and a rendered preview for Markdown. Select lines (click / shift-click / drag the gutter, or select text) and
- * "Start a run about this…" (⌘⏎) opens the composer with this project and a `path:lines` reference.
+ * A file of a checkout: text in the editor (editor/Editor.tsx: editable, ⌘S saves, read-only while an agent works
+ * in the checkout or when the file is truncated or not UTF-8), images previewed, Markdown rendered (with its
+ * source in the editor), binary and oversized files named. Selecting lines offers "Start a run about this…" (⌘⏎):
+ * the composer with this project and a `path:lines` reference.
  */
-import { type CSSProperties, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { type CommandContext, commandTooltip, registerCommands } from '../../app/commands';
 import { codeReference, startRunAbout } from '../../app/project-actions';
 import { Icon } from '../../chrome/icons';
 import { Kbd } from '../../chrome/ui';
+import { onScreen } from '../../code/actions';
+import { useCheckoutReadOnly } from '../../code/hooks';
 import { TileActions } from '../../layout/TileFrame';
-import { focusedTile } from '../../layout/tree';
 import type { TileProps } from '../../layout/types';
 import { toast } from '../../overlays/nav';
-import { highlighted, requestHighlight, type Tok, useHighlightVersion } from '../diff/highlight';
-import { languageOf } from '../diff/model';
 import { copyText, formatBytes, revealInFinder, SkeletonRows, useFile, useProject } from '../project/kit';
 import { RepoMarkdown } from '../project/RepoMarkdown';
+import { keepMine, reloadBuffer, saveBuffer, useBuffer } from './editor/buffers';
+import { Editor, type LineRange } from './editor/Editor';
 
-const LINE_H = 20;
-const OVERSCAN = 40;
-/** Files above these are shown without syntax colours (tokenizing them would stall the worker). */
-const MAX_HIGHLIGHT_CHARS = 400_000;
-const MAX_HIGHLIGHT_LINE = 2_000;
+/** Selections of code tabs by tab id (read by the ⌘⏎ command). */
+const selections = new Map<string, { projectId: string; path: string; sel: LineRange }>();
 
-interface Selection {
-  start: number;
-  end: number;
-}
-
-/** Selections of code tiles by tile id (read by the ⌘⏎ command). */
-const selections = new Map<string, { projectId: string; path: string; sel: Selection }>();
-
-function focusedSelection(ctx: CommandContext) {
-  if (ctx.ui.overlay || !ctx.layout || ctx.activeRunId !== null) return null;
-  const tile = focusedTile(ctx.layout);
-  return tile?.kind === 'code' ? (selections.get(tile.id) ?? null) : null;
+/** The tab on show in the focused viewer, if it is a file. */
+function focusedTab(ctx: CommandContext): string | null {
+  if (ctx.ui.overlay) return null;
+  const ws = onScreen()?.ws;
+  const tile = ws?.focus ? ws.tiles[ws.focus] : undefined;
+  if (tile?.kind !== 'viewer' || !tile.active) return null;
+  return tile.tabs.find((t) => t.id === tile.active)?.kind === 'code' ? tile.active : null;
 }
 
 registerCommands([
@@ -44,255 +37,42 @@ registerCommands([
     title: 'Start a run about the selected lines',
     category: 'Project',
     keybinding: 'Mod+Enter',
-    // Above ⌘⏎ (Focus layout) while lines are selected in the focused code tile.
+    // Above ⌘⏎ (keep the preview tab) while lines are selected in the viewer's file.
     priority: 10,
     hidden: true,
-    inInput: false,
-    when: (ctx) => focusedSelection(ctx) !== null,
+    when: (ctx) => {
+      const tab = focusedTab(ctx);
+      return tab !== null && selections.has(tab);
+    },
     run: (ctx) => {
-      const s = focusedSelection(ctx);
+      const tab = focusedTab(ctx);
+      const s = tab ? selections.get(tab) : undefined;
       if (s) startRunAbout(s.projectId, s.path, s.sel.start, s.sel.end);
+    },
+  },
+  {
+    id: 'code.save',
+    title: 'Save the file',
+    category: 'Tile',
+    keybinding: 'Mod+S',
+    priority: 1,
+    when: (ctx) => focusedTab(ctx) !== null,
+    run: (ctx) => {
+      const tab = focusedTab(ctx);
+      if (tab) return saveBuffer(tab);
     },
   },
 ]);
 
-function normalize(a: number, b: number): Selection {
+/** How often a preview on screen (an image, rendered Markdown) is read again: agents may be writing it. */
+const PREVIEW_MS = 2500;
+
+function normalize(a: number, b: number): LineRange {
   return a <= b ? { start: a, end: b } : { start: b, end: a };
 }
 
-/** A cheap content fingerprint for highlight cache keys. */
-function fingerprint(text: string): string {
-  let h = 2166136261;
-  const step = Math.max(1, Math.floor(text.length / 4096));
-  for (let i = 0; i < text.length; i += step) h = Math.imul(h ^ text.charCodeAt(i), 16777619);
-  return `${text.length}:${(h >>> 0).toString(36)}`;
-}
-
-function rangeLabel(sel: Selection): string {
+function rangeLabel(sel: LineRange): string {
   return sel.start === sel.end ? `L${sel.start}` : `L${sel.start}–${sel.end}`;
-}
-
-function lineOf(node: Node | null): number | null {
-  const el = node instanceof Element ? node : node?.parentElement;
-  const line = el?.closest<HTMLElement>('[data-line]')?.dataset.line;
-  return line ? Number(line) : null;
-}
-
-function Tokens({ toks, text }: { toks: Tok[] | null | undefined; text: string }) {
-  if (!toks) return <>{text || ' '}</>;
-  return (
-    <>
-      {toks.map((t, i) => (
-        <span
-          // biome-ignore lint/suspicious/noArrayIndexKey: token order is stable
-          key={i}
-          style={t.c || t.i ? { color: t.c ?? undefined, fontStyle: t.i ? 'italic' : undefined } : undefined}
-        >
-          {t.t}
-        </span>
-      ))}
-    </>
-  );
-}
-
-function CodeView({
-  tileId,
-  projectId,
-  path,
-  text,
-  reveal,
-  revealNonce,
-  focused,
-}: {
-  tileId: string;
-  projectId: string;
-  path: string;
-  text: string;
-  reveal: Selection | null;
-  revealNonce: string;
-  focused: boolean;
-}) {
-  const lines = useMemo(() => {
-    const out = text.split('\n');
-    if (out.length > 1 && out.at(-1) === '') out.pop();
-    return out;
-  }, [text]);
-  const scrollRef = useRef<HTMLDivElement>(null);
-  const [view, setView] = useState({ top: 0, height: 600 });
-  const [sel, setSel] = useState<Selection | null>(reveal);
-  const anchor = useRef<number | null>(null);
-  const dragging = useRef(false);
-
-  // Highlighting (worker), skipped for huge or minified files.
-  useHighlightVersion();
-  const lang = languageOf(path);
-  const key = `code|${projectId}|${path}|${fingerprint(text)}`;
-  const highlightable =
-    !!lang && text.length <= MAX_HIGHLIGHT_CHARS && lines.every((l) => l.length <= MAX_HIGHLIGHT_LINE);
-  useEffect(() => {
-    if (highlightable && lang) requestHighlight(key, lang, [text]);
-  }, [highlightable, key, lang, text]);
-  const tokens = highlightable ? highlighted(key)?.[0] : null;
-
-  useLayoutEffect(() => {
-    const el = scrollRef.current;
-    if (!el) return;
-    const measure = () => setView({ top: el.scrollTop, height: el.clientHeight });
-    measure();
-    const observer = new ResizeObserver(measure);
-    observer.observe(el);
-    return () => observer.disconnect();
-  }, []);
-
-  // Reveal the requested lines (opening a search result, a ⌘P with :line, a reference).
-  // biome-ignore lint/correctness/useExhaustiveDependencies: re-run when a new reveal is requested
-  useLayoutEffect(() => {
-    const el = scrollRef.current;
-    if (!el) return;
-    setSel(reveal);
-    if (!reveal) {
-      el.scrollTop = 0;
-      return;
-    }
-    const target = (reveal.start - 1) * LINE_H - el.clientHeight / 3;
-    el.scrollTop = Math.max(0, target);
-  }, [revealNonce]);
-
-  // Expose the selection to ⌘⏎.
-  useEffect(() => {
-    if (sel) selections.set(tileId, { projectId, path, sel });
-    else selections.delete(tileId);
-    return () => {
-      selections.delete(tileId);
-    };
-  }, [tileId, projectId, path, sel]);
-
-  useEffect(() => {
-    const up = () => {
-      dragging.current = false;
-    };
-    window.addEventListener('mouseup', up);
-    return () => window.removeEventListener('mouseup', up);
-  }, []);
-
-  const onGutterDown = (line: number, event: React.MouseEvent) => {
-    event.preventDefault();
-    window.getSelection()?.removeAllRanges();
-    if (event.shiftKey && anchor.current !== null) setSel(normalize(anchor.current, line));
-    else {
-      anchor.current = line;
-      setSel({ start: line, end: line });
-    }
-    dragging.current = true;
-  };
-  const onGutterEnter = (line: number) => {
-    if (dragging.current && anchor.current !== null) setSel(normalize(anchor.current, line));
-  };
-
-  // Selecting text marks the lines it spans.
-  const onTextMouseUp = () => {
-    const selection = window.getSelection();
-    if (!selection || selection.isCollapsed) return;
-    const a = lineOf(selection.anchorNode);
-    const b = lineOf(selection.focusNode);
-    if (a !== null && b !== null) {
-      anchor.current = a;
-      setSel(normalize(a, b));
-    }
-  };
-
-  const total = lines.length;
-  const first = Math.max(0, Math.floor(view.top / LINE_H) - OVERSCAN);
-  const last = Math.min(total, Math.ceil((view.top + view.height) / LINE_H) + OVERSCAN);
-  const digits = String(total).length;
-
-  const copyReference = useCallback(async () => {
-    if (!sel) return;
-    try {
-      await copyText(codeReference(path, sel.start, sel.end));
-      toast('Reference copied.');
-    } catch {
-      toast("Couldn't copy the reference.", 'error');
-    }
-  }, [path, sel]);
-
-  return (
-    <div className="cv" style={{ '--cv-gutter': `${Math.max(2, digits)}ch` } as CSSProperties}>
-      {/* biome-ignore lint/a11y/noStaticElementInteractions: text selection maps to line selection */}
-      <div
-        ref={scrollRef}
-        className="cv-scroll"
-        data-tile-body-scroll
-        onScroll={(event) => setView({ top: event.currentTarget.scrollTop, height: event.currentTarget.clientHeight })}
-        onMouseUp={onTextMouseUp}
-        onKeyDown={(event) => {
-          if (event.key === 'Escape' && sel) {
-            event.stopPropagation();
-            setSel(null);
-          }
-        }}
-        data-testid="code-view"
-      >
-        <div className="cv-inner" style={{ height: total * LINE_H }}>
-          <div className="cv-rows" style={{ transform: `translateY(${first * LINE_H}px)` }}>
-            {lines.slice(first, last).map((line, i) => {
-              const n = first + i + 1;
-              const selected = sel !== null && n >= sel.start && n <= sel.end;
-              return (
-                <div key={n} className="cv-line" data-line={n} data-sel={selected || undefined}>
-                  {/* biome-ignore lint/a11y/noStaticElementInteractions: line numbers select lines with the mouse */}
-                  <span
-                    className="cv-ln"
-                    onMouseDown={(event) => onGutterDown(n, event)}
-                    onMouseEnter={() => onGutterEnter(n)}
-                  >
-                    {n}
-                  </span>
-                  <span className="cv-tx">
-                    <Tokens toks={tokens?.[n - 1]} text={line} />
-                  </span>
-                </div>
-              );
-            })}
-          </div>
-        </div>
-      </div>
-      {sel ? (
-        <div className="cv-bar" data-testid="code-selection-bar">
-          <span className="cv-bar-range mono">{rangeLabel(sel)}</span>
-          <button
-            type="button"
-            className="btn btn-primary btn-sm"
-            onClick={() => startRunAbout(projectId, path, sel.start, sel.end)}
-            title={focused ? commandTooltip('code.startRun', 'Start a run about these lines') : undefined}
-            data-testid="code-start-run"
-          >
-            <Icon name="spark" size={12} />
-            Start a run about this…
-            {focused ? <Kbd>⌘⏎</Kbd> : null}
-          </button>
-          <button
-            type="button"
-            className="btn btn-ghost btn-sm btn-icon"
-            aria-label="Copy reference"
-            title={`Copy ${codeReference(path, sel.start, sel.end)}`}
-            onClick={() => void copyReference()}
-          >
-            <Icon name="link" size={12} />
-          </button>
-          <button
-            type="button"
-            className="btn btn-ghost btn-sm btn-icon"
-            aria-label="Clear selection"
-            title="Clear selection (esc)"
-            onClick={() => setSel(null)}
-          >
-            <Icon name="close" size={11} />
-          </button>
-        </div>
-      ) : null}
-    </div>
-  );
 }
 
 function ImageView({ mime, base64, size }: { mime: string; base64: string; size: number }) {
@@ -326,14 +106,102 @@ function Notice({ icon, title, note }: { icon: 'file' | 'image' | 'alert'; title
   );
 }
 
-export default function CodeTile({ tileId, params, focused }: TileProps<'code'>) {
+/** What the file's editing state is, in its path bar: unsaved, saving, read-only and why. */
+function EditState({ tabId, readOnly }: { tabId: string; readOnly: string | null }) {
+  const state = useBuffer(tabId, (m) => (m ? (m.saving ? 'saving' : m.dirty ? 'dirty' : 'clean') : null));
+  if (readOnly)
+    return (
+      <span className="cv-state" data-state="locked">
+        {readOnly}
+      </span>
+    );
+  if (state === 'saving') return <span className="cv-state">Saving…</span>;
+  if (state === 'dirty')
+    return (
+      <span className="cv-state" data-state="dirty" title={commandTooltip('code.save', 'Save')}>
+        Unsaved
+      </span>
+    );
+  return null;
+}
+
+/** The file changed on disk under unsaved edits: take what is there, or keep yours (saving over it). */
+function ConflictBar({ tabId, path }: { tabId: string; path: string }) {
+  const conflict = useBuffer(tabId, (m) => m?.conflict ?? false);
+  if (!conflict) return null;
+  return (
+    <div className="cv-conflict" role="alert" data-testid="code-conflict">
+      <Icon name="alert" size={13} />
+      <span className="cv-conflict-text">
+        <span className="mono">{path}</span> changed on disk while you were editing it.
+      </span>
+      <button type="button" className="btn btn-sm" onClick={() => void reloadBuffer(tabId)}>
+        Take theirs
+      </button>
+      <button type="button" className="btn btn-sm btn-warn" onClick={() => keepMine(tabId)}>
+        Keep mine and save
+      </button>
+    </div>
+  );
+}
+
+function SelectionBar({
+  projectId,
+  path,
+  sel,
+  focused,
+}: {
+  projectId: string;
+  path: string;
+  sel: LineRange;
+  focused: boolean;
+}) {
+  const copyReference = useCallback(async () => {
+    try {
+      await copyText(codeReference(path, sel.start, sel.end));
+      toast('Reference copied.');
+    } catch {
+      toast("Couldn't copy the reference.", 'error');
+    }
+  }, [path, sel]);
+  return (
+    <div className="cv-bar" data-testid="code-selection-bar">
+      <span className="cv-bar-range mono">{rangeLabel(sel)}</span>
+      <button
+        type="button"
+        className="btn btn-primary btn-sm"
+        onClick={() => startRunAbout(projectId, path, sel.start, sel.end)}
+        title={focused ? commandTooltip('code.startRun', 'Start a run about these lines') : undefined}
+        data-testid="code-start-run"
+      >
+        <Icon name="spark" size={12} />
+        Start a run about this…
+        {focused ? <Kbd>⌘⏎</Kbd> : null}
+      </button>
+      <button
+        type="button"
+        className="btn btn-ghost btn-sm btn-icon"
+        aria-label="Copy reference"
+        title={`Copy ${codeReference(path, sel.start, sel.end)}`}
+        onClick={() => void copyReference()}
+      >
+        <Icon name="link" size={12} />
+      </button>
+    </div>
+  );
+}
+
+export default function CodeTile({ tileId, params, focused, visible }: TileProps<'code'>) {
   const { projectId, path } = params;
+  const checkout = params.checkout ?? null;
   const project = useProject(projectId);
-  const file = useFile(projectId, path);
+  const file = useFile(projectId, path, checkout);
   const markdown = /\.(md|mdx|markdown)$/i.test(path);
   const [mode, setMode] = useState<'preview' | 'source'>(markdown && params.line === null ? 'preview' : 'source');
   const reveal = params.line ? normalize(params.line, params.endLine ?? params.line) : null;
   const revealNonce = `${path}:${params.line ?? ''}:${params.endLine ?? ''}`;
+  const [sel, setSel] = useState<LineRange | null>(null);
+  const workspaceLocked = useCheckoutReadOnly(projectId, checkout);
 
   // A new reveal (search hit, reference) shows the source.
   useEffect(() => {
@@ -341,7 +209,37 @@ export default function CodeTile({ tileId, params, focused }: TileProps<'code'>)
     else setMode(markdown ? 'preview' : 'source');
   }, [params.line, markdown]);
 
+  // Expose the selection to ⌘⏎.
+  useEffect(() => {
+    if (sel) selections.set(tileId, { projectId, path, sel });
+    else selections.delete(tileId);
+    return () => {
+      selections.delete(tileId);
+    };
+  }, [tileId, projectId, path, sel]);
+
+  const { refresh } = file;
   const data = file.data?.path === path ? file.data : null;
+  const editing = data?.kind === 'text' && !(markdown && mode === 'preview');
+  // The editor watches its own file; a preview (image, rendered Markdown) is read again now and then instead.
+  useEffect(() => {
+    if (!visible || editing) return;
+    const timer = setInterval(refresh, PREVIEW_MS);
+    return () => clearInterval(timer);
+  }, [visible, editing, refresh]);
+
+  const readOnly = !data
+    ? null
+    : data.truncated
+      ? 'Read-only: too large to edit here'
+      : data.encoding && data.encoding !== 'utf-8'
+        ? `Read-only: ${data.encoding}`
+        : !data.version
+          ? 'Read-only'
+          : workspaceLocked
+            ? 'Read-only while its agent works here'
+            : null;
+
   let body: React.ReactNode;
   if (!data) {
     body = file.error ? (
@@ -360,19 +258,23 @@ export default function CodeTile({ tileId, params, focused }: TileProps<'code'>)
   } else if (markdown && mode === 'preview') {
     body = (
       <div className="cv-md" data-testid="code-markdown">
-        <RepoMarkdown projectId={projectId} path={path} text={data.text ?? ''} />
+        <RepoMarkdown projectId={projectId} checkout={checkout} path={path} text={data.text ?? ''} />
       </div>
     );
   } else {
     body = (
-      <CodeView
-        tileId={tileId}
+      <Editor
+        tabId={tileId}
         projectId={projectId}
+        checkout={checkout}
         path={path}
         text={data.text ?? ''}
+        version={data.version ?? ''}
+        readOnly={readOnly !== null}
         reveal={reveal}
         revealNonce={revealNonce}
-        focused={focused}
+        visible={visible}
+        onSelection={setSel}
       />
     );
   }
@@ -404,7 +306,7 @@ export default function CodeTile({ tileId, params, focused }: TileProps<'code'>)
             className="btn btn-ghost btn-icon"
             aria-label="Reveal in Finder"
             title="Reveal in Finder"
-            onClick={() => revealInFinder(`${project.path}/${path}`)}
+            onClick={() => revealInFinder(`${checkout ?? project.path}/${path}`)}
           >
             <Icon name="folderOpen" size={13} />
           </button>
@@ -418,6 +320,7 @@ export default function CodeTile({ tileId, params, focused }: TileProps<'code'>)
             {i < all.length - 1 ? <span className="cv-path-sep">/</span> : null}
           </span>
         ))}
+        {editing ? <EditState tabId={tileId} readOnly={readOnly} /> : null}
         {data?.kind === 'text' ? (
           <span className="cv-path-meta">
             {formatBytes(data.size)}
@@ -425,7 +328,9 @@ export default function CodeTile({ tileId, params, focused }: TileProps<'code'>)
           </span>
         ) : null}
       </div>
+      {editing ? <ConflictBar tabId={tileId} path={path} /> : null}
       <div className="cv-body">{body}</div>
+      {editing && sel ? <SelectionBar projectId={projectId} path={path} sel={sel} focused={focused} /> : null}
       {data?.truncated ? (
         <div className="cv-truncated">
           <Icon name="alert" size={12} />

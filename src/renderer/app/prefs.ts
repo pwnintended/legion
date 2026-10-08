@@ -1,6 +1,6 @@
 /**
- * Renderer-only appearance preferences (not engine settings): Catppuccin flavour, a reduced-motion override and
- * whether the rail lists archived runs. Persisted in localStorage per device; applied to <html> as
+ * Renderer-only preferences (not engine settings): Catppuccin flavour, a reduced-motion override, whether the rail
+ * lists archived runs and whether the code editor uses vim keys. Persisted in localStorage per device; applied to <html> as
  * `data-flavour` / `data-motion` so CSS (theme tokens, the global reduced-motion rules) follows them.
  */
 import { useReducedMotion } from 'motion/react';
@@ -15,10 +15,12 @@ export interface Prefs {
   flavour: Flavour;
   motion: MotionPref;
   showArchived: boolean;
+  /** The code editor's keys: vim (normal/insert modes) instead of the standard ones. */
+  editorVim: boolean;
 }
 
 const KEY = 'legion.prefs';
-const DEFAULTS: Prefs = { flavour: 'mocha', motion: 'system', showArchived: false };
+const DEFAULTS: Prefs = { flavour: 'mocha', motion: 'system', showArchived: false, editorVim: false };
 
 function load(): Prefs {
   try {
@@ -27,6 +29,7 @@ function load(): Prefs {
       flavour: raw.flavour === 'latte' ? 'latte' : 'mocha',
       motion: raw.motion === 'reduce' || raw.motion === 'full' ? raw.motion : 'system',
       showArchived: raw.showArchived === true,
+      editorVim: raw.editorVim === true,
     };
   } catch {
     return { ...DEFAULTS };

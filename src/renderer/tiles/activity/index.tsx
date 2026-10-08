@@ -1,7 +1,8 @@
 /**
  * Project activity: this project's Legion runs (status, PR, cost, when; click to open the run), its open pull
  * requests (gh; open on GitHub) and its recent git history (subject, decorations, author, when; click to see
- * the commit's diff next to it). One keyboard list: ↑/↓ or j/k, ⏎ opens, ⌘⏎ opens a commit in a new column.
+ * the commit's diff in the viewer). One keyboard list: ↑/↓ or j/k, ⏎ opens, ⌘⏎ opens a commit as a pinned tab.
+ * Lives in the Code view's side panel.
  */
 import type { Run } from '@shared/domain';
 import type { Commit, CommitRef, PullRequestSummary } from '@shared/rpc';
@@ -9,15 +10,15 @@ import { useMemo } from 'react';
 import { useShallow } from 'zustand/react/shallow';
 import { runPr } from '../../app/compat';
 import { openInboxCount, runCost, runningAttempts, taskCounts } from '../../app/data';
-import { useData, useNow, useUi } from '../../app/hooks';
+import { useData, useNow } from '../../app/hooks';
 import { newRunInProject, openCommit } from '../../app/project-actions';
-import { projectWorkspaceKey, selectRailGroups } from '../../app/projects';
+import { selectRailGroups } from '../../app/projects';
 import { actions } from '../../app/store';
 import { Icon } from '../../chrome/icons';
 import { runStatusLine } from '../../chrome/run-status';
 import { CommandKbd, Dot, toneColor } from '../../chrome/ui';
+import { useShownTab } from '../../code/hooks';
 import { formatCost } from '../../layout/describe';
-import { previewTile } from '../../layout/project';
 import type { TileProps } from '../../layout/types';
 import { openUrl, relativeTime, SkeletonRows, useGitLog, useProjectInfo, usePrs } from '../project/kit';
 import { useListNav } from '../project/list-nav';
@@ -101,7 +102,7 @@ function CommitRow({
   open: boolean;
   index: number;
   now: number;
-  onOpen: (newColumn: boolean) => void;
+  onOpen: (pinned: boolean) => void;
 }) {
   return (
     <button
@@ -175,7 +176,7 @@ function SectionHead({ title, count, children }: { title: string; count?: number
   );
 }
 
-export default function ActivityTile({ params, tileId }: TileProps<'activity'>) {
+export default function ActivityTile({ params }: TileProps<'activity'>) {
   const { projectId } = params;
   const now = useNow(60_000);
   const runs = useData((s) => selectRailGroups(s).find((g) => g.key === projectId)?.runs ?? NO_RUNS);
@@ -183,12 +184,9 @@ export default function ActivityTile({ params, tileId }: TileProps<'activity'>) 
   const prs = usePrs(projectId);
   // Pull requests only make sense for a GitHub remote.
   const onGithub = useProjectInfo(projectId).data?.github != null;
-  const openSha = useUi((s) => {
-    const layout = s.layouts[projectWorkspaceKey(projectId)];
-    const tile = layout ? previewTile(layout, 'diff') : null;
-    const target = (tile?.params as { target?: { kind: string; sha?: string } } | undefined)?.target;
-    return target?.kind === 'commit' ? (target.sha ?? null) : null;
-  });
+  const openSha = useShownTab(projectId, (tab) =>
+    tab.kind === 'diff' && tab.params.target.kind === 'commit' ? tab.params.target.sha : null,
+  );
 
   const rows = useMemo<Row[]>(() => {
     const out: Row[] = runs.map((run) => ({ kind: 'run', key: run.id, run }));
@@ -197,13 +195,13 @@ export default function ActivityTile({ params, tileId }: TileProps<'activity'>) 
     return out;
   }, [runs, prs.data, log.data]);
 
-  const open = (row: Row | undefined, newColumn: boolean) => {
+  const open = (row: Row | undefined, pinned: boolean) => {
     if (!row) return;
     if (row.kind === 'run') actions.setActiveRun(row.run.id);
     else if (row.kind === 'pr') openUrl(row.pr.url);
-    else openCommit(projectId, row.commit.sha, { anchorTileId: tileId, newColumn });
+    else openCommit(projectId, row.commit.sha, { pinned });
   };
-  const nav = useListNav(rows.length, (index, newColumn) => open(rows[index], newColumn));
+  const nav = useListNav(rows.length, (index, pinned) => open(rows[index], pinned));
   const indexOf = (key: string) => rows.findIndex((r) => r.key === key);
 
   const branch = log.data?.[0]?.refs.find((r) => r.kind === 'head')?.name ?? null;
@@ -270,7 +268,7 @@ export default function ActivityTile({ params, tileId }: TileProps<'activity'>) 
                 active={nav.active === indexOf(commit.sha)}
                 open={commit.sha === openSha}
                 now={now}
-                onOpen={(newColumn) => open({ kind: 'commit', key: commit.sha, commit }, newColumn)}
+                onOpen={(pinned) => open({ kind: 'commit', key: commit.sha, commit }, pinned)}
               />
             ))}
           </div>

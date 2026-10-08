@@ -8,7 +8,7 @@ import { useState } from 'react';
 import { useShallow } from 'zustand/react/shallow';
 import { confirmAction } from '../app/confirm';
 import { latestPlan, tasksOfRun } from '../app/data';
-import { rpc, useData } from '../app/hooks';
+import { rpc, useData, useHasOrigin } from '../app/hooks';
 import { useReducedMotionPref } from '../app/prefs';
 import { Icon } from '../chrome/icons';
 import { Chip, Kbd } from '../chrome/ui';
@@ -471,14 +471,48 @@ function EscalationBody({ item }: { item: EscalationItem }) {
 
 function PrBody({ item }: { item: InboxItemOf<'pr_ready'> }) {
   const pending = usePendingResolution(item.id);
+  const busy = pending?.state === 'pending';
   const counts = useData(
     useShallow((s) => {
       const tasks = tasksOfRun(s.tasks, item.runId);
       return { merged: tasks.filter((t) => t.status === 'merged').length, total: tasks.length };
     }),
   );
+  const run = useData(
+    useShallow((s) => ({ repoPath: s.runs[item.runId]?.repoPath, base: s.runs[item.runId]?.baseRef })),
+  );
+  // Without an `origin` a PR cannot be opened: the local merge is the way to land it. The actions wait for the
+  // answer so they do not change under the pointer.
+  const hasOrigin = useHasOrigin(run.repoPath);
+  const localOnly = hasOrigin === false;
+  const base = run.base ?? 'the base branch';
   const [open, setOpen] = useState(false);
   const body = item.payload.body.trim();
+  const openPr = (
+    <button
+      type="button"
+      className="btn btn-primary btn-sm"
+      disabled={busy}
+      onClick={() => void resolve(item, { kind: 'pr_ready', approved: true, title: null, body: null }, 'open')}
+      data-testid="chat-create-pr"
+    >
+      {busy && pending.choice === 'open' ? 'Opening…' : 'Open draft pull request'}
+    </button>
+  );
+  const merge = (
+    <button
+      type="button"
+      className={`btn btn-sm${localOnly ? ' btn-primary' : ''}`}
+      disabled={busy}
+      title={`One merge commit of ${item.payload.integrationBranch} on your local ${base}; nothing is pushed`}
+      onClick={() =>
+        void resolve(item, { kind: 'pr_ready', approved: true, title: null, body: null, action: 'merge' }, 'merge')
+      }
+      data-testid="chat-merge-locally"
+    >
+      {busy && pending.choice === 'merge' ? 'Merging…' : `Merge into ${base}`}
+    </button>
+  );
   return (
     <div className="ch-card-body">
       <p className="ch-lede">{item.payload.title}</p>
@@ -487,6 +521,7 @@ function PrBody({ item }: { item: InboxItemOf<'pr_ready'> }) {
           {counts.merged}/{counts.total}
         </span>{' '}
         tasks merged into <span className="mono">{item.payload.integrationBranch}</span>
+        {localOnly ? <>. The repository has no remote, so it lands on your local {base}.</> : null}
       </p>
       {body ? (
         <div className="ch-pr-body" data-open={open}>
@@ -499,15 +534,14 @@ function PrBody({ item }: { item: InboxItemOf<'pr_ready'> }) {
         </div>
       ) : null}
       <div className="ch-actions">
-        <button
-          type="button"
-          className="btn btn-primary btn-sm"
-          disabled={pending?.state === 'pending'}
-          onClick={() => void resolve(item, { kind: 'pr_ready', approved: true, title: null, body: null }, 'open')}
-          data-testid="chat-create-pr"
-        >
-          {pending?.state === 'pending' ? 'Opening…' : 'Open draft pull request'}
-        </button>
+        {hasOrigin === undefined ? null : localOnly ? (
+          merge
+        ) : (
+          <>
+            {openPr}
+            {merge}
+          </>
+        )}
         <button type="button" className="btn btn-ghost btn-sm" onClick={() => jumpToItem(item)}>
           Edit title and description
           <Icon name="arrowRight" size={12} />

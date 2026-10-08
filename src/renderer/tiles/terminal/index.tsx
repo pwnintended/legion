@@ -6,8 +6,7 @@ import '@xterm/xterm/css/xterm.css';
 import { useEffect, useRef, useState } from 'react';
 import { useEngine } from '../../app/engine';
 import { prefsStore } from '../../app/prefs';
-import { actions } from '../../app/store';
-import { setTileParams } from '../../layout/tree';
+import { useSetTileParams } from '../../layout/TileFrame';
 import type { TileProps } from '../../layout/types';
 import { openOrAttach } from './attach';
 import { TERMINAL_FONT_FAMILY, terminalTheme, terminalThemeLatte } from './theme';
@@ -51,6 +50,9 @@ export default function TerminalTile({ tileId, runId, params, focused, visible }
   visibleRef.current = visible;
   const paramsRef = useRef(params);
   paramsRef.current = params;
+  const setParams = useSetTileParams<'terminal'>(runId, tileId);
+  const saveParams = useRef(setParams);
+  saveParams.current = setParams;
   const target = params.attemptId
     ? ({ kind: 'attempt', attemptId: params.attemptId } as const)
     : params.cwd
@@ -175,9 +177,7 @@ export default function TerminalTile({ tileId, runId, params, focused, visible }
           void engine.call('terminals.resize', { terminalId: opened.terminalId, cols, rows }).catch(() => {});
         } else if (opened.terminalId !== known) {
           // Remember the terminal so the next mount re-attaches to it.
-          actions.updateLayout(runId, (layout) =>
-            setTileParams(layout, tileId, { ...paramsRef.current, terminalId: opened.terminalId }),
-          );
+          saveParams.current({ ...paramsRef.current, terminalId: opened.terminalId });
         }
         setStatus('live');
         if (visibleRef.current) term.focus();

@@ -33,7 +33,7 @@ async function launchDemo({ board = false } = {}): Promise<{ app: ElectronApplic
   return { app, window, home };
 }
 
-/** The tile shown in the agents view's station pane, or the focused tile of the code view's strip. */
+/** The tile shown in the agents view's station pane. */
 const focusedTile = (window: Page) =>
   window.locator('[data-workspace] [data-focused="true"]').first().getAttribute('data-tile-id');
 
@@ -49,10 +49,13 @@ const selectedTab = (window: Page) =>
     .first()
     .getAttribute('data-testid', { timeout: 2000 });
 
-const columnOrder = (window: Page) =>
-  window.locator('[data-column]').evaluateAll((els) => els.map((el) => el.getAttribute('data-column')));
+/** The Code view's tiles on screen and the one with the focus. */
+const codeTiles = (window: Page) =>
+  window.locator('[data-code-tile]').evaluateAll((els) => els.map((el) => el.getAttribute('data-code-tile')));
+const codeFocus = (window: Page) =>
+  window.locator('[data-code-tile][data-focused="true"]').first().getAttribute('data-code-tile', { timeout: 2000 });
 
-test('demo workspace: route map, stations and tabs, decisions, the code strip', async () => {
+test('demo workspace: route map, stations and tabs, decisions, the code workspaces', async () => {
   mkdirSync(shots, { recursive: true });
   const { app, window, home } = await launchDemo({ board: true });
   try {
@@ -69,7 +72,7 @@ test('demo workspace: route map, stations and tabs, decisions, the code strip', 
     await expect(window.getByTestId('needs-you').locator('.tb-needs-count')).toHaveText('6');
     // The agents view has no key modes: the status bar shows the map's keys, not the NORMAL pill.
     await expect(window.getByTestId('map-hint')).toBeVisible();
-    await expect(window.getByTestId('mode-pill')).toHaveCount(0);
+    await expect(window.getByTestId('code-hint')).toHaveCount(0);
 
     // The route map: the crew, Plan, the six tasks in plan order, Integration, the PR. The run lands on T2's session.
     const map = window.getByTestId('route-panel');
@@ -168,7 +171,7 @@ test('demo workspace: route map, stations and tabs, decisions, the code strip', 
     await expect(chat).toBeVisible();
     await expect(window.getByTestId('view-chat')).toHaveAttribute('aria-pressed', 'true');
     await expect(window.getByTestId('map-hint')).toHaveCount(0);
-    await expect(window.getByTestId('mode-pill')).toHaveCount(0);
+    await expect(window.getByTestId('code-hint')).toHaveCount(0);
     await expect(window.getByTestId('titlebar')).toContainText('Add passkey (WebAuthn) login');
     await expect(card('approval')).toContainText('@simplewebauthn/browser');
     await expect(card('approval')).toBeInViewport();
@@ -237,66 +240,60 @@ test('demo workspace: route map, stations and tabs, decisions, the code strip', 
     await window.keyboard.press('Escape');
     await expect.poll(() => window.locator('body').getAttribute('data-overlay')).toBe(null);
 
-    // The code view (⌘⇧E): the project's strip, where the key modes live. Overview | Activity | Files.
+    // The code view (⌘⇧E) belongs to the project: its main checkout, a shell in it, the files in the panel.
     await window.keyboard.press('Meta+Shift+e');
     await expect(window.getByTestId('view-code')).toHaveAttribute('aria-pressed', 'true');
     await expect(window.getByTestId('route-map')).toHaveCount(0);
-    await expect(window.locator('[data-workspace="project:prj_demoapp00001"]')).toBeVisible();
-    await expect(window.getByTestId('mode-pill')).toHaveText('NORMAL');
+    await expect(window.getByTestId('code-space')).toHaveCount(1);
+    await expect(window.getByTestId('code-terminal')).toHaveCount(1);
+    await expect(window.getByTestId('code-panel')).toHaveAttribute('data-section', 'files');
+    await expect(window.getByTestId('code-checkout')).toHaveCount(0);
+    await expect(window.getByTestId('code-hint')).toBeVisible();
     await expect(window.getByTestId('map-hint')).toHaveCount(0);
-    expect(await columnOrder(window)).toEqual(['col:project', 'col:activity', 'col:files']);
-    await expect.poll(() => focusedTile(window)).toBe('project');
     await window.waitForTimeout(500);
-    await window.screenshot({ path: join(shots, 'code-strip.png') });
+    await window.screenshot({ path: join(shots, 'code-project.png') });
 
-    // Keyboard focus: ⌘⌥L / ⌘⌥H move between columns.
-    await window.keyboard.press('Meta+Alt+l');
-    await expect.poll(() => focusedTile(window)).toBe('activity');
-    await window.keyboard.press('Meta+Alt+l');
-    await expect.poll(() => focusedTile(window)).toBe('files');
-    await window.keyboard.press('Meta+Alt+ArrowLeft');
-    await expect.poll(() => focusedTile(window)).toBe('activity');
-
-    // Move: ⌘⌥⇧L swaps the activity column with the files, ⌘⌥⇧H swaps it back.
+    // ⌘D splits a terminal to the right, ⌘⇧D one below it; ⌘⌥H / ⌘⌥L move focus between them.
+    await window.keyboard.press('Meta+d');
+    await expect.poll(() => codeTiles(window)).toEqual(['t1', 't2']);
+    await expect.poll(() => codeFocus(window)).toBe('t2');
+    await window.keyboard.press('Meta+Shift+d');
+    await expect.poll(() => codeTiles(window)).toEqual(['t1', 't2', 't3']);
+    await window.keyboard.press('Meta+Alt+h');
+    await expect.poll(() => codeFocus(window)).toBe('t1');
+    // ⌘⌥⇧L moves it into the column on its right; ⌘⌥T turns that column into tabs, ⌘⌥E back into a split.
     await window.keyboard.press('Meta+Alt+Shift+l');
-    await expect.poll(() => columnOrder(window)).toEqual(['col:project', 'col:files', 'col:activity']);
-    await window.keyboard.press('Meta+Alt+Shift+h');
-    await expect.poll(() => columnOrder(window)).toEqual(['col:project', 'col:activity', 'col:files']);
-    await expect.poll(() => focusedTile(window)).toBe('activity');
-
-    // Resize mode: ⌘R, l widens the focused column, esc leaves the mode.
-    const widthBefore = await window.locator('[data-column="col:activity"]').evaluate((el) => el.clientWidth);
-    await window.keyboard.press('Meta+r');
-    await expect(window.getByTestId('mode-pill')).toHaveText('RESIZE');
-    await window.keyboard.press('l');
-    await expect
-      .poll(() => window.locator('[data-column="col:activity"]').evaluate((el) => el.clientWidth))
-      .toBeGreaterThan(widthBefore);
-    await window.keyboard.press('h');
-    await window.keyboard.press('Escape');
-    await expect(window.getByTestId('mode-pill')).toHaveText('NORMAL');
-
-    // ⌘⌥C collapses the focused column to a thin one; clicking it expands it again.
-    await window.keyboard.press('Meta+Alt+c');
-    await expect(window.locator('[data-column="col:activity"] [data-tile-body]')).toHaveCount(0);
-    const thin = window.locator('section[data-tile-id="activity"][aria-label$="(collapsed)"]');
-    await expect(thin).toBeVisible();
-    await window.waitForTimeout(400);
-    await window.screenshot({ path: join(shots, 'code-collapsed.png') });
-    await thin.locator('button').first().click();
-    await expect(window.locator('[data-column="col:activity"] [data-tile-body]')).toBeVisible();
+    await expect.poll(() => codeTiles(window)).toEqual(['t1', 't2', 't3']);
+    await window.keyboard.press('Meta+Alt+t');
+    await expect(window.locator('.cw-con-tabs [role="tab"]')).toHaveText(['Terminal 1', 'Terminal 2', 'Terminal 3']);
+    await expect.poll(() => codeTiles(window)).toEqual(['t1']);
+    await window.keyboard.press('Meta+Alt+e');
+    await expect(window.locator('.cw-con-tabs')).toHaveCount(0);
+    // ⌘F: the focused tile alone; ⌘F again tiles again (Esc too, outside a terminal: a terminal keeps its Esc).
+    await window.keyboard.press('Meta+f');
+    await expect(window.locator('.cw-tiles[data-fullscreen]')).toBeVisible();
+    await expect.poll(() => codeTiles(window)).toEqual(['t1']);
+    await window.keyboard.press('Meta+f');
+    await expect(window.locator('.cw-tiles[data-fullscreen]')).toHaveCount(0);
+    await window.keyboard.press('Meta+w');
+    await expect(window.getByTestId('code-terminal')).toHaveCount(2);
+    // ⌘B: the side panel.
+    await window.keyboard.press('Meta+b');
+    await expect(window.getByTestId('code-panel')).toHaveCount(0);
+    await window.keyboard.press('Meta+b');
+    await expect(window.getByTestId('code-panel')).toBeVisible();
 
     // ⌘E means a conversation's agents: from the code view it does nothing. Chat goes to the board, ⌘E into the
-    // focused tile's agents, and Esc back out to the board; the pill goes with the strip.
+    // focused tile's agents, and Esc back out to the board.
     await window.keyboard.press('Meta+e');
     await expect(window.getByTestId('view-code')).toHaveAttribute('aria-pressed', 'true');
     await window.getByTestId('view-chat').click();
     await expect(window.getByTestId('view-chat')).toHaveAttribute('aria-pressed', 'true');
-    await expect(window.getByTestId('mode-pill')).toHaveCount(0);
+    await expect(window.getByTestId('code-hint')).toHaveCount(0);
     await window.keyboard.press('Meta+e');
     await expect(window.getByTestId('titlebar-agents')).toBeVisible();
     await expect(window.getByTestId('route-map')).toBeVisible();
-    await expect(window.getByTestId('mode-pill')).toHaveCount(0);
+    await expect(window.getByTestId('code-hint')).toHaveCount(0);
     await window.getByTestId('route-map').locator('.rm-title').click();
     await window.keyboard.press('Escape');
     await expect(window.getByTestId('route-map')).toHaveCount(0);
@@ -338,93 +335,108 @@ test('route map: ↑↓ / j k travel between the stops inside the map', async ()
   }
 });
 
-/** Where the focused column sits in the strip's viewport (layout boxes, transforms ignored): 'ok' when fully in view. */
-const focusedInView = (window: Page) =>
+/** Every Code tile is fully inside the tiled area: nothing sits off screen. */
+const allTilesInView = (window: Page) =>
   window.evaluate(() => {
-    const strip = document.querySelector<HTMLElement>('[data-workspace] .strip');
-    const column = document
-      .querySelector<HTMLElement>('[data-workspace] [data-focused="true"]')
-      ?.closest<HTMLElement>('[data-column]');
-    if (!strip || !column) return 'missing';
-    const left = column.offsetLeft - strip.scrollLeft;
-    const right = left + column.offsetWidth;
-    const fits = column.offsetWidth <= strip.clientWidth;
-    // A column wider than the viewport aligns its left edge.
-    const ok = fits ? left >= -1 && right <= strip.clientWidth + 1 : Math.abs(left - 10) <= 1;
-    return ok ? 'ok' : `${column.dataset.column} at ${Math.round(left)}..${Math.round(right)} of ${strip.clientWidth}`;
+    const area = document.querySelector<HTMLElement>('.cw-tiles')?.getBoundingClientRect();
+    if (!area) return 'missing';
+    const out = [...document.querySelectorAll<HTMLElement>('[data-code-tile]')].filter((tile) => {
+      const r = tile.getBoundingClientRect();
+      return r.left < area.left - 1 || r.right > area.right + 1 || r.top < area.top - 1 || r.bottom > area.bottom + 1;
+    });
+    return out.length === 0 ? 'ok' : out.map((t) => t.dataset.codeTile).join(',');
   });
 
-async function expectFocusedInView(window: Page): Promise<void> {
-  await expect.poll(() => focusedInView(window), { timeout: 4000 }).toBe('ok');
-  // ...and it stays there once smooth scrolling and layout animations have settled.
-  await window.waitForTimeout(700);
-  expect(await focusedInView(window)).toBe('ok');
-}
-
-test('strip: the focused column is always fully in view (bursts, resizes, inserted columns)', async () => {
+test('code: workspaces on a run worktree, files in a viewer, nothing off screen, the palette', async () => {
   const { app, window, home } = await launchDemo();
   try {
     await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]?.setSize(1280, 800));
     await expect(window.locator('[data-tile-id="session:T2"]')).toBeVisible({ timeout: 30_000 });
-    // The strip is the code view's: the passkeys run's project, with a file, the search and a commit open.
     await window.keyboard.press('Meta+Shift+e');
-    await expect(window.getByTestId('project-overview')).toBeVisible();
-    await expectFocusedInView(window);
+    await expect(window.getByTestId('code-terminal')).toHaveCount(1);
+
+    // Files open into one viewer beside the shell; browsing replaces the preview tab, ⌘⏎ keeps it.
     await window.keyboard.press('Meta+p');
     await window.keyboard.type('passkeylist');
     await expect(window.getByTestId('goto-option').first()).toContainText('PasskeyList.tsx');
     await window.keyboard.press('Enter');
-    await expect(window.locator('[data-tile-kind="code"]').getByTestId('code-view')).toContainText('PasskeyList');
-    await expectFocusedInView(window);
-    await window.keyboard.press('Meta+Shift+f');
-    await expect(window.getByTestId('project-search')).toBeVisible();
-    await expectFocusedInView(window);
-    await window.getByTestId('project-activity').getByTestId('activity-commit').first().click();
-    await expect(window.locator('[data-tile-kind="diff"]')).toBeVisible();
-    await expectFocusedInView(window);
-    await expect.poll(async () => (await columnOrder(window)).length).toBeGreaterThanOrEqual(6);
+    const viewer = window.getByTestId('code-viewer');
+    const shown = viewer.locator('.cw-tab-body:not([hidden])');
+    await expect(shown.getByTestId('code-editor')).toContainText('PasskeyList');
+    await expect(viewer.getByTestId('code-tab')).toHaveCount(1);
+    await expect(viewer.getByTestId('code-tab')).not.toHaveAttribute('data-pinned', 'true');
+    await window.keyboard.press('Meta+Enter');
+    await expect(viewer.getByTestId('code-tab')).toHaveAttribute('data-pinned', 'true');
+    const files = window.getByTestId('code-panel').getByTestId('file-row');
+    await files.filter({ hasText: 'biome.json' }).click();
+    await files.filter({ hasText: 'legion.json' }).click();
+    await expect(viewer.getByTestId('code-tab')).toHaveCount(2);
+    await expect(viewer).toHaveCount(1);
+    await expect.poll(() => allTilesInView(window)).toBe('ok');
 
-    // Bursts of focus moves while the previous smooth scroll is still in flight.
-    for (const key of ['l', 'l', 'l', 'l']) await window.keyboard.press(`Meta+Alt+${key}`);
-    await expectFocusedInView(window);
-    for (const key of ['h', 'h', 'h', 'h', 'h']) await window.keyboard.press(`Meta+Alt+${key}`);
-    await expectFocusedInView(window);
-    for (const key of ['l', 'l', 'h', 'l', 'l', 'l']) {
-      await window.keyboard.press(`Meta+Alt+${key}`);
-      await window.waitForTimeout(60);
-    }
-    await expectFocusedInView(window);
+    // A new workspace on a task's worktree: read-only while its agent works there, with a way to take it over.
+    await window.getByTestId('code-new-workspace').click();
+    await window.getByTestId('code-new-choice').filter({ hasText: 'T2' }).click();
+    await expect(window.getByTestId('code-space')).toHaveCount(2);
+    const checkout = window.getByTestId('code-checkout');
+    await expect(checkout).toContainText('T2');
+    await expect(checkout).toHaveAttribute('data-read-only', 'true');
+    await expect(window.getByTestId('code-take-over')).toBeVisible();
+    await expect(window.getByTestId('code-terminal')).toContainText('T2 worktree');
+    // Its files open read-only while the agent works there.
+    await window.keyboard.press('Meta+p');
+    await window.keyboard.type('passkeylist');
+    await expect(window.getByTestId('goto-option').first()).toContainText('PasskeyList.tsx');
+    await window.keyboard.press('Enter');
+    await expect(window.getByTestId('code-editor')).toHaveAttribute('data-read-only', 'true');
+    await expect(window.locator('.cv-state')).toHaveText('Read-only while its agent works here');
+    await window.waitForTimeout(400);
+    await window.screenshot({ path: join(shots, 'code-worktree.png') });
+    // Review a task's diff in place: comment on a hunk, send the review to its live agent. Reverting waits for
+    // a take-over while the agent works there.
+    await window.getByTestId('code-new-workspace').click();
+    await window.getByTestId('code-new-choice').filter({ hasText: 'T4' }).click();
+    await window.keyboard.press('Meta+b');
+    await window.getByTestId('code-panel').getByTestId('changes-task').filter({ hasText: 'T4' }).click();
+    const diff = window.getByTestId('diff-tile');
+    await expect(diff.getByTestId('hunk-comment').first()).toBeAttached();
+    await expect(diff.getByTestId('hunk-revert').first()).toBeDisabled();
+    await diff.getByTestId('hunk-comment').nth(1).click({ force: true });
+    await window.keyboard.type('Use a unique index on credential_id.');
+    await window.keyboard.press('Meta+Enter');
+    await expect(diff.getByTestId('review-comment')).toContainText('Use a unique index on credential_id.');
+    await expect(diff.getByTestId('review-bar')).toContainText('1 comment');
+    await diff.getByTestId('review-send').click();
+    await expect(diff.getByTestId('review-comment')).toHaveCount(0);
+    await expect(diff.getByTestId('review-bar')).toHaveCount(0);
 
-    // Widen the focused column to 2/3, then full: still entirely visible (full aligns left).
-    await window.keyboard.press('Meta+r');
-    await window.keyboard.press('l');
-    await window.keyboard.press('l');
-    await expectFocusedInView(window);
-    await window.keyboard.press('l');
-    await window.keyboard.press('Escape');
-    await expectFocusedInView(window);
+    // Asking again for the same worktree switches to it rather than making another.
+    await window.keyboard.press('Meta+1');
+    await window.getByTestId('code-new-workspace').click();
+    await window.getByTestId('code-new-choice').filter({ hasText: 'T2' }).click();
+    await expect(window.getByTestId('code-space')).toHaveCount(3);
+    await expect(window.getByTestId('code-checkout')).toContainText('T2');
+    // ⌘1 / ⌘2 are the workspaces in Code; the first kept its tabs.
+    await window.keyboard.press('Meta+1');
+    await expect(window.getByTestId('code-checkout')).toHaveCount(0);
+    await expect(viewer.getByTestId('code-tab')).toHaveCount(2);
 
-    // An inserted column (another commit, in a new column with ⌘-click) is revealed, also after moving it left.
-    await window.keyboard.press('Meta+Alt+h');
-    await window.keyboard.press('Meta+Alt+h');
-    await expectFocusedInView(window);
-    const before = (await columnOrder(window)).length;
-    await window
-      .getByTestId('project-activity')
-      .getByTestId('activity-commit')
-      .nth(2)
-      .click({ modifiers: ['Meta'] });
-    await expect.poll(async () => (await columnOrder(window)).length).toBe(before + 1);
-    await expectFocusedInView(window);
-    await window.keyboard.press('Meta+Alt+Shift+h');
-    await window.keyboard.press('Meta+r');
-    await window.keyboard.press('l');
-    await window.keyboard.press('Escape');
-    await expectFocusedInView(window);
-    await window.keyboard.press('Meta+Alt+l');
-    await expectFocusedInView(window);
-    await window.keyboard.press('Meta+Alt+h');
-    await expectFocusedInView(window);
+    // The palette names every window of every workspace.
+    await window.keyboard.press('Meta+k');
+    const palette = window.getByTestId('palette');
+    await expect(palette.locator('[cmdk-group-heading]', { hasText: 'Windows' })).toBeVisible();
+    await window.keyboard.type('T2 worktree');
+    await palette
+      .getByRole('option', { name: /T2 worktree/ })
+      .first()
+      .click();
+    await expect(window.getByTestId('code-checkout')).toContainText('T2');
+
+    // Narrow: every tile still fully on screen.
+    await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]?.setSize(960, 600));
+    await window.keyboard.press('Meta+1');
+    await expect.poll(() => allTilesInView(window)).toBe('ok');
+    await window.screenshot({ path: join(shots, 'code-narrow.png') });
   } finally {
     await app.close();
     rmSync(home, { recursive: true, force: true });

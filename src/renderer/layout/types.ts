@@ -50,12 +50,12 @@ export interface TileParamsByKind {
   project: { projectId: string };
   /** The project's runs, git history and open pull requests. */
   activity: { projectId: string };
-  /** The project's file tree. */
-  files: { projectId: string };
+  /** The project's file tree (of `checkout`, one of its worktrees; absent/null = the main checkout). */
+  files: { projectId: string; checkout?: string | null };
   /** A file of the project; `line`..`endLine` (1-based) is revealed and marked. */
-  code: { projectId: string; path: string; line: number | null; endLine: number | null };
+  code: { projectId: string; path: string; line: number | null; endLine: number | null; checkout?: string | null };
   /** Content search in the project. */
-  search: { projectId: string; query: string };
+  search: { projectId: string; query: string; checkout?: string | null };
 }
 
 /** A tile as stored in the layout tree. */

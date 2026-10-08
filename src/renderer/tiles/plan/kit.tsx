@@ -261,7 +261,7 @@ export function useTileKeys(ref: RefObject<HTMLElement | null>, handler: (event:
   const handlerRef = useRef(handler);
   handlerRef.current = handler;
   useEffect(() => {
-    const tile = ref.current?.closest<HTMLElement>('[data-tile-id]');
+    const tile = ref.current?.closest<HTMLElement>('[data-tile-id], [data-code-tile]');
     if (!tile) return;
     const onKey = (event: KeyboardEvent) => {
       if (event.defaultPrevented || isTyping(event.target)) return;

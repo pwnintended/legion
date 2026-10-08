@@ -47,7 +47,9 @@ import {
   demoReadFile,
   demoSearch,
   demoShow,
+  demoStatFile,
   demoStatus,
+  demoWriteFile,
 } from './projects';
 import { withScaleDemo } from './scale';
 import { withSessionLive } from './sessions';
@@ -316,10 +318,21 @@ export class DemoClient implements EngineClient {
         return (input.projectId ? [this.project(input.projectId as string)] : this.projects.list).map(demoStatus);
       case 'projects.info':
         return demoInfo(this.project(input.projectId as string), this.now);
+      case 'projects.checkouts':
+        return this.demoCheckouts(input.projectId as string);
       case 'files.list':
         return demoListDir(this.project(input.projectId as string), input.dir as string);
       case 'files.read':
         return demoReadFile(this.project(input.projectId as string), input.path as string);
+      case 'files.stat':
+        return demoStatFile(this.project(input.projectId as string), input.path as string);
+      case 'files.write':
+        return demoWriteFile(
+          this.project(input.projectId as string),
+          input.path as string,
+          input.text as string,
+          input.expectedVersion as string,
+        );
       case 'files.find':
         return demoFind(this.project(input.projectId as string), input.query as string, input.limit as number);
       case 'files.search':
@@ -382,6 +395,9 @@ export class DemoClient implements EngineClient {
           input.answers as QuestionAnswer[],
           this.attachmentRefs(input.attachmentIds),
         );
+      case 'tasks.revertHunk':
+        // Demo worktrees are not on disk: the revert is acknowledged, the diff stays as it is.
+        return { committed: false };
       case 'sessions.send':
         return this.steer(
           input.attemptId as string,
@@ -459,6 +475,35 @@ export class DemoClient implements EngineClient {
     if (run?.paused) return;
     this.emit([
       { type: 'agent.event', runId: attempt.runId, taskId: attempt.taskId, attemptId: attempt.id, event: step.event },
+    ]);
+  }
+
+  /** Demo checkouts: the task worktrees of the project's runs (and their integration branches). */
+  private demoCheckouts(projectId: string) {
+    const project = this.project(projectId);
+    const w = this.world;
+    const runs = w.runs.filter((r) => r.projectId === projectId || r.repoPath === project.path);
+    return runs.flatMap((run) => [
+      ...w.tasks
+        .filter((t) => t.runId === run.id && t.worktreePath)
+        .map((t) => ({
+          path: t.worktreePath as string,
+          branch: t.branch,
+          kind: 'task' as const,
+          runId: run.id,
+          taskId: t.id,
+        })),
+      ...(run.integrationBranch
+        ? [
+            {
+              path: `/Users/dev/Library/Application Support/Legion/worktrees/${run.id}/integration`,
+              branch: run.integrationBranch,
+              kind: 'integration' as const,
+              runId: run.id,
+              taskId: null,
+            },
+          ]
+        : []),
     ]);
   }
 
@@ -821,13 +866,14 @@ function demoBranches(path: string): RepoBranches {
 const demoCommitted = new Set<string>();
 
 /**
- * A plausible `repos.inspect` answer; paths containing "not-a-repo" are rejected, and ones containing
- * "no-commits" have no commit until `repos.initialCommit`.
+ * A plausible `repos.inspect` answer; paths containing "not-a-repo" are rejected, ones containing
+ * "no-commits" have no commit until `repos.initialCommit`, and ones containing "no-remote" have no remote.
  */
 function inspectDemoRepo(path: string): RepoInspection {
   const name = path.split('/').filter(Boolean).at(-1) ?? path;
   const ok = !path.includes('not-a-repo');
   const committed = ok && (!path.includes('no-commits') || demoCommitted.has(path));
+  const remote = ok && !path.includes('no-remote');
   return {
     path,
     exists: true,
@@ -836,8 +882,8 @@ function inspectDemoRepo(path: string): RepoInspection {
     currentBranch: ok ? 'main' : null,
     headSha: committed ? 'a1f3c9e4b2d8' : null,
     defaultBranch: ok ? 'main' : null,
-    remotes: ok ? [{ name: 'origin', url: `https://github.com/erudiet/${name}.git` }] : [],
-    github: ok ? { owner: 'erudiet', name } : null,
+    remotes: remote ? [{ name: 'origin', url: `https://github.com/erudiet/${name}.git` }] : [],
+    github: remote ? { owner: 'erudiet', name } : null,
     dirty: false,
     hasGh: true,
     ghAuthenticated: true,

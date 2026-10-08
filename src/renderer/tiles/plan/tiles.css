@@ -606,6 +606,136 @@
   .lg-hunk[data-active="true"] {
     box-shadow: inset 2px 0 0 var(--mauve);
   }
+  /* A task's diff under review: the hunk's actions, shown on hover or while it is the active hunk. */
+  .lg-hunk-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding-right: 6px;
+  }
+  .lg-hunk-range {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .lg-hunk-actions {
+    flex: none;
+    display: flex;
+    gap: 2px;
+    opacity: 0;
+    transition: opacity 0.15s;
+  }
+  .lg-hunk-row:hover .lg-hunk-actions,
+  .lg-hunk-row[data-active="true"] .lg-hunk-actions,
+  .lg-hunk-actions:focus-within {
+    opacity: 1;
+  }
+  .lg-hunk-btn {
+    all: unset;
+    box-sizing: border-box;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    height: 20px;
+    padding: 0 7px;
+    border-radius: 5px;
+    font-family: var(--font-ui);
+    font-size: 11.5px;
+    color: var(--subtext1);
+    transition:
+      background-color 0.15s,
+      color 0.15s;
+  }
+  .lg-hunk-btn:hover:not(:disabled) {
+    color: var(--text);
+    background: var(--surface0);
+  }
+  .lg-hunk-btn:disabled {
+    cursor: default;
+    opacity: 0.45;
+  }
+  .lg-hunk-btn:focus-visible {
+    outline: 2px solid var(--mauve);
+    outline-offset: 0;
+  }
+  .lg-compose {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    padding: 10px;
+    border-radius: 10px;
+    background: var(--mantle);
+    border: 1px solid color-mix(in srgb, var(--mauve) 40%, var(--surface0));
+  }
+  .lg-compose-field {
+    all: unset;
+    box-sizing: border-box;
+    width: 100%;
+    min-height: 54px;
+    font-family: var(--font-ui);
+    font-size: 13px;
+    line-height: 1.5;
+    color: var(--text);
+    caret-color: var(--mauve);
+    white-space: pre-wrap;
+  }
+  .lg-compose-field::placeholder {
+    color: var(--overlay1);
+  }
+  .lg-compose-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-family: var(--font-ui);
+    font-size: 11.5px;
+  }
+  .lg-comment {
+    padding: 8px 10px 10px;
+    border-radius: 10px;
+    background: var(--mantle);
+    border: 1px solid var(--surface0);
+    font-family: var(--font-ui);
+  }
+  .lg-comment-head {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    height: 22px;
+    font-size: 11.5px;
+    color: var(--subtext0);
+  }
+  .lg-comment-head .btn-icon {
+    width: 22px;
+    height: 22px;
+    color: var(--overlay2);
+  }
+  .lg-comment-icon {
+    color: var(--mauve);
+  }
+  .lg-comment-text {
+    margin: 4px 0 0;
+    font-size: 13px;
+    line-height: 1.5;
+    color: var(--text);
+    white-space: pre-wrap;
+  }
+  /* The review bar: your comments on their way to the agent, and the merge. */
+  .lg-review {
+    flex: none;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 8px 10px 8px 14px;
+    border-top: 1px solid var(--hairline);
+    background: var(--mantle);
+    font-size: 12px;
+  }
+  .lg-review-count {
+    font-weight: 600;
+    color: var(--text);
+  }
   .lg-fhead {
     all: unset;
     box-sizing: border-box;

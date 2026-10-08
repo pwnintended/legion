@@ -1,24 +1,23 @@
 /**
  * The project's file tree: git-tracked and untracked-not-ignored files, loaded one directory at a time,
  * filterable (fuzzy, over the whole project) and fully keyboard driven: ↑/↓ or j/k move, → expands / steps in,
- * ← collapses / steps out, ⏎ or space opens (⌘⏎ in a new column), typing filters. The file shown in the code
- * viewer is marked.
+ * ← collapses / steps out, ⏎ or space opens in the viewer (⌘⏎ as a pinned tab), typing filters. The file
+ * shown in the viewer is marked. Lives in the Code view's side panel.
  */
 import type { FileEntry, FileList, FileMatch } from '@shared/rpc';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { commandTooltip } from '../../app/commands';
-import { rpc, useUi } from '../../app/hooks';
+import { rpc } from '../../app/hooks';
 import { openFile } from '../../app/project-actions';
-import { projectWorkspaceKey } from '../../app/projects';
 import { fetchQuery, isStale, peekQuery, useQueryVersion } from '../../app/query';
 import { Icon } from '../../chrome/icons';
 import { Kbd } from '../../chrome/ui';
-import { previewTile } from '../../layout/project';
+import { useShownTab } from '../../code/hooks';
 import type { TileProps } from '../../layout/types';
 import { FileIcon, formatBytes, HighlightPositions, splitPath } from '../project/kit';
 import { useListNav } from '../project/list-nav';
 
-/** Expanded directories per project (kept while the app runs, so the tree survives re-mounts). */
+/** Expanded directories per project and checkout (kept while the app runs, so the tree survives re-mounts). */
 const expandedByProject = new Map<string, Set<string>>();
 
 type TreeRow =
@@ -26,19 +25,21 @@ type TreeRow =
   | { kind: 'loading'; dir: string; depth: number }
   | { kind: 'error'; dir: string; depth: number; message: string };
 
-const dirKey = (projectId: string, dir: string) => `dir:${projectId}:${dir}`;
-const DIR_STALE_MS = 15_000;
+const dirKey = (projectId: string, checkout: string | null, dir: string) => `dir:${projectId}:${checkout ?? ''}:${dir}`;
+/** Agents add and remove files while you look: the open directories are read again this often. */
+const DIR_STALE_MS = 4_000;
 
-function loadDir(projectId: string, dir: string): void {
-  const key = dirKey(projectId, dir);
-  if (isStale(key, DIR_STALE_MS)) void fetchQuery(key, () => rpc('files.list', { projectId, dir })).catch(() => {});
+function loadDir(projectId: string, checkout: string | null, dir: string, force = false): void {
+  const key = dirKey(projectId, checkout, dir);
+  if (force || isStale(key, DIR_STALE_MS))
+    void fetchQuery(key, () => rpc('files.list', { projectId, checkout, dir })).catch(() => {});
 }
 
 /** The visible rows of the tree (root + expanded directories), from the query cache. */
-function flatten(projectId: string, expanded: ReadonlySet<string>): TreeRow[] {
+function flatten(projectId: string, checkout: string | null, expanded: ReadonlySet<string>): TreeRow[] {
   const rows: TreeRow[] = [];
   const walk = (dir: string, depth: number) => {
-    const entry = peekQuery<FileList>(dirKey(projectId, dir));
+    const entry = peekQuery<FileList>(dirKey(projectId, checkout, dir));
     if (!entry?.data) {
       if (entry?.error) rows.push({ kind: 'error', dir, depth, message: entry.error });
       else rows.push({ kind: 'loading', dir, depth });
@@ -58,24 +59,32 @@ function parentOf(path: string): string {
   return slash === -1 ? '' : path.slice(0, slash);
 }
 
-export default function FilesTile({ params, tileId, focused }: TileProps<'files'>) {
+export default function FilesTile({ params, focused, visible }: TileProps<'files'>) {
   const { projectId } = params;
-  const [expanded, setExpanded] = useState<Set<string>>(() => expandedByProject.get(projectId) ?? new Set());
+  const checkout = params.checkout ?? null;
+  const treeKey = `${projectId}:${checkout ?? ''}`;
+  const [expanded, setExpanded] = useState<Set<string>>(() => expandedByProject.get(treeKey) ?? new Set());
   const [filter, setFilter] = useState('');
   const [matches, setMatches] = useState<FileMatch[] | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const version = useQueryVersion();
-  const openPath = useUi((s) => {
-    const layout = s.layouts[projectWorkspaceKey(projectId)];
-    const tile = layout ? previewTile(layout, 'code') : null;
-    return (tile?.params as { path?: string } | undefined)?.path ?? null;
-  });
+  const openPath = useShownTab(projectId, (tab) => (tab.kind === 'code' ? tab.params.path : null));
 
   useEffect(() => {
-    expandedByProject.set(projectId, expanded);
-    loadDir(projectId, '');
-    for (const dir of expanded) loadDir(projectId, dir);
-  }, [projectId, expanded]);
+    expandedByProject.set(treeKey, expanded);
+    loadDir(projectId, checkout, '');
+    for (const dir of expanded) loadDir(projectId, checkout, dir);
+  }, [projectId, checkout, treeKey, expanded]);
+
+  // Live: while on screen, the open directories are read again (new files from agents appear on their own).
+  useEffect(() => {
+    if (!visible) return;
+    const timer = setInterval(() => {
+      loadDir(projectId, checkout, '');
+      for (const dir of expanded) loadDir(projectId, checkout, dir);
+    }, DIR_STALE_MS);
+    return () => clearInterval(timer);
+  }, [visible, projectId, checkout, expanded]);
 
   // Filtering searches the whole project (debounced), not just the expanded directories.
   useEffect(() => {
@@ -86,7 +95,7 @@ export default function FilesTile({ params, tileId, focused }: TileProps<'files'
     }
     let cancelled = false;
     const timer = setTimeout(() => {
-      rpc('files.find', { projectId, query, limit: 200 }).then(
+      rpc('files.find', { projectId, checkout, query, limit: 200 }).then(
         (found) => !cancelled && setMatches(found),
         () => !cancelled && setMatches([]),
       );
@@ -95,10 +104,10 @@ export default function FilesTile({ params, tileId, focused }: TileProps<'files'
       cancelled = true;
       clearTimeout(timer);
     };
-  }, [projectId, filter]);
+  }, [projectId, checkout, filter]);
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: `version` re-reads the query cache.
-  const rows = useMemo(() => flatten(projectId, expanded), [projectId, expanded, version]);
+  const rows = useMemo(() => flatten(projectId, checkout, expanded), [projectId, checkout, expanded, version]);
   const filtering = matches !== null;
   const count = filtering ? matches.length : rows.length;
 
@@ -112,19 +121,18 @@ export default function FilesTile({ params, tileId, focused }: TileProps<'files'
     });
   };
 
-  const openEntry = (path: string, newColumn: boolean) =>
-    openFile(projectId, path, { anchorTileId: tileId, newColumn });
+  const openEntry = (path: string, pinned: boolean) => openFile(projectId, path, { pinned });
 
-  const activate = (index: number, newColumn: boolean) => {
+  const activate = (index: number, pinned: boolean) => {
     if (filtering) {
       const match = matches[index];
-      if (match) openEntry(match.path, newColumn);
+      if (match) openEntry(match.path, pinned);
       return;
     }
     const row = rows[index];
     if (row?.kind !== 'entry') return;
     if (row.entry.type === 'dir') toggle(row.entry.path);
-    else openEntry(row.entry.path, newColumn);
+    else openEntry(row.entry.path, pinned);
   };
 
   const nav = useListNav(count, activate, (event, active) => {

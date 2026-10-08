@@ -1,14 +1,15 @@
 /**
  * PR tile: the human PR gate. The final review of the integrated result, an editable generated title/body
- * (preview or markdown), Create draft PR → the PR's link with "Open on GitHub", and a calm completion state.
+ * (preview or markdown), Create draft PR → the PR's link with "Open on GitHub", or Merge into the base branch
+ * locally (the only way when the repository has no `origin`), and a calm completion state.
  */
-import type { InboxItemOf, Review, Run } from '@shared/domain';
+import type { InboxItemOf, LocalMerge, Review, Run } from '@shared/domain';
 import { useMemo, useState } from 'react';
 import { useShallow } from 'zustand/react/shallow';
 import { commandTooltip } from '../../app/commands';
 import { canArchive, isArchived, type PrState, type PullRequestInfo, runPr } from '../../app/compat';
 import { attemptsOfRun, reviewsOfRun, tasksOfRun } from '../../app/data';
-import { rpc, useData, useNow, useRun } from '../../app/hooks';
+import { rpc, useData, useHasOrigin, useNow, useRun } from '../../app/hooks';
 import { archiveRunInteractively, refreshPr } from '../../app/run-actions';
 import { dataStore } from '../../app/store';
 import { Icon } from '../../chrome/icons';
@@ -54,6 +55,7 @@ function openExternal(url: string): void {
 export default function PrTile({ runId }: TileProps<'pr'>) {
   const run = useRun(runId);
   if (!run) return null;
+  if (run.merged) return <Merged run={run} merged={run.merged} />;
   const pr = runPr(run);
   if (pr) return <Opened run={run} pr={pr} />;
   if (run.status === 'pr_ready') return <Ready run={run} />;
@@ -89,7 +91,7 @@ function NotYet({ run }: { run: Run }) {
         : 'Final review by the other engine',
       ok: finalizer?.status === 'succeeded' ? true : null,
     },
-    { label: 'Your sign-off: create the draft PR', ok: null },
+    { label: 'Your sign-off: a draft PR or a local merge', ok: null },
   ];
   const finalizing = run.status === 'finalizing' || run.status === 'integrating';
   return (
@@ -101,12 +103,13 @@ function NotYet({ run }: { run: Run }) {
             ? 'Verifying the integrated result'
             : run.status === 'finalizing'
               ? `Final review${finalizer?.status === 'running' ? ` · ${formatDuration(now - finalizer.startedAt)}` : ''}`
-              : 'The draft PR opens when the run is done'}
+              : 'The work lands when the run is done'}
         </div>
         <p className="muted mt-1.5 mb-3 text-[12.5px] leading-normal">
-          Legion pushes <span className="mono text-[11.5px]">{run.integrationBranch ?? 'the integration branch'}</span>{' '}
-          and opens a draft against <span className="mono text-[11.5px]">{run.baseRef}</span>. You approve it here
-          first.
+          You decide here how{' '}
+          <span className="mono text-[11.5px]">{run.integrationBranch ?? 'the integration branch'}</span> lands: a draft
+          PR against <span className="mono text-[11.5px]">{run.baseRef}</span>, or a merge into your local{' '}
+          <span className="mono text-[11.5px]">{run.baseRef}</span>.
         </p>
         <div className="flex flex-col">
           {steps.map((s) => (
@@ -138,13 +141,19 @@ function Ready({ run }: { run: Run }) {
   const [view, setView] = useState<'preview' | 'edit'>('preview');
   const remember = (next: { title?: string; body?: string }) =>
     drafts.set(run.id, { title: next.title ?? title, body: next.body ?? body });
-  const [create, { pending, error }] = useAction(async () => {
-    await rpc('runs.createPr', {
-      runId: run.id,
-      title: title.trim() || null,
-      body: body.trim() ? body : null,
-    });
+  const text = () => ({ runId: run.id, title: title.trim() || null, body: body.trim() ? body : null });
+  const [create, creating] = useAction(async () => {
+    await rpc('runs.createPr', text());
   });
+  const [merge, merging] = useAction(async () => {
+    await rpc('runs.mergeLocally', text());
+  });
+  const pending = creating.pending || merging.pending;
+  const error = creating.error ?? merging.error;
+  // Without an `origin` a PR cannot be opened: the local merge is the way to land it. The actions wait for the
+  // answer so they do not change under the pointer.
+  const hasOrigin = useHasOrigin(run.repoPath);
+  const localOnly = hasOrigin === false;
   const edited = title !== (item?.payload.title ?? run.title) || body !== (item?.payload.body ?? '');
   const finalizer = useData(
     (s) =>
@@ -259,14 +268,26 @@ function Ready({ run }: { run: Run }) {
       <div className="lg-foot">
         {error ? <div className="text-[12px] text-red">{error}</div> : null}
         <div className="flex flex-wrap items-center gap-2">
+          {hasOrigin === false ? null : (
+            <button
+              type="button"
+              className="btn btn-primary lg-btn-lg"
+              disabled={pending || !title.trim() || hasOrigin === undefined}
+              onClick={() => void create()}
+              data-testid="create-pr"
+            >
+              {creating.pending ? 'Pushing…' : 'Create draft PR'}
+            </button>
+          )}
           <button
             type="button"
-            className="btn btn-primary lg-btn-lg"
-            disabled={pending || !title.trim()}
-            onClick={() => void create()}
-            data-testid="create-pr"
+            className={localOnly ? 'btn btn-primary lg-btn-lg' : 'btn lg-btn-lg'}
+            disabled={pending || !title.trim() || hasOrigin === undefined}
+            onClick={() => void merge()}
+            title={`One merge commit on your local ${run.baseRef}, titled and described like the PR; nothing is pushed`}
+            data-testid="merge-locally"
           >
-            {pending ? 'Pushing…' : 'Create draft PR'}
+            {merging.pending ? 'Merging…' : `Merge into ${run.baseRef}`}
           </button>
           <button
             type="button"
@@ -276,7 +297,13 @@ function Ready({ run }: { run: Run }) {
             Review the full diff
           </button>
           <span className="faint ml-auto text-[12px]">
-            pushes <span className="mono">{run.integrationBranch}</span> · draft against {run.baseRef}
+            {localOnly ? (
+              <>no remote · merges into your local {run.baseRef}</>
+            ) : (
+              <>
+                pushes <span className="mono">{run.integrationBranch}</span> · draft against {run.baseRef}
+              </>
+            )}
           </span>
         </div>
       </div>
@@ -294,7 +321,8 @@ const PR_HEADLINE: Record<PrState, (n: string) => string> = {
   closed: (n) => `PR ${n} was closed`,
 };
 
-function Opened({ run, pr }: { run: Run; pr: PullRequestInfo }) {
+/** What the run took: tasks merged, who coded them, fix rounds, cost (or time when nothing was billed). */
+function RunStats({ run }: { run: Run }) {
   const stats = useData(
     useShallow((s) => {
       const tasks = tasksOfRun(s.tasks, run.id);
@@ -314,12 +342,29 @@ function Opened({ run, pr }: { run: Run; pr: PullRequestInfo }) {
     }),
   );
   const [merged, claude, codex, fixes, cost] = stats;
+  const elapsed = useMemo(() => formatDuration(run.updatedAt - run.createdAt), [run.updatedAt, run.createdAt]);
+  return (
+    <div
+      className="lg-rise mono faint mt-7 flex flex-wrap justify-center gap-x-8 gap-y-3 text-[11.5px]"
+      style={{ animationDelay: '260ms' }}
+    >
+      <Stat label="tasks merged" value={`${merged}`} />
+      <Stat
+        label="coded by"
+        value={[claude ? `${claude} claude` : null, codex ? `${codex} codex` : null].filter(Boolean).join(' · ') || '—'}
+      />
+      <Stat label="fix rounds" value={`${fixes}`} />
+      <Stat label={cost ? 'spent' : 'elapsed'} value={cost ? formatCost(cost) : elapsed} />
+    </div>
+  );
+}
+
+function Opened({ run, pr }: { run: Run; pr: PullRequestInfo }) {
   const number = pr.number ? `#${pr.number}` : '';
   const [copied, setCopied] = useState(false);
   const [refresh, refreshing] = useAction(() => refreshPr(run.id));
   const [archive, archiving] = useAction(() => archiveRunInteractively(run));
   const archivable = canArchive(run);
-  const elapsed = useMemo(() => formatDuration(run.updatedAt - run.createdAt), [run.updatedAt, run.createdAt]);
   const headline = pr.state === 'open' && pr.isDraft ? `Draft PR ${number} is open` : PR_HEADLINE[pr.state](number);
   const note =
     pr.state === 'merged'
@@ -397,20 +442,7 @@ function Opened({ run, pr }: { run: Run; pr: PullRequestInfo }) {
               {archiving.error ?? refreshing.error}
             </div>
           ) : null}
-          <div
-            className="lg-rise mono faint mt-7 flex flex-wrap justify-center gap-x-8 gap-y-3 text-[11.5px]"
-            style={{ animationDelay: '260ms' }}
-          >
-            <Stat label="tasks merged" value={`${merged}`} />
-            <Stat
-              label="coded by"
-              value={
-                [claude ? `${claude} claude` : null, codex ? `${codex} codex` : null].filter(Boolean).join(' · ') || '—'
-              }
-            />
-            <Stat label="fix rounds" value={`${fixes}`} />
-            <Stat label={cost ? 'spent' : 'elapsed'} value={cost ? formatCost(cost) : elapsed} />
-          </div>
+          <RunStats run={run} />
         </div>
       </div>
       <div className="lg-foot">
@@ -433,6 +465,83 @@ function Opened({ run, pr }: { run: Run; pr: PullRequestInfo }) {
           ) : isArchived(run) ? (
             <span className="ml-auto">archived · worktrees removed</span>
           ) : null}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------------------------
+// Merged locally
+// ---------------------------------------------------------------------------------------------
+
+function Merged({ run, merged }: { run: Run; merged: LocalMerge }) {
+  const [copied, setCopied] = useState(false);
+  const [archive, archiving] = useAction(() => archiveRunInteractively(run));
+  const archivable = canArchive(run);
+  return (
+    <div className="lg-col lg-pr-opened" data-testid="pr-merged-locally" data-pr-state="merged">
+      <div className="lg-scroll flex flex-col px-6 py-6">
+        <div className="my-auto flex flex-col items-center text-center">
+          <div className="lg-done-ring lg-done-ring-sm lg-rise flex-none" data-state="merged">
+            <Icon name="merge" size={26} strokeWidth={2.2} />
+          </div>
+          <div className="lg-rise mt-4 text-[17px] font-semibold" style={{ animationDelay: '80ms' }}>
+            Merged into {merged.into}
+          </div>
+          <div
+            className="lg-rise muted mt-1 max-w-[380px] text-[12.5px] leading-normal"
+            style={{ animationDelay: '120ms' }}
+          >
+            {run.title}. One merge commit on your local {merged.into}; nothing was pushed.
+            {archivable ? ' Archive the run to clean up its worktrees and branches.' : null}
+          </div>
+          <div
+            className="lg-rise mono faint mt-2 max-w-full truncate text-[11.5px]"
+            style={{ animationDelay: '160ms' }}
+          >
+            {merged.sha.slice(0, 12)}
+          </div>
+          <div className="lg-rise mt-3.5 flex flex-wrap justify-center gap-2" style={{ animationDelay: '200ms' }}>
+            {archivable ? (
+              <button
+                type="button"
+                className="btn btn-primary lg-btn-lg"
+                onClick={() => void archive()}
+                disabled={archiving.pending}
+                data-testid="pr-archive"
+                title="Remove the run's worktrees and hide it from the rail"
+              >
+                <Icon name="archive" size={14} />
+                {archiving.pending ? 'Archiving…' : 'Archive run'}
+              </button>
+            ) : null}
+            <button
+              type="button"
+              className="btn lg-btn-lg"
+              onClick={() => {
+                void navigator.clipboard?.writeText(merged.sha).then(() => setCopied(true));
+                setTimeout(() => setCopied(false), 1600);
+              }}
+            >
+              {copied ? 'Copied' : 'Copy commit'}
+            </button>
+          </div>
+          {archiving.error ? (
+            <div className="mt-2 text-[12px] text-red" role="alert">
+              {archiving.error}
+            </div>
+          ) : null}
+          <RunStats run={run} />
+        </div>
+      </div>
+      <div className="lg-foot">
+        <div className="faint flex items-center gap-2 text-[12px]">
+          <Chip tone="accent">merged locally</Chip>
+          <span className="mono truncate">
+            {run.integrationBranch} → {merged.into}
+          </span>
+          {isArchived(run) ? <span className="ml-auto">archived · worktrees removed</span> : null}
         </div>
       </div>
     </div>

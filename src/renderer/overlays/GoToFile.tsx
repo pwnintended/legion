@@ -1,6 +1,6 @@
 /**
  * Go to file (⌘P): fuzzy search over every file of the project on screen. `path:42` jumps to a line. ⏎ opens in
- * the code viewer's preview column, ⌘⏎ in a new column. With nothing typed: the files opened recently.
+ * the viewer's preview tab, ⌘⏎ as a pinned tab. With nothing typed: the files opened recently.
  */
 import type { FileMatch } from '@shared/rpc';
 import { useEffect, useId, useMemo, useRef, useState } from 'react';
@@ -26,8 +26,8 @@ export function GoToFileOverlay() {
   const [found, setFound] = useState<{ query: string; list: FileMatch[] } | null>(null);
   const [active, setActive] = useState(0);
   const listRef = useRef<HTMLDivElement>(null);
-  /** ⏎ pressed before the current query's results arrived: open the best one when they do (⌘ = new column). */
-  const pendingOpen = useRef<{ newColumn: boolean } | null>(null);
+  /** ⏎ pressed before the current query's results arrived: open the best one when they do (⌘ = pinned). */
+  const pendingOpen = useRef<{ pinned: boolean } | null>(null);
   const { query, line } = parseGoto(input);
   const projectId = project?.id ?? null;
   const results = found?.list ?? null;
@@ -57,7 +57,7 @@ export function GoToFileOverlay() {
     if (!pending || !best || !projectId) return;
     pendingOpen.current = null;
     actions.closeOverlay();
-    openFile(projectId, best.path, { line, newColumn: pending.newColumn });
+    openFile(projectId, best.path, { line, pinned: pending.pinned });
   }, [found]);
 
   const items = useMemo(() => {
@@ -74,11 +74,11 @@ export function GoToFileOverlay() {
     listRef.current?.querySelector<HTMLElement>(`[data-index="${current}"]`)?.scrollIntoView({ block: 'nearest' });
   }, [current]);
 
-  const open = (index: number, newColumn: boolean) => {
+  const open = (index: number, pinned: boolean) => {
     const item = items[index];
     if (!item || !projectId) return;
     actions.closeOverlay();
-    openFile(projectId, item.path, { line, newColumn });
+    openFile(projectId, item.path, { line, pinned });
   };
 
   return (
@@ -109,9 +109,9 @@ export function GoToFileOverlay() {
               setActive(Math.max(0, current - 1));
             } else if (event.key === 'Enter') {
               event.preventDefault();
-              const newColumn = event.metaKey || event.ctrlKey;
-              if (query && found?.query !== query) pendingOpen.current = { newColumn };
-              else open(current, newColumn);
+              const pinned = event.metaKey || event.ctrlKey;
+              if (query && found?.query !== query) pendingOpen.current = { pinned };
+              else open(current, pinned);
             }
           }}
           data-testid="goto-input"

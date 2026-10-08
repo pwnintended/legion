@@ -267,6 +267,18 @@ export function buildThread(input: ThreadInput): ThreadItem[] {
       order: order(),
     });
   }
+  const merged = input.run.merged ?? null;
+  if (merged) {
+    items.push({
+      kind: 'event',
+      key: `merged:${merged.sha}`,
+      ts: merged.at,
+      tone: 'ok',
+      text: `Merged into ${merged.into} locally (${merged.sha.slice(0, 7)})`,
+      href: null,
+      order: order(),
+    });
+  }
   if (input.run.status === 'failed' || input.run.status === 'cancelled') {
     items.push({
       kind: 'event',

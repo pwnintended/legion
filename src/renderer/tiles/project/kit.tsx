@@ -46,10 +46,15 @@ export function useDir(projectId: string, dir: string | null) {
   );
 }
 
-export function useFile(projectId: string, path: string | null) {
+/** The query key of a file (of a checkout: absent/null = the main one). */
+export function fileKey(projectId: string, path: string, checkout: string | null = null): string {
+  return `file:${projectId}:${checkout ?? ''}:${path}`;
+}
+
+export function useFile(projectId: string, path: string | null, checkout: string | null = null) {
   return useQuery<FileContent>(
-    path === null ? null : `file:${projectId}:${path}`,
-    () => rpc('files.read', { projectId, path: path ?? '' }),
+    path === null ? null : fileKey(projectId, path, checkout),
+    () => rpc('files.read', { projectId, path: path ?? '', checkout }),
     { staleMs: 10_000 },
   );
 }

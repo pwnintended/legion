@@ -1,16 +1,14 @@
 /**
- * Project actions shared by the rail, the palette, overlays and the project home tiles: add / open / forget a
- * project, open a file, a commit or the search in the project home, and start a run about a piece of code.
+ * Project actions shared by the rail, the palette, overlays and the Code view: add / open / forget a project,
+ * open a file, a commit or the search in the Code view's workspace, and start a run about a piece of code.
  */
 import type { Project } from '@shared/domain';
-import { openPreview, previewTile } from '../layout/project';
-import { focusTile, setTileParams } from '../layout/tree';
+import { openDiff, openInViewer, showPanel } from '../code/actions';
 import { toast } from '../overlays/nav';
 import { openComposer } from './composer-seed';
 import { applyProjectRow } from './data';
 import { rpc } from './hooks';
-import { projectWorkspaceKey } from './projects';
-import { actions, activeProjectOf, dataStore, syncActiveLayout, uiStore } from './store';
+import { actions, activeProjectOf, dataStore, uiStore } from './store';
 import { getClient } from './sync';
 
 function adoptProject(project: Project): void {
@@ -61,15 +59,6 @@ export async function setPinned(project: Project, pinned: boolean): Promise<void
   }
 }
 
-/** Make sure the project's code is on screen (switching to it from a run when needed); returns its key. */
-function showHome(projectId: string): string {
-  const ui = uiStore.getState();
-  if (ui.activeProjectId !== projectId) actions.openProjectHome(projectId);
-  actions.setView('code');
-  syncActiveLayout();
-  return projectWorkspaceKey(projectId);
-}
-
 // ---------------------------------------------------------------------------------------------
 // Recently opened files (⌘P's empty state), per project, this session
 // ---------------------------------------------------------------------------------------------
@@ -88,64 +77,31 @@ function recordOpened(projectId: string, path: string): void {
 export interface OpenOptions {
   line?: number | null;
   endLine?: number | null;
-  /** The tile the file was opened from (the preview column goes right of it). */
-  anchorTileId?: string | null;
-  /** A new, permanent column instead of the preview column. */
-  newColumn?: boolean;
+  /** Keep it as a pinned tab instead of the viewer's preview. */
+  pinned?: boolean;
 }
 
-/** Open a file of the project in the code viewer. */
+/** Open a file of the project in the Code view's viewer. */
 export function openFile(projectId: string, path: string, options: OpenOptions = {}): void {
-  const key = showHome(projectId);
   recordOpened(projectId, path);
-  actions.updateLayout(
-    key,
-    (ws) =>
-      openPreview(
-        ws,
-        'code',
-        { projectId, path, line: options.line ?? null, endLine: options.endLine ?? null },
-        options.anchorTileId ?? 'files',
-        options.newColumn ?? false,
-      ),
-    true,
+  openInViewer(
+    projectId,
+    'code',
+    { projectId, path, line: options.line ?? null, endLine: options.endLine ?? null },
+    { pinned: options.pinned ?? false },
   );
 }
 
-/** Open a commit's diff. */
+/** Open a commit's diff in the viewer. */
 export function openCommit(projectId: string, sha: string, options: OpenOptions = {}): void {
-  const key = showHome(projectId);
-  actions.updateLayout(
-    key,
-    (ws) =>
-      openPreview(
-        ws,
-        'diff',
-        { target: { kind: 'commit', projectId, sha } },
-        options.anchorTileId ?? 'activity',
-        options.newColumn ?? false,
-      ),
-    true,
-  );
+  openDiff(projectId, { kind: 'commit', projectId, sha }, { pinned: options.pinned ?? false });
 }
 
-/** Focus the project's search (opening it right of the files when needed), optionally with a query. */
+/** Show the search in the Code view's side panel, optionally with a query, the caret in its field. */
 export function openSearch(projectId: string, query: string | null = null): void {
-  const key = showHome(projectId);
-  actions.updateLayout(
-    key,
-    (ws) => {
-      const existing = previewTile(ws, 'search');
-      if (existing) {
-        const params = existing.params as { projectId: string; query: string };
-        const next =
-          query !== null && query !== params.query ? setTileParams(ws, existing.id, { ...params, query }) : ws;
-        return focusTile(next, existing.id);
-      }
-      return openPreview(ws, 'search', { projectId, query: query ?? '' }, 'files');
-    },
-    true,
-  );
+  const ui = uiStore.getState();
+  if (activeProjectOf(ui, dataStore.getState())?.id !== projectId) actions.openProjectHome(projectId);
+  showPanel('search', query);
 }
 
 /** `src/a.ts:12-18` (or `:12`, or just the path). */

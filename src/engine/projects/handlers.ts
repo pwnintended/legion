@@ -1,6 +1,8 @@
 /**
  * RPC procedures for projects and read-only repository browsing (architecture §5 Project, §10):
- * `projects.*`, `files.*`, `git.log`, `git.show`, `prs.list`. Nothing here writes to a user's repository.
+ * `projects.*`, `files.*`, `git.log`, `git.show`, `prs.list`. The only write is `files.write` (the user saving a
+ * file they edited, refused when it changed since). Files are read from the main checkout or, with `checkout`,
+ * from one of the project's worktrees (checkouts.ts).
  */
 import { realpath } from 'node:fs/promises';
 import { basename } from 'node:path';
@@ -9,8 +11,17 @@ import { RpcError } from '@shared/rpc-transport';
 import type { EngineContext } from '../context';
 import { inspectRepo } from '../rpc/repo-inspect';
 import type { EngineRpcServer } from '../rpc/server';
+import { checkoutRoot, listCheckouts } from './checkouts';
 import { FileIndexCache } from './file-index';
-import { DEFAULT_MAX_TEXT_BYTES, findFiles, listDir, readProjectFile, searchFiles } from './files';
+import {
+  DEFAULT_MAX_TEXT_BYTES,
+  findFiles,
+  listDir,
+  readProjectFile,
+  searchFiles,
+  statProjectFile,
+  writeProjectFile,
+} from './files';
 import { gitLog, gitShow } from './history';
 import { listPrs, projectInfo, projectStatus } from './info';
 
@@ -50,13 +61,36 @@ export function registerProjectHandlers(server: EngineRpcServer, ctx: EngineCont
   });
   server.implement('projects.info', ({ projectId }) => projectInfo(services.project(projectId), files, ctx.env));
 
-  server.implement('files.list', ({ projectId, dir }) => listDir(root(projectId), files, dir));
-  server.implement('files.read', ({ projectId, path, maxBytes }) =>
-    readProjectFile(root(projectId), files, path, maxBytes ?? DEFAULT_MAX_TEXT_BYTES),
+  server.implement('projects.checkouts', ({ projectId }) =>
+    listCheckouts(root(projectId), {
+      runs: ctx.store.listRuns().filter((r) => r.projectId === projectId),
+      tasksOf: (runId) => ctx.store.listTasks(runId),
+    }),
   );
-  server.implement('files.find', ({ projectId, query, limit }) => findFiles(root(projectId), files, query, limit));
-  server.implement('files.search', ({ projectId, query, regex, caseSensitive, limit }) =>
-    searchFiles(root(projectId), { query, regex: regex ?? false, caseSensitive: caseSensitive ?? false, limit }),
+
+  const at = (projectId: string, checkout: string | null | undefined) => checkoutRoot(root(projectId), checkout);
+  server.implement('files.list', async ({ projectId, checkout, dir }) =>
+    listDir(await at(projectId, checkout), files, dir),
+  );
+  server.implement('files.read', async ({ projectId, checkout, path, maxBytes }) =>
+    readProjectFile(await at(projectId, checkout), files, path, maxBytes ?? DEFAULT_MAX_TEXT_BYTES),
+  );
+  server.implement('files.stat', async ({ projectId, checkout, path }) =>
+    statProjectFile(await at(projectId, checkout), files, path),
+  );
+  server.implement('files.write', async ({ projectId, checkout, path, text, expectedVersion }) =>
+    writeProjectFile(await at(projectId, checkout), files, path, text, expectedVersion),
+  );
+  server.implement('files.find', async ({ projectId, checkout, query, limit }) =>
+    findFiles(await at(projectId, checkout), files, query, limit),
+  );
+  server.implement('files.search', async ({ projectId, checkout, query, regex, caseSensitive, limit }) =>
+    searchFiles(await at(projectId, checkout), {
+      query,
+      regex: regex ?? false,
+      caseSensitive: caseSensitive ?? false,
+      limit,
+    }),
   );
   server.implement('git.log', ({ projectId, limit, ref }) => gitLog(root(projectId), limit, ref ?? null));
   server.implement('git.show', ({ projectId, sha }) => gitShow(root(projectId), sha));

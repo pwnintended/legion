@@ -401,21 +401,25 @@ export function describeTile(state: DataState, runId: string, tile: LayoutTile, 
         : merging
           ? { label: 'merging', tone: 'run', live: true }
           : { label: `${merged}/${tasks.length} merged`, tone: merged > 0 ? 'ok' : 'idle', live: false };
-      return { ...base, status, note: pr ? prLabel(pr) : 'PR: not yet', tone: status.tone };
+      const landed = pr ? prLabel(pr) : run?.merged ? `merged into ${run.merged.into}` : 'PR: not yet';
+      return { ...base, status, note: landed, tone: status.tone };
     }
     case 'pr': {
-      const status: StatusChip = pr
-        ? {
-            label: prLabel(pr),
-            tone: pr.state === 'merged' ? 'accent' : pr.state === 'closed' ? 'idle' : 'ok',
-            live: false,
-          }
-        : urgent.length > 0
-          ? { label: 'ready for you', tone: 'warn', live: false }
-          : run?.status === 'finalizing'
-            ? { label: 'final review', tone: 'run', live: true }
-            : { label: 'not yet', tone: 'idle', live: false };
-      return { ...base, status, note: pr?.url ?? status.label, tone: status.tone };
+      const merged = run?.merged ?? null;
+      const status: StatusChip = merged
+        ? { label: `merged into ${merged.into}`, tone: 'accent', live: false }
+        : pr
+          ? {
+              label: prLabel(pr),
+              tone: pr.state === 'merged' ? 'accent' : pr.state === 'closed' ? 'idle' : 'ok',
+              live: false,
+            }
+          : urgent.length > 0
+            ? { label: 'ready for you', tone: 'warn', live: false }
+            : run?.status === 'finalizing'
+              ? { label: 'final review', tone: 'run', live: true }
+              : { label: 'not yet', tone: 'idle', live: false };
+      return { ...base, status, note: pr?.url ?? merged?.sha ?? status.label, tone: status.tone };
     }
     case 'clarify':
       return {

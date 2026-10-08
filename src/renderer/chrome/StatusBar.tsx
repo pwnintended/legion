@@ -1,32 +1,18 @@
 /**
- * Status bar: usage. The run's spend and each engine's rate-limit windows; in the code view also the key mode
- * pill (NORMAL / RESIZE / MOVE) and its hints, in the agents view the route map's keys. Where the run stands and what needs the human live in the
- * conversation (progress strip, needs-you bar) and the title bar.
+ * Status bar: usage. The run's spend and each engine's rate-limit windows; in the agents view the route map's
+ * keys, in the code view the workspace's (or, with a terminal focused, that keys go to it). Where the run
+ * stands and what needs the human live in the conversation (progress strip, needs-you bar) and the title bar.
  */
 import { useActiveRun, useRateLimits, useRunCost, useUi } from '../app/hooks';
 import { formatCost } from '../layout/describe';
 import { Bar } from './ui';
 
-const MODE_PILL = {
-  normal: { label: 'NORMAL', bg: 'var(--mauve)' },
-  resize: { label: 'RESIZE', bg: 'var(--peach)' },
-  move: { label: 'MOVE', bg: 'var(--blue)' },
-  locked: { label: 'LOCKED', bg: 'var(--surface2)' },
-} as const;
-
-const HINTS = {
-  resize: 'h/l narrower·wider  f full  t thin  esc done',
-  move: 'h/j/k/l move  esc done',
-} as const;
-
 export function StatusBar() {
   const run = useActiveRun();
-  const keyMode = useUi((s) => s.keyMode);
   const locked = useUi((s) => s.terminalLocked);
   const view = useUi((s) => s.view);
   const cost = useRunCost(run?.id);
   const limits = useRateLimits();
-  const pill = MODE_PILL[keyMode === 'normal' && locked ? 'locked' : keyMode];
 
   return (
     <footer
@@ -39,16 +25,11 @@ export function StatusBar() {
         </span>
       ) : null}
       {view === 'code' ? (
-        <>
-          <span
-            className="rounded px-1.5 py-px font-semibold tracking-[0.04em] text-on-fill transition-colors"
-            style={{ background: pill.bg }}
-            data-testid="mode-pill"
-          >
-            {pill.label}
-          </span>
-          <span className="faint">{keyMode !== 'normal' ? HINTS[keyMode] : 'strip'}</span>
-        </>
+        <span className="faint" data-testid="code-hint">
+          {locked
+            ? 'keys go to the terminal · ⌘-chords still work · ⌘⌥H/L leave it'
+            : '⌘T terminal · ⌘D/⌘⇧D split · ⌘⌥HJKL focus · ⌘⌥⇧ move · ⌘⌃ resize · ⌘⌥T/S/E tabs·stack·split · ⌘1–9 workspaces'}
+        </span>
       ) : null}
 
       <span className="flex-1" />

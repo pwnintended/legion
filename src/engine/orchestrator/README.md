@@ -12,7 +12,7 @@ applies it with CAS transitions through `Store`, runs git through `engine/git`, 
 | `planner.ts` | `runs.create`, clarify, plan (validation retries), plan versions, revision, approval |
 | `tasks.ts` | the per-task driver (re-entrant by task status) |
 | `merge.ts` | merge queue, conflict resolution (lockfiles, resolver sessions) |
-| `finalize.ts` | integration verify, final review, PR text, `runs.createPr` |
+| `finalize.ts` | integration verify, final review, PR text, `runs.createPr` / `runs.mergeLocally` |
 | `cleanup.ts` | `runs.refreshPr` + polling of open PRs, `runs.archive` (§8 step 9; auto on PR merged/closed; `discard` removes what it would keep) |
 | `actions.ts` | human actions: pause/resume/cancel, `tasks.*`, `inbox.resolve` effects |
 | `sessions.ts` | `sessions.send/interrupt/takeover`, attempt terminals |

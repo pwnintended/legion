@@ -114,7 +114,8 @@ export function receiptText(item: InboxItem, taskLabel: string | null): string {
             : 'Conflict closed';
     }
     case 'pr_ready':
-      return resolutionOf(item)?.approved ? 'Opened the draft pull request' : 'Closed without opening a pull request';
+      if (!resolutionOf(item)?.approved) return 'Closed without opening a pull request';
+      return resolutionOf(item)?.action === 'merge' ? 'Merged it locally' : 'Opened the draft pull request';
     case 'budget': {
       const resolution = resolutionOf(item);
       if (resolution?.action === 'raise' && resolution.newLimitUsd !== null)

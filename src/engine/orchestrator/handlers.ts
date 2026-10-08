@@ -1,4 +1,5 @@
 /** RPC procedures of the lifecycle service (`runs.*`, `tasks.*`, `inbox.*`, `sessions.*`, ...). */
+
 import { gitShow } from '../projects';
 import type { EngineRpcServer } from '../rpc/server';
 import {
@@ -15,9 +16,10 @@ import {
 import { createChat } from './assistant';
 import { archiveRun, refreshPr } from './cleanup';
 import { getDiff } from './diff';
-import { createPr } from './finalize';
+import { createPr, mergeLocally } from './finalize';
 import type { Orchestrator } from './orchestrator';
 import { answerClarify, approvePlan, createRun, requestPlanRevision, updatePlan } from './planner';
+import { revertHunk } from './revert';
 import { interruptSession, sendToSession, takeover } from './sessions';
 
 export function registerOrchestratorHandlers(server: EngineRpcServer, o: Orchestrator): void {
@@ -41,6 +43,7 @@ export function registerOrchestratorHandlers(server: EngineRpcServer, o: Orchest
   server.implement('runs.resume', ({ runId }) => resumeRun(o, runId));
   server.implement('runs.cancel', ({ runId }) => cancelRun(o, runId));
   server.implement('runs.createPr', ({ runId, title, body }) => createPr(o, runId, title, body));
+  server.implement('runs.mergeLocally', ({ runId, title, body }) => mergeLocally(o, runId, title, body));
   server.implement('runs.refreshPr', ({ runId }) => refreshPr(o, runId));
   server.implement('runs.archive', ({ runId, force, discard }) =>
     archiveRun(o, runId, { force: force === true, discard: discard === true }),
@@ -51,6 +54,7 @@ export function registerOrchestratorHandlers(server: EngineRpcServer, o: Orchest
   server.implement('tasks.skip', ({ taskId }) => skipTask(o, taskId));
   server.implement('tasks.approveMerge', ({ taskId }) => approveMerge(o, taskId));
   server.implement('tasks.requestChanges', ({ taskId, feedback }) => requestChanges(o, taskId, feedback));
+  server.implement('tasks.revertHunk', ({ taskId, path, hunk }) => revertHunk(o, taskId, path, hunk));
 
   server.implement('inbox.list', (filter) => store.listInbox(filter));
   server.implement('inbox.resolve', ({ itemId, resolution }) => resolveInbox(o, itemId, resolution));

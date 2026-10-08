@@ -1,15 +1,14 @@
 /**
  * Search in the project (`git grep`): a query field with case and regex toggles, results grouped by file with
- * the match highlighted. ↑/↓ move through matches, ⏎ opens the file at the line (⌘⏎ in a new column).
+ * the match highlighted. ↑/↓ move through matches, ⏎ opens the file at the line in the viewer (⌘⏎ keeps it as
+ * a pinned tab). Lives in the Code view's side panel.
  */
 import type { SearchMatch, SearchResult } from '@shared/rpc';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { rpc, useUi } from '../../app/hooks';
 import { openFile } from '../../app/project-actions';
-import { projectWorkspaceKey } from '../../app/projects';
-import { actions } from '../../app/store';
 import { Icon } from '../../chrome/icons';
-import { setTileParams } from '../../layout/tree';
+import { useSetTileParams } from '../../layout/TileFrame';
 import type { TileProps } from '../../layout/types';
 import { FileIcon, HighlightQuery, splitPath } from '../project/kit';
 import { useListNav } from '../project/list-nav';
@@ -22,14 +21,16 @@ type State =
   | { status: 'done'; result: SearchResult }
   | { status: 'error'; message: string };
 
-export default function SearchTile({ tileId, params, focused }: TileProps<'search'>) {
+export default function SearchTile({ tileId, runId, params, focused }: TileProps<'search'>) {
   const { projectId } = params;
+  const checkout = params.checkout ?? null;
   const [query, setQuery] = useState(params.query);
   const [caseSensitive, setCaseSensitive] = useState(false);
   const [regex, setRegex] = useState(false);
   const [state, setState] = useState<State>({ status: 'idle' });
   const inputRef = useRef<HTMLInputElement>(null);
   const focusRequest = useUi((s) => s.focusRequest);
+  const setParams = useSetTileParams<'search'>(runId, tileId);
 
   // A query handed in (palette, ⌘⇧F with a selection) replaces the field.
   useEffect(() => setQuery(params.query), [params.query]);
@@ -45,32 +46,30 @@ export default function SearchTile({ tileId, params, focused }: TileProps<'searc
     return () => cancelAnimationFrame(id);
   }, [focused, focusRequest]);
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: params.query is read, not a trigger
   useEffect(() => {
     const q = query.trim();
     if (!q) {
       setState({ status: 'idle' });
+      if (params.query.trim()) setParams({ projectId, query, checkout });
       return;
     }
     let cancelled = false;
     setState((s) => ({ status: 'loading', previous: s.status === 'done' ? s.result : null }));
     const timer = setTimeout(() => {
-      rpc('files.search', { projectId, query: q, regex, caseSensitive, limit: LIMIT }).then(
+      rpc('files.search', { projectId, checkout, query: q, regex, caseSensitive, limit: LIMIT }).then(
         (result) => !cancelled && setState({ status: 'done', result }),
         (error: unknown) =>
           !cancelled && setState({ status: 'error', message: error instanceof Error ? error.message : String(error) }),
       );
-      // Remember the query in the layout (it survives a reload).
-      actions.updateLayout(
-        projectWorkspaceKey(projectId),
-        (ws) => setTileParams(ws, tileId, { projectId, query }),
-        false,
-      );
+      // Remember the query (it survives a reload).
+      setParams({ projectId, query, checkout });
     }, 220);
     return () => {
       cancelled = true;
       clearTimeout(timer);
     };
-  }, [projectId, tileId, query, regex, caseSensitive]);
+  }, [projectId, checkout, query, regex, caseSensitive, setParams]);
 
   const result = state.status === 'done' ? state.result : state.status === 'loading' ? state.previous : null;
   const matches = result?.matches ?? [];
@@ -84,9 +83,9 @@ export default function SearchTile({ tileId, params, focused }: TileProps<'searc
     return out;
   }, [matches]);
 
-  const open = (index: number, newColumn: boolean) => {
+  const open = (index: number, pinned: boolean) => {
     const match = matches[index];
-    if (match) openFile(projectId, match.path, { line: match.line, anchorTileId: tileId, newColumn });
+    if (match) openFile(projectId, match.path, { line: match.line, pinned });
   };
   const nav = useListNav(matches.length, open);
 

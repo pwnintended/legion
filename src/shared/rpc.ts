@@ -271,6 +271,20 @@ export type TerminalMessage = z.infer<typeof TerminalMessageSchema>;
 // ---------------------------------------------------------------------------------------------
 
 /** Live git state of a project's checkout, for the rail. */
+/**
+ * A checkout of a project other than its main one: a git worktree (Legion's task and integration worktrees, or
+ * any the user made), with the run and task it belongs to when Legion knows.
+ */
+export const CheckoutSchema = z.object({
+  /** Absolute, canonical path. */
+  path: z.string(),
+  branch: z.string().nullable(),
+  kind: z.enum(['task', 'integration', 'other']),
+  runId: IdSchema.nullable(),
+  taskId: IdSchema.nullable(),
+});
+export type Checkout = z.infer<typeof CheckoutSchema>;
+
 export const ProjectStatusSchema = z.object({
   projectId: IdSchema,
   /** The checkout is still there and still a git repository. */
@@ -366,8 +380,21 @@ export const FileContentSchema = z.object({
   /** Only the first `maxBytes` (cut at a line end) were returned. */
   truncated: z.boolean(),
   image: z.object({ mime: z.string(), base64: z.string() }).nullable(),
+  /**
+   * The version read (modification time and size): `files.write` refuses to overwrite a file whose version
+   * moved on since. Optional for older payloads.
+   */
+  version: z.string().nullish(),
 });
 export type FileContent = z.infer<typeof FileContentSchema>;
+
+export const FileStatSchema = z.object({
+  path: z.string(),
+  /** Null when the file is gone. */
+  version: z.string().nullable(),
+  size: z.number().int().nonnegative(),
+});
+export type FileStat = z.infer<typeof FileStatSchema>;
 
 export const FileMatchSchema = z.object({
   path: z.string(),
@@ -534,10 +561,16 @@ export const rpcContract = {
   },
   /** Facts for the project home: branches, remotes, gh, README, languages, size, last commit. */
   'projects.info': { input: ByProject, output: ProjectInfoSchema },
+  /** The project's other checkouts (git worktrees), Legion's own matched to their run and task. */
+  'projects.checkouts': { input: ByProject, output: z.array(CheckoutSchema) },
 
-  // project files: read-only, confined to the project root, ignored files invisible ----------------
+  // project files: read-only, confined to the checkout's root, ignored files invisible -------------
+  // `checkout`: one of the project's checkouts (`projects.checkouts`); absent/null = the main one.
   /** One directory's entries (`dir: ''` = the root). */
-  'files.list': { input: z.object({ projectId: IdSchema, dir: z.string() }), output: FileListSchema },
+  'files.list': {
+    input: z.object({ projectId: IdSchema, dir: z.string(), checkout: z.string().nullish() }),
+    output: FileListSchema,
+  },
   /**
    * A file's content: text (encoding detected, cut at `maxBytes`, default 1 MiB), images (png, jpg, gif,
    * webp, svg, ico; up to 8 MiB) as base64, else `binary`. Refused (`bad_request`): paths outside the project,
@@ -546,6 +579,7 @@ export const rpcContract = {
   'files.read': {
     input: z.object({
       projectId: IdSchema,
+      checkout: z.string().nullish(),
       path: z.string().min(1),
       maxBytes: z
         .number()
@@ -558,13 +592,39 @@ export const rpcContract = {
   },
   /** Fuzzy path match over the project's files (cached index), best first. */
   'files.find': {
-    input: z.object({ projectId: IdSchema, query: z.string(), limit: z.number().int().min(1).max(500) }),
+    input: z.object({
+      projectId: IdSchema,
+      checkout: z.string().nullish(),
+      query: z.string(),
+      limit: z.number().int().min(1).max(500),
+    }),
     output: z.array(FileMatchSchema),
+  },
+  /** A file's current version, cheaply (for noticing that it changed on disk). */
+  'files.stat': {
+    input: z.object({ projectId: IdSchema, checkout: z.string().nullish(), path: z.string().min(1) }),
+    output: FileStatSchema,
+  },
+  /**
+   * Save a text file (UTF-8). `expectedVersion` is the version the text was edited from: when the file changed
+   * since, nothing is written and the call fails with `conflict`. Confined like `files.read` (no new files, no
+   * ignored files, nothing outside the checkout or in `.git`).
+   */
+  'files.write': {
+    input: z.object({
+      projectId: IdSchema,
+      checkout: z.string().nullish(),
+      path: z.string().min(1),
+      text: z.string().max(8 * 1024 * 1024),
+      expectedVersion: z.string().min(1),
+    }),
+    output: FileStatSchema,
   },
   /** Content search (`git grep` over tracked + untracked-not-ignored text files). */
   'files.search': {
     input: z.object({
       projectId: IdSchema,
+      checkout: z.string().nullish(),
       query: z.string().min(1).max(500),
       regex: z.boolean().nullish(),
       caseSensitive: z.boolean().nullish(),
@@ -653,6 +713,16 @@ export const rpcContract = {
     output: z.object({ run: RunSchema, url: z.string() }),
   },
   /**
+   * The PR gate without a remote: one merge commit of the integration branch (titled and described like the PR)
+   * onto the local base branch → done, recorded in `run.merged`. A checked-out base moves by `merge --ff-only`
+   * in its checkout (refused over conflicting local changes); `failed_precondition` when the base is no local
+   * branch or has moved on in a conflicting way.
+   */
+  'runs.mergeLocally': {
+    input: z.object({ runId: IdSchema, title: z.string().nullable(), body: z.string().nullable() }),
+    output: z.object({ run: RunSchema, sha: z.string() }),
+  },
+  /**
    * Re-read the run's PR from the host (`gh pr view`) and store it in `run.pr`. A merged or closed PR
    * finishes the run and archives it (cleanup, see `runs.archive`). The engine also polls open PRs.
    */
@@ -663,7 +733,8 @@ export const rpcContract = {
    * removes worktrees and local branches **unless they hold work found nowhere else**: a worktree with
    * uncommitted changes and a task branch with work in neither integration nor the base are kept (removed
    * anyway with `force`); the integration branch is deleted only when the PR was merged, or closed with the
-   * branch fully pushed, or when it has nothing beyond the base (`force` never deletes it). What was kept is
+   * branch fully pushed, or merged locally (`runs.mergeLocally`) and still in that branch, or when it has nothing
+   * beyond the base (`force` never deletes it). What was kept is
    * listed in `archiveReport`. Restores `gc.auto`, sets `archived: true`. Idempotent.
    */
   'runs.archive': {
@@ -697,6 +768,14 @@ export const rpcContract = {
   'tasks.skip': { input: ByTask, output: TaskSchema },
   /** For `awaiting_human` tasks (high risk / escalations): approve for the merge queue. */
   'tasks.approveMerge': { input: ByTask, output: TaskSchema },
+  /**
+   * Take one hunk of the task's diff back out of its worktree (applied in reverse; `conflict` when it no longer
+   * matches). Committed on the task branch unless the task's coder is at work (then its next commit takes it).
+   */
+  'tasks.revertHunk': {
+    input: z.object({ taskId: IdSchema, path: z.string().min(1), hunk: DiffHunkSchema }),
+    output: z.object({ committed: z.boolean() }),
+  },
   /** Send human feedback to the coder session (→ fixing). */
   'tasks.requestChanges': {
     input: z.object({ taskId: IdSchema, feedback: z.string().min(1) }),

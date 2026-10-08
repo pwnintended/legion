@@ -235,6 +235,62 @@ describe('files', () => {
     await expect(read('inside-link.ts')).resolves.toMatchObject({ kind: 'text', text: expect.stringContaining('42') });
   });
 
+  it('reads another checkout of the project (a git worktree), and nothing outside its checkouts', async () => {
+    const { id } = await addRepo();
+    const other = join(dir.path, 'wt-feature');
+    await repo.git('worktree', 'add', '-q', '-b', 'feature/w', other);
+    writeFileSync(join(other, 'src/index.ts'), 'export const answer = 43;\n');
+    const checkouts = await client.call('projects.checkouts', { projectId: id });
+    expect(checkouts).toEqual([
+      expect.objectContaining({ branch: 'feature/w', kind: 'other', runId: null, taskId: null }),
+    ]);
+    const checkout = checkouts[0]?.path ?? '';
+    const file = await client.call('files.read', { projectId: id, checkout, path: 'src/index.ts' });
+    expect(file).toMatchObject({ kind: 'text', text: 'export const answer = 43;\n' });
+    const main = await client.call('files.read', { projectId: id, path: 'src/index.ts' });
+    expect(main).toMatchObject({ text: expect.stringContaining('42') });
+    const found = await client.call('files.find', { projectId: id, checkout, query: 'index', limit: 5 });
+    expect(found[0]?.path).toBe('src/index.ts');
+    await expect(client.call('files.list', { projectId: id, checkout: dir.path, dir: '' })).rejects.toMatchObject({
+      code: 'bad_request',
+    });
+  });
+
+  it('saves an edited file only when it did not change since it was read', async () => {
+    const { id } = await addRepo();
+    const read = await client.call('files.read', { projectId: id, path: 'src/util/numbers.ts' });
+    expect(read.version).toEqual(expect.any(String));
+    const version = read.version as string;
+    expect(await client.call('files.stat', { projectId: id, path: 'src/util/numbers.ts' })).toMatchObject({ version });
+    const saved = await client.call('files.write', {
+      projectId: id,
+      path: 'src/util/numbers.ts',
+      text: 'export const two = 2;\nexport const three = 3;\n',
+      expectedVersion: version,
+    });
+    expect(saved.version).not.toBe(version);
+    const again = await client.call('files.read', { projectId: id, path: 'src/util/numbers.ts' });
+    expect(again.text).toContain('three');
+    // Saving from the old version would overwrite what changed since: refused, nothing written.
+    await expect(
+      client.call('files.write', {
+        projectId: id,
+        path: 'src/util/numbers.ts',
+        text: 'stale\n',
+        expectedVersion: version,
+      }),
+    ).rejects.toMatchObject({ code: 'conflict' });
+    expect((await client.call('files.read', { projectId: id, path: 'src/util/numbers.ts' })).text).toContain('three');
+    // Ignored files, new files and paths outside stay out of reach.
+    await expect(
+      client.call('files.write', { projectId: id, path: '.env', text: 'x', expectedVersion: version }),
+    ).rejects.toMatchObject({ code: 'not_found' });
+    await expect(
+      client.call('files.write', { projectId: id, path: '../escape.ts', text: 'x', expectedVersion: version }),
+    ).rejects.toMatchObject({ code: 'bad_request' });
+    expect(await client.call('files.stat', { projectId: id, path: 'nope.ts' })).toMatchObject({ version: null });
+  });
+
   it('finds files fuzzily, best first', async () => {
     const { id } = await addRepo();
     const found = await client.call('files.find', { projectId: id, query: 'strts', limit: 5 });

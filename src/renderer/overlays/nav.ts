@@ -2,8 +2,10 @@
 import type { InboxItem } from '@shared/domain';
 import { useSyncExternalStore } from 'react';
 import { actions, syncActiveLayout, uiStore } from '../app/store';
+import { openTerminal } from '../code/actions';
 import { itemTargetsTile, tileTaskId } from '../layout/describe';
 import { allocateId, allTiles, columnOfTile, insertColumn, type LayoutTile, makeColumn } from '../layout/tree';
+import type { TileParamsByKind } from '../layout/types';
 
 /** Switch to the item's run and focus the tile it targets (the same tile ⌘U would pick). */
 export function jumpToItem(item: InboxItem): void {
@@ -24,15 +26,15 @@ export function revealInRun(runId: string, tileId: string | null): void {
 }
 
 /**
- * Open a user tile of a run and focus it: a terminal in the Code view, anything else as the run's pane on the
- * route map (a new column in the run's tree, right of `anchorTileId` or the focused column).
+ * Open a user tile of a run and focus it: a terminal in the run's Code workspace, anything else as the run's
+ * pane on the route map (a new column in the run's tree, right of `anchorTileId` or the focused column).
  */
 export function openTileColumn(runId: string, tile: Omit<LayoutTile, 'id' | 'auto'>, anchorTileId: string | null) {
-  actions.setActiveRun(runId);
   if (tile.kind === 'terminal') {
-    actions.openInCode(tile);
+    openTerminal(tile.params as TileParamsByKind['terminal'], runId);
     return;
   }
+  actions.setActiveRun(runId);
   syncActiveLayout();
   actions.setView('agents');
   actions.updateLayout(

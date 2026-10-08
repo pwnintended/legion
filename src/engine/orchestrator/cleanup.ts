@@ -203,12 +203,15 @@ async function doArchive(o: Orchestrator, runId: string, force: boolean, discard
 
   // The integration branch exists from planning on (the planner works in its worktree). It goes only when
   // its work is safe elsewhere: the PR was merged, or it was closed and the branch is fully pushed, or it
-  // has nothing beyond the base. `force` never deletes it; `discard` always does (locally).
+  // was merged locally and the base branch still has it, or it has nothing beyond the base. `force` never
+  // deletes it; `discard` always does (locally).
   let deleteIntegration = discard;
   if (integration && !discard) {
     const state = run.pr?.state ?? (run.prUrl ? 'open' : null);
     if (state === 'merged') deleteIntegration = true;
-    else if (state === 'closed' && (await fullyPushed(repo, integration))) deleteIntegration = true;
+    else if (run.merged && (await isAncestor(repo, integration, `refs/heads/${run.merged.into}`).catch(() => false))) {
+      deleteIntegration = true;
+    } else if (state === 'closed' && (await fullyPushed(repo, integration))) deleteIntegration = true;
     else if (state === null && base && (await isAncestor(repo, integration, base).catch(() => false))) {
       deleteIntegration = true;
     }
@@ -218,7 +221,9 @@ async function doArchive(o: Orchestrator, runId: string, force: boolean, discard
           ? 'the pull request is open'
           : state === 'closed'
             ? 'the pull request was closed and the branch is not fully pushed'
-            : 'its work is not merged anywhere (no pull request)';
+            : run.merged
+              ? `${run.merged.into} no longer has its work`
+              : 'its work is not merged anywhere (no pull request)';
       report.kept.push({ kind: 'branch', name: integration, reason });
     }
   }

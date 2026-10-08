@@ -668,14 +668,30 @@ re-attaches the transferred port to a live terminal (a detached shell, or the te
   Runs whose project was removed are grouped by repository. Archived runs stay hidden unless asked for.
 - Project page: with an active project and no active run (`uiStore.activeProjectId`, `activeRunId: null`), the chat
   view shows a new conversation (a prompt that starts `runs.chat`, or `runs.create` with the assistant off; branch and
-  engine in the full composer) and the project's earlier conversations. The agents view, labelled Repository, is the
-  project's own workspace: a layout tree stored under `project:<id>` (always Strip). Default columns:
-  Overview (README rendered with repo-relative links/images, facts, languages, New run / Go to file / Search /
-  Terminal / Finder), Activity (runs, open PRs, git history), Files (lazy tree, filter, keyboard). Files, commits and
-  search hits open in a *preview* column right of their source (`layout/project.ts`, reused per kind; ⌘⏎/⌘-click =
-  a new column): the code viewer (Shiki in the diff worker, virtualized, image and Markdown previews, binary/size
-  guards), the diff tile for commits, the search tile (⌘⇧F). Selecting lines in the code viewer → "Start a run about
-  this…" (⌘⏎) opens the composer with the project and a `path:lines` reference. Adding a project opens its home,
+  engine in the full composer) and the project's earlier conversations.
+- Code view (`renderer/code/`, ⌘⇧E): the project's workspaces, kept per project in localStorage
+  (`legion.code.<projectId>`), for checking on files and running commands while agents work. Code belongs to the
+  project: its first workspace is the main checkout with a shell in it; the user makes more, on the project or on
+  one of its checkouts (`projects.checkouts`: the git worktrees, Legion's matched to their run and task). A
+  worktree workspace is read-only while the task's agent works there, until taken over (`sessions.takeover`, the
+  agent's session handed over in a terminal). Takeovers and worktree shells asked for elsewhere land in the
+  workspace on that worktree. Inside a workspace the layout is the user's, i3-style (`code/tree.ts`, pure and
+  tested): containers split side by side or above each other in remembered shares, or show one child under tabs
+  or a stack; open beside, move, resize, re-layout, fullscreen. Tiles are terminals and viewers (files and diffs as
+  tabs; the next file opened replaces the unpinned preview tab). `files.*` take a `checkout` (refused unless it is
+  one of the project's worktrees). The side panel (⌘B) holds a run's Changes (each task's diff, the whole run's),
+  Files, Search (`git grep`, ⌘⇧F) and Activity (runs, open PRs, git history); open files and directories are read
+  again every few seconds while on screen. Files open in an editor (CodeMirror 6, `tiles/code/editor/`): buffers
+  that outlive the editor on screen, ⌘S through `files.write` (refused with `conflict` when the file's version,
+  modification time and size, moved on since it was read), `files.stat` every two seconds to reload an untouched
+  buffer or flag a conflict under unsaved edits, read-only in a worktree workspace while its agent works there,
+  vim keys as a preference. Images, rendered Markdown, binary and size guards as before. A task's diff is
+  reviewed in place (`tiles/diff/review.ts`): comments drafted on hunks go to the task's agent as one message
+  (`sessions.send` into the live coder session, else `tasks.requestChanges`); `tasks.revertHunk` applies a hunk in
+  reverse in the task's worktree (`conflict` when it no longer matches) and commits it on the task branch unless
+  the coder is at work; Approve & merge is `tasks.approveMerge`.
+  Selecting lines in the code viewer → "Start a run about this…" (⌘⏎) opens the composer with the project and a
+  `path:lines` reference. Adding a project opens its home,
   never the composer; ⌘⇧N preselects the project on screen (`app/composer-seed.ts`); ⌘⇧H returns to the home. The
   empty state leads with adding a project (and lists checkouts found on this Mac).
 - Coordination (§8.4-8.6): the composer's prompt starts a conversation with the assistant (`runs.chat`); with the
@@ -683,9 +699,9 @@ re-attaches the transferred port to a live terminal (a detached shell, or the te
   assistant or a lead gets an `agents` column in the agents view (stacked `agents` tile = the attempt tree by
   `parentAttemptId` with status and queued-message counts, click opens the agent's session; `messages` tile = every
   agent-to-agent message), open while executing.
-- Layout engine is a pure TS tree (Workspace → Strip → Column(split|stacked|tabbed) → Tile) with ops
-  (insertAfter, remove, focusDir, moveDir, setWidthPreset, collapse, toggleStacked) and full unit tests.
-  The run's DAG drives insertion; the user's manual changes persist per run.
+- A run's layout tree (`renderer/layout/`) is a pure TS tree (Workspace → Strip → Column → Tile) with ops and
+  full unit tests; it is the model behind the route map (the focused tile is the station pane). The run's DAG
+  drives insertion. The Code view does not use it (see above).
 - Keyboard: one command registry feeds keybindings, palette and tooltips. `Mod` = ⌘. Focus h/j/k/l
   (`⌘⌥` + hjkl or arrows to avoid clobbering text input), terminal tiles get a "locked" mode.
 - Motion: springs (stiffness ~800, critically damped), transform/opacity only, honour reduced motion,

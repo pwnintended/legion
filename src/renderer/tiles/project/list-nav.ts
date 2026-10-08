@@ -13,7 +13,7 @@ function isTyping(event: React.KeyboardEvent): boolean {
  */
 export function useListNav(
   count: number,
-  onOpen: (index: number, newColumn: boolean) => void,
+  onOpen: (index: number, pinned: boolean) => void,
   extraKeys?: (event: React.KeyboardEvent, active: number) => boolean,
 ) {
   const [active, setActive] = useState(-1);

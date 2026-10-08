@@ -1,7 +1,8 @@
 import { excludePathspecs, identityArgs, NO_HOOKS, RERERE } from './changes';
-import { GitError, git, gitSucceeds, gitText, parsePorcelainZ, splitZ, withRepoLock } from './exec';
+import { ANY_EXIT, GitError, git, gitSucceeds, gitText, parsePorcelainZ, splitZ, withRepoLock } from './exec';
 import { isLockfilePath } from './provision';
-import { headSha } from './repo';
+import { branchExists, headSha, isAncestor } from './repo';
+import { listWorktrees } from './worktrees';
 
 /** A precondition on the worktree (dirty, merge in progress, ...) failed before anything was changed. */
 export class IntegrationError extends Error {
@@ -333,6 +334,51 @@ export async function resolveLockfileConflicts(
       }
     }
     return { resolved, remaining };
+  });
+}
+
+// ---------------------------------------------------------------------------------------------
+// Landing a run locally (no remote)
+// ---------------------------------------------------------------------------------------------
+
+/**
+ * Land `head` on the local branch `base` as one merge commit (`base` first parent, so `git log --first-parent`
+ * shows one entry per run). The commit is built from objects (`merge-tree` + `commit-tree`), never by a merge in
+ * a worktree, so a conflict changes nothing. Then `base` moves to it: when `base` is checked out (usually the
+ * user's main checkout) by `merge --ff-only` there, which updates that working tree and refuses rather than
+ * overwrite local changes; otherwise only the ref moves. Returns the new tip (the old one when `head` is already
+ * in `base`). Throws {@link IntegrationError} when `base` is no local branch, conflicts, or cannot move.
+ */
+export async function mergeIntoBase(repo: string, base: string, head: string, message: string): Promise<string> {
+  return withRepoLock(repo, async () => {
+    if (!(await branchExists(repo, base))) throw new IntegrationError(`${base} is not a local branch`);
+    const [baseSha, headTip] = await Promise.all([refSha(repo, base), refSha(repo, head)]);
+    if (await isAncestor(repo, headTip, baseSha)) return baseSha;
+    const forecast = await forecastMerge(repo, baseSha, headTip);
+    if (!forecast.clean) {
+      throw new IntegrationError(
+        `${base} has moved on and conflicts with ${head} in ${forecast.conflictFiles.join(', ')}`,
+      );
+    }
+    const id = await identityArgs(repo);
+    const sha = await gitText(
+      repo,
+      [...id, 'commit-tree', '--no-gpg-sign', forecast.tree, '-p', baseSha, '-p', headTip, '-F', '-'],
+      { input: message },
+    );
+    const checkout = (await listWorktrees(repo)).find((w) => w.branch === base && !w.bare);
+    if (!checkout) {
+      await git(repo, ['update-ref', '-m', `legion: merge ${head}`, `refs/heads/${base}`, sha, baseSha]);
+      return sha;
+    }
+    const ff = await git(checkout.path, [...NO_HOOKS, 'merge', '--ff-only', '--no-stat', sha], {
+      okExitCodes: ANY_EXIT,
+    });
+    if (ff.exitCode !== 0) {
+      const reason = (ff.stderr || ff.stdout).trim().split('\n')[0] ?? '';
+      throw new IntegrationError(`could not move ${base} in ${checkout.path}: ${reason}`);
+    }
+    return sha;
   });
 }
 

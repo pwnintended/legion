@@ -3,7 +3,7 @@
  * (`runs.archive`), the coder's report on the task row, same-engine review with another model, and engine
  * settings that apply without a restart.
  */
-import { existsSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { MessageChannel } from 'node:worker_threads';
 import { DEFAULT_SETTINGS, type Run, type Settings, type Task } from '@shared/domain';
@@ -317,6 +317,48 @@ describe('PR status, task reports and cleanup', () => {
     expect(await legionBranches(harness)).toEqual([]);
     expect(existsSync(t2.worktreePath as string)).toBe(false);
     expect((await harness.repo.git('worktree', 'list', '--porcelain')).match(/^worktree /gm)).toHaveLength(1);
+  });
+});
+
+describe('merging locally instead of a PR', () => {
+  it('lands the run on the local main as one merge commit; archiving then removes every branch', async () => {
+    h = await startHarness({ script: basicScript([node('T1'), node('T2', { dependsOn: ['T1'] })]) });
+    const harness = h;
+    const run = await toPrReady(harness);
+    const landed = await harness.client.call('runs.mergeLocally', { runId: run.id, title: 'Ship it', body: null });
+    const main = await harness.repo.git('rev-parse', 'main');
+    expect(landed.sha).toBe(main);
+    expect(landed.run).toMatchObject({ status: 'done', pr: null, prUrl: null, merged: { into: 'main', sha: main } });
+    expect(await harness.repo.git('log', '-1', '--format=%s', 'main')).toBe('Ship it');
+    expect(await harness.repo.git('show', 'main:src/t2.txt')).toBe('T2');
+    expect(await harness.repo.git('status', '--porcelain')).toBe('');
+    expect(harness.prHost.pushes).toEqual([]);
+    const item = harness.engine.store
+      .listInbox({ runId: run.id, includeResolved: true })
+      .find((i) => i.kind === 'pr_ready');
+    expect(item?.resolution).toMatchObject({ approved: true, title: 'Ship it', action: 'merge' });
+    expect(await gcAuto(harness)).toBeNull();
+
+    const archived = await harness.client.call('runs.archive', { runId: run.id });
+    expect(archived.archiveReport?.kept).toEqual([]);
+    expect(await legionBranches(harness)).toEqual([]);
+  });
+
+  it('leaves the run at the gate when main cannot move', async () => {
+    h = await startHarness({ script: basicScript([node('T1')]) });
+    const harness = h;
+    const run = await toPrReady(harness);
+    const before = await harness.repo.git('rev-parse', 'main');
+    mkdirSync(join(harness.repo.path, 'src'));
+    writeFileSync(join(harness.repo.path, 'src', 't1.txt'), 'mine\n');
+    await expect(
+      harness.client.call('runs.mergeLocally', { runId: run.id, title: null, body: null }),
+    ).rejects.toMatchObject({
+      code: 'failed_precondition',
+      message: expect.stringMatching(/could not merge into main/),
+    });
+    expect(runOf(harness, run.id)).toMatchObject({ status: 'pr_ready', merged: null });
+    expect(await harness.repo.git('rev-parse', 'main')).toBe(before);
   });
 });
 

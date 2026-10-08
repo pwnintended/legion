@@ -1,0 +1,730 @@
+/*
+ * The Code view: workspaces on the crust gutter. The tab row on top and the tile tab rows reuse the board's tab
+ * track (board.css: .bd-tabs, .bd-tab, .bd-tab-pill); tiles use the tile frame (components.css: .tile). The
+ * viewer's head holds its own file tabs; a preview tab is dashed, like everything not kept yet. Tokens only.
+ */
+
+.cw {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--crust);
+}
+
+/* Workspace row ----------------------------------------------------------------------------------- */
+.cw-bar {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 30px;
+  padding: 10px 10px 0;
+  min-width: 0;
+}
+.cw-bar .btn-icon {
+  width: 30px;
+  height: 30px;
+  color: var(--overlay2);
+}
+.cw-bar .btn-icon:hover,
+.cw-bar .btn-icon[aria-pressed="true"] {
+  color: var(--text);
+}
+.cw-spaces {
+  position: relative;
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.cw-spaces::-webkit-scrollbar {
+  display: none;
+}
+.cw-space {
+  position: relative;
+  flex: 0 1 220px;
+  min-width: 108px;
+  display: flex;
+}
+.cw-space:first-child {
+  flex: none;
+  min-width: 0;
+  max-width: 220px;
+}
+.cw-space-tab {
+  flex: 1;
+  width: 100%;
+}
+.cw-space:has(.cw-space-close) .cw-space-tab {
+  padding-right: 24px;
+}
+.cw-space-icon {
+  flex: none;
+  color: var(--overlay2);
+}
+.cw-space-tab[aria-selected="true"] .cw-space-icon {
+  color: var(--subtext1);
+}
+.cw-space-close {
+  all: unset;
+  box-sizing: border-box;
+  cursor: pointer;
+  position: absolute;
+  top: 50%;
+  right: 5px;
+  width: 16px;
+  height: 16px;
+  margin-top: -8px;
+  display: grid;
+  place-items: center;
+  border-radius: 4px;
+  color: var(--overlay2);
+  opacity: 0;
+  transition:
+    opacity 0.15s,
+    background-color 0.15s,
+    color 0.15s;
+}
+.cw-space:hover .cw-space-close,
+.cw-space[data-active] .cw-space-close,
+.cw-space-close:focus-visible {
+  opacity: 1;
+}
+.cw-space-close:hover {
+  color: var(--text);
+  background: var(--surface1);
+}
+.cw-space-close:focus-visible {
+  outline: 2px solid var(--mauve);
+  outline-offset: 0;
+}
+.cw-live-dot {
+  flex: none;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--blue);
+  animation: lg-breathe 1.4s ease-in-out infinite;
+}
+.cw-bar-grow {
+  flex: 1;
+}
+.cw-new-terminal {
+  flex: none;
+  color: var(--subtext1);
+}
+.cw-new-terminal .kbd {
+  margin-left: 2px;
+}
+
+/* New workspace -------------------------------------------------------------------------------- */
+.cw-new {
+  position: relative;
+  flex: none;
+}
+.cw-new-button[aria-expanded="true"] {
+  color: var(--text);
+  background: var(--surface0);
+}
+.cw-new-pop {
+  position: absolute;
+  z-index: 30;
+  top: 36px;
+  left: 0;
+  width: 340px;
+  max-height: min(460px, 70vh);
+  display: flex;
+  flex-direction: column;
+  background: var(--base);
+  border: 1px solid var(--surface1);
+  border-radius: 12px;
+  box-shadow:
+    0 24px 64px color-mix(in srgb, var(--shadow) 55%, transparent),
+    0 0 0 1px color-mix(in srgb, var(--shadow) 40%, transparent);
+  overflow: hidden;
+}
+.cw-new-title {
+  flex: none;
+  padding: 11px 14px 9px;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--text);
+  border-bottom: 1px solid var(--hairline);
+}
+.cw-new-list {
+  overflow-y: auto;
+  padding: 6px;
+  outline: none;
+}
+.cw-new-group {
+  padding: 10px 8px 4px;
+  font-size: 11.5px;
+  color: var(--subtext0);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.cw-new-row {
+  all: unset;
+  box-sizing: border-box;
+  cursor: pointer;
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 32px;
+  padding: 0 8px;
+  border-radius: 8px;
+  font-size: 12.5px;
+  color: var(--text);
+}
+.cw-new-row[data-active] {
+  background: var(--surface0);
+}
+.cw-new-row:focus-visible {
+  outline: 2px solid var(--mauve);
+  outline-offset: -2px;
+}
+.cw-new-label {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.cw-new-note {
+  flex: none;
+  margin-left: auto;
+  font-size: 11.5px;
+  color: var(--subtext0);
+}
+.cw-new-empty {
+  margin: 8px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--subtext0);
+}
+.cw-space-lock {
+  flex: none;
+  color: var(--overlay2);
+}
+
+/* A worktree workspace: what it is on, and whether it is yours to change ------------------------- */
+.cw-checkout {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 32px;
+  margin: 8px 10px 0;
+  padding: 0 6px 0 10px;
+  border-radius: 9px;
+  background: var(--mantle);
+  border: 1px solid var(--surface0);
+  font-size: 12px;
+  min-width: 0;
+}
+.cw-checkout[data-read-only] {
+  border-color: color-mix(in srgb, var(--peach) 34%, var(--surface0));
+}
+.cw-checkout-icon {
+  flex: none;
+  color: var(--subtext0);
+}
+.cw-checkout[data-read-only] .cw-checkout-icon {
+  color: var(--peach);
+}
+.cw-checkout-name {
+  min-width: 0;
+  font-weight: 600;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.cw-checkout-path {
+  min-width: 0;
+  font-size: 11px;
+  color: var(--overlay2);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.cw-checkout-note {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--subtext0);
+}
+
+/* Main: side panel and tiles ------------------------------------------------------------------- */
+.cw-main {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+}
+.cw-panel-slot {
+  flex: none;
+  display: flex;
+  padding: 10px 0 10px 10px;
+}
+.cw-tiles {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+}
+.cw-slot {
+  position: absolute;
+  left: 0;
+  top: 0;
+  display: flex;
+  will-change: transform;
+}
+
+/* Tiles ------------------------------------------------------------------------------------------ */
+.cw-tile {
+  flex: 1;
+}
+.cw-head {
+  gap: 8px;
+  padding: 0 6px 0 12px;
+}
+.cw-head-icon {
+  flex: none;
+  color: var(--subtext0);
+}
+.cw-head-title {
+  flex: 0 1 auto;
+  color: var(--text);
+}
+.cw-tile:not([data-focused="true"]) .cw-head-title {
+  color: var(--subtext1);
+}
+.cw-head-note {
+  min-width: 0;
+  font-size: 11px;
+  color: var(--overlay2);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.cw-head .chip {
+  flex: none;
+}
+.cw-grow {
+  flex: 1;
+}
+.cw-actions {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+.cw-actions .btn-icon {
+  width: 26px;
+  height: 26px;
+  color: var(--overlay2);
+}
+.cw-actions .btn-icon:hover {
+  color: var(--text);
+}
+/* A tile's own actions show on hover or focus, the viewer's tab actions always (they belong to the tab). */
+.cw-tile .cw-actions > .btn-icon {
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+.cw-tile:hover .cw-actions > .btn-icon,
+.cw-tile[data-focused="true"] .cw-actions > .btn-icon,
+.cw-actions > .btn-icon:focus-visible {
+  opacity: 1;
+}
+.cw-actions .tile-actions {
+  opacity: 1;
+}
+/* A tabbed container's tab row (the board's tab track) and a stacked container's title bars. */
+.cw-con-tabs {
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.cw-con-tabs::-webkit-scrollbar {
+  display: none;
+}
+.cw-con-tabs .bd-tab {
+  flex: 0 1 220px;
+  min-width: 96px;
+}
+.cw-con-stack {
+  position: absolute;
+  left: 0;
+  top: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  box-sizing: border-box;
+  border-radius: 9px;
+  background: var(--mantle);
+  border: 1px solid var(--surface0);
+  overflow: hidden;
+}
+.cw-stack-row {
+  all: unset;
+  box-sizing: border-box;
+  cursor: pointer;
+  flex: none;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 0 10px;
+  font-size: 12px;
+  color: var(--subtext0);
+  border-bottom: 1px solid var(--hairline);
+  transition:
+    color 0.15s,
+    background-color 0.15s;
+}
+.cw-stack-row:last-child {
+  border-bottom: none;
+}
+.cw-stack-row:hover {
+  color: var(--text);
+}
+.cw-stack-row[aria-selected="true"] {
+  color: var(--text);
+  background: var(--surface0);
+}
+.cw-stack-row[data-focused] {
+  box-shadow: inset 2px 0 0 var(--mauve);
+}
+.cw-stack-row:focus-visible {
+  outline: 2px solid var(--mauve);
+  outline-offset: -2px;
+}
+
+/* Nothing open: what to open, and the keys for it. */
+.cw-empty {
+  position: absolute;
+  inset: 10px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  border: var(--border-w) dashed var(--surface1);
+  border-radius: var(--radius);
+}
+.cw-empty-lede {
+  margin: 0;
+  font-size: 13px;
+  color: var(--subtext0);
+}
+.cw-empty-actions {
+  display: flex;
+  gap: 8px;
+}
+.cw-tab-icon {
+  flex: none;
+  color: var(--overlay2);
+}
+
+/* Viewer ----------------------------------------------------------------------------------------- */
+.cw-viewer-head {
+  padding-left: 6px;
+}
+.cw-vtabs {
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.cw-vtabs::-webkit-scrollbar {
+  display: none;
+}
+.cw-vtabs[data-fade-end] {
+  mask-image: linear-gradient(to right, #000 calc(100% - 28px), transparent);
+}
+.cw-vtabs[data-fade-start] {
+  mask-image: linear-gradient(to right, transparent, #000 28px);
+}
+.cw-vtabs[data-fade-start][data-fade-end] {
+  mask-image: linear-gradient(to right, transparent, #000 28px, #000 calc(100% - 28px), transparent);
+}
+.cw-vtab {
+  position: relative;
+  flex: none;
+  display: flex;
+  align-items: center;
+  height: 26px;
+  max-width: 240px;
+  border-radius: 6px;
+  transition: background-color 0.15s;
+}
+.cw-vtab:hover {
+  background: color-mix(in srgb, var(--surface0) 50%, transparent);
+}
+.cw-vtab[data-active] {
+  background: var(--surface0);
+}
+.cw-tile[data-focused="true"] .cw-vtab[data-active] {
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--mauve) 45%, transparent);
+}
+/* Not kept yet: the next file you open takes its place. */
+.cw-vtab[data-preview] {
+  outline: 1px dashed var(--surface2);
+  outline-offset: -1px;
+}
+.cw-vtab-main {
+  all: unset;
+  box-sizing: border-box;
+  cursor: pointer;
+  min-width: 0;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 24px 0 9px;
+  font-size: 12px;
+  color: var(--subtext0);
+  transition: color 0.15s;
+}
+.cw-vtab:hover .cw-vtab-main,
+.cw-vtab[data-active] .cw-vtab-main {
+  color: var(--text);
+}
+.cw-vtab-main:focus-visible {
+  outline: 2px solid var(--mauve);
+  outline-offset: -2px;
+  border-radius: 6px;
+}
+.cw-vtab-icon {
+  flex: none;
+  color: var(--overlay2);
+}
+.cw-vtab-id {
+  flex: none;
+  font-size: 11px;
+  color: var(--overlay2);
+}
+.cw-vtab-title {
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.cw-vtab-note {
+  flex: none;
+  font-size: 11px;
+  color: var(--overlay1);
+}
+.cw-vtab-close {
+  all: unset;
+  box-sizing: border-box;
+  cursor: pointer;
+  position: absolute;
+  top: 50%;
+  right: 5px;
+  width: 16px;
+  height: 16px;
+  margin-top: -8px;
+  display: grid;
+  place-items: center;
+  border-radius: 4px;
+  color: var(--overlay2);
+  opacity: 0;
+  transition:
+    opacity 0.15s,
+    background-color 0.15s,
+    color 0.15s;
+}
+.cw-vtab:hover .cw-vtab-close,
+.cw-vtab[data-active] .cw-vtab-close,
+.cw-vtab-dirty {
+  position: absolute;
+  top: 50%;
+  right: 9px;
+  width: 7px;
+  height: 7px;
+  margin-top: -3.5px;
+  border-radius: 50%;
+  background: var(--text);
+  display: none;
+  pointer-events: none;
+}
+/* Unsaved: a dot where the close sits, the close on hover. */
+.cw-vtab[data-dirty] .cw-vtab-dirty {
+  display: block;
+}
+.cw-vtab[data-dirty] .cw-vtab-close {
+  opacity: 0;
+}
+.cw-vtab[data-dirty]:hover .cw-vtab-dirty {
+  display: none;
+}
+.cw-vtab[data-dirty]:hover .cw-vtab-close {
+  opacity: 1;
+}
+.cw-vtab-close:focus-visible {
+  opacity: 1;
+}
+.cw-vtab-close:hover {
+  color: var(--text);
+  background: var(--surface1);
+}
+.cw-vtab-close:focus-visible {
+  outline: 2px solid var(--mauve);
+  outline-offset: 0;
+}
+.cw-viewer-actions {
+  margin-left: 4px;
+}
+.cw-tab-actions[hidden] {
+  display: none;
+}
+.cw-tab-body {
+  position: absolute;
+  inset: 0;
+}
+
+/* Side panel ------------------------------------------------------------------------------------- */
+.cw-panel {
+  width: 300px;
+  height: 100%;
+}
+.cw-panel-head {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  height: 38px;
+  padding: 0 4px 0 6px;
+  border-bottom: 1px solid var(--hairline);
+}
+.cw-section {
+  all: unset;
+  box-sizing: border-box;
+  cursor: pointer;
+  position: relative;
+  isolation: isolate;
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 26px;
+  padding: 0 8px;
+  border-radius: 6px;
+  font-size: 12px;
+  color: var(--subtext0);
+  transition: color 0.15s;
+}
+.cw-section:hover,
+.cw-section[aria-selected="true"] {
+  color: var(--text);
+}
+.cw-section:focus-visible {
+  outline: 2px solid var(--mauve);
+  outline-offset: -2px;
+}
+/* Only the open section names itself; the others are icons with their name in the tooltip. */
+.cw-section:not([aria-selected="true"]) .cw-section-label {
+  display: none;
+}
+.cw-section-pill {
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  border-radius: 6px;
+  background: var(--surface0);
+}
+.cw-panel-close {
+  margin-left: auto;
+  width: 26px;
+  height: 26px;
+  color: var(--overlay2);
+}
+.cw-panel-close:hover {
+  color: var(--text);
+}
+.cw-panel-body {
+  flex: 1;
+  min-height: 0;
+  position: relative;
+  overflow: hidden;
+}
+
+/* Changes ----------------------------------------------------------------------------------------- */
+.cg {
+  height: 100%;
+  overflow-y: auto;
+  padding: 6px 8px 18px;
+  box-sizing: border-box;
+}
+.cg-line {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+.cg-line .cg-row {
+  flex: 1;
+  min-width: 0;
+}
+.cg-row[disabled] {
+  cursor: default;
+}
+.cg-row[disabled]:hover {
+  background: none;
+}
+.cg-icon {
+  color: var(--subtext0);
+}
+.cg-id {
+  flex: none;
+  font-size: 11.5px;
+  color: var(--subtext1);
+}
+.cg-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.cg-stat {
+  gap: 6px;
+  font-size: 11px;
+}
+.cg-add {
+  color: var(--green);
+}
+.cg-del {
+  color: var(--red);
+}
+.cg-shell {
+  flex: none;
+  width: 28px;
+  height: 28px;
+  color: var(--overlay2);
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+.cg-line:hover .cg-shell,
+.cg-shell:focus-visible {
+  opacity: 1;
+}
+.cg-shell:hover {
+  color: var(--text);
+}
+.cg-empty {
+  padding: 10px 10px 14px 34px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .cw-live-dot {
+    /* biome-ignore lint/complexity/noImportantStyles: reduced motion must override component styles */
+    animation: none !important;
+  }
+}

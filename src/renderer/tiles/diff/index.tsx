@@ -1,25 +1,32 @@
 /**
  * Diff tile: a task's changes (`diff.get` task range) or the whole run (`base...integration`). File tabs with
  * +/−, per-file collapse (large files start collapsed), virtualized rows, Shiki highlighting of the hunks
- * on screen (in a worker), review findings anchored at file:line, "since round N", j/k hunks, n findings.
+ * on screen (in a worker), review findings anchored at file:line, "since round N", j/k hunks, n findings. On a
+ * task's diff you review in place: comment on a hunk (c), revert one, and send your review to the task's agent
+ * or approve the merge (ReviewParts.tsx, review.ts).
  */
 
 import type { EngineKind, Review, Task } from '@shared/domain';
-import type { DiffFile, DiffTarget } from '@shared/rpc';
+import type { DiffFile, DiffHunk, DiffTarget } from '@shared/rpc';
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useStore } from 'zustand';
 import { useShallow } from 'zustand/react/shallow';
+import { confirmAction } from '../../app/confirm';
 import { attemptsOfRun, reviewsOfRun, tasksOfRun } from '../../app/data';
-import { useData, useLatestPlan, useRun, useSettings } from '../../app/hooks';
+import { rpc, useData, useLatestPlan, useRun, useSettings } from '../../app/hooks';
 import { Chip } from '../../chrome/ui';
+import { codeStore } from '../../code/state';
 import { otherEngine } from '../../layout/describe';
 import type { TileProps } from '../../layout/types';
+import { toast } from '../../overlays/nav';
 import { Segmented, useTileKeys } from '../plan/kit';
 import { filesChangedSince, type TrackedFinding, trackFindings } from '../review/evidence';
 import { FindingCard } from '../review/findings';
 import { diffFocus, targetKey, useDiff } from './data';
 import { highlighted, requestHighlight, type Tok, useHighlightVersion } from './highlight';
 import { buildRows, defaultCollapsed, hunkSides, languageOf, offsetsOf, type Row, rowAt } from './model';
+import { CommentCard, ComposeBox, HunkHead, ReviewBar } from './ReviewParts';
+import { startComment, useComposing, useDrafts } from './review';
 
 type Mode = 'all' | 'since';
 const OVERSCAN_PX = 600;
@@ -192,10 +199,66 @@ function DiffView({
   const root = useRef<HTMLDivElement>(null);
   const [view, setView] = useState({ top: 0, height: 800 });
 
+  // Reviewing a task's diff: your drafted comments and the box you are writing one in, inline under their hunks.
+  const reviewTask = target.kind === 'task' ? ctx.task : null;
+  const drafts = useDrafts(reviewTask?.id ?? null);
+  const composingAll = useComposing();
+  const composing = reviewTask && composingAll?.taskId === reviewTask.id ? composingAll : null;
   const built = useMemo(
-    () => buildRows(files, collapsed, ctx.findings, (f) => measured.get(f.key) ?? estimateFindingHeight(f)),
-    [files, collapsed, ctx.findings, measured],
+    () =>
+      buildRows(
+        files,
+        collapsed,
+        ctx.findings,
+        (f) => measured.get(f.key) ?? estimateFindingHeight(f),
+        reviewTask
+          ? {
+              comments: drafts,
+              composing: composing ? { path: composing.path, newStart: composing.newStart } : null,
+              height: (key, fallback) => measured.get(key) ?? fallback,
+            }
+          : null,
+      ),
+    [files, collapsed, ctx.findings, measured, reviewTask, drafts, composing],
   );
+  const revertBlocked = useData((s) => {
+    if (!reviewTask) return 'Not a task';
+    if (['merging', 'merged', 'skipped', 'cancelled'].includes(reviewTask.status))
+      return `The task is ${reviewTask.status}`;
+    if (!reviewTask.worktreePath) return 'The task has no worktree';
+    const coding = Object.values(s.attempts).some(
+      (a) => a.taskId === reviewTask.id && a.status === 'running' && (a.role === 'coder' || a.role === 'resolver'),
+    );
+    if (!coding) return null;
+    const taken = Object.values(codeStore.getState().projects).some((p) =>
+      p.workspaces.some((w) => w.checkout === reviewTask.worktreePath && w.taken),
+    );
+    return taken ? null : 'Its agent is working there: take its worktree over first';
+  });
+  const revert = async (path: string, hunk: DiffHunk) => {
+    if (!reviewTask) return;
+    const ok = await confirmAction({
+      title: `Revert this change to ${path.split('/').at(-1)}?`,
+      body: [
+        `It is taken back out of ${reviewTask.nodeId}'s worktree, and committed on its branch unless its agent is at work (its next commit takes it then).`,
+        'Tell the agent why in a comment, or it may make the change again.',
+      ],
+      confirmLabel: 'Revert',
+      tone: 'warn',
+    });
+    if (!ok) return;
+    try {
+      const result = await rpc('tasks.revertHunk', { taskId: reviewTask.id, path, hunk });
+      toast(
+        result.committed
+          ? `Reverted and committed on ${reviewTask.nodeId}'s branch.`
+          : `Reverted in ${reviewTask.nodeId}'s worktree.`,
+      );
+      onRefresh();
+    } catch (error) {
+      toast(`Couldn't revert: ${error instanceof Error ? error.message : String(error)}`, 'error');
+    }
+  };
   const offsets = useMemo(() => offsetsOf(built.rows), [built]);
   const total = offsets[built.rows.length] ?? 0;
 
@@ -313,6 +376,17 @@ function DiffView({
         if (path) toggle(path);
         return true;
       }
+      case 'c': {
+        // Comment on the active hunk (else the first one on screen).
+        if (!reviewTask) return false;
+        const at = built.hunkRows[activeHunk] ?? built.hunkRows.find((r) => r >= rowAt(offsets, view.top + 4));
+        const row = at !== undefined ? built.rows[at] : undefined;
+        const file = row ? files[row.file] : undefined;
+        const hunk = row?.kind === 'hunk' && file ? file.hunks[row.hunk] : undefined;
+        if (!file || !hunk) return false;
+        startComment(reviewTask.id, file.path, hunk.newStart);
+        return true;
+      }
       default:
         return false;
     }
@@ -423,7 +497,8 @@ function DiffView({
                   top: offsets[index],
                   left: 0,
                   right: 0,
-                  height: row.kind === 'finding' ? undefined : row.height,
+                  height:
+                    row.kind === 'finding' || row.kind === 'comment' || row.kind === 'compose' ? undefined : row.height,
                 }}
               >
                 <RowView
@@ -439,6 +514,9 @@ function DiffView({
                   task={ctx.task}
                   scope={ctx.task?.id ?? runId}
                   onMeasure={onMeasure}
+                  reviewTaskId={reviewTask?.id ?? null}
+                  revertBlocked={revertBlocked}
+                  onRevert={revert}
                 />
               </div>
             );
@@ -461,6 +539,15 @@ function DiffView({
           </div>
         ) : null}
       </div>
+      {built.strayComments.length > 0 ? (
+        <div className="flex-none border-t border-[var(--hairline)] px-3.5 py-2">
+          <div className="lg-sec">Comments on changes no longer in this diff</div>
+          {built.strayComments.map((c) => (
+            <CommentCard key={c.id} comment={c} />
+          ))}
+        </div>
+      ) : null}
+      {reviewTask ? <ReviewBar task={reviewTask} comments={drafts} /> : null}
       {focused ? (
         <div className="faint flex flex-none items-center gap-3 border-t border-[var(--hairline)] px-3.5 py-1.5 text-[11px]">
           <span>
@@ -475,6 +562,11 @@ function DiffView({
           <span>
             <span className="kbd">x</span> collapse
           </span>
+          {reviewTask ? (
+            <span>
+              <span className="kbd">c</span> comment
+            </span>
+          ) : null}
         </div>
       ) : null}
     </div>
@@ -503,6 +595,9 @@ const RowView = memo(function RowView({
   task,
   scope,
   onMeasure,
+  reviewTaskId,
+  revertBlocked,
+  onRevert,
 }: {
   row: Row;
   file: DiffFile;
@@ -516,6 +611,10 @@ const RowView = memo(function RowView({
   task: Task | null;
   scope: string;
   onMeasure: (key: string, height: number) => void;
+  /** Reviewing this task's diff: hunks take comments and reverts. */
+  reviewTaskId: string | null;
+  revertBlocked: string | null;
+  onRevert: (path: string, hunk: DiffHunk) => void;
 }) {
   switch (row.kind) {
     case 'file': {
@@ -564,10 +663,43 @@ const RowView = memo(function RowView({
       const h = file.hunks[row.hunk];
       if (!h) return null;
       return (
-        <div className="lg-hunk" data-active={activeHunk}>
-          @@ −{h.oldStart},{h.oldLines} +{h.newStart},{h.newLines} @@{' '}
-          <span className="faint">{h.header || (file.status === 'added' ? 'new file' : '')}</span>
-        </div>
+        <HunkHead
+          file={file.path}
+          hunk={h}
+          status={file.status}
+          active={activeHunk}
+          review={
+            reviewTaskId
+              ? {
+                  onComment: () => startComment(reviewTaskId, file.path, h.newStart),
+                  onRevert: () => onRevert(file.path, h),
+                  revertBlocked:
+                    file.status === 'modified' || file.status === 'renamed'
+                      ? revertBlocked
+                      : 'Only changes to an existing file can be reverted here',
+                }
+              : null
+          }
+        />
+      );
+    }
+    case 'comment':
+      return (
+        <Measured id={row.key} onMeasure={onMeasure}>
+          <div className="py-1.5 pr-3.5 pl-[62px]">
+            <CommentCard comment={row.comment} />
+          </div>
+        </Measured>
+      );
+    case 'compose': {
+      const h = file.hunks[row.hunk];
+      if (!h || !reviewTaskId) return null;
+      return (
+        <Measured id={row.key} onMeasure={onMeasure}>
+          <div className="py-1.5 pr-3.5 pl-[62px]">
+            <ComposeBox taskId={reviewTaskId} path={file.path} hunk={h} />
+          </div>
+        </Measured>
       );
     }
     case 'line':

@@ -1,7 +1,7 @@
 /**
  * App shell: title bar, rail, then what is in view: the project's board of conversations (chat view; the active
- * run is its focused tile), the active run's route map of agents (agents view), or the project's code strip
- * (code view, and a project with no run); onboarding when there is nothing yet. Status bar, overlays.
+ * run is its focused tile), the active run's route map of agents (agents view), or the project's workspaces
+ * (code view: the active run's, or the project's own); onboarding when there is nothing yet. Status bar, overlays.
  * Overlays (composer, inbox, palette) are rendered by `overlays/index.tsx` (default export, mounted once here)
  * and read `uiStore.overlay` to decide what to show.
  */
@@ -14,11 +14,12 @@ import { Onboarding } from '../chrome/Onboarding';
 import { Rail } from '../chrome/Rail';
 import { StatusBar } from '../chrome/StatusBar';
 import { TitleBar } from '../chrome/TitleBar';
-import { Workspace, WorkspaceSkeleton } from '../layout/Workspace';
+import { CodeView } from '../code/CodeView';
+import { WorkspaceSkeleton } from '../layout/Workspace';
 import { installKeybindings } from './commands';
 import { useConnection, useData, useRuns, useUi } from './hooks';
 import { useMotionConfig } from './prefs';
-import { activeWorkspaceKey } from './store';
+import { projectOfRun } from './projects';
 
 const overlayModules = import.meta.glob<{ default: ComponentType }>('../overlays/index.tsx');
 const overlayLoader = Object.values(overlayModules)[0];
@@ -35,10 +36,14 @@ export function App() {
   const runs = useRuns();
   const connection = useConnection();
   const hasProjects = useData((s) => Object.keys(s.projects).length > 0);
-  const workspaceKey = useUi(activeWorkspaceKey);
   const activeRunId = useUi((s) => s.activeRunId);
   const activeProjectId = useUi((s) => s.activeProjectId);
   const view = useUi((s) => s.view);
+  const codeProject = useData((s) => {
+    const run = activeRunId ? s.runs[activeRunId] : undefined;
+    const project = run ? projectOfRun(s, run) : activeProjectId ? s.projects[activeProjectId] : null;
+    return project?.id ?? null;
+  });
   const boardKey = useData((s) => {
     const run = activeRunId ? s.runs[activeRunId] : undefined;
     return run ? boardKeyOf(s, run) : activeProjectId;
@@ -50,7 +55,8 @@ export function App() {
   else if (runs.length === 0 && !hasProjects) content = <Onboarding />;
   else if (view === 'chat' && boardKey) content = <Board key={boardKey} boardKey={boardKey} />;
   else if (view === 'agents' && activeRunId) content = <RouteMap key={activeRunId} runId={activeRunId} />;
-  else if (workspaceKey) content = <Workspace key={workspaceKey} workspaceKey={workspaceKey} />;
+  else if (view === 'code' && codeProject) content = <CodeView key={codeProject} projectId={codeProject} />;
+  else if (view === 'code') content = <NoProject />;
   else content = <WorkspaceSkeleton />;
 
   return (
@@ -71,5 +77,14 @@ export function App() {
         ) : null}
       </div>
     </MotionConfig>
+  );
+}
+
+/** A run whose project was removed has no workspaces: its code lives in a project Legion no longer knows. */
+function NoProject() {
+  return (
+    <div className="flex flex-1 items-center justify-center p-8 text-center text-[13px] text-subtext0">
+      This run's project was removed from Legion. Add the folder again to browse its code here.
+    </div>
   );
 }

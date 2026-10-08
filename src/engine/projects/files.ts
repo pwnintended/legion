@@ -1,12 +1,13 @@
 /**
- * Read-only file browsing of a project: directory listings and file contents from the file index (so ignored
- * files never show), fuzzy "Go to file" and `git grep` content search. Every path goes through `paths.ts`.
+ * File browsing of a project (or one of its checkouts): directory listings and file contents from the file index
+ * (so ignored files never show), fuzzy "Go to file", `git grep` content search, and saving an edited text file
+ * (only when it did not change since it was read). Every path goes through `paths.ts`.
  */
-import { lstat, open, stat } from 'node:fs/promises';
+import { lstat, open, stat, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { fuzzyRank } from '@shared/fuzzy';
 import { imageMimeOf } from '@shared/languages';
-import type { FileContent, FileEntry, FileList, FileMatch, SearchMatch, SearchResult } from '@shared/rpc';
+import type { FileContent, FileEntry, FileList, FileMatch, FileStat, SearchMatch, SearchResult } from '@shared/rpc';
 import { RpcError } from '@shared/rpc-transport';
 import { git } from '../git';
 import type { FileIndexCache } from './file-index';
@@ -95,19 +96,64 @@ async function readHead(path: string, bytes: number): Promise<Buffer> {
   }
 }
 
-export async function readProjectFile(
+/** A file's version: its modification time (nanoseconds) and size. Changes whenever anyone writes it. */
+async function versionOf(real: string): Promise<{ version: string; size: number }> {
+  const info = await stat(real, { bigint: true });
+  return { version: `${info.mtimeNs}:${info.size}`, size: Number(info.size) };
+}
+
+/** A file of the index, confined: its clean relative path and real absolute path. */
+async function indexedFile(
   root: string,
   cache: FileIndexCache,
   path: string,
-  maxBytes: number = DEFAULT_MAX_TEXT_BYTES,
-): Promise<FileContent> {
+): Promise<{ clean: string; real: string }> {
   const clean = normalizeRel(path);
   if (!clean) throw new RpcError('bad_request', 'the project root is a directory');
   let index = await cache.get(root);
   // A file created a moment ago may not be in the cached index yet.
   if (!index.set.has(clean)) index = await cache.get(root, { fresh: true });
   if (!index.set.has(clean)) throw new RpcError('not_found', `${clean} is not one of the project's files`);
-  const real = await resolveInside(root, clean);
+  return { clean, real: await resolveInside(root, clean) };
+}
+
+export async function statProjectFile(root: string, cache: FileIndexCache, path: string): Promise<FileStat> {
+  const clean = normalizeRel(path);
+  try {
+    const { real } = await indexedFile(root, cache, clean);
+    return { path: clean, ...(await versionOf(real)) };
+  } catch (error) {
+    if (error instanceof RpcError && error.code === 'not_found') return { path: clean, version: null, size: 0 };
+    throw error;
+  }
+}
+
+/** Save `text` over a file that is still at `expectedVersion` (else `conflict`, and nothing is written). */
+export async function writeProjectFile(
+  root: string,
+  cache: FileIndexCache,
+  path: string,
+  text: string,
+  expectedVersion: string,
+): Promise<FileStat> {
+  const { clean, real } = await indexedFile(root, cache, path);
+  const info = await stat(real);
+  if (info.isDirectory()) throw new RpcError('bad_request', `${clean} is a directory`);
+  const before = await versionOf(real);
+  if (before.version !== expectedVersion) {
+    throw new RpcError('conflict', `${clean} changed on disk since it was opened`, { version: before.version });
+  }
+  await writeFile(real, text, 'utf8');
+  return { path: clean, ...(await versionOf(real)) };
+}
+
+export async function readProjectFile(
+  root: string,
+  cache: FileIndexCache,
+  path: string,
+  maxBytes: number = DEFAULT_MAX_TEXT_BYTES,
+): Promise<FileContent> {
+  const { clean, real } = await indexedFile(root, cache, path);
   const info = await stat(real);
   if (info.isDirectory()) throw new RpcError('bad_request', `${clean} is a directory`);
   const base: FileContent = {
@@ -118,6 +164,7 @@ export async function readProjectFile(
     encoding: null,
     truncated: false,
     image: null,
+    version: (await versionOf(real)).version,
   };
   const mime = imageMimeOf(clean);
   if (mime) {

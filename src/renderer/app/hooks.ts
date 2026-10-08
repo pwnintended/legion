@@ -268,3 +268,30 @@ export function useRpc(): <P extends ProcedureName>(method: P, input: RpcInput<P
 export function rpc<P extends ProcedureName>(method: P, input: RpcInput<P>): Promise<RpcOutput<P>> {
   return getClient().call(method, input);
 }
+
+/** Last `useHasOrigin` answer per repository, so a remounted card knows at once (still asked again). */
+const originAnswers = new Map<string, boolean>();
+
+/**
+ * Whether the repository has an `origin` remote to push a PR to (`repos.inspect`, asked on every mount).
+ * Undefined until the first answer; true when the repository cannot be inspected (the PR path reports why).
+ */
+export function useHasOrigin(repoPath: string | null | undefined): boolean | undefined {
+  const [, rerender] = useState(0);
+  useEffect(() => {
+    if (!repoPath) return;
+    let cancelled = false;
+    const answer = (hasOrigin: boolean) => {
+      originAnswers.set(repoPath, hasOrigin);
+      if (!cancelled) rerender((n) => n + 1);
+    };
+    rpc('repos.inspect', { path: repoPath }).then(
+      (r) => answer(r.remotes.some((x) => x.name === 'origin')),
+      () => answer(true),
+    );
+    return () => {
+      cancelled = true;
+    };
+  }, [repoPath]);
+  return repoPath ? originAnswers.get(repoPath) : undefined;
+}

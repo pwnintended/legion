@@ -56,7 +56,7 @@ import { entryTs, type TimelineRow, timelineCursor, type Working } from './timel
 // ---------------------------------------------------------------------------------------------
 
 function focusedApproval(ctx: CommandContext) {
-  if (ctx.ui.overlay || ctx.ui.keyMode !== 'normal' || !ctx.layout || !ctx.activeRunId) return null;
+  if (ctx.ui.overlay || !ctx.layout || !ctx.activeRunId) return null;
   const tile = focusedTile(ctx.layout);
   if (tile?.kind !== 'session') return null;
   const params = tile.params as { attemptId: string | null; taskId: string | null };
@@ -72,7 +72,7 @@ function focusedApproval(ctx: CommandContext) {
 
 /** The open escalation / conflict of the focused session tile's task. */
 function focusedEscalation(ctx: CommandContext): EscalationItem | null {
-  if (ctx.ui.overlay || ctx.ui.keyMode !== 'normal' || !ctx.layout || !ctx.activeRunId) return null;
+  if (ctx.ui.overlay || !ctx.layout || !ctx.activeRunId) return null;
   const tile = focusedTile(ctx.layout);
   if (tile?.kind !== 'session') return null;
   const taskId = (tile.params as { taskId: string | null }).taskId;

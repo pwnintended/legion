@@ -5,8 +5,7 @@
  *
  * Keyboard rules:
  * - ⌘-chords work everywhere, including text inputs, unless the command sets `inInput: false`.
- * - Plain keys (Escape, or h/j/k/l inside RESIZE/MOVE mode) never fire while typing in an input, unless the
- *   command sets `inInput: true`.
+ * - Plain keys (Escape) never fire while typing in an input, unless the command sets `inInput: true`.
  * - Terminals are "locked": everything except ⌘-chords passes through to them.
  * - Overlays own their keys: while one is open, only commands marked `inOverlay` (opening/closing/switching
  *   overlays) are dispatched from the keyboard; everything else (⌘⏎ Focus layout, ⌘⌥H, plain tile keys, ...)
@@ -17,22 +16,8 @@ import { useSyncExternalStore } from 'react';
 import { useStore } from 'zustand';
 import { boardCommands } from '../board/commands';
 import { boardActions } from '../board/state';
-import {
-  collapse,
-  cycleColumnMode,
-  cycleWidth,
-  type Dir,
-  findTile,
-  focusDir,
-  focusedColumn,
-  focusedTile,
-  maximize,
-  moveDir,
-  remove,
-  setWidthPreset,
-  toggleCollapsed,
-  type Workspace,
-} from '../layout/tree';
+import { codeCommands } from '../code/commands';
+import type { Workspace } from '../layout/tree';
 import { toast } from '../overlays/nav';
 import { canArchive, isArchived, runPr } from './compat';
 import { isConfirmOpen } from './confirm';
@@ -49,16 +34,7 @@ import {
 } from './project-actions';
 import { selectWorkspaceRuns } from './projects';
 import { archiveRunInteractively, discardRunInteractively, refreshPr, stopRunInteractively } from './run-actions';
-import {
-  actions,
-  activeProjectOf,
-  activeWorkspaceKey,
-  dataStore,
-  jumpToNextDecision,
-  type KeyMode,
-  type UiState,
-  uiStore,
-} from './store';
+import { actions, activeProjectOf, dataStore, jumpToNextDecision, type UiState, uiStore } from './store';
 
 export interface CommandContext {
   ui: UiState;
@@ -67,27 +43,15 @@ export interface CommandContext {
   layout: Workspace | null;
 }
 
-export type CommandCategory =
-  | 'Run'
-  | 'Project'
-  | 'Layout'
-  | 'Focus'
-  | 'Column'
-  | 'Tile'
-  | 'Overlay'
-  | 'Workspace'
-  | 'Mode'
-  | 'App';
+export type CommandCategory = 'Run' | 'Project' | 'Layout' | 'Focus' | 'Tile' | 'Overlay' | 'Workspace' | 'App';
 
 export interface Command {
-  /** Stable id, e.g. `layout.overview`. The app menu and palette refer to commands by id. */
+  /** Stable id, e.g. `view.code`. The app menu and palette refer to commands by id. */
   id: string;
   title: string;
   category?: CommandCategory;
   /** One or more bindings like `Mod+Alt+H` (see keys.ts). The first is shown in tooltips. */
   keybinding?: string | readonly string[];
-  /** Only bound in this key mode (RESIZE/MOVE). Omitted = every mode. */
-  mode?: KeyMode;
   /** Override whether the binding fires while a text input has focus (see module doc). */
   inInput?: boolean;
   /** The binding also fires while an overlay is open (default: overlays own the keyboard; see module doc). */
@@ -155,14 +119,13 @@ export function listCommands(): Command[] {
 
 function context(): CommandContext {
   const ui = uiStore.getState();
-  const key = activeWorkspaceKey(ui);
   return {
     ui,
     data: dataStore.getState(),
     activeRunId: ui.activeRunId,
-    // Layout commands only act on what is on screen: the run's tree behind the route map (agents view), or the
-    // project's strip (code view). The conversation has none.
-    layout: key && ui.view !== 'chat' ? (ui.layouts[key] ?? null) : null,
+    // Layout commands only act on what is on screen: the run's tree behind the route map (agents view). The
+    // conversation has none, and the Code view keeps its own workspaces (code/state.ts).
+    layout: ui.activeRunId && ui.view === 'agents' ? (ui.layouts[ui.activeRunId] ?? null) : null,
   };
 }
 
@@ -268,7 +231,6 @@ export function keyGuard(
   if (ctx.ui.overlay !== null && !command.inOverlay) return false;
   if (!where.modChord && where.inTerminal) return false;
   if (where.inInput && (where.modChord ? command.inInput === false : command.inInput !== true)) return false;
-  if (command.mode && command.mode !== ctx.ui.keyMode) return false;
   return isEnabled(command, ctx);
 }
 
@@ -283,7 +245,6 @@ export function handleKeyDown(event: KeyboardEvent): boolean {
   const inInput = isTextInput(event.target);
   const inTerminal = isTerminal(event.target);
   const ctx = context();
-  const keyMode = ctx.ui.keyMode;
   for (const { command, chords } of parsedBindings()) {
     for (const chord of chords) {
       if (!matchesChord(chord, event)) continue;
@@ -300,18 +261,6 @@ export function handleKeyDown(event: KeyboardEvent): boolean {
       return true;
     }
   }
-  // Inside RESIZE/MOVE mode, stray letters must not leak into the page.
-  if (
-    keyMode !== 'normal' &&
-    ctx.ui.overlay === null &&
-    !inTerminal &&
-    !inInput &&
-    /^Key[A-Z]$/.test(event.code) &&
-    !event.metaKey
-  ) {
-    event.preventDefault();
-    return true;
-  }
   return false;
 }
 
@@ -325,7 +274,7 @@ export function handleAgentsEscape(event: KeyboardEvent): boolean {
   if (isConfirmOpen() || ownsPlainKeys(event.target) || isTextInput(event.target) || isTerminal(event.target))
     return false;
   const { ui } = context();
-  if (ui.view !== 'agents' || ui.overlay !== null || ui.keyMode !== 'normal') return false;
+  if (ui.view !== 'agents' || ui.overlay !== null) return false;
   event.preventDefault();
   void executeCommand('view.agents.leave');
   return true;
@@ -361,48 +310,11 @@ export function installKeybindings(target: Window = window): () => void {
 // Built-in commands
 // ---------------------------------------------------------------------------------------------
 
-/** The code view's strip is on screen: column, focus and key-mode commands act on it. */
-const hasLayout = (ctx: CommandContext) =>
-  ctx.ui.view === 'code' && ctx.layout !== null && ctx.layout.strip.columns.length > 0;
 const activeRun = (ctx: CommandContext) => (ctx.activeRunId ? (ctx.data.runs[ctx.activeRunId] ?? null) : null);
-
-function layoutOp(op: (layout: Workspace) => Workspace) {
-  return () => actions.layout(op);
-}
-
-function onFocusedColumn(op: (layout: Workspace, columnId: string) => Workspace) {
-  return layoutOp((layout) => {
-    const column = focusedColumn(layout);
-    return column ? op(layout, column.id) : layout;
-  });
-}
-
-const DIRS: { dir: Dir; name: string; keys: string[] }[] = [
-  { dir: 'h', name: 'left', keys: ['H', 'Left'] },
-  { dir: 'j', name: 'down', keys: ['J', 'Down'] },
-  { dir: 'k', name: 'up', keys: ['K', 'Up'] },
-  { dir: 'l', name: 'right', keys: ['L', 'Right'] },
-];
 
 const projectInView = (ctx: CommandContext) => activeProjectOf(ctx.ui, ctx.data);
 /** The project home is on screen (no run focused). */
 const onProjectHome = (ctx: CommandContext) => ctx.activeRunId === null && projectInView(ctx) !== null;
-
-/** A terminal in the Code view: in the worktree of the task on the route map, else the repository root. */
-function openTerminal(ctx: CommandContext): void {
-  const run = activeRun(ctx);
-  const project = projectInView(ctx);
-  const root = run?.repoPath ?? project?.path;
-  if (!root) return;
-  const runLayout = run ? ctx.ui.layouts[run.id] : undefined;
-  const tile = runLayout ? focusedTile(runLayout) : null;
-  const taskId =
-    tile && (tile.kind === 'session' || tile.kind === 'review')
-      ? (tile.params as { taskId: string | null }).taskId
-      : null;
-  const cwd = (taskId && ctx.data.tasks[taskId]?.worktreePath) || root;
-  actions.openInCode({ kind: 'terminal', params: { terminalId: null, cwd, attemptId: null } });
-}
 
 export function builtinCommands(): Command[] {
   const commands: Command[] = [
@@ -527,7 +439,7 @@ export function builtinCommands(): Command[] {
     },
     {
       id: 'view.code',
-      title: "Show the project's code",
+      title: "Show the code: the project's workspaces",
       category: 'Layout',
       keybinding: 'Mod+Shift+E',
       when: (ctx) => ctx.ui.view !== 'code' && projectInView(ctx) !== null,
@@ -561,35 +473,6 @@ export function builtinCommands(): Command[] {
       run: () => actions.closeOverlay(),
     },
 
-    // Focus & move -----------------------------------------------------------------------------------
-    ...DIRS.map<Command>(({ dir, name, keys }) => ({
-      id: `focus.${name}`,
-      title: `Focus ${name}`,
-      category: 'Focus',
-      keybinding: keys.map((k) => `Mod+Alt+${k}`),
-      repeatable: true,
-      when: hasLayout,
-      run: layoutOp((l) => focusDir(l, dir)),
-    })),
-    ...DIRS.map<Command>(({ dir, name, keys }) => ({
-      id: `move.${name}`,
-      title: dir === 'h' || dir === 'l' ? `Move column ${name}` : `Move tile ${name}`,
-      category: 'Focus',
-      keybinding: keys.map((k) => `Mod+Alt+Shift+${k}`),
-      repeatable: true,
-      when: hasLayout,
-      run: layoutOp((l) => moveDir(l, dir)),
-    })),
-    ...DIRS.map<Command>(({ dir, name, keys }) => ({
-      id: `move.mode.${name}`,
-      title: `Move ${name}`,
-      keybinding: keys,
-      mode: 'move',
-      hidden: true,
-      repeatable: true,
-      when: hasLayout,
-      run: layoutOp((l) => moveDir(l, dir)),
-    })),
     {
       id: 'decision.next',
       inOverlay: true,
@@ -600,116 +483,6 @@ export function builtinCommands(): Command[] {
         if (jumpToNextDecision()) actions.closeOverlay();
         else toast('Nothing is waiting for you.', 'info');
       },
-    },
-
-    // Modes ------------------------------------------------------------------------------------------
-    {
-      id: 'mode.resize',
-      title: 'Resize mode',
-      category: 'Mode',
-      keybinding: 'Mod+R',
-      when: hasLayout,
-      run: (ctx) => actions.setKeyMode(ctx.ui.keyMode === 'resize' ? 'normal' : 'resize'),
-    },
-    {
-      id: 'mode.move',
-      title: 'Move mode',
-      category: 'Mode',
-      when: hasLayout,
-      run: (ctx) => actions.setKeyMode(ctx.ui.keyMode === 'move' ? 'normal' : 'move'),
-    },
-    {
-      id: 'mode.exit',
-      title: 'Back to normal mode',
-      keybinding: ['Escape', 'Enter'],
-      hidden: true,
-      when: (ctx) => ctx.ui.keyMode !== 'normal',
-      run: () => actions.setKeyMode('normal'),
-    },
-    {
-      id: 'resize.narrower',
-      title: 'Narrower',
-      keybinding: ['H', 'Left'],
-      mode: 'resize',
-      hidden: true,
-      repeatable: true,
-      run: onFocusedColumn((l, c) => cycleWidth(l, c, -1)),
-    },
-    {
-      id: 'resize.wider',
-      title: 'Wider',
-      keybinding: ['L', 'Right'],
-      mode: 'resize',
-      hidden: true,
-      repeatable: true,
-      run: onFocusedColumn((l, c) => cycleWidth(l, c, 1)),
-    },
-    {
-      id: 'resize.full',
-      title: 'Full width',
-      keybinding: 'F',
-      mode: 'resize',
-      hidden: true,
-      run: onFocusedColumn((l, c) => setWidthPreset(l, c, 'full')),
-    },
-    {
-      id: 'resize.thin',
-      title: 'Collapse',
-      keybinding: 'T',
-      mode: 'resize',
-      hidden: true,
-      run: onFocusedColumn((l, c) => collapse(l, c)),
-    },
-
-    // Columns & tiles --------------------------------------------------------------------------------
-    {
-      id: 'column.maximize',
-      title: 'Maximize column',
-      category: 'Column',
-      keybinding: 'Mod+F',
-      when: hasLayout,
-      run: layoutOp(maximize),
-    },
-    {
-      id: 'column.cycleMode',
-      title: 'Toggle tabbed / stacked column',
-      category: 'Column',
-      keybinding: 'Mod+W',
-      when: hasLayout,
-      run: onFocusedColumn(cycleColumnMode),
-    },
-    {
-      id: 'column.toggleCollapse',
-      title: 'Collapse / expand column',
-      category: 'Column',
-      keybinding: 'Mod+Alt+C',
-      when: hasLayout,
-      run: onFocusedColumn(toggleCollapsed),
-    },
-    {
-      id: 'column.cycleWidth',
-      title: 'Cycle column width',
-      category: 'Column',
-      when: hasLayout,
-      run: onFocusedColumn((l, c) => cycleWidth(l, c, 1)),
-    },
-    {
-      id: 'tile.newTerminal',
-      title: 'Open a terminal in the focused worktree',
-      category: 'Tile',
-      when: (ctx) => activeRun(ctx) !== null || projectInView(ctx) !== null,
-      run: openTerminal,
-    },
-    {
-      id: 'tile.close',
-      title: 'Close tile',
-      category: 'Tile',
-      keybinding: 'Mod+Shift+W',
-      when: (ctx) => {
-        const tile = ctx.layout && focusedTile(ctx.layout);
-        return !!tile && !tile.auto;
-      },
-      run: layoutOp((l) => (l.focus && !findTile(l, l.focus.tile)?.auto ? remove(l, l.focus.tile) : l)),
     },
 
     // Run ----------------------------------------------------------------------------------------------
@@ -786,7 +559,7 @@ export function builtinCommands(): Command[] {
     },
   ];
 
-  commands.push(...boardCommands());
+  commands.push(...boardCommands(), ...codeCommands());
 
   // Workspaces ⌘1–9: runs in rail order (grouped by project).
   for (let n = 1; n <= 9; n++) {

@@ -1,6 +1,7 @@
 /**
  * Keybinding strings: `Mod+Alt+H`, `Mod+Shift+Enter`, `Escape`, `H`. `Mod` = ⌘ on macOS (Ctrl elsewhere).
- * Letters and digits match on `event.code` (so ⌥ doesn't turn H into ˙); named keys match on `event.key`.
+ * Letters, digits and brackets match on `event.code` (so ⌥ doesn't turn H into ˙, nor ⇧ [ into {); named
+ * keys match on `event.key`.
  */
 
 export interface Chord {
@@ -59,6 +60,9 @@ export function parseChord(binding: string): Chord {
 function eventKey(event: KeyEventLike): string {
   if (/^Key[A-Z]$/.test(event.code)) return event.code.slice(3);
   if (/^Digit[0-9]$/.test(event.code)) return event.code.slice(5);
+  // Brackets by position, so ⇧ (which makes them braces) doesn't change the key.
+  if (event.code === 'BracketLeft') return '[';
+  if (event.code === 'BracketRight') return ']';
   if (event.key.length === 1) return event.key.toUpperCase();
   return event.key;
 }

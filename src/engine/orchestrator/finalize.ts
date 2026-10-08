@@ -1,12 +1,14 @@
 /**
  * §8 steps 7–8: every task terminal → integrating (full verify on the integration worktree) →
  * finalizing (holistic review on the engine other than the coders' majority; blockers → inbox) →
- * pr_ready (inbox item with the PR text) → `runs.createPr` (push + draft PR through the `PrHost`) → done.
+ * pr_ready (inbox item with the PR text) → `runs.createPr` (push + draft PR through the `PrHost`), or
+ * `runs.mergeLocally` (merge commit onto the local base branch) → done.
  */
 import type { PullRequest, Review, ReviewFinding, Run } from '@shared/domain';
 import { RpcError } from '@shared/rpc-transport';
 import { ReviewOutputSchema, reviewOutputJsonSchema } from '@shared/schemas';
-import { cleanWorktree, gitText } from '../git';
+import type { RunPatch } from '../db';
+import { cleanWorktree, gitText, mergeIntoBase } from '../git';
 import {
   buildFinalizerPrompt,
   buildPrBody,
@@ -281,7 +283,7 @@ export function enterPrReady(o: Orchestrator, runId: string): Run {
   });
 }
 
-/** Runs with a `runs.createPr` in flight (archive and refresh wait for it to settle). */
+/** Runs with a `runs.createPr` / `runs.mergeLocally` in flight (archive and refresh wait for it to settle). */
 export const prInFlight = new Set<string>();
 
 /** Human PR gate (`runs.createPr` / approving the `pr_ready` item): push + draft PR → done. */
@@ -291,10 +293,63 @@ export async function createPr(
   title: string | null,
   body: string | null,
 ): Promise<{ run: Run; url: string }> {
+  let url = '';
+  const run = await passGate(o, runId, title, body, 'pr', async (run, text) => {
+    let pr: PullRequest;
+    try {
+      await o.prHost.push(run.repoPath, run.integrationBranch);
+      pr = await o.prHost.createDraftPr({
+        repoPath: run.repoPath,
+        base: run.baseRef,
+        head: run.integrationBranch,
+        title: text.title,
+        body: text.body,
+      });
+    } catch (error) {
+      throw new RpcError('failed_precondition', `could not create the pull request: ${(error as Error).message}`);
+    }
+    url = pr.url;
+    return { prUrl: pr.url, pr };
+  });
+  return { run, url };
+}
+
+/**
+ * The PR gate without a remote (`runs.mergeLocally` / approving the `pr_ready` item with `action: 'merge'`):
+ * one merge commit of the integration branch onto the local base branch, titled like the PR → done.
+ */
+export async function mergeLocally(
+  o: Orchestrator,
+  runId: string,
+  title: string | null,
+  body: string | null,
+): Promise<{ run: Run; sha: string }> {
+  let sha = '';
+  const run = await passGate(o, runId, title, body, 'merge', async (run, text) => {
+    const message = `${text.title}\n\n${text.body}`.trim();
+    try {
+      sha = await mergeIntoBase(run.repoPath, run.baseRef, run.integrationBranch, `${message}\n`);
+    } catch (error) {
+      throw new RpcError('failed_precondition', `could not merge into ${run.baseRef}: ${(error as Error).message}`);
+    }
+    return { merged: { into: run.baseRef, sha, at: Date.now() } };
+  });
+  return { run, sha };
+}
+
+/** Runs the gate's `land` once per run, then records its patch, resolves the `pr_ready` item and finishes the run. */
+async function passGate(
+  o: Orchestrator,
+  runId: string,
+  title: string | null,
+  body: string | null,
+  action: 'pr' | 'merge',
+  land: (run: Run & { integrationBranch: string }, text: { title: string; body: string }) => Promise<RunPatch>,
+): Promise<Run> {
   const run = o.store.requireRun(runId);
   if (run.status !== 'pr_ready') throw new RpcError('conflict', `run ${runId} is ${run.status}, not pr_ready`);
   if (!run.integrationBranch) throw new RpcError('failed_precondition', 'the run has no integration branch');
-  if (prInFlight.has(runId)) throw new RpcError('conflict', 'a pull request is already being created');
+  if (prInFlight.has(runId)) throw new RpcError('conflict', 'the run is already being landed');
   prInFlight.add(runId);
   try {
     const item = o.store
@@ -303,29 +358,25 @@ export async function createPr(
     const text = item ? item.payload : prText(o, run);
     const finalTitle = title?.trim() || text.title;
     const finalBody = body ?? text.body;
-    let pr: PullRequest;
-    try {
-      await o.prHost.push(run.repoPath, run.integrationBranch);
-      pr = await o.prHost.createDraftPr({
-        repoPath: run.repoPath,
-        base: run.baseRef,
-        head: run.integrationBranch,
-        title: finalTitle,
-        body: finalBody,
-      });
-    } catch (error) {
-      throw new RpcError('failed_precondition', `could not create the pull request: ${(error as Error).message}`);
-    }
-    const url = pr.url;
+    const patch = await land(
+      { ...run, integrationBranch: run.integrationBranch },
+      { title: finalTitle, body: finalBody },
+    );
     const done = o.store.transaction(() => {
-      o.store.updateRun(runId, { prUrl: url, pr });
+      o.store.updateRun(runId, patch);
       if (item) {
-        o.store.resolveInboxItem(item.id, { kind: 'pr_ready', approved: true, title: finalTitle, body: finalBody });
+        o.store.resolveInboxItem(item.id, {
+          kind: 'pr_ready',
+          approved: true,
+          title: finalTitle,
+          body: finalBody,
+          action,
+        });
       }
       return o.store.transitionRun(runId, 'pr_ready', 'done');
     });
     await releaseRepo(o, done);
-    return { run: done, url };
+    return done;
   } finally {
     prInFlight.delete(runId);
   }

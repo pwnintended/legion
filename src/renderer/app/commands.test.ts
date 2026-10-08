@@ -254,16 +254,14 @@ describe("a conversation's agents (⌘E in, ⌘E or Esc out)", () => {
     expect(ran).toEqual(['view.agents.leave', 'view.agents.leave']);
   });
 
-  it('Esc stays with a field, an overlay, a key mode or a handler that already took it', () => {
+  it('Esc stays with a field, an overlay or a handler that already took it', () => {
     withPlan();
     uiStore.setState({ view: 'agents' });
     const input = { tagName: 'TEXTAREA', isContentEditable: false, closest: () => null };
     expect(handleAgentsEscape(esc(input) as unknown as KeyboardEvent)).toBe(false);
     const taken = { ...esc(), defaultPrevented: true };
     expect(handleAgentsEscape(taken as unknown as KeyboardEvent)).toBe(false);
-    uiStore.setState({ keyMode: 'resize' });
-    expect(handleAgentsEscape(esc() as unknown as KeyboardEvent)).toBe(false);
-    uiStore.setState({ keyMode: 'normal', overlay: 'palette' });
+    uiStore.setState({ overlay: 'palette' });
     expect(handleAgentsEscape(esc() as unknown as KeyboardEvent)).toBe(false);
     expect(ran).toEqual([]);
   });

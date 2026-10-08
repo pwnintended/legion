@@ -1,0 +1,79 @@
+{
+ "regions": [
+  {
+   "id": "titlebar",
+   "kind": "chrome",
+   "grid": "A0:J0",
+   "note": "title bar: crumb, Chat | Agents | Code switch, Commands, Needs you 1, New run; map title row"
+  },
+  {
+   "id": "map-top",
+   "kind": "text",
+   "grid": "A1:C2",
+   "note": "map counts (22 tasks, 6 working, 1 waiting, 1 failed), Plan terminus, folded Wave 1, Wave 2 label on the trunk",
+   "snap": false
+  },
+  {
+   "id": "map-wave",
+   "kind": "text",
+   "grid": "A3:C5",
+   "note": "open wave: folded 4 merged line, rows T7 to T14 hanging off the bus, T9 selected with a mauve outline",
+   "snap": false
+  },
+  {
+   "id": "map-next",
+   "kind": "text",
+   "grid": "A6:C7",
+   "note": "Wave 3 rows T15 to T17 dimmed, folded Then 2 waves line",
+   "snap": false
+  },
+  {
+   "id": "map-termini",
+   "kind": "text",
+   "grid": "A8:C9",
+   "note": "Integration and Pull request termini, dashed rings",
+   "snap": false
+  },
+  {
+   "id": "pane-header",
+   "kind": "text",
+   "grid": "D1:J1",
+   "note": "T9 id chip, Tax rates sync title, engine chips claude coder / codex reviewer, fixing 1/2 chip, goal caption",
+   "snap": false
+  },
+  {
+   "id": "stage-tabs",
+   "kind": "control",
+   "grid": "D2:J2",
+   "note": "stage track Code, Review, Fix 1/2, Verify, Merge, and tabs Transcript, Changes, Review, Messages",
+   "snap": false
+  },
+  {
+   "id": "transcript-top",
+   "kind": "text",
+   "grid": "D3:J5",
+   "note": "transcript: claude turn with edit row, codex finding box",
+   "snap": false
+  },
+  {
+   "id": "transcript-bottom",
+   "kind": "text",
+   "grid": "D6:J8",
+   "note": "transcript: claude reply, running vitest command block",
+   "snap": false
+  },
+  {
+   "id": "composer",
+   "kind": "control",
+   "grid": "D9:J9",
+   "note": "steer composer at the bottom of the pane",
+   "snap": false
+  },
+  {
+   "id": "statusbar",
+   "kind": "chrome",
+   "grid": "A9:J9",
+   "note": "status bar: key mode pill, spend, engine meters"
+  }
+ ]
+}

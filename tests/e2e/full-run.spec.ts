@@ -35,6 +35,10 @@ function makeRepo(dir: string): string {
   writeFileSync(join(repo, 'README.md'), '# widgets\n\nA tiny fixture repository.\n');
   git('add', '-A');
   git('commit', '-q', '-m', 'initial');
+  // A PR needs a remote to push to (without one the card offers only the local merge); fake mode never pushes.
+  const origin = join(dir, 'widgets-origin.git');
+  execFileSync('git', ['init', '-q', '--bare', origin]);
+  git('remote', 'add', 'origin', origin);
   return repo;
 }
 
@@ -213,7 +217,10 @@ test('full run, chat first: composer → assistant → clarify → plan → appr
     } finally {
       db.close();
     }
-    expect(execFileSync('git', ['remote'], { cwd: repo, encoding: 'utf8' }).trim()).toBe('');
+    // Fake mode has no external effects: nothing was pushed to the fixture's origin.
+    expect(execFileSync('git', ['remote'], { cwd: repo, encoding: 'utf8' }).trim()).toBe('origin');
+    const origin = execFileSync('git', ['remote', 'get-url', 'origin'], { cwd: repo, encoding: 'utf8' }).trim();
+    expect(execFileSync('git', ['for-each-ref'], { cwd: origin, encoding: 'utf8' }).trim()).toBe('');
   } finally {
     await app?.close();
     rmSync(scratch, { recursive: true, force: true });

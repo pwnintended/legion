@@ -547,6 +547,7 @@ function AppearanceSection() {
   const id = useId();
   const flavour = usePrefs((p) => p.flavour);
   const motion = usePrefs((p) => p.motion);
+  const vim = usePrefs((p) => p.editorVim);
   return (
     <section className="st-section" data-section="appearance" aria-labelledby="st-appearance">
       <h2 id="st-appearance" className="st-h">
@@ -587,6 +588,23 @@ function AppearanceSection() {
             { value: 'full', label: 'Full' },
           ]}
           onChange={(v) => setPref('motion', v)}
+        />
+      </div>
+      <div className="st-row">
+        <div className="min-w-0 flex-1">
+          <div className="st-label" id={`${id}-keys`}>
+            Editor keys
+          </div>
+          <div className="st-note">How the Code view's editor takes keys. Vim starts in normal mode.</div>
+        </div>
+        <Segmented<'standard' | 'vim'>
+          labelledBy={`${id}-keys`}
+          value={vim ? 'vim' : 'standard'}
+          options={[
+            { value: 'standard', label: 'Standard' },
+            { value: 'vim', label: 'Vim' },
+          ]}
+          onChange={(v) => setPref('editorVim', v === 'vim')}
         />
       </div>
     </section>

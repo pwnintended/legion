@@ -17,7 +17,7 @@ export { assistantEnabled, createChat, MAX_ASSISTANT_FAILURES, runAssistant } fr
 export { archiveRun, PR_POLL_MS, refreshPr, startPrPolling } from './cleanup';
 export { DEMO_PLAN, demoScript } from './demo';
 export { getDiff } from './diff';
-export { createPr, enterPrReady, prText } from './finalize';
+export { createPr, enterPrReady, mergeLocally, prText } from './finalize';
 export { registerOrchestratorHandlers } from './handlers';
 export { board, leadEnabled, MAX_LEAD_FAILURES, runLead } from './lead';
 export { AgentRun, HANDBACK_PROMPT, type TurnResult } from './live-session';

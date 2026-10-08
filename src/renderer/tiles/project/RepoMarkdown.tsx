@@ -11,14 +11,35 @@ import '../session/session.css';
 import { openUrl, useFile } from './kit';
 import { absolutizeRepoLinks, repoTarget } from './links';
 
-function RepoImage({ projectId, path, alt }: { projectId: string; path: string; alt: string }) {
-  const file = useFile(projectId, path);
+function RepoImage({
+  projectId,
+  checkout,
+  path,
+  alt,
+}: {
+  projectId: string;
+  checkout: string | null;
+  path: string;
+  alt: string;
+}) {
+  const file = useFile(projectId, path, checkout);
   const image = file.data?.image;
   if (!image) return file.loading ? <span className="md-img-pending" aria-hidden="true" /> : null;
   return <img src={`data:${image.mime};base64,${image.base64}`} alt={alt} className="md-repo-img" />;
 }
 
-export function RepoMarkdown({ projectId, path, text }: { projectId: string; path: string; text: string }) {
+export function RepoMarkdown({
+  projectId,
+  path,
+  text,
+  checkout = null,
+}: {
+  projectId: string;
+  path: string;
+  text: string;
+  /** The checkout the file is from (absent/null = the main one): relative images and links resolve in it. */
+  checkout?: string | null;
+}) {
   const components = useMemo(
     () =>
       ({
@@ -26,7 +47,7 @@ export function RepoMarkdown({ projectId, path, text }: { projectId: string; pat
           const src = props.src;
           const resolved = typeof src === 'string' ? repoTarget(src, path) : null;
           const alt = typeof props.alt === 'string' ? props.alt : '';
-          return resolved ? <RepoImage projectId={projectId} path={resolved} alt={alt} /> : null;
+          return resolved ? <RepoImage projectId={projectId} checkout={checkout} path={resolved} alt={alt} /> : null;
         },
         a: (props: React.AnchorHTMLAttributes<HTMLAnchorElement>) => {
           const href = typeof props.href === 'string' ? props.href : undefined;
@@ -38,7 +59,7 @@ export function RepoMarkdown({ projectId, path, text }: { projectId: string; pat
               title={target ?? href}
               onClick={(event) => {
                 event.preventDefault();
-                if (target) openFile(projectId, target, { anchorTileId: null });
+                if (target) openFile(projectId, target);
                 else if (href) openUrl(href);
               }}
             >
@@ -47,7 +68,7 @@ export function RepoMarkdown({ projectId, path, text }: { projectId: string; pat
           );
         },
       }) as Partial<Components>,
-    [projectId, path],
+    [projectId, path, checkout],
   );
   const source = useMemo(() => absolutizeRepoLinks(text, path), [text, path]);
   return <Markdown text={source} streaming={false} caret={false} components={components} />;

@@ -5,7 +5,7 @@
  * - passkeys run: T4's review pack (round-1 findings, a fix round, and with `stage=gate` an approving round 2
  *   that waits for the human gate because migrations are high-risk), verify evidence and diff data;
  * - PDF run: merges, post-merge/final verification, a final review and a generated PR body;
- * - RPCs: runs.updatePlan / requestPlanRevision / createPr, tasks.approveMerge / requestChanges, diff.get.
+ * - RPCs: runs.updatePlan / requestPlanRevision / createPr / mergeLocally, tasks.approveMerge / requestChanges, diff.get.
  *
  * `?stage=gate` (or `localStorage['legion.demo.stage'] = 'gate'`) starts T4 at the human merge gate.
  */
@@ -824,6 +824,23 @@ export function handlePlanReviewRpc(ctx: DemoRpcContext, method: ProcedureName, 
       // `pr` is the engine's richer PR row (may not be in this build's Run type yet).
       Object.assign(run, { pr: { url, number: 412, state: 'open', isDraft: true } });
       return { run: setRun(ctx, run, { status: 'done', prUrl: url }), url };
+    }
+    case 'runs.mergeLocally': {
+      const run = runOf(ctx, input.runId as string);
+      if (run.status !== 'pr_ready') throw new RpcError('failed_precondition', `run is ${run.status}`);
+      const sha = '5e1f0c3a9b7d2e4f6a8c0b1d3e5f7a9c2b4d6e8f';
+      const bodies: ServerEventBody[] = [];
+      for (const item of w.inbox) {
+        if (item.runId === run.id && item.kind === 'pr_ready' && item.resolvedAt === null) {
+          Object.assign(item, {
+            resolvedAt: Date.now(),
+            resolution: { approved: true, title: input.title ?? null, body: input.body ?? null, action: 'merge' },
+          });
+          bodies.push({ type: 'inbox.updated', item: clone(item) });
+        }
+      }
+      ctx.emit(bodies);
+      return { run: setRun(ctx, run, { status: 'done', merged: { into: run.baseRef, sha, at: Date.now() } }), sha };
     }
     default:
       return NOT_HANDLED;

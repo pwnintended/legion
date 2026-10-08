@@ -47,6 +47,7 @@ export function runStatusLine(
         ? { text: 'PR ready for you', tone: 'warn', live: false }
         : { text: `PR ready · ${merged}/${total} merged`, tone: 'ok', live: false };
     case 'done': {
+      if (run.merged) return { text: `done · merged into ${run.merged.into}`, tone: 'ok', live: false };
       const pr = runPr(run);
       if (!pr) return { text: 'done', tone: 'ok', live: false };
       const n = pr.number ? ` #${pr.number}` : '';

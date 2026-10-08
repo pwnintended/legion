@@ -4,6 +4,7 @@
  */
 import type { DiffFile, DiffHunk, DiffLine } from '@shared/rpc';
 import type { TrackedFinding } from '../review/evidence';
+import type { ReviewComment } from './review';
 
 export const ROW_H = { file: 36, hunk: 26, line: 20, note: 30, gap: 10 } as const;
 /** Files with more changed lines than this start collapsed. */
@@ -23,6 +24,10 @@ export type Row =
       anchor: 'open' | 'resolved' | null;
     }
   | { kind: 'finding'; key: string; file: number; finding: TrackedFinding; height: number }
+  /** Your drafted review comment on a hunk (Code view). */
+  | { kind: 'comment'; key: string; file: number; comment: ReviewComment; height: number }
+  /** Writing a comment on hunk `hunk`. */
+  | { kind: 'compose'; key: string; file: number; hunk: number; height: number }
   | { kind: 'note'; key: string; file: number; text: string; height: number }
   | { kind: 'gap'; key: string; file: number; height: number };
 
@@ -61,23 +66,43 @@ export interface BuiltRows {
   fileRows: Map<string, number>;
   /** Findings whose file is not part of this diff. */
   elsewhere: TrackedFinding[];
+  /** Your comments whose file is not part of this diff (any more). */
+  strayComments: ReviewComment[];
 }
+
+export interface ReviewRows {
+  comments: readonly ReviewComment[];
+  /** The hunk a comment is being written on (by file path and new-side start). */
+  composing: { path: string; newStart: number } | null;
+  height: (key: string, fallback: number) => number;
+}
+
+export const COMMENT_H = 96;
+export const COMPOSE_H = 132;
 
 export function buildRows(
   files: readonly DiffFile[],
   collapsed: ReadonlySet<string>,
   findings: readonly TrackedFinding[],
   findingHeight: (f: TrackedFinding) => number,
+  review: ReviewRows | null = null,
 ): BuiltRows {
   const rows: Row[] = [];
   const hunkRows: number[] = [];
   const findingRows: number[] = [];
   const fileRows = new Map<string, number>();
   const placed = new Set<TrackedFinding>();
+  const placedComments = new Set<ReviewComment>();
   files.forEach((file, fi) => {
     fileRows.set(file.path, rows.length);
     rows.push({ kind: 'file', key: `f:${file.path}`, file: fi, height: ROW_H.file });
     const mine = findings.filter((f) => f.finding.file === file.path);
+    const myComments = review?.comments.filter((c) => c.path === file.path) ?? [];
+    const pushComment = (c: ReviewComment) => {
+      placedComments.add(c);
+      const key = `c:${c.id}`;
+      rows.push({ kind: 'comment', key, file: fi, comment: c, height: review?.height(key, COMMENT_H) ?? COMMENT_H });
+    };
     if (collapsed.has(file.path)) {
       const hidden = mine.length ? ` · ${mine.length} finding${mine.length === 1 ? '' : 's'}` : '';
       rows.push({
@@ -88,6 +113,7 @@ export function buildRows(
         height: ROW_H.note,
       });
       for (const f of mine) placed.add(f);
+      for (const c of myComments) pushComment(c);
       return;
     }
     if (file.binary || file.hunks.length === 0) {
@@ -116,6 +142,8 @@ export function buildRows(
       rows.push({ kind: 'finding', key: `x:${f.key}`, file: fi, finding: f, height: findingHeight(f) });
     };
     for (const f of unanchored) pushFinding(f);
+    // Comments on a hunk that is no longer in the diff (it moved or went) lead the file.
+    for (const c of myComments) if (!file.hunks.some((h) => h.newStart === c.newStart)) pushComment(c);
     file.hunks.forEach((hunk, hi) => {
       hunkRows.push(rows.length);
       rows.push({ kind: 'hunk', key: `h:${file.path}:${hi}`, file: fi, hunk: hi, height: ROW_H.hunk });
@@ -133,6 +161,11 @@ export function buildRows(
         });
         for (const f of here) pushFinding(f);
       });
+      for (const c of myComments) if (c.newStart === hunk.newStart && !placedComments.has(c)) pushComment(c);
+      if (review?.composing && review.composing.path === file.path && review.composing.newStart === hunk.newStart) {
+        const key = `w:${file.path}:${hunk.newStart}`;
+        rows.push({ kind: 'compose', key, file: fi, hunk: hi, height: review.height(key, COMPOSE_H) });
+      }
     });
     if (file.truncated)
       rows.push({
@@ -150,6 +183,7 @@ export function buildRows(
     findingRows,
     fileRows,
     elsewhere: findings.filter((f) => !placed.has(f) && f.finding.file !== null),
+    strayComments: review?.comments.filter((c) => !placedComments.has(c)) ?? [],
   };
 }
 

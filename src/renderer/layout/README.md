@@ -1,17 +1,22 @@
 # layout
 
-Tiling engine (architecture §11): a pure TS tree (Workspace → Strip → Column(split|stacked|tabbed) → Tile)
-with ops and full unit tests, plus its React renderer. `types.ts` (TileKind, TileProps, TileDescriptor,
-TileCardProps) is a shared contract with `tiles/`: extend it only in coordination.
+A run's layout tree (architecture §11): a pure TS tree (Workspace → Strip → Column → Tile) with ops and full
+unit tests. It is the model behind the route map (agents/): the focused tile is the station pane on screen, and
+tile ids stay stable for commands and jumps. `types.ts` (TileKind, TileProps, TileDescriptor) is a shared
+contract with `tiles/`: extend it only in coordination.
 
-- `tree.ts` — types + ops: `insertColumn`, `insertAfter`, `remove`, `focusDir`, `moveDir`, `setWidthPreset`,
-  `cycleWidth`, `collapse`/`expand`, `toggleStacked`/`toggleTabbed`/`cycleColumnMode`, `maximize`, `focusTile`.
+- `tree.ts` — types + ops: `insertColumn`, `insertAfter`, `remove`, `focusDir`, `focusTile`, `setTileParams`, ….
 - `sync.ts` — `syncWithRun(layout, input)` derives columns from the run, preserving manual changes.
-- `geometry.ts` (px widths, scroll targets, virtualization), `dag.ts` (topo order, depths, critical path),
-  `persist.ts` (per-run localStorage), `describe.ts` (tile header/card metadata from run data).
-- Views: `Workspace` → `StripView` (+ `Minimap`, `ColumnView`), `FocusView`, `OverviewView`, `PipelineView`.
+- `dag.ts` (topo order, depths, critical path), `persist.ts` (per-run localStorage), `describe.ts` (tile
+  header metadata from run data).
+- `TileFrame.tsx` — `TileBody` hosts a tile kind's body wherever it is drawn (the station pane, the Code view's
+  viewer, terminals and side panel): header actions slot, error boundary, loading skeleton, and where the body
+  saves its params (`useSetTileParams`).
+- `Workspace.tsx` — the loading skeleton.
 
-Tile contract: a tile kind's default export receives `TileProps` and renders only its body; `TileFrame`
-draws the border, focus glow, urgency pulse and header (id, title, engine chip, status chip, actions).
-Add header buttons with `<TileActions>`; export a named `Card` (`TileCardProps`) to customise the Overview
-card body. Put `data-terminal` on terminal surfaces so keybindings stay out of their way.
+The Code view does not use this tree: its workspaces (the project's own and one per run, tiled in the board's
+tall layout) live in `code/`.
+
+Tile contract: a tile kind's default export receives `TileProps` and renders only its body; its host draws the
+frame and head. Add header buttons with `<TileActions>`. Put `data-terminal` on terminal surfaces so keybindings
+stay out of their way.

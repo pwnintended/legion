@@ -9,6 +9,7 @@ import {
   forecastMerge,
   IntegrationError,
   isMergeInProgress,
+  mergeIntoBase,
   mergeIntoTaskBranch,
   resetIntegration,
   resolveLockfileConflicts,
@@ -230,6 +231,66 @@ describe('mergeIntoTaskBranch', () => {
     const t = await taskWorktree('T1', { 'a1.txt': '1' });
     writeFiles(t.path, { 'wip.txt': 'wip' });
     await expect(mergeIntoTaskBranch(t.path, 'legion/r/integration')).rejects.toBeInstanceOf(IntegrationError);
+  });
+});
+
+describe('mergeIntoBase', () => {
+  const parents = (rev: string) => gitText(repo.path, ['rev-list', '--parents', '-n', '1', rev]);
+
+  it('lands integration on the checked-out base as one merge commit and updates that checkout', async () => {
+    const t = await taskWorktree('T1', { 'src/b.ts': 'b\n' });
+    await squashMergeIntoIntegration(integ, t.branch, 'T1');
+    const sha = await mergeIntoBase(repo.path, 'main', 'legion/r/integration', 'Ship it\n\nThe body.\n');
+    expect(await repo.head()).toBe(sha);
+    expect((await parents(sha)).split(' ')).toEqual([sha, baseSha, await gitText(integ, ['rev-parse', 'HEAD'])]);
+    expect(await gitText(repo.path, ['log', '-1', '--format=%B', 'main'])).toBe('Ship it\n\nThe body.\n');
+    expect(readFileSync(join(repo.path, 'src/b.ts'), 'utf8')).toBe('b\n');
+    expect(await isDirty(repo.path)).toBe(false);
+    // Already in: a no-op.
+    expect(await mergeIntoBase(repo.path, 'main', 'legion/r/integration', 'again')).toBe(sha);
+  });
+
+  it('moves only the ref of a base that is not checked out, on top of commits made since', async () => {
+    await git(repo.path, ['switch', '-q', '-c', 'elsewhere']);
+    const t = await taskWorktree('T1', { 'src/b.ts': 'b\n' });
+    await squashMergeIntoIntegration(integ, t.branch, 'T1');
+    await git(repo.path, ['switch', '-q', 'main']);
+    const moved = await repo.commit({ 'later.txt': 'later\n' }, 'later on main');
+    await git(repo.path, ['switch', '-q', 'elsewhere']);
+    const sha = await mergeIntoBase(repo.path, 'main', 'legion/r/integration', 'Ship it');
+    expect(await gitText(repo.path, ['rev-parse', 'main'])).toBe(sha);
+    expect((await parents(sha)).split(' ')[1]).toBe(moved);
+    expect(await gitText(repo.path, ['show', 'main:src/b.ts'])).toBe('b');
+    expect(await gitText(repo.path, ['show', 'main:later.txt'])).toBe('later');
+    expect(await gitText(repo.path, ['branch', '--show-current'])).toBe('elsewhere');
+  });
+
+  it('changes nothing when the base has moved on in a conflicting way', async () => {
+    const t = await taskWorktree('T1', { 'shared.txt': 'one\nTASK\nthree\n' });
+    await squashMergeIntoIntegration(integ, t.branch, 'T1');
+    const moved = await repo.commit({ 'shared.txt': 'one\nMAIN\nthree\n' }, 'main edit');
+    await expect(mergeIntoBase(repo.path, 'main', 'legion/r/integration', 'Ship it')).rejects.toThrow(
+      /main has moved on and conflicts with legion\/r\/integration in shared\.txt/,
+    );
+    expect(await repo.head()).toBe(moved);
+    expect(await isDirty(repo.path)).toBe(false);
+  });
+
+  it('refuses rather than overwrite local changes in the base checkout', async () => {
+    const t = await taskWorktree('T1', { 'src/b.ts': 'b\n' });
+    await squashMergeIntoIntegration(integ, t.branch, 'T1');
+    writeFiles(repo.path, { 'src/b.ts': 'mine\n' });
+    await expect(mergeIntoBase(repo.path, 'main', 'legion/r/integration', 'Ship it')).rejects.toBeInstanceOf(
+      IntegrationError,
+    );
+    expect(await repo.head()).toBe(baseSha);
+    expect(readFileSync(join(repo.path, 'src/b.ts'), 'utf8')).toBe('mine\n');
+  });
+
+  it('refuses a base that is not a local branch', async () => {
+    await expect(mergeIntoBase(repo.path, 'origin/main', 'legion/r/integration', 'x')).rejects.toThrow(
+      /origin\/main is not a local branch/,
+    );
   });
 });
 
