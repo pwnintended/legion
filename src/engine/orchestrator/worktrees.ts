@@ -278,8 +278,3 @@ export async function taskDiffBase(
   if (!base || base === start) return start;
   return (await isAncestor(cwd, start, base)) ? base : start;
 }
-
-/** Task verify commands plus the repo-wide ones, deduplicated. */
-export function verifyCommands(node: TaskNode, config: LegionConfig | null): string[] {
-  return [...new Set([...node.verify.commands, ...(config?.verify ?? [])].map((c) => c.trim()).filter(Boolean))];
-}

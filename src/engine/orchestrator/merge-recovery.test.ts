@@ -202,3 +202,67 @@ describe('settlePendingMerges (crash points)', () => {
     expect(status(older)).toMatchObject({ status: 'reverted', error: expect.stringContaining('moved on') });
   });
 });
+
+describe('post-merge gates', () => {
+  /** One task T1; every coder turn writes `src/t1.txt`; records the fix-round prompts. */
+  const oneTask =
+    (fixPrompts: string[]): Script =>
+    (ctx) => {
+      if (ctx.opts.role === 'planner') return [planOutput([node('T1')])];
+      if (ctx.opts.role === 'reviewer' || ctx.opts.role === 'finalizer') return [approve(ctx)];
+      if (ctx.message.startsWith('Fix round')) fixPrompts.push(ctx.message);
+      return [{ kind: 'write_file', path: 'src/t1.txt', content: 'T1\n' }, report('Implement T1')];
+    };
+  /** Fails in the integration worktree (`echo`es `message`), once when `once`, else every time. */
+  const failInIntegration = (message: string, once: boolean) =>
+    `case "$PWD" in */_integration) ${once ? 'mkdir "$LEGION_ROOT_PATH/.git/legion-gate-failed" 2>/dev/null && ' : ''}{ echo '${message}'; exit 1; };; esac; true`;
+  const postMergeRows = (harness: Harness, run: Run) =>
+    harness.engine.store.listVerifications(run.id).filter((v) => v.phase === 'post_merge');
+
+  it('a blocking gate failing after the squash reverts the merge and sends its output into a fix round', async () => {
+    const fixPrompts: string[] = [];
+    const legion = { gates: { commands: { integ: failInIntegration('INTEGRATION BROKEN', true), other: 'true' } } };
+    h = await startHarness({ script: oneTask(fixPrompts), files: { 'legion.json': JSON.stringify(legion) } });
+    const harness = h;
+    const run = await startRun(harness);
+    await harness.waitFor(() => runOf(harness, run.id).status === 'pr_ready', 'pr_ready', 30_000);
+    const store = harness.engine.store;
+    const [task] = store.listTasks(run.id);
+    expect(task?.fixRounds).toBe(1);
+    const merges = store.listMerges(run.id);
+    expect(merges.map((m) => m.status)).toEqual(['reverted', 'merged']);
+    expect(merges[0]?.error).toContain('integ');
+    // Every gate (the task's own verify command included) ran and was recorded, not just up to the failure.
+    const first = postMergeRows(harness, run)
+      .slice(0, 3)
+      .sort((a, b) => (a.gate ?? '').localeCompare(b.gate ?? ''));
+    expect(first.map((r) => [r.gate, r.status, r.blocking])).toEqual([
+      ['integ', 'fail', true],
+      ['other', 'pass', true],
+      ['test', 'pass', true],
+    ]);
+    expect(fixPrompts).toHaveLength(1);
+    expect(fixPrompts[0]).toContain('integ');
+    expect(fixPrompts[0]).toContain('INTEGRATION BROKEN');
+  }, 60_000);
+
+  it('a failing non-blocking gate only warns: the merge stays', async () => {
+    const fixPrompts: string[] = [];
+    const legion = {
+      gates: { commands: { advisory: { run: failInIntegration('JUST A WARNING', false), blocking: false } } },
+    };
+    h = await startHarness({ script: oneTask(fixPrompts), files: { 'legion.json': JSON.stringify(legion) } });
+    const harness = h;
+    const run = await startRun(harness);
+    await harness.waitFor(() => runOf(harness, run.id).status === 'pr_ready', 'pr_ready', 30_000);
+    const store = harness.engine.store;
+    expect(store.listTasks(run.id)[0]?.fixRounds).toBe(0);
+    expect(fixPrompts).toEqual([]);
+    expect(store.listMerges(run.id).map((m) => m.status)).toEqual(['merged']);
+    const rows = postMergeRows(harness, run).sort((a, b) => (a.gate ?? '').localeCompare(b.gate ?? ''));
+    expect(rows.map((r) => [r.gate, r.status, r.blocking, r.summary])).toEqual([
+      ['advisory', 'fail', false, 'JUST A WARNING'],
+      ['test', 'pass', true, 'passed'],
+    ]);
+  }, 60_000);
+});

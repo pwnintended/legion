@@ -32,6 +32,7 @@ import {
 import {
   buildResolverPrompt,
   decideAfterMerge,
+  type GateResult,
   globMatchesPath,
   normalizeGateResult,
   taskStatusPath,
@@ -46,8 +47,9 @@ import {
   ensureWorktree,
   integrationKeep,
   provisionIntegration,
+  resolveTaskGates,
+  runGates,
   runVerification,
-  verifyCommands,
 } from './worktrees';
 
 type Outcome = 'done' | 'park' | 'resolved';
@@ -135,21 +137,35 @@ async function mergeTask(o: Orchestrator, run: Run, task: Task): Promise<Outcome
     const earlier = o.store
       .listMerges(run.id)
       .some((m) => m.taskId === task.id && m.id !== merge.id && m.status !== 'conflict');
-    let failed: Awaited<ReturnType<typeof runVerification>>['results'] = [];
+    /** The failed blocking gates (or the failed install); non-blocking failures only warn. */
+    let failed: GateResult[] = [];
     try {
       if (!result.empty || earlier) {
         const changed = touchedPaths(await changedFiles(integration, preSha, result.mergedSha));
         const install = changed.some(isLockfilePath) ? await installCommand(integration, config) : null;
-        const commands = [...(install ? [install] : []), ...verifyCommands(node, config)];
-        const outcome = await runVerification(o, {
-          run,
-          task,
-          attemptId: null,
-          phase: 'post_merge',
-          commands,
-          cwd: integration,
-        });
-        failed = outcome.ok ? [] : outcome.results.filter((r) => r.exitCode !== 0);
+        if (install) {
+          const outcome = await runVerification(o, {
+            run,
+            task,
+            attemptId: null,
+            phase: 'post_merge',
+            commands: [install],
+            cwd: integration,
+          });
+          failed = outcome.results.filter((r) => r.exitCode !== 0).map(normalizeGateResult);
+        }
+        // Scope and secrets are task-level gates: post-merge runs the command gates only.
+        if (failed.length === 0) {
+          const outcome = await runGates(o, {
+            run,
+            task,
+            attemptId: null,
+            phase: 'post_merge',
+            gates: await resolveTaskGates(o, run, node, config, integration),
+            cwd: integration,
+          });
+          failed = outcome.results.filter((r) => r.status === 'fail' && r.blocking);
+        }
         // Whatever the verify commands wrote must not wedge the next merge.
         if (failed.length === 0) await cleanWorktree(integration, keep);
       }
@@ -181,7 +197,7 @@ async function mergeTask(o: Orchestrator, run: Run, task: Task): Promise<Outcome
     o.store.transaction(() => {
       o.store.finishMerge(merge.id, 'verify_failed', {
         postSha: result.mergedSha,
-        error: `post-merge verification failed: ${failed.map((f) => f.command).join(', ')}`,
+        error: `post-merge verification failed: ${failed.map((f) => f.name).join(', ')}`,
       });
       o.store.revertMerge(merge.id, 'post-merge verification failed; integration reset to the pre-merge sha');
     });
@@ -191,14 +207,16 @@ async function mergeTask(o: Orchestrator, run: Run, task: Task): Promise<Outcome
         fix: {
           findings: [],
           unmetCriteria: [],
-          failedVerify: failed.map(normalizeGateResult),
+          failedVerify: failed,
           humanNote: null,
           mergedIntegrationRef: integrationBranchName(run.id),
         },
       });
     }
     o.applyDecision(task.id, decision, {
-      ...(decision.escalation ? { summary: `post-merge verification keeps failing for ${node.id}` } : {}),
+      ...(decision.escalation
+        ? { summary: `post-merge verification keeps failing for ${node.id}: ${failed.map((f) => f.name).join(', ')}` }
+        : {}),
     });
     return 'done';
   }
@@ -329,7 +347,7 @@ async function resolveConflicts(
           }),
           outputSchema: taskReportJsonSchema,
           cwd: path,
-          allowedCommands: verifyCommands(node, config),
+          allowedCommands: (await resolveTaskGates(o, run, node, config, path)).map((g) => g.command),
           parentAttemptId: o.leadAttemptId(run.id),
         });
         const report = await coderTurn(o, session);

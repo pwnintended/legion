@@ -81,6 +81,7 @@ import {
   type RepoInput,
   type ResumeStep,
   renderMessages,
+  resolveGates,
   SLOT_STATUSES,
   type TaskDecision,
   type ToolNames,
@@ -334,7 +335,8 @@ export class Orchestrator {
   repoInput(run: Run, config: LegionConfig | null): RepoInput {
     return {
       baseRef: run.baseRef,
-      verifyCommands: config?.verify ?? [],
+      // The repo-level gate commands. Synchronous, so without detected gates (detection reads the worktree).
+      verifyCommands: resolveGates({ config, detected: [], taskCommands: [] }).map((g) => g.command),
       setupCommands: config?.setup ?? [],
       installCommand: config?.installCommand ?? null,
     };
