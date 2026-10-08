@@ -404,7 +404,10 @@ relies on this); when both exist the structured report wins.
    - Failure: retry up to 2 more attempts from a reset worktree with the failure summary; then `failed`,
      downstream `blocked`, inbox escalation (retry / skip / edit / abort).
 7. **Finalize**: full verify on integration; final holistic review (engine other than the majority of coders)
-   over `base...integration`; blocker findings → inbox.
+   over `base...integration`. Blocker findings → final fix loop: a coder session (coder engine, no task, cwd =
+   integration worktree) gets the blocker/major findings and unmet requirements, Legion commits its work onto the
+   integration branch, then full verify and the final review run again (told which findings to re-check). Max
+   `limits.maxFixRounds` rounds (the session is resumed across them), then escalate to inbox.
 8. **PR**: `git push -u origin legion/<run>/integration`, `gh pr create --draft --base <base> --title … --body-file …`.
    Body: issue link, plan summary, task table (engine, reviewer verdict), verification, minor findings, run id.
 9. **Cleanup** (`runs.archive({runId, force?})`, also run automatically when the PR is **merged**): an active run
@@ -457,8 +460,15 @@ The service applies `core/` decisions with CAS transitions; every flow is re-ent
   limited, the queue parks *before* touching git (`mergeParked`); the tick does not restart it until the run
   resumes or the limit resets (a wake timer is armed at the reset).
 - **Escalations**: task items carry `taskId`; run-level items (`taskId: null`) come from the final verify
-  (`verify_failed`), the final review (`final_review`) or a finalizer that cannot run (`other`), with actions `[retry,
-  skip, abort]`: retry reruns the step, skip moves on (integrating → finalizing → pr_ready), abort cancels the run.
+  (`verify_failed`), the final review (`final_review`: blockers left after the final fix rounds, or a final fixer
+  that reported blocked) or a finalizer / final fixer that cannot run (`other`), with actions `[retry, skip, abort]`:
+  retry reruns the step (for `final_review`, `resume: fix`: another final fix round with a fresh budget, on the
+  latest final review's findings, with the note), skip moves on (integrating → finalizing → pr_ready), abort
+  cancels the run.
+- **Final fix rounds** (`finalize.ts`, `RunMeta.finalFix` / `finalFixRounds` / `finalFixerSessionId`): the findings
+  owed to the fixer are persisted before it starts, so a pause, crash or `other` escalation resumes the round. A
+  done (or partial) report is committed onto the integration branch with the report's commit message and the run
+  goes finalizing → integrating; a blocked report (or none) discards the round's changes and escalates.
   Task retry (`tasks.retry`, escalation `retry`) resumes the step that failed when the task has work to keep: the
   escalation payload's `resume` (also `TaskMeta.resumeStep`) is `review` (reviewer failed → `reviewing`), `merge`
   (merge failed, conflict unresolved, lockfile regeneration failed, high-risk gate → `approved`, fresh resolver
@@ -473,7 +483,8 @@ The service applies `core/` decisions with CAS transitions; every flow is re-ent
   engine until the reset (60 s when unknown); the failed coder attempt is re-queued without being charged.
 - **Budget**: `settings.budget.perRunUsd` (or a per-run limit raised through the `budget` item) reached → run paused +
   `budget` item; `raise` (default 1.5× the spend) resumes, `stop` cancels. A notification fires at `warnAtPct`.
-- **Pause** gates new agent sessions (dispatch, reviewers, fixers, resolvers, finalizer); turns in flight finish.
+- **Pause** gates new agent sessions (dispatch, reviewers, fixers, resolvers, finalizer, final fixer); turns in
+  flight finish.
   **Cancel** cancels open tasks and attempts, dismisses open inbox items, interrupts and closes live sessions and
   takeover terminals (worktrees are kept).
 - **Attachments** (`engine/attachments/`): `attachments.add` sniffs the content (PNG/JPEG/GIF/WebP ≤ 10 MB;

@@ -219,6 +219,25 @@ export interface FixerPromptInput {
   readonly structuredReport?: boolean;
 }
 
+/** Final fixer: a coder session on the integration branch that addresses the final review's findings. */
+export interface FinalFixerPromptInput {
+  readonly issue: IssueInput;
+  readonly baseRef: string;
+  readonly integrationRef: string;
+  /** Blocker/major findings of the final review. */
+  readonly findings: readonly ReviewFinding[];
+  /** Requirements the final reviewer did not consider met. */
+  readonly unmetCriteria: readonly ReviewCriterion[];
+  /** The repository's (or the merged tasks') verify commands. */
+  readonly verifyCommands: readonly string[];
+  /** 1-based fix round and the maximum. */
+  readonly round: number;
+  readonly maxRounds: number;
+  readonly humanNote?: string | null;
+  readonly tools?: ToolNames;
+  readonly structuredReport?: boolean;
+}
+
 export interface ReviewerPromptInput {
   readonly issue: IssueInput;
   readonly node: TaskNode;
@@ -268,6 +287,10 @@ export interface FinalizerPromptInput {
   /** `git diff base...integration` (clipped by the builder). */
   readonly diff: string;
   readonly verify: readonly VerifyResultInput[];
+  /** 0 = first review; n = after the n-th final fix round. */
+  readonly round?: number;
+  /** Blocker/major findings the previous final review handed to the fixer. */
+  readonly previousFindings?: readonly ReviewFinding[];
 }
 
 export interface PrTaskRow {

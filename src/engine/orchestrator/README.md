@@ -12,7 +12,7 @@ applies it with CAS transitions through `Store`, runs git through `engine/git`, 
 | `planner.ts` | `runs.create`, clarify, plan (validation retries), plan versions, revision, approval |
 | `tasks.ts` | the per-task driver (re-entrant by task status) |
 | `merge.ts` | merge queue, conflict resolution (lockfiles, resolver sessions) |
-| `finalize.ts` | integration verify, final review, PR text, `runs.createPr` / `runs.mergeLocally` |
+| `finalize.ts` | integration verify, final review, final fix rounds (blockers → a coder on the integration branch → verify and review again), PR text, `runs.createPr` / `runs.mergeLocally` |
 | `cleanup.ts` | `runs.refreshPr` + polling of open PRs, `runs.archive` (§8 step 9; auto on PR merged/closed; `discard` removes what it would keep) |
 | `actions.ts` | human actions: pause/resume/cancel, `tasks.*`, `inbox.resolve` effects |
 | `sessions.ts` | `sessions.send/interrupt/takeover`, attempt terminals |
@@ -30,5 +30,5 @@ applies it with CAS transitions through `Store`, runs git through `engine/git`, 
 
 Wiring is in `engine/index.ts` (`createOrchestrator`, MCP server, terminals, `recover`). Tests: `lifecycle.test.ts`
 (end to end on a real repo), `service.test.ts`, `messaging.test.ts` (agent hierarchy and mailbox), `lead.test.ts` (the implementation lead), `research.test.ts` (research agents), `assistant.test.ts` (the assistant), `accounting.test.ts`, `finish.test.ts` (plan annotations, PR status,
-archive, task reports, same-engine review, live engine settings), `demo.test.ts` (fake mode end to end); `run.live.test.ts` runs a tiny real run with
+archive, task reports, same-engine review, live engine settings), `final-fix.test.ts` (final review blockers → final fix rounds → escalation), `demo.test.ts` (fake mode end to end); `run.live.test.ts` runs a tiny real run with
 `pnpm test:live` (Claude haiku coders, Codex low-effort reviewer, stops at `pr_ready`).

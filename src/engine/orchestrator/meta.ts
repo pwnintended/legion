@@ -45,6 +45,18 @@ export interface RunMeta {
     status: 'pending' | 'approved' | 'rejected';
     feedback: string | null;
   } | null;
+  /** The final review's findings owed to the final fixer (`finalize.ts`); null = nothing to fix. */
+  finalFix: FinalFixContext | null;
+  /** Final fix rounds used (a human retry of the `final_review` escalation starts a fresh budget). */
+  finalFixRounds: number;
+  /** The final fixer's engine session; later rounds resume it. */
+  finalFixerSessionId: string | null;
+}
+
+export interface FinalFixContext {
+  findings: ReviewFinding[];
+  unmetCriteria: ReviewCriterion[];
+  humanNote: string | null;
 }
 
 export interface FixContext {
@@ -102,6 +114,9 @@ const RUN_DEFAULTS: RunMeta = {
   assistantFailures: 0,
   assistantDisabled: false,
   amendment: null,
+  finalFix: null,
+  finalFixRounds: 0,
+  finalFixerSessionId: null,
 };
 
 const TASK_DEFAULTS: TaskMeta = {
