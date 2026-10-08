@@ -312,6 +312,17 @@ export const demoScript: FakeScript = (ctx) => {
     ];
   }
   if (role === 'assistant') return assistantSteps(ctx);
+  if (role === 'session') {
+    if (ctx.turn > 0 || ctx.resumed) return [{ kind: 'text', text: 'Done. Anything else?' }, usage(0.002)];
+    return [
+      ...attachmentSteps(ctx),
+      { kind: 'text', text: 'Let me look at the repository first.' },
+      { kind: 'tool', name: 'Read', toolKind: 'read', input: { path: 'README.md' }, output: '# readme' },
+      { kind: 'tool', name: 'Bash', toolKind: 'command', input: { command: 'git status --short' }, output: '' },
+      { kind: 'text', text: 'The working tree is clean. Tell me what to change and I will edit it here.' },
+      usage(0.01),
+    ];
+  }
   if (role === 'lead') {
     const merged = ctx.turn === 0 ? [] : mergedTasks(ctx.message);
     const status: FakeStep[] = merged.length

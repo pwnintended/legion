@@ -46,7 +46,7 @@ export type EngineInfo = z.infer<typeof EngineInfoSchema>;
  * - read_only (planner, reviewer, finalizer): Claude `--permission-mode default` with edit tools disallowed;
  *   what it would ask is answered by a host-side policy (read-only probes and reads pass, the rest is denied),
  *   never a human; Codex `sandbox: read-only`, `approvalPolicy: never`.
- * - workspace_write (coder, resolver): Claude `acceptEdits` + curated allowed tools; everything else is
+ * - workspace_write (coder, resolver, session): Claude `acceptEdits` + curated allowed tools; everything else is
  *   asked in-band (`--permission-prompt-tool stdio` → `can_use_tool` control requests → `approval_request`);
  *   Codex `sandbox: workspace-write`, `approvalPolicy: on-request` (`item/<kind>/requestApproval`).
  * - coordinate (future lead / assistant roles): the session may only talk, through the Legion MCP tools. Claude
@@ -80,6 +80,7 @@ export const ROLE_PERMISSION_MODE: { readonly [R in Role]: PermissionProfile['mo
   researcher: 'read_only',
   research_lead: 'coordinate',
   assistant: 'coordinate',
+  session: 'workspace_write',
 };
 
 /** Roles whose profile includes the web tools. */

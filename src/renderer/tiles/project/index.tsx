@@ -6,7 +6,7 @@
 import type { LanguageStat, ProjectInfo } from '@shared/rpc';
 import { commandTooltip, executeCommand } from '../../app/commands';
 import { useNow } from '../../app/hooks';
-import { newRunInProject } from '../../app/project-actions';
+import { newSessionInProject } from '../../app/project-actions';
 import { Icon } from '../../chrome/icons';
 import { CommandKbd } from '../../chrome/ui';
 import type { TileProps } from '../../layout/types';
@@ -215,12 +215,12 @@ export default function ProjectTile({ params }: TileProps<'project'>) {
           <button
             type="button"
             className="btn btn-primary"
-            onClick={() => newRunInProject(projectId)}
-            title={commandTooltip('composer.open', 'New run in this project')}
-            data-testid="project-new-run"
+            onClick={() => newSessionInProject(projectId)}
+            title={commandTooltip('composer.open', 'New session in this project')}
+            data-testid="project-new-session"
           >
             <Icon name="plus" strokeWidth={2.4} />
-            New run
+            New session
             <CommandKbd id="composer.open" />
           </button>
           <button

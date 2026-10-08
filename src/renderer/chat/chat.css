@@ -165,6 +165,18 @@
 .ch-sources {
   padding-left: 28px;
 }
+
+/* A direct session's tool calls between its words: the session tile's rows, under the text column. */
+.ch-item[data-kind="work"] {
+  margin: -10px 0;
+}
+.ch-work {
+  display: flex;
+  flex-direction: column;
+  padding-left: 28px;
+  min-width: 0;
+  user-select: text;
+}
 .ch-sources-toggle {
   all: unset;
   cursor: pointer;

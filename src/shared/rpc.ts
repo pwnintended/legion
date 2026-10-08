@@ -695,6 +695,20 @@ export const rpcContract = {
     }),
     output: RunSchema,
   },
+  /**
+   * Start a direct session: a run in `session` whose agent (role `session`, the engine chosen) works in the project's
+   * checkout itself, no worktree, no plan; the human talks to it with `sessions.send`. Archiving it ends it as `done`.
+   */
+  'runs.session': {
+    input: z.object({
+      repoPath: z.string().min(1),
+      prompt: z.string().min(1),
+      engine: EngineKindSchema,
+      model: z.string().nullable(),
+      attachmentIds: AttachmentIds,
+    }),
+    output: RunSchema,
+  },
   'runs.answerClarify': {
     input: z.object({ runId: IdSchema, answers: z.array(QuestionAnswerSchema), attachmentIds: AttachmentIds }),
     output: RunSchema,

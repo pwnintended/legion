@@ -18,6 +18,9 @@ export function runStatusLine(
   switch (run.status) {
     case 'chatting':
       return { text: 'conversation', tone: agents > 0 ? 'run' : 'idle', live: agents > 0 };
+    case 'session':
+      if (urgent) return { text: waiting, tone: 'warn', live: false };
+      return { text: 'session', tone: agents > 0 ? 'run' : 'idle', live: agents > 0 };
     case 'draft':
       return { text: `draft${paused}`, tone: 'idle', live: false };
     case 'clarifying':

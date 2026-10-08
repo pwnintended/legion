@@ -59,6 +59,7 @@ export function steps(
     }));
   switch (run.status) {
     case 'chatting':
+    case 'session':
     case 'draft':
     case 'clarifying':
     case 'planning':

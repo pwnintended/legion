@@ -37,6 +37,7 @@ import {
 import {
   addProjectFromDialog,
   newRunInProject,
+  newSessionInProject,
   openProject,
   openSearch,
   removeProject,
@@ -340,11 +341,19 @@ export function builtinCommands(): Command[] {
     {
       id: 'composer.open',
       inOverlay: true,
-      title: 'New run…',
+      title: 'New session…',
       category: 'Run',
-      // ⌘N is a new conversation on the board; the full composer is ⌘⇧N everywhere.
+      // ⌘N is a new conversation on the board (assistant, plan, agents); ⌘⇧N is a direct session everywhere.
       keybinding: 'Mod+Shift+N',
       // Opened from a project (its home or one of its runs): that project is preselected.
+      run: () => newSessionInProject(),
+    },
+    {
+      id: 'run.new',
+      inOverlay: true,
+      title: 'New run with a plan…',
+      category: 'Run',
+      // The full run composer: base branch, planner engine, clarifying questions (no chord: ⌘N starts one too).
       run: () => newRunInProject(),
     },
 
@@ -355,8 +364,8 @@ export function builtinCommands(): Command[] {
       title: 'Add a project…',
       category: 'Project',
       keybinding: 'Mod+O',
-      // The composer's repository picker has its own ⌘O (browse for a folder); it keeps it while open.
-      when: (ctx) => ctx.ui.overlay !== 'composer',
+      // The composers' repository picker has its own ⌘O (browse for a folder); it keeps it while open.
+      when: (ctx) => ctx.ui.overlay !== 'composer' && ctx.ui.overlay !== 'session',
       run: () => actions.openOverlay('addProject'),
     },
     {

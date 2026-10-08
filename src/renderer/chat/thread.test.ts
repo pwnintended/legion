@@ -248,3 +248,52 @@ describe('assistantBusy', () => {
     expect(assistantBusy([you(1, 'x')], { ...live, status: 'succeeded' })).toBe(false);
   });
 });
+
+describe('a direct session', () => {
+  const sessionRun: Run = { ...run, status: 'session' };
+  const call = (ts: number, id: string, name: string, kind: 'read' | 'command') =>
+    at(ts, { type: 'tool_call', id, name, input: { command: 'ls' }, kind });
+  const result = (ts: number, id: string) => at(ts, { type: 'tool_result', id, ok: true, output: '' });
+  const said = (ts: number, text: string) => at(ts, { type: 'message', text });
+
+  it('reads like a conversation, its tool calls grouped between its words', () => {
+    const entries = [
+      you(1100, 'Fix the build'),
+      said(1200, 'Looking.'),
+      call(1300, 'c1', 'Bash', 'command'),
+      result(1310, 'c1'),
+      call(1320, 'c2', 'Read', 'read'),
+      result(1330, 'c2'),
+      said(1400, 'Fixed it.'),
+      turnEnd(1500),
+    ];
+    const thread = buildThread(
+      input({
+        run: sessionRun,
+        attempts: [attempt('att_ss', 'session')],
+        transcripts: { att_ss: entries },
+      }),
+    );
+    expect(thread.map((i) => i.kind)).toEqual(['human', 'assistant', 'work', 'assistant']);
+    const work = thread[2] as Extract<ThreadItem, { kind: 'work' }>;
+    expect(work.entries.map((e) => e.event.type)).toEqual(['tool_call', 'tool_result', 'tool_call', 'tool_result']);
+    // The words after the tool calls continue the same turn: no second header.
+    expect((thread[3] as Extract<ThreadItem, { kind: 'assistant' }>).continued).toBe(true);
+  });
+
+  it('keeps the assistant’s tool calls out of its conversation', () => {
+    const entries = [you(1100, 'Hi'), call(1200, 'c1', 'Read', 'read'), said(1300, 'Hello.'), turnEnd(1400)];
+    const thread = buildThread(input({ transcripts: { att_as: entries } }));
+    expect(thread.map((i) => i.kind)).toEqual(['human', 'assistant']);
+  });
+
+  it('calls its end a stopped session', () => {
+    const thread = buildThread(
+      input({
+        run: { ...run, status: 'cancelled' },
+        attempts: [attempt('att_ss', 'session', { status: 'cancelled' })],
+      }),
+    );
+    expect(thread.at(-1)).toMatchObject({ kind: 'event', text: 'The session was stopped' });
+  });
+});

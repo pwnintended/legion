@@ -1,14 +1,14 @@
 /**
- * Overlay host, mounted once by App: shows the composer (⌘⇧N), palette (⌘K), settings, ... from
+ * Overlay host, mounted once by App: shows the session composer (⌘⇧N), the run composer, palette (⌘K), settings, ... from
  * `uiStore.overlay`, restores focus when it closes, and renders transient toasts.
  */
 import { AnimatePresence, motion } from 'motion/react';
 import { useLayoutEffect, useRef } from 'react';
 import { useUi } from '../app/hooks';
-import type { Overlay } from '../app/store';
+import { type Overlay, uiStore } from '../app/store';
 import { PreviewHost } from '../attachments/Attachments';
 import { AddProjectOverlay } from './AddProject';
-import { ComposerOverlay } from './Composer';
+import { ComposerOverlay, SessionComposerOverlay } from './Composer';
 import { ConfirmHost } from './Confirm';
 import { GoToFileOverlay } from './GoToFile';
 import { useToasts } from './nav';
@@ -19,6 +19,7 @@ import { SettingsOverlay } from './Settings';
 
 const VIEWS: Record<Overlay, () => React.JSX.Element> = {
   composer: ComposerOverlay,
+  session: SessionComposerOverlay,
   palette: PaletteOverlay,
   settings: SettingsOverlay,
   addProject: AddProjectOverlay,
@@ -28,6 +29,8 @@ const VIEWS: Record<Overlay, () => React.JSX.Element> = {
 /** Put focus back where it was (a rail button, ...) or on the focused tile once an overlay closes. */
 function restoreFocus(previous: HTMLElement | null): void {
   requestAnimationFrame(() => {
+    // Another overlay opened meanwhile (the palette ran a command that opens one): that one has the focus.
+    if (uiStore.getState().overlay !== null) return;
     const active = document.activeElement as HTMLElement | null;
     const stillInOverlay = active?.closest('[data-overlay-root]');
     if (active && active !== document.body && !stillInOverlay) return;

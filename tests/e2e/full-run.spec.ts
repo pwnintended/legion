@@ -13,6 +13,7 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { type ElectronApplication, _electron as electron, expect, type Page, test } from '@playwright/test';
+import { openRunComposer } from './agents';
 
 const root = resolve(import.meta.dirname, '../..');
 const shots = join(root, 'test-results', 'full-run');
@@ -78,10 +79,9 @@ test('full run, chat first: composer → assistant → clarify → plan → appr
     await expect(window.getByTestId('connection-status')).toHaveText('connected', { timeout: 30_000 });
     await shot(window, 'empty');
 
-    // ⌘⇧N → composer; pick the repo through the picker's Browse… (the folder dialog is answered by the test hook).
-    await window.keyboard.press('ControlOrMeta+Shift+n');
+    // The run composer; pick the repo through the picker's Browse… (the folder dialog is answered by the test hook).
+    await openRunComposer(window);
     const composer = window.getByTestId('composer');
-    await expect(composer).toBeVisible();
     await composer.locator('textarea').fill('Add a demo feature\n\nThe widgets repo needs a small feature with docs.');
     await composer.getByTestId('repo-picker').click();
     await window.getByTestId('repo-browse').click();

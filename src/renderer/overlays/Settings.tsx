@@ -34,6 +34,11 @@ const ROLES: { role: Role; label: string; note: string }[] = [
   { role: 'researcher', label: 'Researcher', note: 'Read-only repository and web research on a brief.' },
   { role: 'research_lead', label: 'Research lead', note: 'Splits a broad brief over researchers and synthesises.' },
   { role: 'assistant', label: 'Assistant', note: 'Your conversation partner; starts the work and relays the lead.' },
+  {
+    role: 'session',
+    label: 'Session',
+    note: 'A direct session: edits your checkout, no plan. Default for new sessions.',
+  },
 ];
 const SECTIONS: { id: SettingsSection; label: string }[] = [
   { id: 'engines', label: 'Engines' },

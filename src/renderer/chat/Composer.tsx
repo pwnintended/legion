@@ -39,12 +39,15 @@ const MAX_HEIGHT = 240;
 export function ChatComposer({
   runId,
   assistant,
+  name = 'the assistant',
   busy,
   closed,
   onSent,
 }: {
   runId: string;
   assistant: Attempt | null;
+  /** Who answers, in a sentence: `the assistant`, or a direct session's engine (`Claude`). */
+  name?: string;
   busy: boolean;
   /** Why there is nobody to talk to (null = the assistant is live). */
   closed: string | null;
@@ -88,7 +91,7 @@ export function ChatComposer({
     return (
       <div className="ch-composer ch-composer-closed" data-testid="chat-closed">
         <Icon name="session" size={14} />
-        <span>{closed ?? 'The assistant is not running.'}</span>
+        <span>{closed ?? `${name.charAt(0).toUpperCase()}${name.slice(1)} is not running.`}</span>
       </div>
     );
   }
@@ -109,8 +112,8 @@ export function ChatComposer({
         className="ch-input"
         rows={1}
         value={text}
-        placeholder={busy ? 'Reply… the assistant reads it when it finishes' : 'Reply to the assistant…'}
-        aria-label="Reply to the assistant"
+        placeholder={busy ? `Reply… ${name} reads it when it finishes` : `Reply to ${name}…`}
+        aria-label={`Reply to ${name}`}
         spellCheck
         data-testid="chat-input"
         onChange={(event) => update(event.target.value)}
@@ -131,8 +134,8 @@ export function ChatComposer({
           <button
             type="button"
             className="ch-round ch-stop"
-            aria-label="Stop the assistant"
-            title="Stop the assistant's turn"
+            aria-label={`Stop ${name}`}
+            title={`Stop ${name}'s turn`}
             onClick={() => assistant && void interrupt(assistant.id)}
             data-testid="chat-stop"
           >

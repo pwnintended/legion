@@ -20,6 +20,7 @@ import { createPr, mergeLocally } from './finalize';
 import type { Orchestrator } from './orchestrator';
 import { answerClarify, approvePlan, createRun, requestPlanRevision, updatePlan } from './planner';
 import { revertHunk } from './revert';
+import { createSession } from './session-run';
 import { interruptSession, sendToSession, takeover } from './sessions';
 
 export function registerOrchestratorHandlers(server: EngineRpcServer, o: Orchestrator): void {
@@ -31,6 +32,7 @@ export function registerOrchestratorHandlers(server: EngineRpcServer, o: Orchest
   server.implement('runs.get', ({ runId }) => store.runSnapshot(runId));
   server.implement('runs.create', (input) => createRun(o, input));
   server.implement('runs.chat', (input) => createChat(o, input));
+  server.implement('runs.session', (input) => createSession(o, input));
   server.implement('runs.answerClarify', ({ runId, answers, attachmentIds }) =>
     answerClarify(o, runId, answers, null, attachmentIds ?? null),
   );

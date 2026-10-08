@@ -17,6 +17,7 @@ import { addTask, amendTask, cancelTask, leadEnabled, planStatus, runLead } from
 import { mergeQueue } from './merge';
 import { Orchestrator, type OrchestratorOptions } from './orchestrator';
 import { spawnResearch } from './research';
+import { runSession } from './session-run';
 import { driveTask } from './tasks';
 
 export * from './actions';
@@ -42,6 +43,7 @@ export * from './planner';
 export { type DraftPrRequest, FakePrHost, ghPrHost, type PrHost, prNumberOf } from './pr-host';
 export { recover } from './recovery';
 export { EngineRegistry, type EngineRegistryOptions, FAKE_ENGINES_ENV } from './registry';
+export { createSession, endSession, MAX_SESSION_FAILURES, runSession } from './session-run';
 export { attemptTerminal, resolveAttemptTerminal, takeover } from './sessions';
 
 export function createOrchestrator(options: OrchestratorOptions): Orchestrator {
@@ -61,6 +63,7 @@ export function createOrchestrator(options: OrchestratorOptions): Orchestrator {
     spawnResearch: (binding, request) => spawnResearch(o, binding, request),
     assistant: (runId, loop) => runAssistant(o, runId, loop),
     assistantEnabled: (runId) => assistantEnabled(o, runId),
+    session: (runId) => runSession(o, runId),
     assistantTools: {
       startImplementation: (binding, request) => startImplementation(o, binding, request),
       runStatus: (binding) => runStatus(o, binding),

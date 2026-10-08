@@ -37,6 +37,10 @@ export interface RunMeta {
   assistantSessionId: string | null;
   assistantFailures: number;
   assistantDisabled: boolean;
+  /** A direct session (`session-run.ts`): its current attempt and engine session, and consecutive failures. */
+  sessionAttemptId: string | null;
+  sessionSessionId: string | null;
+  sessionFailures: number;
   /** A plan version proposed by the lead that waits for, or just got, the human's answer. */
   amendment: {
     planId: string;
@@ -103,6 +107,9 @@ const RUN_DEFAULTS: RunMeta = {
   assistantSessionId: null,
   assistantFailures: 0,
   assistantDisabled: false,
+  sessionAttemptId: null,
+  sessionSessionId: null,
+  sessionFailures: 0,
   amendment: null,
 };
 

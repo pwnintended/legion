@@ -26,6 +26,7 @@ import { prInFlight } from './finalize';
 import { runMeta, taskMeta } from './meta';
 import type { Orchestrator } from './orchestrator';
 import { releaseRepo } from './repo-gc';
+import { endSession } from './session-run';
 
 /** How often open PRs are re-read from the host. */
 export const PR_POLL_MS = 3 * 60 * 1000;
@@ -130,6 +131,8 @@ async function isRegisteredWorktree(repo: string, path: string): Promise<boolean
 async function doArchive(o: Orchestrator, runId: string, force: boolean, discard: boolean): Promise<ArchivedRun> {
   let run = o.store.requireRun(runId);
   if (prInFlight.has(runId)) throw new RpcError('conflict', 'a pull request is being created for this run');
+  // A direct session has nothing unfinished to lose: archiving it ends it.
+  if (run.status === 'session') run = await endSession(o, runId);
   if (!isTerminal(RUN_TRANSITIONS, run.status)) {
     if (!force) {
       throw new RpcError(

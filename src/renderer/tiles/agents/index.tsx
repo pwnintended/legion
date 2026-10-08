@@ -27,6 +27,7 @@ const ROLE_WORD: Record<Attempt['role'], string> = {
   finalizer: 'final review',
   researcher: 'researcher',
   research_lead: 'research lead',
+  session: 'session',
 };
 
 const STATUS_COLOR: Record<Attempt['status'], string> = {

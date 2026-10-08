@@ -27,6 +27,7 @@ export type RealEngineKind = z.infer<typeof RealEngineKindSchema>;
  * `lead`: the run's coordinator after plan approval (coordinate mode: talks, never touches files).
  * `researcher`: read-only + web, answers one brief with a research report. `research_lead`: coordinate + web, fans
  * a brief out to researchers and synthesises their reports.
+ * `session`: a direct session (`runs.session`): one agent the human talks to, editing the project's checkout.
  */
 export const ROLES = [
   'planner',
@@ -38,6 +39,7 @@ export const ROLES = [
   'researcher',
   'research_lead',
   'assistant',
+  'session',
 ] as const;
 export const RoleSchema = z.enum(ROLES);
 export type Role = z.infer<typeof RoleSchema>;
@@ -65,6 +67,7 @@ export function isTerminal<S extends string>(table: TransitionTable<S>, status: 
 
 export const RUN_STATUSES = [
   'chatting',
+  'session',
   'draft',
   'clarifying',
   'planning',
@@ -90,6 +93,8 @@ export type RunStatus = z.infer<typeof RunStatusSchema>;
 export const RUN_TRANSITIONS: TransitionTable<RunStatus> = {
   // chatting: a conversation with the assistant (§8.6); `start_implementation` moves it on.
   chatting: ['clarifying', 'planning', 'done', 'failed', 'cancelled'],
+  // session: a direct session (`runs.session`), no plan; it ends when archived, stopped or given up.
+  session: ['done', 'failed', 'cancelled'],
   draft: ['clarifying', 'planning', 'failed', 'cancelled'],
   clarifying: ['planning', 'failed', 'cancelled'],
   planning: ['clarifying', 'awaiting_approval', 'failed', 'cancelled'],
@@ -891,6 +896,7 @@ export const SettingsSchema = z.object({
     researcher: RoleDefaultsSchema,
     research_lead: RoleDefaultsSchema,
     assistant: RoleDefaultsSchema,
+    session: RoleDefaultsSchema,
   }),
   lead: z.object({
     /** Open an implementation lead for every run once its plan is approved (`orchestrator/lead.ts`). */
@@ -950,6 +956,7 @@ export const DEFAULT_SETTINGS: Settings = {
     researcher: roleDefaults('claude'),
     research_lead: roleDefaults('claude'),
     assistant: roleDefaults('claude'),
+    session: roleDefaults('claude'),
   },
   lead: { enabled: true },
   assistant: { enabled: true },
@@ -992,6 +999,7 @@ export const SettingsPatchSchema = z
         researcher: RoleDefaultsPatchSchema,
         research_lead: RoleDefaultsPatchSchema,
         assistant: RoleDefaultsPatchSchema,
+        session: RoleDefaultsPatchSchema,
       })
       .partial(),
     lead: SettingsSchema.shape.lead.partial(),

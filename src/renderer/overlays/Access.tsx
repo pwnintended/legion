@@ -32,6 +32,7 @@ const ACCESS_ROLE_LIST: { role: AccessRole; label: string; note: string }[] = [
   { role: 'resolver', label: 'Resolver', note: 'Resolves merge conflicts.' },
   { role: 'finalizer', label: 'Final review', note: 'Reviews the whole branch before the PR.' },
   { role: 'researcher', label: 'Researcher', note: 'Read-only research on a brief.' },
+  { role: 'session', label: 'Session', note: 'Edits your checkout in a direct session.' },
 ];
 
 const NO_ACCESS: AgentAccess = { mcp: [], skills: null };

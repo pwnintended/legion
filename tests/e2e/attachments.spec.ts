@@ -20,7 +20,7 @@ import {
   test,
 } from '@playwright/test';
 import { png, sevenPng, textPdf } from '../../src/engine/attachments/testing';
-import { openAgents } from './agents';
+import { openAgents, openRunComposer } from './agents';
 
 const root = resolve(import.meta.dirname, '../..');
 const shots = join(root, 'test-results', 'attachments');
@@ -131,9 +131,8 @@ test('attachments: paste, drop, dialog, preview, remove, then the planner receiv
     await expect(window.getByTestId('connection-status')).toHaveText('connected', { timeout: 30_000 });
 
     // The composer with a repository and a description.
-    await window.keyboard.press('ControlOrMeta+Shift+n');
+    await openRunComposer(window);
     const composer = window.getByTestId('composer');
-    await expect(composer).toBeVisible();
     const textarea = composer.locator('textarea');
     await textarea.fill('Make the settings page match the mockup\n\nThe header and the save button are off.');
     await composer.getByTestId('repo-picker').click();
@@ -231,8 +230,7 @@ test('attachments: paste, drop, dialog, preview, remove, then the planner receiv
     // The draft (attachments included) survives closing the composer.
     await window.keyboard.press('Escape');
     await expect(composer).toHaveCount(0);
-    await window.keyboard.press('ControlOrMeta+Shift+n');
-    await expect(composer).toBeVisible();
+    await openRunComposer(window);
     await expect(chips).toHaveCount(3);
 
     // A smaller window.

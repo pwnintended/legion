@@ -119,7 +119,11 @@ function runCaption(station: StationKey, run: Run, plan: ReturnType<typeof lates
   switch (station) {
     case 'plan':
       if (!plan)
-        return run.status === 'chatting' ? 'The run is still a conversation.' : 'The planner is working on it.';
+        return run.status === 'chatting'
+          ? 'The run is still a conversation.'
+          : run.status === 'session'
+            ? 'A direct session works without a plan.'
+            : 'The planner is working on it.';
       return plan.approvedAt
         ? `Version ${plan.version}, signed off. ${plan.dag.nodes.length} tasks.`
         : `Version ${plan.version}, waiting for your sign-off.`;

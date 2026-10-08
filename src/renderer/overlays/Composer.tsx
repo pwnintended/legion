@@ -1,8 +1,12 @@
 /**
- * Composer (⌘⇧N): describe the work or paste a GitHub / Linear URL, pick a repository (recent, found on this
- * Mac, a typed path, Browse… ⌘O, or a folder dropped from Finder), a base branch and the planner engine, then
- * ⌘⏎ creates the run and focuses its workspace. Screenshots and files attach by paste (⌘V), drop or the Attach
- * button (⌘⇧A). The draft, attachments included, survives closing the overlay.
+ * Composer, in two modes:
+ * - `session` (⌘⇧N): a direct session. Say what you want, pick a repository and an engine; ⌘⏎ opens one agent
+ *   working in that checkout (`runs.session`), no plan.
+ * - `run` ("Branch and engine…" from a new conversation, "Start a run about these lines"): describe the work or
+ *   paste a GitHub / Linear URL, pick a base branch and the planner engine; ⌘⏎ starts the assistant or the planner.
+ * Both pick a repository the same way (recent, found on this Mac, a typed path, Browse… ⌘O, or a folder dropped
+ * from Finder) and focus the new run. Screenshots and files attach by paste (⌘V), drop or the Attach button (⌘⇧A).
+ * The draft, attachments included, survives closing the overlay and switching modes.
  */
 import type { EngineKind } from '@shared/domain';
 import type { EngineInfo } from '@shared/engine';
@@ -124,7 +128,20 @@ type LegionWindow = Window & {
   };
 };
 
+export type ComposerMode = 'session' | 'run';
+
+/** ⌘⇧N: the composer for a direct session. */
+export function SessionComposerOverlay() {
+  return <Composer mode="session" />;
+}
+
+/** The composer for a planned run (the assistant or the planner). */
 export function ComposerOverlay() {
+  return <Composer mode="run" />;
+}
+
+function Composer({ mode }: { mode: ComposerMode }) {
+  const session = mode === 'session';
   const ids = useId();
   const activeRun = useActiveRun();
   const engines = useEngines();
@@ -136,10 +153,12 @@ export function ComposerOverlay() {
     seed?.repoPath ?? saved.repoPath ?? activeRun?.repoPath ?? null,
   );
   const [base, setBase] = useState(() => seededBase(saved.base, saved.repoPath, seed));
-  const [engine, setEngine] = useState<EngineKind>(saved.engine ?? settings?.roles.planner.engine ?? 'claude');
+  const [engine, setEngine] = useState<EngineKind>(
+    saved.engine ?? settings?.roles[session ? 'session' : 'planner'].engine ?? 'claude',
+  );
   const [clarify, setClarify] = useState(saved.clarify);
   // With the assistant on (Settings → Agents), the prompt starts a conversation; off, it goes to the planner.
-  const viaAssistant = settings?.assistant.enabled !== false;
+  const viaAssistant = !session && settings?.assistant.enabled !== false;
   const [recent, setRecent] = useState<RecentRepo[]>([]);
   const [found, setFound] = useState<DiscoveredRepo[]>(lastFound ?? []);
   const [discovering, setDiscovering] = useState(lastFound === null);
@@ -213,6 +232,7 @@ export function ComposerOverlay() {
   const root = inspection?.isGitRepo ? inspection.root : null;
   // Runs branch from a commit: a fresh `git init` needs its first one (Legion can make it).
   const noCommits = !!root && !inspection?.headSha;
+  const checkedOut = inspection?.currentBranch ?? null;
   const headSha = inspection?.headSha ?? null;
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: the branches appear with the first commit (`headSha`).
@@ -275,7 +295,7 @@ export function ComposerOverlay() {
     }
   };
 
-  const link = detectIssueLink(text);
+  const link = session ? null : detectIssueLink(text);
   const repoError = !repoPath
     ? 'Choose a repository.'
     : inspect.status === 'error'
@@ -283,9 +303,15 @@ export function ComposerOverlay() {
       : inspection && !inspection.isGitRepo
         ? repoProblem(inspection)
         : noCommits
-          ? 'No commits yet. Agents work on branches cut from a commit.'
+          ? session
+            ? 'No commits yet. A session needs a first commit to start from.'
+            : 'No commits yet. Agents work on branches cut from a commit.'
           : null;
-  const textError = text.trim() ? null : 'Describe the work or paste an issue URL.';
+  const textError = text.trim()
+    ? null
+    : session
+      ? 'Say what the session should do.'
+      : 'Describe the work or paste an issue URL.';
   const engineInfo = engines.list.find((e) => e.kind === engine);
   const engineError =
     engines.status === 'ready' && !engineState(engineInfo).ok
@@ -293,7 +319,9 @@ export function ComposerOverlay() {
       : null;
   const ready = !textError && !repoError && !engineError && inspect.status !== 'loading' && !uploading;
   const blocked = textError
-    ? 'Describe the work first'
+    ? session
+      ? 'Say what to do first'
+      : 'Describe the work first'
     : !repoPath
       ? 'Choose a repository first'
       : inspect.status === 'loading'
@@ -318,26 +346,34 @@ export function ComposerOverlay() {
     }
     setCreating(true);
     try {
-      const run = viaAssistant
-        ? await rpc('runs.chat', {
+      const run = session
+        ? await rpc('runs.session', {
             repoPath: inspection?.root ?? repoPath,
-            baseRef: base.trim() || null,
             prompt: text.trim(),
             engine,
             model: null,
             attachmentIds: savedAttachments.ids,
           })
-        : await rpc('runs.create', {
-            repoPath: inspection?.root ?? repoPath,
-            baseRef: base.trim() || null,
-            title: null,
-            issueText: text.trim(),
-            issueUrl: link?.url ?? null,
-            plannerEngine: engine,
-            plannerModel: null,
-            skipClarify: !clarify,
-            attachmentIds: savedAttachments.ids,
-          });
+        : viaAssistant
+          ? await rpc('runs.chat', {
+              repoPath: inspection?.root ?? repoPath,
+              baseRef: base.trim() || null,
+              prompt: text.trim(),
+              engine,
+              model: null,
+              attachmentIds: savedAttachments.ids,
+            })
+          : await rpc('runs.create', {
+              repoPath: inspection?.root ?? repoPath,
+              baseRef: base.trim() || null,
+              title: null,
+              issueText: text.trim(),
+              issueUrl: link?.url ?? null,
+              plannerEngine: engine,
+              plannerModel: null,
+              skipClarify: !clarify,
+              attachmentIds: savedAttachments.ids,
+            });
       saved = { text: '', repoPath, base: '', engine, clarify };
       savedAttachments.clear();
       actions.closeOverlay();
@@ -367,11 +403,11 @@ export function ComposerOverlay() {
   const statusId = `${ids}-repo-status`;
   return (
     <OverlayPanel
-      label="New run"
+      label={session ? 'New session' : 'New run'}
       placement="center"
       width={expanded ? 'min(1240px, 100%)' : 'min(920px, 100%)'}
       top={expanded ? 40 : 90}
-      testId="composer"
+      testId={session ? 'session-composer' : 'composer'}
       onKeyDown={(event) => {
         if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) {
           event.preventDefault();
@@ -397,8 +433,8 @@ export function ComposerOverlay() {
         }}
       >
         <div className="ovl-head ovl-head-plain">
-          <span className="ovl-title">New run</span>
-          <CommandKbd id="composer.open" />
+          <span className="ovl-title">{session ? 'New session' : 'New run'}</span>
+          {session ? <CommandKbd id="composer.open" /> : null}
           <button
             type="button"
             className="btn btn-ghost btn-icon"
@@ -439,7 +475,11 @@ export function ComposerOverlay() {
               value={text}
               data-autofocus
               spellCheck
-              placeholder="Describe an issue or feature, paste a GitHub / Linear URL or a screenshot…"
+              placeholder={
+                session
+                  ? 'Ask about the code or describe a change. Paste a screenshot if it helps…'
+                  : 'Describe an issue or feature, paste a GitHub / Linear URL or a screenshot…'
+              }
               aria-invalid={attempted && !!textError}
               aria-describedby={`${ids}-text-note`}
               onChange={(event) => setText(event.target.value)}
@@ -476,23 +516,25 @@ export function ComposerOverlay() {
                 onBrowse={() => void chooseFolder()}
               />
             </div>
-            <div className="cmp-field cmp-base">
-              <label htmlFor={`${ids}-base`} className="cmp-small">
-                Base branch
-              </label>
-              <BranchPicker
-                id={`${ids}-base`}
-                value={base}
-                branches={branchState}
-                loading={!!root && !branchState}
-                disabled={!root}
-                disabledReason="Choose a repository first"
-                onChange={setBase}
-              />
-            </div>
+            {session ? null : (
+              <div className="cmp-field cmp-base">
+                <label htmlFor={`${ids}-base`} className="cmp-small">
+                  Base branch
+                </label>
+                <BranchPicker
+                  id={`${ids}-base`}
+                  value={base}
+                  branches={branchState}
+                  loading={!!root && !branchState}
+                  disabled={!root}
+                  disabledReason="Choose a repository first"
+                  onChange={setBase}
+                />
+              </div>
+            )}
             <div className="cmp-field cmp-planner">
               <span className="cmp-small" id={`${ids}-engine`}>
-                Planner
+                {session ? 'Engine' : 'Planner'}
               </span>
               <div className="segs cmp-segs" role="radiogroup" aria-labelledby={`${ids}-engine`}>
                 {(['claude', 'codex'] as const).map((kind) => {
@@ -541,6 +583,7 @@ export function ComposerOverlay() {
             path={repoPath}
             home={home}
             error={repoPath ? repoError : attempted ? repoError : null}
+            session={session}
             fix={
               noCommits ? (
                 <>
@@ -562,7 +605,7 @@ export function ComposerOverlay() {
           {engineError ? <span className="cmp-error">{engineError}</span> : null}
 
           <div className="cmp-foot">
-            {viaAssistant ? null : (
+            {viaAssistant || session ? null : (
               <label className="cmp-check">
                 <input type="checkbox" checked={clarify} onChange={(event) => setClarify(event.target.checked)} />
                 Let the planner ask clarifying questions first
@@ -578,7 +621,15 @@ export function ComposerOverlay() {
                 data-ready={ready}
                 data-testid="composer-submit"
               >
-                {creating ? 'Creating…' : viaAssistant ? 'Ask' : 'Plan it'}
+                {creating
+                  ? session
+                    ? 'Starting…'
+                    : 'Creating…'
+                  : session
+                    ? 'Start'
+                    : viaAssistant
+                      ? 'Ask'
+                      : 'Plan it'}
                 <Kbd chord="Mod+Enter" />
               </button>
               {blocked && !creating ? (
@@ -590,13 +641,15 @@ export function ComposerOverlay() {
           </div>
           {submitError ? (
             <span className="cmp-error" role="alert">
-              Couldn't create the run: {submitError}
+              Couldn't {session ? 'start the session' : 'create the run'}: {submitError}
             </span>
           ) : null}
           <p className="cmp-hint">
-            {viaAssistant
-              ? 'The assistant answers, researches the repo when needed, and hands a brief to the planner when you want the work done. Nothing runs until you approve the plan.'
-              : `The planner reads the repo${clarify ? ', asks up to 5 clarifying questions,' : ''} then drafts the task DAG for your sign-off. Nothing runs until you approve it.`}
+            {session
+              ? `The agent works in your checkout${checkedOut ? ` on ${checkedOut}` : ''}, no worktree and no plan. Its edits land as they are; committing is up to you.`
+              : viaAssistant
+                ? 'The assistant answers, researches the repo when needed, and hands a brief to the planner when you want the work done. Nothing runs until you approve the plan.'
+                : `The planner reads the repo${clarify ? ', asks up to 5 clarifying questions,' : ''} then drafts the task DAG for your sign-off. Nothing runs until you approve it.`}
           </p>
         </form>
         {drop.dragging ? <DropHint intent={dragIntent(drop.dragging)} /> : null}
@@ -635,12 +688,15 @@ function RepoStatus({
   home,
   error,
   fix = null,
+  session = false,
 }: {
   id: string;
   inspect: Inspect;
   path: string | null;
   home: string | null;
   error: string | null;
+  /** A direct session works in the checkout: say which branch it is on, and nothing about PRs or worktrees. */
+  session?: boolean;
   /** An action that resolves `error` (e.g. the first commit). */
   fix?: ReactNode;
 }) {
@@ -688,7 +744,27 @@ function RepoStatus({
           </span>
         </>
       ) : null}
-      {r.defaultBranch ? (
+      {session ? (
+        <>
+          {sep}
+          {r.currentBranch ? (
+            <span>
+              on <span className="mono cmp-mono">{r.currentBranch}</span>
+            </span>
+          ) : (
+            <span className="cmp-warn">detached HEAD</span>
+          )}
+          {r.dirty ? (
+            <>
+              {sep}
+              <span className="faint" title="The session works in this checkout, alongside your changes">
+                has uncommitted changes
+              </span>
+            </>
+          ) : null}
+        </>
+      ) : null}
+      {!session && r.defaultBranch ? (
         <>
           {sep}
           <span>
@@ -696,9 +772,13 @@ function RepoStatus({
           </span>
         </>
       ) : null}
-      {sep}
-      {gh}
-      {r.dirty ? (
+      {session ? null : (
+        <>
+          {sep}
+          {gh}
+        </>
+      )}
+      {!session && r.dirty ? (
         <>
           {sep}
           <span className="faint" title="Legion works in its own worktrees; your checkout is never touched">

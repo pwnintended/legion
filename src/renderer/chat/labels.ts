@@ -26,6 +26,7 @@ const ROLE_NAME: Record<Role, string> = {
   researcher: 'Researcher',
   research_lead: 'Research lead',
   assistant: 'Assistant',
+  session: 'Session',
 };
 
 export function agentLabel(state: DataState, attemptId: string): AgentLabel {

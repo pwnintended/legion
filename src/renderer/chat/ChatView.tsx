@@ -2,6 +2,8 @@
  * A run's conversation, the body of its tile on the project board: one column of the human's messages, the
  * assistant's replies (with what its agents told it folded underneath), the decisions waiting on the human as
  * cards, what agents presented, and the run's milestones; the progress strip above and the reply box below.
+ * A direct session reads the same, its agent in the assistant's place with its tool calls between its words,
+ * and no progress strip (there is no plan).
  * The tile's head carries the run's title. The agents themselves stay in the Agents view (⌘E).
  */
 import type { Attempt, Run } from '@shared/domain';
@@ -25,9 +27,11 @@ import { actions } from '../app/store';
 import { ChipList, chipOfRef } from '../attachments/Attachments';
 import { Icon } from '../chrome/icons';
 import { Chip } from '../chrome/ui';
-import { formatCost, formatDuration, formatStamp } from '../layout/describe';
+import { displayEngine, formatCost, formatDuration, formatStamp } from '../layout/describe';
 import { useSentMessages } from '../tiles/session/actions';
 import { Markdown } from '../tiles/session/Markdown';
+import { type RowContext, Row as TimelineRowView } from '../tiles/session/Rows';
+import { buildTimeline, type TimelineRow } from '../tiles/session/timeline';
 import '../tiles/session/session.css';
 import { ChatComposer } from './Composer';
 import { Decision } from './Decision';
@@ -38,6 +42,7 @@ import {
   assistantAttempts,
   assistantBusy,
   buildThread,
+  isSessionRun,
   liveAssistant,
   openDecisionItems,
   type PendingMessage,
@@ -107,12 +112,20 @@ function useThreadOf(run: Run) {
     });
     const busy = assistantBusy(live ? byId[live.id] : undefined, live);
     const loading = assistants.some((_, i) => !transcripts[i] || transcripts[i]?.status === 'loading');
-    return { thread, busy, live, assistants, loading };
+    return { thread, busy, live, assistants, loading, session: isSessionRun(run, attempts) };
   }, [run, attempts, assistants, transcripts, messages, inbox, presentations, tasks, nodes, merges, live, sent]);
 }
 
 /** Why the human cannot reply right now (null = they can). */
-function closedReason(run: Run, live: Attempt | null, hadAssistant: boolean): string | null {
+function closedReason(run: Run, live: Attempt | null, hadAssistant: boolean, session: boolean): string | null {
+  if (session) {
+    if (run.status === 'done' || run.archived)
+      return `This session ended. Start a new one with ${formatChord('Mod+Shift+N')}.`;
+    if (run.status === 'cancelled') return 'This session was stopped.';
+    if (run.status === 'failed') return `This session failed. Start a new one with ${formatChord('Mod+Shift+N')}.`;
+    if (live?.status !== 'running') return 'The session is not running. Legion reopens it in a moment.';
+    return null;
+  }
   if (run.archived)
     return `This run is archived: its worktrees and branches are cleaned up. Start a new one with ${formatChord('Mod+N')}.`;
   if (run.status === 'done') return `This run is finished. Start a new one with ${formatChord('Mod+N')}.`;
@@ -126,7 +139,8 @@ function closedReason(run: Run, live: Attempt | null, hadAssistant: boolean): st
 
 /** `focused`: the board's focused tile (the active run); its conversation is the one tests and ⌘U address. */
 export function Conversation({ run, focused }: { run: Run; focused: boolean }) {
-  const { thread, busy, live, assistants, loading } = useThreadOf(run);
+  const { thread, busy, live, assistants, loading, session } = useThreadOf(run);
+  const partner = usePartnerName(live, session);
   const scrollRef = useRef<HTMLDivElement>(null);
   const feedRef = useRef<HTMLDivElement>(null);
   const [pinned, setPinned] = useState(true);
@@ -141,7 +155,7 @@ export function Conversation({ run, focused }: { run: Run; focused: boolean }) {
   const seen = useRef<Set<string> | null>(null);
   if (seen.current === null && !loading) seen.current = new Set(thread.map((i) => i.key));
   const open = openDecisionItems(thread);
-  const closed = closedReason(run, live, assistants.length > 0);
+  const closed = closedReason(run, live, assistants.length > 0, session);
 
   const toBottom = (smooth = false) => {
     const el = scrollRef.current;
@@ -202,7 +216,7 @@ export function Conversation({ run, focused }: { run: Run; focused: boolean }) {
       {assistants.map((a) => (
         <KeepTranscript key={a.id} attemptId={a.id} />
       ))}
-      <Progress run={run} />
+      {session ? null : <Progress run={run} />}
       {/* biome-ignore lint/a11y/noStaticElementInteractions: the handlers only note that the reader scrolled on purpose */}
       <div
         className="ch-scroll"
@@ -253,12 +267,12 @@ export function Conversation({ run, focused }: { run: Run; focused: boolean }) {
                 data-enter={seen.current !== null && !seen.current.has(item.key) ? true : undefined}
                 data-highlight={highlight === item.key || undefined}
               >
-                <Row item={item} />
+                <Row item={item} running={live?.status === 'running'} focused={focused} />
               </li>
             ))}
           </ol>
           {!loading ? <Outcome run={run} /> : null}
-          {busy ? <Typing /> : null}
+          {busy ? <Typing name={partner} /> : null}
         </div>
       </div>
       <div className="ch-dock">
@@ -282,16 +296,30 @@ export function Conversation({ run, focused }: { run: Run; focused: boolean }) {
             ) : null}
           </AnimatePresence>
           <NeedsYou runId={run.id} open={open} />
-          <ChatComposer runId={run.id} assistant={live} busy={busy} closed={closed} onSent={() => toBottom(true)} />
+          <ChatComposer
+            runId={run.id}
+            assistant={live}
+            name={partner}
+            busy={busy}
+            closed={closed}
+            onSent={() => toBottom(true)}
+          />
         </div>
       </div>
     </div>
   );
 }
 
-function Typing() {
+/** What the conversation calls whoever answers: the assistant, or a session's engine. */
+function usePartnerName(live: Attempt | null, session: boolean): string {
+  const engine = useData((s) => (live ? displayEngine(s, live) : null));
+  if (!session) return 'the assistant';
+  return engine === 'codex' ? 'Codex' : 'Claude';
+}
+
+function Typing({ name }: { name: string }) {
   return (
-    <div className="ch-typing" role="status" aria-label="The assistant is writing" data-testid="chat-typing">
+    <div className="ch-typing" role="status" aria-label={`${capitalize(name)} is working`} data-testid="chat-typing">
       <span />
       <span />
       <span />
@@ -299,12 +327,16 @@ function Typing() {
   );
 }
 
-function Row({ item }: { item: ThreadItem }) {
+const capitalize = (text: string) => text.charAt(0).toUpperCase() + text.slice(1);
+
+function Row({ item, running, focused }: { item: ThreadItem; running: boolean; focused: boolean }) {
   switch (item.kind) {
     case 'human':
       return <Human item={item} />;
     case 'assistant':
       return <Assistant item={item} />;
+    case 'work':
+      return <Work item={item} running={running} focused={focused} />;
     case 'update':
       return <Update item={item} />;
     case 'decision':
@@ -461,10 +493,44 @@ function YouFiles({ item }: { item: Extract<ThreadItem, { kind: 'human' }> }) {
   );
 }
 
+/** Rows a session's work shows (its words are the conversation's; approvals are decision cards). */
+const WORK_ROWS = new Set<TimelineRow['kind']>(['reads', 'edit', 'command', 'mcp', 'tool', 'todo']);
+const NO_APPROVALS = new Map();
+
+/** A direct session's tool calls between two of its texts, as the session tile's timeline rows. */
+function Work({
+  item,
+  running,
+  focused,
+}: {
+  item: Extract<ThreadItem, { kind: 'work' }>;
+  running: boolean;
+  focused: boolean;
+}) {
+  const engine = useData((s) => displayEngine(s, s.attempts[item.key.split(':')[1] ?? '']));
+  const rows = useMemo(() => buildTimeline(item.entries).rows.filter((r) => WORK_ROWS.has(r.kind)), [item.entries]);
+  const ctx: RowContext = useMemo(
+    () => ({ engine, running, focused, approvals: NO_APPROVALS, onOpenDiff: null }),
+    [engine, running, focused],
+  );
+  if (rows.length === 0) return null;
+  return (
+    <div className="ch-work">
+      {rows.map((row, i) => (
+        <div className="ss-row" key={row.key}>
+          <TimelineRowView row={row} ctx={ctx} last={i === rows.length - 1} />
+        </div>
+      ))}
+    </div>
+  );
+}
+
 function Assistant({ item }: { item: Extract<ThreadItem, { kind: 'assistant' }> }) {
   const [open, setOpen] = useState(false);
   const fromLead = useData((s) => item.sources.every((m) => s.attempts[m.fromAttemptId]?.role === 'lead'));
-  const engine = useData((s) => s.attempts[item.key.split(':')[1] ?? '']?.engine ?? 'claude');
+  const attempt = useData((s) => s.attempts[item.key.split(':')[1] ?? '']);
+  const engine = useData((s) => displayEngine(s, attempt));
+  const name = attempt?.role === 'session' ? (engine === 'codex' ? 'Codex' : 'Claude') : 'Assistant';
   if (!item.text.trim() && !item.streaming) return null;
   return (
     <div className="ch-as">
@@ -473,7 +539,7 @@ function Assistant({ item }: { item: Extract<ThreadItem, { kind: 'assistant' }> 
           <span className="ch-as-mark" data-engine={engine} aria-hidden="true">
             <Icon name="spark" size={12} strokeWidth={2} />
           </span>
-          <span className="ch-as-name">Assistant</span>
+          <span className="ch-as-name">{name}</span>
           <time className="ch-time">{formatStamp(item.ts)}</time>
         </div>
       )}

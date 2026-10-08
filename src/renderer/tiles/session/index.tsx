@@ -209,6 +209,7 @@ const ROLE_LABEL: Record<Attempt['role'], string> = {
   researcher: 'researcher · read-only + web',
   research_lead: 'research lead · coordinates researchers',
   assistant: 'assistant · talks to you and your agents',
+  session: 'session · edits your checkout',
 };
 
 /**

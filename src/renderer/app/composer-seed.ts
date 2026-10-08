@@ -1,5 +1,5 @@
 /**
- * What the next New run composer should start with: the project it was opened from, and text to add to the
+ * What the next composer (a new run or a new session) should start with: the project it was opened from, and text to add to the
  * issue (e.g. a `path:lines` reference from the code viewer). The composer takes it once when it mounts.
  */
 import { actions } from './store';
@@ -13,10 +13,16 @@ export interface ComposerSeed {
 
 let pending: ComposerSeed | null = null;
 
-/** Open the composer with a seed (replacing any seed not taken yet). */
+/** Open the run composer with a seed (replacing any seed not taken yet). */
 export function openComposer(seed: ComposerSeed | null = null): void {
   pending = seed;
   actions.openOverlay('composer');
+}
+
+/** Open the session composer (⌘⇧N) with a seed. */
+export function openSessionComposer(seed: ComposerSeed | null = null): void {
+  pending = seed;
+  actions.openOverlay('session');
 }
 
 /** The seed for the composer that is mounting now (null when it was opened without one). */

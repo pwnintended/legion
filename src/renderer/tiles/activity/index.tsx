@@ -11,7 +11,7 @@ import { useShallow } from 'zustand/react/shallow';
 import { runPr } from '../../app/compat';
 import { openInboxCount, runCost, runningAttempts, taskCounts } from '../../app/data';
 import { useData, useNow } from '../../app/hooks';
-import { newRunInProject, openCommit } from '../../app/project-actions';
+import { newSessionInProject, openCommit } from '../../app/project-actions';
 import { selectRailGroups } from '../../app/projects';
 import { actions } from '../../app/store';
 import { Icon } from '../../chrome/icons';
@@ -209,9 +209,9 @@ export default function ActivityTile({ params }: TileProps<'activity'>) {
     // biome-ignore lint/a11y/noStaticElementInteractions: a keyboard-navigable list (rows are buttons)
     <div className="ac-scroll" ref={nav.ref} onKeyDown={nav.onKeyDown} data-testid="project-activity">
       <SectionHead title="Runs" count={runs.length || null}>
-        <button type="button" className="btn btn-ghost btn-sm" onClick={() => newRunInProject(projectId)}>
+        <button type="button" className="btn btn-ghost btn-sm" onClick={() => newSessionInProject(projectId)}>
           <Icon name="plus" size={12} strokeWidth={2.4} />
-          New run
+          New session
         </button>
       </SectionHead>
       {runs.length === 0 ? (

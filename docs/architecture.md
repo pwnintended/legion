@@ -173,9 +173,10 @@ Run        id, projectId?, repoPath, baseRef, title, issueText, issueUrl?, statu
            integrationBranch?, prUrl?, pr? {url, number, state: open|closed|merged, isDraft}, archived,
            attachments? (AttachmentRef[]: id, name, mime, size, kind image|text|file, sha256), error?, createdAt,
            updatedAt
-           status: chatting → | draft → clarifying → planning → awaiting_approval → executing → integrating
+           status: chatting → | session → | draft → clarifying → planning → awaiting_approval → executing → integrating
                    → finalizing → pr_ready → done | failed | cancelled   (+ paused flag; chatting = a
-                   conversation with the assistant, §8.6, that may become work or end as done/cancelled)
+                   conversation with the assistant, §8.6, that may become work or end as done/cancelled; session = a direct
+                   session, §8.8, that ends as done/failed/cancelled)
 Plan       id, runId, version, markdown, dag (PlanDag = {nodes, annotations}), source (agent|user), feedback?,
            createdAt, approvedAt?
 TaskNode   (inside PlanDag) id "T1".., title, goal, kind (contracts|feature|test|refactor|docs|integration),
@@ -185,7 +186,7 @@ Task       runtime row per node: runId, nodeId, status, branch, worktreePath, st
            mergedSha?, engine/model/effortOverride?, progress?, report? {summary, commitMessage}, error?
            status: blocked → queued → provisioning → running → verifying → reviewing → fixing
                    → approved → awaiting_human → merging → merged | failed | skipped | cancelled
-Attempt    id, taskId?, runId, role (planner|coder|reviewer|resolver|finalizer|lead|researcher|research_lead|assistant), engine, model,
+Attempt    id, taskId?, runId, role (planner|coder|reviewer|resolver|finalizer|lead|researcher|research_lead|assistant|session), engine, model,
            sessionId (claude session / codex thread), parentAttemptId? (the attempt it reports to), status,
            startedAt, endedAt, costUsd?, tokens?, error?
            status: pending → running → succeeded | failed | interrupted | cancelled  (interrupted → running on resume)
@@ -258,7 +259,7 @@ streams without visible text, e.g. the structured plan: at its start and every 2
 |---|---|---|
 | planner, reviewer, finalizer | `--permission-mode default --permission-prompt-tool stdio`, `--allowedTools mcp__legion`, `--disallowedTools` edit tools + AskUserQuestion/Enter/ExitPlanMode. Reads inside cwd/`--add-dir` and commands the CLI classifies as read-only (`ls`, `git diff`, …) need no rule. What the CLI would ask about is answered by Legion, never a human (`adapters/claude/read-only-policy.ts`): Read/Grep/Glob on any path (`cat` already reads anywhere), `<tool> --version`-style probes, `command -v`, plain reads (`cd`, `find` without `-exec`/`-delete`, `sed -n 'N,Mp'`, …) and read-only `git` (also `-C <dir>`), alone or chained with `;` `&&` `\|\|` `\|`, with `~/`, `2>/dev/null`/`2>&1` and, for programs no file name can turn into a writer, `*`/`?` globs; anything else is denied with a message. The same rules are appended to the system prompt (`READ_ONLY_GUIDE`) so the agent does not learn them by being denied. Not `dontAsk`: it calls nobody and denies every command off the CLI's fixed read-only set (not configurable), so one unlisted part (`… ; npm -v`) fails a whole chain. | `sandbox: read-only`, `approvalPolicy: never` |
 | researcher | as above plus `--allowedTools WebSearch,WebFetch` (`PermissionProfile.web`) | as above plus `web_search = "live"` |
-| coder, resolver | `--permission-mode acceptEdits` (edits inside the working dirs), `--allowedTools` = `Bash(<cmd>)`/`Bash(<cmd> *)` per verify command + `mcp__legion`; everything else → `--permission-prompt-tool stdio` → `approval_request` (or `--permission-prompts none` when `askHuman` is false). `settings.permissions.approvals = auto` (default): switched to auto mode over the control protocol (kept in `acceptEdits` when the model has none) | `sandbox: workspace-write` (cwd = worktree), `approvalPolicy: on-request` → requestApproval → inbox; `auto`: `approvalsReviewer: auto_review` |
+| coder, resolver, session | `--permission-mode acceptEdits` (edits inside the working dirs), `--allowedTools` = `Bash(<cmd>)`/`Bash(<cmd> *)` per verify command + `mcp__legion`; everything else → `--permission-prompt-tool stdio` → `approval_request` (or `--permission-prompts none` when `askHuman` is false). `settings.permissions.approvals = auto` (default): switched to auto mode over the control protocol (kept in `acceptEdits` when the model has none) | `sandbox: workspace-write` (cwd = worktree), `approvalPolicy: on-request` → requestApproval → inbox; `auto`: `approvalsReviewer: auto_review` |
 | lead, assistant (`coordinate`); research_lead = the same plus `WebSearch`, `WebFetch` allowed | `dontAsk --permission-prompts none`, `--allowedTools mcp__legion`, `--disallowedTools` = the read-only list + `Read, Glob, Grep, LS, Bash, BashOutput, KillShell, WebFetch, WebSearch, Task, Agent, NotebookRead, TodoWrite, Skill, ToolSearch`: the session can only talk | `sandbox: read-only`, `approvalPolicy: never` (best effort: Codex's tool list cannot be trimmed) |
 
 Every Claude profile also denies `Bash(git commit *)`, `Bash(git push *)`, Enter/ExitWorktree and the
@@ -668,6 +669,20 @@ through `sessions.send` on the assistant attempt: its process stays alive and id
   which records them for every session). Legion's own wake prompts are never recorded as one, so the transcript
   alone tells the human's words from Legion's.
 
+### 8.8 Direct sessions (`orchestrator/session-run.ts`)
+
+⌘⇧N skips the whole flow: `runs.session({repoPath, prompt, engine, model, attachmentIds})` creates a run in status
+**`session`** (base ref = the checked-out branch) and opens one agent (role `session`, `settings.roles.session`,
+`workspace_write` like a coder) with `cwd` = the project's checkout itself: no worktree, no plan, no review, no
+integration branch. Its system prompt only says where it works and that committing is the human's (the
+`ALWAYS_DENIED` git rules still apply). The human talks to it with `sessions.send`; approvals go to the inbox like a
+coder's. The loop keeps the process open: after a crash or an engine restart it resumes the engine session
+(`RunMeta.sessionSessionId`); `MAX_SESSION_FAILURES` (3) failures in a row fail the run. `runs.cancel` stops it;
+`runs.archive` ends it as `done` without `force` (nothing in it can be lost: the edits are already in the checkout).
+Takeover resumes it in a terminal in the checkout. The UI shows it as a conversation (§11) with the agent's tool
+calls between its words and no progress strip; the full run composer stays on the palette ("New run with a plan…")
+and on the new-conversation tile.
+
 ### 8.7 Presentations (`orchestrator/present.ts`)
 
 `present` puts something in front of the human: screenshots, a rendered report, a document. Files are resolved
@@ -755,8 +770,8 @@ re-attaches the transferred port to a live terminal (a detached shell, or the te
 - Concept: projects are the top level; a run is a **conversation** (chat view, the default) whose agents work
   offstage in the **agents view** (⌘E toggles; the title bar's Chat | Agents switch). The agents view is the tiling
   workspace: strip of columns = tasks (plus plan/DAG/PR tiles); tile = a view; layout modes Strip / Focus /
-  Overview / Pipeline (switching to one shows the agents). Overlays: composer (⌘⇧N), palette (⌘K), add a project
-  (⌘⇧N), go to file (⌘P). The status bar carries usage only (run spend, rate limits; the key mode in the agents view).
+  Overview / Pipeline (switching to one shows the agents). Overlays: session composer (⌘⇧N, §8.8), run composer
+  (palette, "Branch and engine…"), palette (⌘K), add a project (⌘O), go to file (⌘P). The status bar carries usage only (run spend, rate limits; the key mode in the agents view).
   See `docs/research/tiling-ux.md`.
 - Conversation (`renderer/chat/`): `thread.ts` folds the assistant attempts' transcripts (`user_message` = the
   human; final `message`s replace their streamed deltas), the agents' messages to the assistant (under the reply

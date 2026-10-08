@@ -2,7 +2,7 @@ import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { type ElectronApplication, _electron as electron, expect, type Page, test } from '@playwright/test';
-import { openAgents } from './agents';
+import { openAgents, openRunComposer } from './agents';
 
 const root = resolve(import.meta.dirname, '../..');
 const shots = join(root, 'test-results', 'session');
@@ -90,10 +90,10 @@ test('session tiles, approvals, composer, decisions, palette, clarify', async ()
     await window.waitForTimeout(400);
     await t3.screenshot({ path: join(shots, 'approval-accepted.png') });
 
-    // Composer (⌘⇧N; ⌘N is a new conversation tile on the board): validation, repo inspection, issue link detection.
-    await window.keyboard.press('ControlOrMeta+Shift+n');
+    // The run composer (palette; ⌘N is a new conversation tile, ⌘⇧N a session): validation, repo inspection,
+    // issue link detection.
+    await openRunComposer(window);
     const composer = window.getByTestId('composer');
-    await expect(composer).toBeVisible();
     await expect(composer.getByTestId('repo-status')).toContainText('erudiet/app');
     await window.keyboard.press('ControlOrMeta+Enter');
     await expect(composer.getByText('Describe the work or paste an issue URL.')).toBeVisible();

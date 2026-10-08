@@ -417,6 +417,8 @@ export class DemoClient implements EngineClient {
           attachmentIds: chat.attachmentIds,
         });
       }
+      case 'runs.session':
+        return this.createSession(input as unknown as RpcInput<'runs.session'>);
       case 'runs.answerClarify':
         return this.answerClarify(
           input.runId as string,
@@ -740,6 +742,15 @@ export class DemoClient implements EngineClient {
     if (attempt?.status !== 'running') throw new RpcError('conflict', 'session is not running');
     // Like the engine: the human's message is in the transcript before the agent answers it.
     this.emit([this.attemptEvent(attempt, { type: 'user_message', text, attachments, priority })]);
+    if (attempt.role === 'session') {
+      setTimeout(() => {
+        this.emit([
+          this.attemptEvent(attempt, { type: 'message', text: 'Done. Anything else?' }),
+          this.attemptEvent(attempt, { type: 'turn_complete', structuredOutput: null, isError: false, reason: null }),
+        ]);
+      }, 1200);
+      return { ok: true };
+    }
     if (attempt.role === 'assistant') {
       setTimeout(() => {
         this.emit([
@@ -832,6 +843,63 @@ export class DemoClient implements EngineClient {
     this.world.runs.push(run);
     this.emit([{ type: 'run.updated', run: structuredClone(run), from: null }]);
     return structuredClone(run);
+  }
+
+  /** Demo `runs.session`: a session run whose scripted agent looks around the repository, then waits. */
+  private createSession(input: RpcInput<'runs.session'>): Run {
+    const created = this.createRun({
+      repoPath: input.repoPath,
+      baseRef: null,
+      title: null,
+      issueText: input.prompt,
+      issueUrl: null,
+      plannerEngine: input.engine,
+      plannerModel: input.model,
+      skipClarify: false,
+      attachmentIds: input.attachmentIds,
+    });
+    const run = this.updateRun(created.id, { status: 'session' });
+    const attempt: Attempt = {
+      id: `att_${run.id.slice(4)}s`,
+      runId: run.id,
+      taskId: null,
+      role: 'session',
+      parentAttemptId: null,
+      engine: input.engine,
+      model: input.engine === 'codex' ? 'gpt-5-codex' : 'claude-opus-4',
+      effort: null,
+      sessionId: `sess_${run.id.slice(4)}`,
+      status: 'running',
+      startedAt: Date.now(),
+      endedAt: null,
+      costUsd: null,
+      inputTokens: null,
+      outputTokens: null,
+      error: null,
+    };
+    this.world.attempts.push(attempt);
+    this.emit([
+      { type: 'attempt.updated', attempt: structuredClone(attempt), from: null },
+      this.attemptEvent(attempt, {
+        type: 'user_message',
+        text: input.prompt,
+        attachments: run.attachments ?? [],
+        priority: null,
+      }),
+    ]);
+    const steps: AgentEvent[] = [
+      { type: 'message', text: 'Let me look at the repository first.' },
+      { type: 'tool_call', id: 'demo-read', name: 'Read', input: { file_path: 'README.md' }, kind: 'read' },
+      { type: 'tool_result', id: 'demo-read', ok: true, output: '# readme' },
+      { type: 'tool_call', id: 'demo-status', name: 'Bash', input: { command: 'git status --short' }, kind: 'command' },
+      { type: 'tool_result', id: 'demo-status', ok: true, output: '' },
+      { type: 'message', text: 'The working tree is clean. Tell me what to change and I will edit it here.' },
+      { type: 'turn_complete', structuredOutput: null, isError: false, reason: null },
+    ];
+    steps.forEach((event, i) => {
+      setTimeout(() => this.emit([this.attemptEvent(attempt, event)]), 500 * (i + 1));
+    });
+    return run;
   }
 
   private answerClarify(runId: string, answers: QuestionAnswer[], attachments: AttachmentRef[] = []): Run {

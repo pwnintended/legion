@@ -16,6 +16,7 @@ import {
   type Page,
   test,
 } from '@playwright/test';
+import { openRunComposer } from './agents';
 
 const root = resolve(import.meta.dirname, '../..');
 const shots = join(root, 'test-results', 'composer');
@@ -132,9 +133,8 @@ test('composer: repository picker, status line, base branch, at three sizes', as
     const list = window.getByTestId('repo-picker-list');
     const status = composer.getByTestId('repo-status');
 
-    // ⌘⇧N: the issue field has focus; nothing is picked on a fresh install.
-    await window.keyboard.press('ControlOrMeta+Shift+n');
-    await expect(composer).toBeVisible();
+    // The run composer: the issue field has focus; nothing is picked on a fresh install.
+    await openRunComposer(window);
     await expect.poll(() => window.evaluate(() => document.activeElement?.tagName)).toBe('TEXTAREA');
     await expect(picker).toContainText('Choose a repository…');
     // "Plan it" is visibly inert and says why on hover.
@@ -239,8 +239,7 @@ test('composer: repository picker, status line, base branch, at three sizes', as
     for (const size of SIZES) {
       const tag = `${size[0]}x${size[1]}`;
       await setSize(app, window, size);
-      await window.keyboard.press('ControlOrMeta+Shift+n');
-      await expect(composer).toBeVisible();
+      await openRunComposer(window);
       // Empty: no text yet (the draft keeps the last repo).
       await composer.locator('textarea').fill('');
       await composer.getByTestId('composer-submit').hover();

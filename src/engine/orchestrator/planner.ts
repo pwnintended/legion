@@ -75,14 +75,18 @@ export async function createRun(o: Orchestrator, input: RpcInput<'runs.create'>)
   return run;
 }
 
-/** Inspect the repository, add its project, store the run row in `status` (`runs.create`, `runs.chat`). */
+/**
+ * Inspect the repository, add its project, store the run row in `status` (`runs.create`, `runs.chat`,
+ * `runs.session`). A direct session works on whatever is checked out: without a base ref its base is the
+ * current branch, not the default one.
+ */
 export async function insertRun(
   o: Orchestrator,
   input: Pick<
     RpcInput<'runs.create'>,
     'repoPath' | 'baseRef' | 'title' | 'issueText' | 'issueUrl' | 'plannerEngine' | 'plannerModel' | 'attachmentIds'
   >,
-  status: 'draft' | 'chatting',
+  status: 'draft' | 'chatting' | 'session',
 ): Promise<Run> {
   o.assertOpen();
   const inspection = await inspectRepo(input.repoPath, o.ctx.env);
@@ -91,7 +95,11 @@ export async function insertRun(
   }
   if (!inspection.headSha) throw new RpcError('failed_precondition', 'the repository has no commits');
   const root = await toplevel(inspection.root);
-  const baseRef = input.baseRef?.trim() || inspection.defaultBranch || inspection.currentBranch;
+  const baseRef =
+    input.baseRef?.trim() ||
+    (status === 'session'
+      ? inspection.currentBranch || inspection.defaultBranch
+      : inspection.defaultBranch || inspection.currentBranch);
   if (!baseRef) throw new RpcError('bad_request', 'could not determine a base ref');
   let baseSha: string;
   try {

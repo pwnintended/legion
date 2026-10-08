@@ -386,20 +386,34 @@ test('project home: add a project, browse, go to file, search, a commit, start a
     await window.waitForTimeout(400);
     await shotAt(app, window, '09-composer');
 
-    // ⌘⇧N from the home preselects the project too; the run shows up under it in the rail.
+    // ⌘⇧N from the home is a direct session in the project (preselected); it shows up under it in the rail.
     await window.keyboard.press('Escape');
     await expect(composer).toHaveCount(0);
     await window.keyboard.press('ControlOrMeta+Shift+n');
-    await expect(composer).toBeVisible();
-    await composer.locator('textarea').fill('Make truncate count graphemes');
-    await expect(composer.getByTestId('repo-status')).toHaveAttribute('data-state', 'ok', { timeout: 15_000 });
-    await composer.getByTestId('composer-submit').click();
-    await expect(composer).toHaveCount(0);
+    const session = window.getByTestId('session-composer');
+    await expect(session).toBeVisible();
+    await expect(session.getByTestId('repo-picker')).toHaveAttribute('title', repo);
+    await expect(session).not.toContainText('Base branch');
+    await session.locator('textarea').fill('Make truncate count graphemes');
+    await expect(session.getByTestId('repo-status')).toHaveAttribute('data-state', 'ok', { timeout: 15_000 });
+    await expect(session.getByTestId('repo-status')).toContainText('on main');
+    await window.waitForTimeout(400);
+    await shotAt(app, window, '09b-session-composer');
+    await session.getByTestId('composer-submit').click();
+    await expect(session).toHaveCount(0);
     await expect(window.getByTestId('rail-run')).toHaveCount(1);
     await expect(window.getByTestId('titlebar')).toContainText('widgets');
-    // The run opens on its chat, a tile of the project's board. Code still belongs to the project: the same
-    // workspace, as you left it.
-    await expect(window.getByTestId('chat')).toBeVisible();
+    // The session opens on its chat, a tile of the project's board: no plan strip, the agent's words and tool
+    // calls. Code still belongs to the project: the same workspace, as you left it.
+    const chat = window.getByTestId('chat');
+    await expect(chat).toBeVisible();
+    await expect(chat.getByTestId('chat-progress')).toHaveCount(0);
+    await expect(chat.locator('.ch-you-text')).toHaveText('Make truncate count graphemes');
+    await expect(chat).toContainText('Tell me what to change', { timeout: 15_000 });
+    await expect(chat.locator('.ch-work')).not.toHaveCount(0);
+    await expect(chat.getByLabel('Reply to Claude')).toBeVisible();
+    await window.waitForTimeout(400);
+    await shotAt(app, window, '09c-session-chat');
     await window.getByTestId('view-code').click();
     await expect(window.getByTestId('view-code')).toHaveAttribute('aria-pressed', 'true');
     await expect(window.getByTestId('code-space')).toHaveCount(1);

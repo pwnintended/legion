@@ -9,6 +9,8 @@
  * - a few run events (PR opened, run stopped or failed; task merges when no assistant narrates the run).
  * A run without an assistant (planner-first, or the assistant switched off) still gets a thread: its request,
  * its decisions, its presentations and its events.
+ * A direct session (role `session`) is read the same way as the assistant, plus its work: the tool calls between
+ * its words, as `work` items the view renders as the session tile's timeline rows.
  */
 import type { AttachmentRef } from '@shared/attachments';
 import type { AgentMessage, Attempt, InboxItem, Merge, Presentation, Run, Task, TaskNode } from '@shared/domain';
@@ -45,6 +47,8 @@ export type ThreadItem =
     }
   /** A message to the assistant it said nothing about (only once its turn is over). */
   | { kind: 'update'; key: string; ts: number; message: AgentMessage }
+  /** A direct session's tool calls between two of its texts: the transcript entries to fold into rows. */
+  | { kind: 'work'; key: string; ts: number; entries: readonly TranscriptEntry[] }
   | { kind: 'decision'; key: string; ts: number; item: InboxItem }
   | { kind: 'presentation'; key: string; ts: number; presentation: Presentation }
   | { kind: 'event'; key: string; ts: number; tone: 'ok' | 'bad' | 'muted'; text: string; href: string | null }
@@ -71,8 +75,17 @@ const RELAYED_KINDS = new Set<AgentMessage['kind']>(['status', 'report', 'questi
 /** How long after sending an optimistic message waits for its recorded twin before it shows on its own. */
 const PENDING_MATCH_MS = 60_000;
 
+/** Roles the human talks to in the conversation: the assistant, or a direct session's agent. */
+const CONVERSATION_ROLES = new Set<Attempt['role']>(['assistant', 'session']);
+
+/** The attempts of the run's conversation partner (the assistant, or the session agent), oldest first. */
 export function assistantAttempts(attempts: readonly Attempt[]): Attempt[] {
-  return attempts.filter((a) => a.role === 'assistant').sort((a, b) => a.startedAt - b.startedAt);
+  return attempts.filter((a) => CONVERSATION_ROLES.has(a.role)).sort((a, b) => a.startedAt - b.startedAt);
+}
+
+/** A direct session (`runs.session`): its conversation is with the agent doing the work. */
+export function isSessionRun(run: Run, attempts: readonly Attempt[]): boolean {
+  return run.status === 'session' || attempts.some((a) => a.role === 'session');
 }
 
 /** The assistant attempt a message from the human goes to: the live one, else the latest. */
@@ -97,6 +110,9 @@ export function assistantBusy(entries: readonly TranscriptEntry[] | undefined, a
 /** `turn`: the assistant turn a transcript item belongs to (attempt id + count). */
 type Draft = ThreadItem & { order: number; turn?: string };
 
+/** Events of a direct session's work (shown as rows); approvals show as decision cards instead. */
+const WORK_EVENTS = new Set<TranscriptEntry['event']['type']>(['tool_call', 'tool_result', 'file_change', 'todo']);
+
 /**
  * Fold one assistant transcript into human / assistant / error items. Streamed deltas build an item that the
  * final `message` then replaces (the most recent unfinished one, as in the session timeline): a tool call between
@@ -104,13 +120,17 @@ type Draft = ThreadItem & { order: number; turn?: string };
  */
 function foldTranscript(attempt: Attempt, entries: readonly TranscriptEntry[], out: Draft[], order: () => number) {
   type Text = Draft & { kind: 'assistant' };
+  type Work = Draft & { kind: 'work'; entries: TranscriptEntry[] };
+  const showWork = attempt.role === 'session';
   let current: Text | null = null;
   let open: Text[] = [];
+  let work: Work | null = null;
   let turns = 0;
   const endTurn = () => {
     for (const item of open) item.streaming = false;
     open = [];
     current = null;
+    work = null;
     turns += 1;
   };
   const text = (seq: number, ts: number, value: string, streaming: boolean): Text => ({
@@ -124,7 +144,16 @@ function foldTranscript(attempt: Attempt, entries: readonly TranscriptEntry[], o
     order: order(),
     turn: `${attempt.id}:${turns}`,
   });
-  for (const { seq, ts, event } of entries) {
+  for (const entry of entries) {
+    const { seq, ts, event } = entry;
+    if (showWork && WORK_EVENTS.has(event.type)) {
+      if (work) work.entries.push(entry);
+      else {
+        work = { kind: 'work', key: `work:${attempt.id}:${seq}`, ts, entries: [entry], order: order() };
+        work.turn = `${attempt.id}:${turns}`;
+        out.push(work);
+      }
+    } else if (event.type === 'text_delta' || event.type === 'message') work = null;
     switch (event.type) {
       case 'user_message':
         endTurn();
@@ -279,6 +308,7 @@ export function buildThread(input: ThreadInput): ThreadItem[] {
       order: order(),
     });
   }
+  const noun = isSessionRun(input.run, input.attempts) ? 'session' : 'run';
   if (input.run.status === 'failed' || input.run.status === 'cancelled') {
     items.push({
       kind: 'event',
@@ -287,8 +317,8 @@ export function buildThread(input: ThreadInput): ThreadItem[] {
       tone: input.run.status === 'failed' ? 'bad' : 'muted',
       text:
         input.run.status === 'failed'
-          ? `The run failed${input.run.error ? `: ${input.run.error}` : ''}`
-          : 'The run was stopped',
+          ? `The ${noun} failed${input.run.error ? `: ${input.run.error}` : ''}`
+          : `The ${noun} was stopped`,
       href: null,
       order: order(),
     });
@@ -315,7 +345,9 @@ export function buildThread(input: ThreadInput): ThreadItem[] {
 
   let previous: Draft | null = null;
   for (const item of items) {
-    if (item.kind === 'assistant') item.continued = previous?.kind === 'assistant' && previous.turn === item.turn;
+    // A session's words after its tool calls in the same turn read on without a new header.
+    if (item.kind === 'assistant')
+      item.continued = (previous?.kind === 'assistant' || previous?.kind === 'work') && previous.turn === item.turn;
     previous = item;
   }
   return items.map(({ order: _order, turn: _turn, ...item }) => item as ThreadItem);

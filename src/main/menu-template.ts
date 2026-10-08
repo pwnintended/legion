@@ -56,7 +56,8 @@ export function buildMenuTemplate({ appName, isMac, isDev, send }: MenuTemplateO
   const file: MenuItemConstructorOptions = {
     label: 'File',
     submenu: [
-      item('New Run…', 'composer.open'),
+      item('New Session…', 'composer.open'),
+      item('New Run with a Plan…', 'run.new'),
       item('Add Project…', 'project.add'),
       { type: 'separator' },
       item('Go to File…', 'file.goto'),

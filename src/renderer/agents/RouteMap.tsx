@@ -406,7 +406,7 @@ function Terminus({
       if (station === 'plan') {
         const clarify = open.some((i) => i.kind === 'question' && i.payload.source === 'clarify');
         const signoff = open.some((i) => i.kind === 'plan_signoff');
-        const early = ['chatting', 'draft', 'clarifying', 'planning'].includes(status);
+        const early = ['chatting', 'session', 'draft', 'clarifying', 'planning'].includes(status);
         const state: RowState | 'current' = clarify || signoff ? 'waiting' : early ? 'current' : 'done';
         const title = plan ? `Plan · v${plan.version}` : 'Plan';
         const caption = clarify
@@ -417,7 +417,9 @@ function Terminus({
               ? `Signed off · ${plan.dag.nodes.length} tasks`
               : status === 'chatting'
                 ? 'Not started'
-                : 'Being drafted';
+                : status === 'session'
+                  ? 'None: a direct session'
+                  : 'Being drafted';
         return { state, title, caption };
       }
       if (station === 'integration') {

@@ -260,6 +260,8 @@ export class Orchestrator {
   readonly leadLoops = new Map<string, LeadLoopHandle>();
   /** Assistant loops by run id (`assistant.ts`). */
   readonly assistantLoops = new Map<string, LeadLoopHandle>();
+  /** Direct session loops by run id (`session-run.ts`). */
+  readonly sessionLoops = new Set<string>();
   closed = false;
   /** Stopped on close (timers set up by the wiring, e.g. PR polling). */
   readonly disposers: (() => void)[] = [];
@@ -1127,6 +1129,8 @@ export class Orchestrator {
     spawnResearch(binding: McpBinding, request: SpawnResearchRequest): Promise<{ attemptId: string; role: Role }>;
     assistant(runId: string, loop: LeadLoopHandle): Promise<void>;
     assistantEnabled(runId: string): boolean;
+    /** A direct session's loop (`session-run.ts`). */
+    session(runId: string): Promise<void>;
     assistantTools: {
       startImplementation(binding: McpBinding, request: StartImplementationRequest): { runId: string; status: string };
       runStatus(binding: McpBinding): AssistantRunStatus;
@@ -1159,6 +1163,21 @@ export class Orchestrator {
   assistantAttemptId(runId: string): string | null {
     const meta = runMeta(this.store, runId);
     return meta.assistantDisabled ? null : meta.assistantAttemptId;
+  }
+
+  /** Open the run's direct session loop (no-op when one runs). */
+  startSession(runId: string): void {
+    if (this.closed || this.sessionLoops.has(runId) || !this.flows) return;
+    const flows = this.flows;
+    this.sessionLoops.add(runId);
+    this.background(`session ${runId}`, () => flows.session(runId).finally(() => this.sessionLoops.delete(runId)));
+  }
+
+  /** Keep every direct session open (after an engine restart; called from the tick). */
+  private tickSessions(): void {
+    for (const run of this.store.listRuns()) {
+      if (run.status === 'session' && !run.archived) this.startSession(run.id);
+    }
   }
 
   /** Keep every live conversation's assistant running and informed (called from the tick). */
@@ -1303,6 +1322,7 @@ export class Orchestrator {
   private async tick(): Promise<void> {
     if (this.closed || !this.flows) return;
     this.tickAssistants();
+    this.tickSessions();
     const settings = this.settings();
     const runs = this.store.listRuns().filter((r) => r.status === 'executing');
     for (const run of runs) {

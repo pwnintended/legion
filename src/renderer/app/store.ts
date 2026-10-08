@@ -26,7 +26,7 @@ import {
 } from './data';
 import { projectOfRun, selectProjects } from './projects';
 
-export type Overlay = 'composer' | 'palette' | 'settings' | 'addProject' | 'goto';
+export type Overlay = 'composer' | 'session' | 'palette' | 'settings' | 'addProject' | 'goto';
 /**
  * `chat`: the project's board of conversations (home of the app). `agents`: the active run's route map, one
  * station (task, plan, integration, pull request, crew) at a time. `code`: the project's workspaces (its own,

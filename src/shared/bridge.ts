@@ -15,6 +15,7 @@ export interface PlatformInfo {
 /** Command ids main sends to the renderer (app menu, global shortcut, notification clicks). */
 export const COMMAND_IDS = [
   'composer.open',
+  'run.new',
   'inbox.open',
   'palette.open',
   'focus.nextUrgent',

@@ -192,7 +192,7 @@ export function TitleBar() {
           title={commandTooltip(onBoard ? 'board.new' : 'composer.open')}
         >
           <Icon name="plus" strokeWidth={2.4} />
-          {onBoard ? 'New conversation' : 'New run'}
+          {onBoard ? 'New conversation' : 'New session'}
           <CommandKbd id={onBoard ? 'board.new' : 'composer.open'} />
         </button>
       </div>

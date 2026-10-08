@@ -5,7 +5,7 @@
 import type { Project } from '@shared/domain';
 import { openDiff, openInViewer, showPanel } from '../code/actions';
 import { toast } from '../overlays/nav';
-import { openComposer } from './composer-seed';
+import { openComposer, openSessionComposer } from './composer-seed';
 import { applyProjectRow } from './data';
 import { rpc } from './hooks';
 import { actions, activeProjectOf, dataStore, uiStore } from './store';
@@ -117,10 +117,16 @@ export function startRunAbout(projectId: string, path: string, line: number | nu
   openComposer({ repoPath: project?.path ?? null, text: `About \`${reference}\`:\n` });
 }
 
-/** The composer, preselecting the project on screen. */
+/** The run composer (a plan, agents, a PR), preselecting the project on screen. */
 export function newRunInProject(projectId: string | null = currentProject()?.id ?? null): void {
   const project = projectId ? dataStore.getState().projects[projectId] : null;
   openComposer(project ? { repoPath: project.path, text: null } : null);
+}
+
+/** The session composer (⌘⇧N), preselecting the project on screen. */
+export function newSessionInProject(projectId: string | null = currentProject()?.id ?? null): void {
+  const project = projectId ? dataStore.getState().projects[projectId] : null;
+  openSessionComposer(project ? { repoPath: project.path, text: null } : null);
 }
 
 /** The folder dialog (answered by `LEGION_E2E_PICK_DIR` in tests); null when cancelled or unavailable. */
