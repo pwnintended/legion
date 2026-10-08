@@ -230,7 +230,10 @@ const presentations = new Table<Presentation>('presentations', {
   createdAt: ['created_at'],
 });
 
-const verifications = new Table<Verification>('verifications', {
+/** The gate fields have no columns yet (read back as absent). */
+type VerificationRow = Omit<Verification, 'gate' | 'kind' | 'status' | 'summary' | 'blocking'>;
+
+const verifications = new Table<VerificationRow>('verifications', {
   id: ['id'],
   runId: ['run_id'],
   taskId: ['task_id'],

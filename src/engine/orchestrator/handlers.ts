@@ -1,5 +1,6 @@
 /** RPC procedures of the lifecycle service (`runs.*`, `tasks.*`, `inbox.*`, `sessions.*`, ...). */
 
+import { RpcError } from '@shared/rpc-transport';
 import { gitShow } from '../projects';
 import type { EngineRpcServer } from '../rpc/server';
 import {
@@ -85,4 +86,8 @@ export function registerOrchestratorHandlers(server: EngineRpcServer, o: Orchest
       ? gitShow(store.requireProject(target.projectId).path, target.sha)
       : getDiff(o, target, contextLines),
   );
+  // TODO(T2): read the stored full output.
+  server.implement('verifications.output', () => {
+    throw new RpcError('not_implemented', 'verifications.output is not implemented yet');
+  });
 }

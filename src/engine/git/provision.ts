@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { access, copyFile, mkdir, readdir, readFile } from 'node:fs/promises';
 import { dirname, join, relative, resolve, sep } from 'node:path';
+import { GatesConfigSchema, type PackageManager as SharedPackageManager } from '@shared/domain';
 import { tail } from '@shared/util';
 import { execa } from 'execa';
 import { z } from 'zod';
@@ -21,6 +22,8 @@ export const LegionConfigSchema = z.object({
   installCommand: z.string().min(1).optional(),
   /** Regenerates the lockfile after a lockfile conflict (default: per package manager, non-frozen). */
   lockfileCommand: z.string().min(1).optional(),
+  /** Named gates run before review and merge (`verify` still works: each entry becomes a gate). */
+  gates: GatesConfigSchema.optional(),
 });
 export type LegionConfig = z.infer<typeof LegionConfigSchema>;
 
@@ -53,7 +56,7 @@ export async function loadLegionConfig(root: string): Promise<LegionConfig | nul
 // Lockfiles / install command
 // ---------------------------------------------------------------------------------------------
 
-export type PackageManager = 'pnpm' | 'npm' | 'yarn' | 'bun';
+export type PackageManager = SharedPackageManager;
 
 /** Order = precedence when several lockfiles exist. */
 export const LOCKFILES: readonly { file: string; manager: PackageManager }[] = [

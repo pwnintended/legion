@@ -5,6 +5,7 @@
 export * from './dag';
 export * from './engines';
 export * from './estimate';
+export * from './gates';
 export * from './glob';
 export * from './graph';
 export * from './lead';

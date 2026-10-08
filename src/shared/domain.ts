@@ -476,10 +476,113 @@ export function reviewPasses(review: Pick<Review, 'criteria' | 'findings'>): boo
   );
 }
 
+// ---------------------------------------------------------------------------------------------
+// Gates (legion.json `gates`, the gate results of a verify, Settings → Gates)
+// ---------------------------------------------------------------------------------------------
+
+/** `command`: a shell command; `scope` / `secrets`: Legion's built-in gates (`legion:scope`, `legion:secrets`). */
+export const GateKindSchema = z.enum(['command', 'scope', 'secrets']);
+export type GateKind = z.infer<typeof GateKindSchema>;
+
+/** `skipped` gates are listed but never counted (e.g. the secret scan with mode `off`). */
+export const GateStatusSchema = z.enum(['pass', 'fail', 'skipped']);
+export type GateStatus = z.infer<typeof GateStatusSchema>;
+
+/** Where a gate comes from: legion.json `gates.commands`, legacy `verify`, detection, the task's own commands, Legion. */
+export const GateSourceSchema = z.enum(['config', 'verify', 'detected', 'task', 'builtin']);
+export type GateSource = z.infer<typeof GateSourceSchema>;
+
+export const PackageManagerSchema = z.enum(['pnpm', 'npm', 'yarn', 'bun']);
+export type PackageManager = z.infer<typeof PackageManagerSchema>;
+
+/** A gate's name: the key in `gates.commands` (`test`, `db:migrate:check`, ...). */
+export const GateNameSchema = z
+  .string()
+  .regex(
+    /^[a-z0-9][a-z0-9:._-]{0,39}$/,
+    'lowercase letters, digits and : . _ - (at most 40, not starting with a symbol)',
+  );
+export type GateName = z.infer<typeof GateNameSchema>;
+
+const GateCommandTextSchema = z.string().regex(/\S/, 'empty command');
+
+/** One `gates.commands` value: a command (blocking), `{ run, blocking }`, or `false` to suppress the name. */
+export const GateCommandConfigSchema = z.union([
+  GateCommandTextSchema,
+  z.object({ run: GateCommandTextSchema, blocking: z.boolean().optional() }),
+  z.literal(false),
+]);
+export type GateCommandConfig = z.infer<typeof GateCommandConfigSchema>;
+
+/** The scope gate: `block` fails the task on out-of-scope changes, `warn` only reports them. */
+export const GateScopeModeSchema = z.enum(['warn', 'block']);
+export type GateScopeMode = z.infer<typeof GateScopeModeSchema>;
+
+export const SecretScanModeSchema = z.enum(['block', 'warn', 'off']);
+export type SecretScanMode = z.infer<typeof SecretScanModeSchema>;
+
+/** legion.json `gates`. Every key is optional; {@link GateSettingsSchema} holds the effective values. */
+export const GatesConfigSchema = z.object({
+  /** Auto-detect gates (package.json scripts). Default true. */
+  detect: z.boolean().optional(),
+  commands: z.record(GateNameSchema, GateCommandConfigSchema).optional(),
+  /** Default `block`. */
+  scope: GateScopeModeSchema.optional(),
+  /** The bare mode, or `{ mode, allow }` with globs whose files are never scanned. Default `block`. */
+  secrets: z
+    .union([
+      SecretScanModeSchema,
+      z.object({ mode: SecretScanModeSchema.optional(), allow: z.array(z.string().min(1)).optional() }),
+    ])
+    .optional(),
+});
+export type GatesConfig = z.infer<typeof GatesConfigSchema>;
+
+/** One command gate to run. */
+export const GateSpecSchema = z.object({
+  name: z.string().min(1),
+  command: z.string().min(1),
+  /** A failing non-blocking gate only warns. */
+  blocking: z.boolean(),
+  source: GateSourceSchema,
+});
+export type GateSpec = z.infer<typeof GateSpecSchema>;
+
+/** The effective `gates` settings (defaults applied). */
+export const GateSettingsSchema = z.object({
+  detect: z.boolean(),
+  scope: GateScopeModeSchema,
+  secrets: z.object({ mode: SecretScanModeSchema, allow: z.array(z.string()) }),
+});
+export type GateSettings = z.infer<typeof GateSettingsSchema>;
+
+/** A project's gate configuration as Settings → Gates edits it (legion.json is the source of truth). */
+export const ProjectGatesSchema = z.object({
+  /** Absolute path of the project's legion.json. */
+  path: z.string(),
+  exists: z.boolean(),
+  /** sha256 of the file's text; null when absent. `projects.setGates` refuses a stale revision. */
+  revision: z.string().nullable(),
+  /** Why legion.json is invalid (editing is disabled), or null. */
+  error: z.string().nullable(),
+  gates: GatesConfigSchema.nullable(),
+  /** Legacy legion.json `verify`. */
+  verify: z.array(z.string()),
+  detected: z.array(GateSpecSchema),
+  packageManager: PackageManagerSchema.nullable(),
+  /** The effective repo-level gates with their source. */
+  resolved: z.array(GateSpecSchema),
+  settings: GateSettingsSchema,
+});
+export type ProjectGates = z.infer<typeof ProjectGatesSchema>;
+
 export const VerificationPhaseSchema = z.enum(['setup', 'task', 'post_merge', 'final']);
 export type VerificationPhase = z.infer<typeof VerificationPhaseSchema>;
 
-/** One verify/setup command execution (node `verify.commands`, repo `legion.json` setup/verify). */
+/**
+ * One verify/setup command execution (node `verify.commands`, repo `legion.json` setup/verify). A verify-phase
+ * row is one gate result; the gate fields are null (or absent) on legacy rows and setup/install rows.
+ */
 export const VerificationSchema = z.object({
   id: IdSchema,
   runId: IdSchema,
@@ -493,6 +596,13 @@ export const VerificationSchema = z.object({
   outputTail: z.string(),
   durationMs: z.number().int().nonnegative(),
   createdAt: TimestampSchema,
+  /** The gate's name (`test`, `scope`, ...). */
+  gate: z.string().nullable().optional(),
+  kind: GateKindSchema.nullable().optional(),
+  status: GateStatusSchema.nullable().optional(),
+  /** One line: what passed or why it failed. */
+  summary: z.string().nullable().optional(),
+  blocking: z.boolean().nullable().optional(),
 });
 export type Verification = z.infer<typeof VerificationSchema>;
 

@@ -7,6 +7,7 @@ import {
   expandGlobs,
   installCommand,
   LegionConfigError,
+  LegionConfigSchema,
   loadLegionConfig,
   lockfileCommand,
   portBase,
@@ -39,6 +40,50 @@ describe('legion.json', () => {
     await expect(loadLegionConfig(d)).rejects.toBeInstanceOf(LegionConfigError);
     writeFileSync(join(d, 'legion.json'), '{ not json');
     await expect(loadLegionConfig(d)).rejects.toThrow(/invalid JSON/);
+  });
+
+  it('accepts the gates key in every form', () => {
+    const gates = {
+      detect: false,
+      commands: {
+        test: 'pnpm test',
+        e2e: { run: 'pnpm e2e', blocking: false },
+        'db:migrate:check': { run: 'pnpm db:check' },
+        lint: false,
+      },
+      scope: 'warn',
+      secrets: { mode: 'block', allow: ['fixtures/**'] },
+    };
+    expect(LegionConfigSchema.parse({ verify: ['pnpm test'], gates })).toEqual({ verify: ['pnpm test'], gates });
+    for (const secrets of ['block', 'warn', 'off', {}, { mode: 'off' }, { allow: ['a/**'] }]) {
+      expect(LegionConfigSchema.safeParse({ gates: { secrets } }).success, JSON.stringify(secrets)).toBe(true);
+    }
+    expect(LegionConfigSchema.parse({ gates: {} })).toEqual({ gates: {} });
+    expect(LegionConfigSchema.parse({ verify: ['pnpm test'] })).toEqual({ verify: ['pnpm test'] });
+  });
+
+  it('rejects invalid gates', async () => {
+    for (const gates of [
+      { scope: 'off' },
+      { detect: 'yes' },
+      { secrets: 'maybe' },
+      { secrets: { mode: 'loud' } },
+      { secrets: { allow: [''] } },
+      { commands: { test: '' } },
+      { commands: { test: '   ' } },
+      { commands: { test: { run: '' } } },
+      { commands: { test: { blocking: false } } },
+      { commands: { test: true } },
+      { commands: { Test: 'pnpm test' } },
+      { commands: { 'my test': 'pnpm test' } },
+      { commands: { '-x': 'pnpm test' } },
+      { commands: { ['a'.repeat(41)]: 'pnpm test' } },
+    ]) {
+      expect(LegionConfigSchema.safeParse({ gates }).success, JSON.stringify(gates)).toBe(false);
+    }
+    const d = dir();
+    writeFileSync(join(d, 'legion.json'), JSON.stringify({ gates: { scope: 'off' } }));
+    await expect(loadLegionConfig(d)).rejects.toBeInstanceOf(LegionConfigError);
   });
 });
 

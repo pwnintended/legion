@@ -67,6 +67,13 @@ export function registerProjectHandlers(server: EngineRpcServer, ctx: EngineCont
       tasksOf: (runId) => ctx.store.listTasks(runId),
     }),
   );
+  // TODO(T10): read and write the project's legion.json gates.
+  server.implement('projects.gates', () => {
+    throw new RpcError('not_implemented', 'projects.gates is not implemented yet');
+  });
+  server.implement('projects.setGates', () => {
+    throw new RpcError('not_implemented', 'projects.setGates is not implemented yet');
+  });
 
   const at = (projectId: string, checkout: string | null | undefined) => checkoutRoot(root(projectId), checkout);
   server.implement('files.list', async ({ projectId, checkout, dir }) =>
