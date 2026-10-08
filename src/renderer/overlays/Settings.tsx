@@ -1,6 +1,7 @@
 /**
  * Settings (⌘,): engines (binary path, detected version and login, enable), agent defaults per role, run
- * limits (concurrency, budget, retries) and appearance. Engine settings go through `settings.get/set` (each
+ * limits (concurrency, budget, retries) and appearance. Gates (Gates.tsx) edit the project's legion.json instead
+ * and save with their own button. Engine settings go through `settings.get/set` (each
  * valid field saves on commit: blur, ⏎ or a choice); appearance is a renderer preference (prefs.ts).
  */
 import type { Effort, EngineKind, Role, Settings, SettingsPatch } from '@shared/domain';
@@ -15,6 +16,7 @@ import { CommandKbd, Dot } from '../chrome/ui';
 import { ENGINE_NAME } from '../layout/describe';
 import { errorMessage } from '../tiles/session/actions';
 import { AccessSection } from './Access';
+import { GatesSection } from './Gates';
 import { ApprovalsControl, Field, Segmented, Select, Switch } from './SettingsControls';
 import { OverlayPanel } from './Shell';
 import { engineStatus, parseBinaryPath, parseBudget, parseModel, parseWhole } from './settings-model';
@@ -37,6 +39,7 @@ const SECTIONS: { id: SettingsSection; label: string }[] = [
   { id: 'engines', label: 'Engines' },
   { id: 'agents', label: 'Agents' },
   { id: 'access', label: 'Access' },
+  { id: 'gates', label: 'Gates' },
   { id: 'runs', label: 'Runs' },
   { id: 'appearance', label: 'Appearance' },
 ];
@@ -143,6 +146,7 @@ export function SettingsOverlay() {
               <EnginesSection settings={settings} engines={engines.list} commit={commit} />
               <AgentsSection settings={settings} engines={engines.list} commit={commit} />
               <AccessSection settings={settings} commit={commit} />
+              <GatesSection />
               <RunsSection settings={settings} commit={commit} />
             </>
           ) : (
