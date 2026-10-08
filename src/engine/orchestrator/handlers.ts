@@ -85,4 +85,7 @@ export function registerOrchestratorHandlers(server: EngineRpcServer, o: Orchest
       ? gitShow(store.requireProject(target.projectId).path, target.sha)
       : getDiff(o, target, contextLines),
   );
+  server.implement('verifications.output', ({ verificationId }) => ({
+    output: store.verificationOutput(verificationId),
+  }));
 }

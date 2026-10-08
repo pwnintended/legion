@@ -5,6 +5,7 @@
 export * from './dag';
 export * from './engines';
 export * from './estimate';
+export * from './gates';
 export * from './glob';
 export * from './graph';
 export * from './lead';
@@ -15,4 +16,5 @@ export * from './prompts';
 export * from './research';
 export * from './scheduler';
 export * from './scope';
+export * from './secrets';
 export * from './sensitive';

@@ -1,8 +1,8 @@
 /**
  * RPC procedures for projects and read-only repository browsing (architecture §5 Project, §10):
- * `projects.*`, `files.*`, `git.log`, `git.show`, `prs.list`. The only write is `files.write` (the user saving a
- * file they edited, refused when it changed since). Files are read from the main checkout or, with `checkout`,
- * from one of the project's worktrees (checkouts.ts).
+ * `projects.*`, `files.*`, `git.log`, `git.show`, `prs.list`. The writes are `files.write` (the user saving a
+ * file they edited, refused when it changed since) and `projects.setGates` (legion.json's `gates` key, gates.ts).
+ * Files are read from the main checkout or, with `checkout`, from one of the project's worktrees (checkouts.ts).
  */
 import { realpath } from 'node:fs/promises';
 import { basename } from 'node:path';
@@ -22,6 +22,7 @@ import {
   statProjectFile,
   writeProjectFile,
 } from './files';
+import { readProjectGates, writeProjectGates } from './gates';
 import { gitLog, gitShow } from './history';
 import { listPrs, projectInfo, projectStatus } from './info';
 
@@ -66,6 +67,10 @@ export function registerProjectHandlers(server: EngineRpcServer, ctx: EngineCont
       runs: ctx.store.listRuns().filter((r) => r.projectId === projectId),
       tasksOf: (runId) => ctx.store.listTasks(runId),
     }),
+  );
+  server.implement('projects.gates', ({ projectId }) => readProjectGates(root(projectId)));
+  server.implement('projects.setGates', ({ projectId, revision, gates, verify }) =>
+    writeProjectGates(root(projectId), { revision, gates, verify }),
   );
 
   const at = (projectId: string, checkout: string | null | undefined) => checkoutRoot(root(projectId), checkout);

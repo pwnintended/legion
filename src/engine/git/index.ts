@@ -1,4 +1,5 @@
 export * from './changes';
+export * from './detect';
 export * from './exec';
 export * from './glob';
 export * from './integration';

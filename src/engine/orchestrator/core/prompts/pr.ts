@@ -1,4 +1,5 @@
 /** Draft PR title and body (§8 step 8). A template over run data, no agent involved. */
+import type { GateResult } from '../gates';
 import { clipMiddle, clipTail, demoteHeadings, join } from './format';
 import type { PrBodyInput, VerifyResultInput } from './types';
 
@@ -23,9 +24,31 @@ export function buildPrTitle(title: string, prefix?: string | null): string {
   return full.length <= PR_TITLE_MAX_CHARS ? full : `${full.slice(0, PR_TITLE_MAX_CHARS - 1).trimEnd()}…`;
 }
 
-function verifyOutcome(r: VerifyResultInput): string {
+function isGateResult(r: VerifyResultInput | GateResult): r is GateResult {
+  return 'name' in r && 'status' in r && typeof r.name === 'string' && typeof r.status === 'string';
+}
+
+function verifyOutcome(r: VerifyResultInput | GateResult): string {
+  if (isGateResult(r)) {
+    if (r.status === 'pass') return '✅ passed';
+    if (r.status === 'skipped') return '⏭️ skipped';
+    const why = r.kind !== 'command' ? r.summary : r.exitCode === null ? 'killed / timed out' : `exit ${r.exitCode}`;
+    return r.blocking ? `❌ ${why}` : `⚠️ warning: ${why}`;
+  }
   if (r.exitCode === null) return '⚠️ killed / timed out';
   return r.exitCode === 0 ? '✅ passed' : `❌ exit ${r.exitCode}`;
+}
+
+function failed(r: VerifyResultInput | GateResult): boolean {
+  return isGateResult(r) ? r.status === 'fail' : r.exitCode !== 0;
+}
+
+function duration(r: VerifyResultInput): string {
+  return r.durationMs != null ? `${(r.durationMs / 1000).toFixed(1)}s` : '-';
+}
+
+function code(text: string): string {
+  return `\`${cell(text).replace(/`/g, "'")}\``;
 }
 
 /** Minor findings: full bodies, titles only, or a count. */
@@ -51,23 +74,26 @@ export function buildPrBody(input: PrBodyInput): PrText {
                 `| ${cell(t.nodeId)} | ${cell(t.title)} | ${cell(t.status)} | ${cell(t.coderEngine)} | ${cell(t.reviewerEngine ?? '-')} | ${cell(t.verdict ?? '-')} | ${t.fixRounds} |`,
             ),
           ].join('\n');
+    // Gate results get a Gate column; legacy rows (no gate name) keep the command-only table.
+    const gated = input.verification.some(isGateResult);
     const verification =
       input.verification.length === 0
         ? '## Verification\n\nNo verification commands were run.'
         : [
             '## Verification',
             '',
-            '| Command | Result | Duration |',
-            '|---|---|---|',
-            ...input.verification.map(
-              (r) =>
-                `| \`${cell(r.command).replace(/`/g, "'")}\` | ${verifyOutcome(r)} | ${r.durationMs != null ? `${(r.durationMs / 1000).toFixed(1)}s` : '-'} |`,
+            gated ? '| Gate | Command | Result | Duration |' : '| Command | Result | Duration |',
+            gated ? '|---|---|---|---|' : '|---|---|---|',
+            ...input.verification.map((r) =>
+              gated
+                ? `| ${isGateResult(r) ? cell(r.name) : '-'} | ${code(r.command)} | ${cell(verifyOutcome(r))} | ${duration(r)} |`
+                : `| ${code(r.command)} | ${verifyOutcome(r)} | ${duration(r)} |`,
             ),
             ...input.verification
-              .filter((r) => r.exitCode !== 0 && r.outputTail.trim() && tailMax > 0)
+              .filter((r) => failed(r) && r.outputTail.trim() && tailMax > 0)
               .map(
                 (r) =>
-                  `\n<details><summary>Output of <code>${escapeHtml(r.command)}</code></summary>\n\n\`\`\`\`text\n${clipTail(r.outputTail.trim(), tailMax).replace(/````/g, "'''")}\n\`\`\`\`\n\n</details>`,
+                  `\n<details><summary>Output of <code>${escapeHtml(isGateResult(r) ? r.name : r.command)}</code></summary>\n\n\`\`\`\`text\n${clipTail(r.outputTail.trim(), tailMax).replace(/````/g, "'''")}\n\`\`\`\`\n\n</details>`,
               ),
           ].join('\n');
     const minorFindings = renderMinor(input, minor);

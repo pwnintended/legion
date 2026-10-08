@@ -388,8 +388,8 @@ relies on this); when both exist the structured report wins.
    - Provision: `git worktree add -b legion/<run>/<task>-<slug> <wt> <integration HEAD>`; record `startSha`;
      run repo `legion.json` `setup` commands.
    - Code (coder session) → Legion commits (`git add -A && git commit`, message from `mark_task_done`).
-   - Verify: run node `verify.commands` + repo `legion.json` `verify`; scope check (actual changed files vs
-     declared `touches`).
+   - Verify: run the task's **gates** (§8.0) — every command gate (no fail-fast), then the built-in scope and
+     secret-scan gates on the task diff; blocking failures enter the fix loop.
    - Review (other engine, fresh session, read-only): input = node spec, issue, `git diff <diff base>..HEAD` (§8.1 Diffs),
      verify results, scope report → `Review`. Approve iff all criteria met and no blocker/major.
    - Fix loop: send blocker/major findings back to the coder session (resume), re-verify, re-review.
@@ -397,7 +397,7 @@ relies on this); when both exist the structured report wins.
    - High-risk nodes, and tasks whose diff touches agent/CI/hook config or package scripts (§6) →
      `awaiting_human` after approval.
    - Merge queue (serialized): `git merge-tree --write-tree` forecast; clean → squash-merge into integration
-     worktree, commit `T<n>: <title>`, run post-merge verify; failure → reset integration to the pre-merge SHA,
+     worktree, commit `T<n>: <title>`, run post-merge verify (command gates, §8.0); blocking failure → reset integration to the pre-merge SHA,
      send the task back to fixing with integration HEAD merged into its branch. Conflicts → resolver session
      (coder engine) in the task worktree; 2 failures → inbox. Lockfiles: never hand-merged — take integration's
      side, regenerate with the non-frozen lockfile command, commit it; a failed regeneration → inbox.
@@ -417,6 +417,63 @@ relies on this); when both exist the structured report wins.
    `gc.auto`, set `archived: true` (hidden from `runs.list` unless `includeArchived`). Idempotent.
    `discard: true` (implies `force`; also on an archived run, from the report dialog or the sidebar) removes
    everything kept, the integration branch included; nothing on the remote is touched.
+
+### 8.0 Gates (`orchestrator/core/gates.ts`, `git/detect.ts`, `core/secrets.ts`, `core/scope.ts`)
+
+A gate is a named check with a structured result. Kinds (`GateKind`): `command` (a shell command), `scope` and
+`secrets` (built-ins; their row's `command` is `legion:scope` / `legion:secrets`). Each result is a
+`verifications` row with, besides `command`/`exitCode`/`outputTail`/`durationMs`, the gate fields `gate` (name),
+`kind`, `status` (`pass` | `fail` | `skipped`), `summary` (one line) and `blocking`. Migration `008_gates` added
+them plus `verification_outputs` (full output, capped at 1 MB, excluded from snapshots), served lazily by
+`verifications.output`. Legacy rows (gate fields null) are classified from their command.
+
+**Resolution** (`resolveGates({config, detected, taskCommands})`), in order. A command (trimmed) runs once, under
+the first source that names it; colliding names, and the built-in names `scope` and `secrets`
+(`BUILTIN_GATE_NAMES`), get `-2`, `-3`, ...:
+1. legion.json `gates.commands` (source `config`); a string is blocking, `{run, blocking}` may be non-blocking, and
+   `false` suppresses that name (for `verify` entries and detected gates);
+2. legacy `verify` entries (source `verify`), named by `gateNameFor(command)` (`pnpm test` → `test`); one whose
+   command differs from a same-named configured gate still runs, suffixed (`test-2`);
+3. detected gates whose name isn't defined or suppressed above (source `detected`, only when `gates.detect` is on);
+4. the task's own `verify.commands` (source `task`).
+
+**Detection** (`detectProjectGates(dir)`) runs a `DETECTORS` registry of `ProjectDetector = {id, detect(dir)}`;
+only `node` exists: `test`, `typecheck` (`typecheck` / `type-check`) and `lint` scripts of package.json, run with
+`detectPackageManager` (`packageManager` field, else the lockfile, else npm). New ecosystems add a detector.
+`orchestrator.repoInput()` is synchronous and resolves without detection, so the planner sees only config and
+`verify` gates; detected gates are resolved at verify time (`resolveTaskGates`).
+
+**Settings** (`resolveGateSettings`): `detect` (default `true`), `scope` (`block` default | `warn`), `secrets`
+(`block` default | `warn` | `off`, plus `allow` globs).
+- **Secret scan** (`scanSecrets(diff, {allow})`): built-in rules over the added lines of the task diff, no external
+  tool; findings report file, line and rule with the value masked (it is never stored). Skipped: lockfiles,
+  `allow` globs, placeholders / env references, and lines containing `legion:allow-secret`.
+- **Scope** (`scopeGateResult(report, mode)`): changed files vs declared `touches`; `warn` keeps the old
+  informational behaviour, `block` (default) fails the gate. Lockfiles stay allowed when an install command
+  exists. Since scope blocks by default, tests that deliberately write outside their touches set
+  `gates.scope: 'warn'`.
+
+**Flow.** Task verify runs `runGates` over the resolved command gates, then scope and secrets, then the unchanged
+sensitive-change check; `decideAfterVerify(task, gatesPassed(results))` — only failed **blocking** gates fail it,
+non-blocking failures are warnings. The failed blocking `GateResult`s go into `fix.failedVerify` and so into the
+coder's fix brief. Post-merge verify runs the install (if any), then the task's command gates plus scope and
+secrets over the squash (`preSha..mergedSha`, via `builtinGates`), so edits a conflict resolver made after task
+verify are gated too; only blocking failures reset / revert the merge (`verify_failed`). Final verify runs the
+repo-level command gates, falling back to the merged nodes' verify commands when none resolve, and escalates with
+the failing gate names. The review pack and the merge-gate card show `gateCounts` as "N/N green"; the PR body has
+a Gate column.
+
+**Editing in the app.** legion.json is the single source of truth; there is no app-local store.
+`projects.gates({projectId})` returns `ProjectGates` (the file's `gates` and `verify`, the detected gates and
+package manager, the resolved gates with their source, the effective settings and a `revision` = sha256 of the
+file text, null when absent). `projects.setGates({projectId, revision, gates, verify?})` (`engine/projects/gates.ts`)
+rejects a stale revision (`conflict`), invalid names, command gates named `scope` / `secrets`, blank or duplicate
+entries (including `verify`), replaces only
+`gates` (and `verify` when given; `gates: null` removes the key) while keeping the other keys, key order, indent
+and trailing newline, and writes atomically. **Settings → Gates** (`renderer/overlays/Gates.tsx`, logic in
+`gates-model.ts`) is the per-project editor over these two calls: detection toggle, command gates with a blocking
+flag and source badges (a `verify` entry can be moved into `gates.commands`), scope mode and secret-scan mode and
+allowlist. legion.json is a sensitive path for agents, so a coder can't silently relax gates.
 
 ### 8.1 Lifecycle service (`engine/orchestrator/`)
 

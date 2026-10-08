@@ -28,7 +28,16 @@ import { focusedTile } from '../../layout/tree';
 import type { TileProps } from '../../layout/types';
 import { focusDiff } from '../diff/data';
 import { Check, errorText, InlineComposer, Markdown, openTile, shortSha, useAction, useTileKeys } from '../plan/kit';
-import { type Gate, gateReasons, gatesFor, isBlocking, latestVerifications, trackFindings } from './evidence';
+import {
+  type Gate,
+  gateReasons,
+  gatesChip,
+  gatesFor,
+  isBlocking,
+  taskChangedFiles,
+  taskGates,
+  trackFindings,
+} from './evidence';
 import { FindingCard } from './findings';
 
 // ---------------------------------------------------------------------------------------------
@@ -123,12 +132,11 @@ function usePack(runId: string, taskId: string | null): Pack {
         : (attemptsOfRun(state.attempts, runId)
             .filter((a) => a.role === 'finalizer')
             .at(-1) ?? null));
-    const files = new Set<string>();
-    for (const a of coderAttempts) for (const f of state.diffstats[a.id]?.files ?? []) files.add(f);
-    const verifications = taskId
-      ? latestVerifications(verificationsOfRun(state.verifications, runId), taskId)
-      : verificationsOfRun(state.verifications, runId).filter((v) => v.phase === 'final');
-    const gates = gatesFor({ node, verifications, changedFiles: taskId ? [...files] : null });
+    const runVerifications = verificationsOfRun(state.verifications, runId);
+    const changedFiles = taskId ? taskChangedFiles(attempts, state.diffstats, taskId) : [];
+    const gates = taskId
+      ? taskGates({ taskId, node, verifications: runVerifications, attempts, diffstats: state.diffstats })
+      : gatesFor({ node, verifications: runVerifications.filter((v) => v.phase === 'final'), changedFiles: null });
     const reasons =
       task && node
         ? gateReasons({
@@ -139,7 +147,7 @@ function usePack(runId: string, taskId: string | null): Pack {
             maxFixRounds: settings?.limits.maxFixRounds ?? 2,
           })
         : [];
-    return { task, node, reviews, coder, reviewer, coderAttempts, gates, reasons, changedFiles: [...files] };
+    return { task, node, reviews, coder, reviewer, coderAttempts, gates, reasons, changedFiles };
   }, [runId, taskId, plan, settings, ...deps]);
 }
 
@@ -370,7 +378,26 @@ function FinalIntent({ runId }: { runId: string }) {
 
 function Gates({ gates, live }: { gates: Gate[]; live: boolean }) {
   const [open, setOpen] = useState<string | null>(null);
-  const green = gates.filter((g) => g.ok === true).length;
+  /** Full outputs by verification id, fetched on first expand; null = loading. */
+  const [outputs, setOutputs] = useState<Record<string, string | null>>({});
+  const chip = gatesChip(gates);
+  const skipped = gates.filter((g) => g.status === 'skipped').length;
+
+  const toggle = (g: Gate) => {
+    const next = open === g.key ? null : g.key;
+    setOpen(next);
+    const id = g.verificationId;
+    if (!next || !id || id in outputs) return;
+    setOutputs((o) => ({ ...o, [id]: null }));
+    // No stored output (legacy row) or an RPC error: the tail on the row is all there is.
+    void rpc('verifications.output', { verificationId: id })
+      .then(
+        (r) => r.output,
+        () => null,
+      )
+      .then((output) => setOutputs((o) => ({ ...o, [id]: output || g.detail || '' })));
+  };
+
   return (
     <>
       <div className="lg-sec">
@@ -379,8 +406,15 @@ function Gates({ gates, live }: { gates: Gate[]; live: boolean }) {
           {gates.length === 0 ? (
             'not run yet'
           ) : (
-            <Chip tone={green === gates.length ? 'ok' : 'bad'}>
-              {green}/{gates.length} green
+            <Chip
+              tone={chip.tone}
+              title={
+                [chip.warnings ? `${chip.warnings} non-blocking failed` : null, skipped ? `${skipped} skipped` : null]
+                  .filter(Boolean)
+                  .join(' · ') || undefined
+              }
+            >
+              {chip.green}/{chip.total} green
             </Chip>
           )}
         </span>
@@ -392,30 +426,52 @@ function Gates({ gates, live }: { gates: Gate[]; live: boolean }) {
         </div>
       ) : null}
       <div data-testid="gates">
-        {gates.map((g) => (
-          <div key={g.key}>
-            <button
-              type="button"
-              className="lg-gate"
-              onClick={() => setOpen(open === g.key ? null : g.key)}
-              aria-expanded={open === g.key}
-              title={g.command ?? undefined}
-            >
-              <Check ok={g.ok} />
-              <span className="min-w-0 flex-1 truncate">{g.label}</span>
-              <span className="lg-gate-ev">{g.evidence}</span>
-            </button>
-            {open === g.key && g.detail ? (
-              <div className="lg-block mt-0.5 mb-2 lg-rise">
-                {g.command ? <div className="faint">$ {g.command}</div> : null}
-                {g.detail}
-              </div>
-            ) : null}
-          </div>
-        ))}
+        {gates.map((g) => {
+          const output = g.verificationId ? outputs[g.verificationId] : undefined;
+          const detail = output || g.detail;
+          return (
+            <div key={g.key}>
+              <button
+                type="button"
+                className="lg-gate"
+                onClick={() => toggle(g)}
+                aria-expanded={open === g.key}
+                title={g.command ?? undefined}
+              >
+                <GateMark gate={g} />
+                <span className={`min-w-0 flex-1 truncate${g.status === 'skipped' ? ' faint' : ''}`}>{g.label}</span>
+                <span className="lg-gate-ev">{g.evidence}</span>
+              </button>
+              {open === g.key && (detail || output === null) ? (
+                <div className="lg-block mt-0.5 mb-2 lg-rise">
+                  {g.command ? <div className="faint">$ {g.command}</div> : null}
+                  {output === null ? <div className="faint">loading the full output…</div> : null}
+                  {detail}
+                </div>
+              ) : null}
+            </div>
+          );
+        })}
       </div>
     </>
   );
+}
+
+/** ✓ / ✗, △ for a failed non-blocking gate (it only warns), – for a skipped one. */
+function GateMark({ gate }: { gate: Gate }) {
+  if (gate.status === 'skipped')
+    return (
+      <span className="faint w-[13px] flex-none text-center" role="img" aria-label="skipped">
+        –
+      </span>
+    );
+  if (gate.ok === false && !gate.blocking)
+    return (
+      <span className="w-[13px] flex-none text-center text-peach" role="img" aria-label="failed, non-blocking">
+        △
+      </span>
+    );
+  return <Check ok={gate.ok} />;
 }
 
 function Criteria({ review, node }: { review: Review; node: TaskNode | null }) {

@@ -7,10 +7,13 @@
  * the merge (`tasks.approveMerge`) and request changes (`tasks.requestChanges`, back to its coder).
  */
 import type { InboxItemOf, ResumeStep } from '@shared/domain';
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
+import { useShallow } from 'zustand/react/shallow';
 import { confirmAction } from '../../app/confirm';
-import { rpc, useData } from '../../app/hooks';
-import { Kbd } from '../../chrome/ui';
+import { attemptsOfRun, verificationsOfRun } from '../../app/data';
+import { rpc, useData, useLatestPlan } from '../../app/hooks';
+import { Chip, Kbd } from '../../chrome/ui';
+import { gatesChip, taskGates } from '../review/evidence';
 import { trackResolution, usePendingResolution } from './actions';
 import { Glyph } from './glyphs';
 
@@ -78,6 +81,26 @@ export function useMergeGate(item: EscalationItem): boolean {
   return item.kind === 'escalation' && status === 'awaiting_human';
 }
 
+/** The "N/N green" chip of the task's latest gates, counted exactly as the review pack does; null before any ran. */
+function useGatesChip(item: EscalationItem): ReturnType<typeof gatesChip> | null {
+  const plan = useLatestPlan(item.runId);
+  const [tasks, verifications, attempts, diffstats] = useData(
+    useShallow((s) => [s.tasks, s.verifications, s.attempts, s.diffstats] as const),
+  );
+  return useMemo(() => {
+    const task = item.taskId ? tasks[item.taskId] : undefined;
+    if (!task) return null;
+    const gates = taskGates({
+      taskId: task.id,
+      node: plan?.dag.nodes.find((n) => n.id === task.nodeId) ?? null,
+      verifications: verificationsOfRun(verifications, item.runId),
+      attempts: attemptsOfRun(attempts, item.runId),
+      diffstats,
+    });
+    return gates.length > 0 ? gatesChip(gates) : null;
+  }, [plan, tasks, verifications, attempts, diffstats, item.runId, item.taskId]);
+}
+
 export function approveGatedMerge(item: EscalationItem): Promise<void> {
   return trackResolution(item.id, 'approve', () => rpc('tasks.approveMerge', { taskId: item.taskId as string }));
 }
@@ -108,6 +131,7 @@ export function EscalationCard({ item, focused, label }: { item: EscalationItem;
   const [editing, setEditing] = useState(false);
   const [note, setNote] = useState('');
   const gate = useMergeGate(item);
+  const gates = useGatesChip(item);
   const tracked = usePendingResolution(item.id);
   const pending = tracked?.state === 'pending' ? (tracked.choice as Action | 'approve' | 'changes') : null;
   const error = tracked?.state === 'error' ? tracked.message : null;
@@ -128,6 +152,11 @@ export function EscalationCard({ item, focused, label }: { item: EscalationItem;
       <div className="ap-title esc-title">
         <Glyph name="warn" size={14} />
         {title}
+        {gate && gates ? (
+          <Chip tone={gates.tone} title={gates.warnings ? `${gates.warnings} non-blocking failed` : undefined}>
+            gates {gates.green}/{gates.total} green
+          </Chip>
+        ) : null}
         <span className="ap-tool mono">{item.kind}</span>
       </div>
       <div className="ap-reason esc-summary">{item.payload.summary}</div>

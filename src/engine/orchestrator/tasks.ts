@@ -19,7 +19,6 @@ import {
   createWorktree,
   git,
   gitText,
-  LOCKFILES,
   mergeIntoTaskBranch,
   provisionFiles,
   removeWorktree,
@@ -39,6 +38,7 @@ import {
   decideAfterReview,
   decideAfterVerify,
   type Failure,
+  gatesPassed,
   markdownSection,
   PLAN_FILE,
   packageScriptsChanged,
@@ -52,7 +52,14 @@ import {
 import type { AgentRun } from './live-session';
 import { type FixContext, patchTaskMeta, taskMeta } from './meta';
 import { AgentFailure, Closed, type Orchestrator } from './orchestrator';
-import { confirmedIntegrationSha, runVerification, taskDiffBase, verifyCommands } from './worktrees';
+import {
+  builtinGates,
+  confirmedIntegrationSha,
+  resolveTaskGates,
+  runGates,
+  runVerification,
+  taskDiffBase,
+} from './worktrees';
 
 type Step = 'next' | 'park';
 
@@ -297,6 +304,7 @@ async function code(o: Orchestrator, run: Run, task: Task, mode: 'coder' | 'fixe
     return null;
   });
   const meta = taskMeta(o.store, task.id);
+  const gateCommands = (await resolveTaskGates(o, run, node, config, worktree)).map((g) => g.command);
   const tools = o.toolNames(engine);
   const leadAttemptId = o.leadAttemptId(run.id);
   const interrupted = o.store
@@ -374,7 +382,7 @@ async function code(o: Orchestrator, run: Run, task: Task, mode: 'coder' | 'fixe
       prompt: p,
       outputSchema: taskReportJsonSchema,
       cwd: worktree,
-      allowedCommands: verifyCommands(node, config),
+      allowedCommands: gateCommands,
       resumeSessionId,
       reuseAttemptId,
       // A fresh coder session sees the run's attachments with its first message (resumes already have them).
@@ -451,26 +459,35 @@ async function verify(o: Orchestrator, run: Run, task: Task): Promise<Step> {
   const node = o.nodeOf(task);
   const worktree = task.worktreePath as string;
   const config = await o.config(run);
-  const outcome = await runVerification(o, {
+  const attemptId = lastCoderAttemptId(o, task);
+  const commands = await runGates(o, {
     run,
     task,
-    attemptId: lastCoderAttemptId(o, task),
+    attemptId,
     phase: 'task',
-    commands: verifyCommands(node, config),
+    gates: await resolveTaskGates(o, run, node, config, worktree),
     cwd: worktree,
   });
   // The agent's work is committed; anything else in the tree now is verify output (stamps, coverage,
   // formatter rewrites). Discard it so a later commit never sweeps it into the task.
   await cleanWorktree(worktree, taskMeta(o.store, task.id).provisioned);
   const base = await taskDiffBase(run, task, worktree);
-  const changed = base ? touchedPaths(await changedFiles(worktree, base, 'HEAD')) : [];
-  const alwaysAllowed = config?.installCommand ? LOCKFILES.map((l) => `**/${l.file}`) : [];
-  const scope = checkScope(node, changed, alwaysAllowed);
-  const sensitive = base ? await sensitiveChanges(worktree, base, changed) : [];
-  patchTaskMeta(o.store, task.id, { lastVerify: outcome.results, scope, sensitive });
+  const builtins = await builtinGates(o, { node, config, cwd: worktree, base, head: 'HEAD' });
+  const recorded = await runGates(o, {
+    run,
+    task,
+    attemptId,
+    phase: 'task',
+    gates: [],
+    builtins: builtins.results,
+    cwd: worktree,
+  });
+  const results = [...commands.results, ...recorded.results];
+  const sensitive = base ? await sensitiveChanges(worktree, base, builtins.changed) : [];
+  patchTaskMeta(o.store, task.id, { lastVerify: results, scope: builtins.scope, sensitive });
   const current = o.store.requireTask(task.id);
-  const decision = decideAfterVerify(current, outcome.ok, o.limits());
-  const failed = outcome.results.filter((r) => r.exitCode !== 0);
+  const decision = decideAfterVerify(current, gatesPassed(results), o.limits());
+  const failed = results.filter((r) => r.status === 'fail' && r.blocking);
   if (decision.action === 'fix' || decision.resume === 'fix') {
     patchTaskMeta(o.store, task.id, {
       fix: { findings: [], unmetCriteria: [], failedVerify: failed, humanNote: null, mergedIntegrationRef: null },
@@ -478,7 +495,7 @@ async function verify(o: Orchestrator, run: Run, task: Task): Promise<Step> {
   }
   o.applyDecision(task.id, decision, {
     ...(decision.escalation
-      ? { summary: `verification keeps failing: ${failed.map((f) => f.command).join(', ')}` }
+      ? { summary: `verification keeps failing: ${failed.map((f) => `${f.name} (${f.summary})`).join(', ')}` }
       : {}),
   });
   return 'next';

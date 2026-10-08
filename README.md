@@ -80,15 +80,25 @@ Optional, at the repository root; every key is optional.
 | Key | |
 |---|---|
 | `setup` | Commands run in every new worktree (e.g. `pnpm install --frozen-lockfile`). |
-| `verify` | Commands every task must pass, on top of each task's own verify commands; also the final verify on the integration branch. |
+| `verify` | Commands every task must pass, on top of each task's own verify commands; each becomes a named gate (`pnpm test` → `test`). Also the final verify on the integration branch. |
+| `gates` | Named gates run before review and merge; see below. |
+| `gates.detect` | Auto-detect `test` / `typecheck` / `lint` from package.json scripts with the detected package manager (pnpm/npm/yarn/bun). Default `true`. |
+| `gates.commands` | `{name: command}` (blocking), `{name: {run, blocking: false}}` (warn only), or `{name: false}` to suppress a detected or `verify` gate of that name. A configured name replaces the detected gate of that name; a `verify` entry with the same name but a different command still runs (as `name-2`), so remove it or suppress the name. Each command runs once. `scope` and `secrets` are taken by the built-in gates. |
+| `gates.scope` | Changed files vs the task's `touches`: `"block"` (default) or `"warn"`. |
+| `gates.secrets` | Secret scan of the task diff (and again of what is merged, conflict resolution included): `"block"` (default), `"warn"` or `"off"`, or `{mode, allow: [globs]}`. A line containing `legion:allow-secret` is skipped. |
 | `copy` / `symlink` | Untracked files to bring into worktrees (globs, e.g. `.env*`). |
 | `highRiskGlobs` | Paths whose tasks wait for your approval before merging (e.g. `migrations/**`). |
 | `installCommand` | Re-run after lockfile merges (lockfiles are never hand-merged). |
 
 ```json
 { "setup": ["pnpm install --frozen-lockfile"], "verify": ["pnpm test"], "copy": [".env.local"],
-  "highRiskGlobs": ["migrations/**"], "installCommand": "pnpm install" }
+  "highRiskGlobs": ["migrations/**"], "installCommand": "pnpm install",
+  "gates": { "commands": { "e2e": { "run": "pnpm e2e", "blocking": false }, "lint": false },
+             "scope": "block", "secrets": { "mode": "block", "allow": ["fixtures/**"] } } }
 ```
+
+The same `gates` keys (and `verify`) can be edited per project in **Settings → Gates**, which writes them back to
+`legion.json`.
 
 ## Architecture
 

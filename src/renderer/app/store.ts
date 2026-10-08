@@ -33,7 +33,7 @@ export type Overlay = 'composer' | 'palette' | 'settings' | 'addProject' | 'goto
  * and one per run), with files, diffs and terminals (code/).
  */
 export type View = 'chat' | 'agents' | 'code';
-export type SettingsSection = 'engines' | 'agents' | 'access' | 'runs' | 'appearance';
+export type SettingsSection = 'engines' | 'agents' | 'access' | 'gates' | 'runs' | 'appearance';
 
 export interface UiState {
   activeRunId: string | null;

@@ -352,7 +352,11 @@ describe('run lifecycle (fake engines, real git)', () => {
         report(`Implement ${id}`),
       ];
     };
-    h = await startHarness({ script, files: { 'shared.txt': 'base\n' } });
+    h = await startHarness({
+      script,
+      // The tasks write outside their touches on purpose (to conflict): scope only warns.
+      files: { 'shared.txt': 'base\n', 'legion.json': JSON.stringify({ gates: { scope: 'warn' } }) },
+    });
     const harness = h;
     const run = await createRun(harness, true);
     await approveLatestPlan(harness, run.id);
@@ -383,7 +387,11 @@ describe('run lifecycle (fake engines, real git)', () => {
         report(`Implement ${id}`),
       ];
     };
-    h = await startHarness({ script, files: { 'shared.txt': 'base\n' } });
+    h = await startHarness({
+      script,
+      // The tasks write outside their touches on purpose (to conflict): scope only warns.
+      files: { 'shared.txt': 'base\n', 'legion.json': JSON.stringify({ gates: { scope: 'warn' } }) },
+    });
     const harness = h;
     const o = harness.engine.orchestrator;
     const flows = o.flows;

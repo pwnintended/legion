@@ -4,27 +4,36 @@
  * pr_ready (inbox item with the PR text) → `runs.createPr` (push + draft PR through the `PrHost`), or
  * `runs.mergeLocally` (merge commit onto the local base branch) → done.
  */
-import type { PullRequest, Review, ReviewFinding, Run } from '@shared/domain';
+import type { PullRequest, Review, ReviewFinding, Run, Verification } from '@shared/domain';
 import { RpcError } from '@shared/rpc-transport';
 import { ReviewOutputSchema, reviewOutputJsonSchema } from '@shared/schemas';
 import type { RunPatch } from '../db';
-import { cleanWorktree, gitText, mergeIntoBase } from '../git';
+import { cleanWorktree, gitText, type LegionConfig, mergeIntoBase } from '../git';
 import {
   buildFinalizerPrompt,
   buildPrBody,
   finalizerEngineFor,
+  type GateResult,
+  type GateSpec,
   maxAttempts,
+  normalizeGateResult,
   type PrText,
+  resolveGates,
   reviewerEngineFor,
   TERMINAL_STATUSES,
-  type VerifyResultInput,
 } from './core';
 import type { AgentRun } from './live-session';
 import { runMeta, taskMeta } from './meta';
 import { AgentFailure, Closed, type Orchestrator } from './orchestrator';
 import { releaseRepo } from './repo-gc';
 import { coderModelOf, planSummary } from './tasks';
-import { ensureIntegrationWorktree, integrationKeep, provisionIntegration, runVerification } from './worktrees';
+import {
+  ensureIntegrationWorktree,
+  integrationKeep,
+  provisionIntegration,
+  resolveTaskGates,
+  runGates,
+} from './worktrees';
 
 export async function finalize(o: Orchestrator, runId: string): Promise<void> {
   let run = o.store.requireRun(runId);
@@ -39,19 +48,12 @@ export async function finalize(o: Orchestrator, runId: string): Promise<void> {
   if (run.status === 'integrating') {
     await provisionIntegration(o, run, config);
     const integration = await ensureIntegrationWorktree(o, run);
-    const commands = finalVerifyCommands(o, run, config?.verify ?? null);
-    if (commands.length > 0) {
-      const outcome = await runVerification(o, {
-        run,
-        task: null,
-        attemptId: null,
-        phase: 'final',
-        commands,
-        cwd: integration,
-      });
+    const gates = await finalGates(o, run, config, integration);
+    if (gates.length > 0) {
+      const outcome = await runGates(o, { run, task: null, attemptId: null, phase: 'final', gates, cwd: integration });
       await cleanWorktree(integration, integrationKeep(o, run));
       if (!outcome.ok) {
-        const failed = outcome.results.filter((r) => r.exitCode !== 0).map((r) => r.command);
+        const failed = outcome.results.filter((r) => r.status === 'fail' && r.blocking).map((r) => r.name);
         o.escalate(
           runId,
           null,
@@ -82,9 +84,13 @@ export async function finalize(o: Orchestrator, runId: string): Promise<void> {
   }
 }
 
-/** `legion.json` verify, else every merged node's verify commands. */
-function finalVerifyCommands(o: Orchestrator, run: Run, repoVerify: readonly string[] | null): string[] {
-  if (repoVerify && repoVerify.length > 0) return [...repoVerify];
+/**
+ * The repo-level command gates (legion.json `gates.commands`, `verify`, detected project gates), else every
+ * merged node's verify commands. Scope and secrets are task-level gates and don't run here.
+ */
+async function finalGates(o: Orchestrator, run: Run, config: LegionConfig | null, cwd: string): Promise<GateSpec[]> {
+  const repo = await resolveTaskGates(o, run, null, config, cwd);
+  if (repo.length > 0) return repo;
   const merged = new Set(
     o.store
       .listTasks(run.id)
@@ -94,22 +100,41 @@ function finalVerifyCommands(o: Orchestrator, run: Run, repoVerify: readonly str
   const commands = o
     .approvedNodes(run.id)
     .filter((n) => merged.has(n.id))
-    .flatMap((n) => n.verify.commands);
-  return [...new Set(commands.map((c) => c.trim()).filter(Boolean))];
+    .flatMap((n) => n.verify.commands)
+    .map((c) => c.trim())
+    .filter(Boolean);
+  return resolveGates({ config: null, detected: [], taskCommands: [...new Set(commands)] });
 }
 
-/** The latest result of every final verify command, in run order. */
-function latestFinalVerify(o: Orchestrator, runId: string): VerifyResultInput[] {
-  const latest = new Map<string, VerifyResultInput>();
+/** A final verify row as a gate result; a legacy row (no gate fields) through `normalizeGateResult`. */
+function gateResultOf(v: Verification): GateResult {
+  const legacy = normalizeGateResult({
+    command: v.command,
+    exitCode: v.exitCode,
+    outputTail: v.outputTail,
+    durationMs: v.durationMs,
+  });
+  if (!v.gate) return legacy;
+  return {
+    ...legacy,
+    name: v.gate,
+    kind: v.kind ?? legacy.kind,
+    status: v.status ?? legacy.status,
+    blocking: v.blocking ?? legacy.blocking,
+    summary: v.summary ?? legacy.summary,
+    // The row doesn't store where the gate came from.
+    source: (v.kind ?? legacy.kind) === 'command' ? 'config' : 'builtin',
+  };
+}
+
+/** The latest result of every final verify gate (by kind and gate name; by command for legacy rows), in run order. */
+function latestFinalVerify(o: Orchestrator, runId: string): GateResult[] {
+  const latest = new Map<string, GateResult>();
   for (const v of o.store.listVerifications(runId)) {
     if (v.phase !== 'final') continue;
-    latest.delete(v.command);
-    latest.set(v.command, {
-      command: v.command,
-      exitCode: v.exitCode,
-      outputTail: v.outputTail,
-      durationMs: v.durationMs,
-    });
+    const key = v.gate ? `gate:${v.kind ?? 'command'}:${v.gate}` : `command:${v.command}`;
+    latest.delete(key);
+    latest.set(key, gateResultOf(v));
   }
   return [...latest.values()];
 }

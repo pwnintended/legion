@@ -521,3 +521,71 @@ describe('engine settings without a restart', () => {
     }
   });
 });
+
+describe('final verify on gates', () => {
+  /** True only in the final verify: integration worktree, no task. */
+  const inFinal = '[ "$LEGION_TASK_ID" = _integration ]';
+
+  it('runs the repo-level gates, records them as gate rows and names them in the PR body', async () => {
+    const legion = {
+      gates: {
+        commands: {
+          check: 'echo final-ok',
+          advisory: { run: `! ${inFinal} || { echo 'STYLE NITS'; exit 1; }`, blocking: false },
+        },
+      },
+    };
+    h = await startHarness({ script: basicScript([node('T1')]), files: { 'legion.json': JSON.stringify(legion) } });
+    const harness = h;
+    const run = await toPrReady(harness);
+    const rows = harness.engine.store
+      .listVerifications(run.id)
+      .filter((v) => v.phase === 'final')
+      .sort((a, b) => (a.gate ?? '').localeCompare(b.gate ?? ''));
+    // Repo-level gates only: no task verify command, no scope / secrets.
+    expect(rows.map((r) => [r.gate, r.kind, r.command, r.status, r.blocking])).toEqual([
+      ['advisory', 'command', legion.gates.commands.advisory.run, 'fail', false],
+      ['check', 'command', 'echo final-ok', 'pass', true],
+    ]);
+    const item = harness.engine.store
+      .listInbox({ runId: run.id, includeResolved: true })
+      .find((i) => i.kind === 'pr_ready');
+    const body = item?.kind === 'pr_ready' ? item.payload.body : '';
+    expect(body).toContain('| Gate | Command | Result | Duration |');
+    expect(body).toContain('| check | `echo final-ok` | ✅ passed |');
+    expect(body).toContain('| advisory |');
+    expect(body).toContain('⚠️ warning: exit 1');
+    expect(body).toContain('<summary>Output of <code>advisory</code></summary>');
+  }, 60_000);
+
+  it('a failing blocking gate escalates, naming the gate', async () => {
+    const legion = { gates: { commands: { smoke: `! ${inFinal} || { echo 'SMOKE FAILED'; exit 1; }` } } };
+    h = await startHarness({ script: basicScript([node('T1')]), files: { 'legion.json': JSON.stringify(legion) } });
+    const harness = h;
+    const run = await createRun(harness);
+    await harness.waitFor(() => runOf(harness, run.id).status === 'awaiting_approval', 'plan');
+    const plan = harness.engine.store.latestPlan(run.id);
+    await harness.client.call('runs.approvePlan', { runId: run.id, planId: plan?.id as string });
+    const item = await harness.waitFor(
+      () =>
+        harness.engine.store
+          .listInbox({ runId: run.id, includeResolved: false })
+          .find((i) => i.kind === 'escalation' && i.payload.reason === 'verify_failed'),
+      'final verify escalation',
+      30_000,
+    );
+    expect(runOf(harness, run.id).status).toBe('integrating');
+    expect(item.kind === 'escalation' ? item.payload.summary : '').toContain('Final verification failed on');
+    expect(item.kind === 'escalation' ? item.payload.summary : '').toContain(': smoke.');
+    const final = harness.engine.store.listVerifications(run.id).filter((v) => v.phase === 'final');
+    expect(final.map((v) => [v.gate, v.status, v.summary])).toEqual([['smoke', 'fail', 'SMOKE FAILED']]);
+  }, 60_000);
+
+  it('falls back to the merged tasks verify commands when no repo gate resolves', async () => {
+    h = await startHarness({ script: basicScript([node('T1')]) });
+    const harness = h;
+    const run = await toPrReady(harness);
+    const final = harness.engine.store.listVerifications(run.id).filter((v) => v.phase === 'final');
+    expect(final.map((v) => [v.gate, v.command, v.status])).toEqual([['test', 'test -f src/t1.txt', 'pass']]);
+  }, 60_000);
+});

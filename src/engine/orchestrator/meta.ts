@@ -5,7 +5,7 @@
 import type { AttachmentRef } from '@shared/attachments';
 import type { ReviewCriterion, ReviewFinding } from '@shared/domain';
 import type { Store } from '../db';
-import type { ResumeStep, ScopeReport, VerifyResultInput } from './core';
+import { type GateResult, normalizeGateResult, type ResumeStep, type ScopeReport } from './core';
 
 export interface RunMeta {
   /** Base commit the integration branch was created from. */
@@ -50,7 +50,8 @@ export interface RunMeta {
 export interface FixContext {
   findings: ReviewFinding[];
   unmetCriteria: ReviewCriterion[];
-  failedVerify: VerifyResultInput[];
+  /** Failed blocking gates (legacy meta: plain verify results, normalized when read). */
+  failedVerify: GateResult[];
   humanNote: string | null;
   /** Post-merge failure: merge this ref into the task branch before fixing. */
   mergedIntegrationRef: string | null;
@@ -68,7 +69,8 @@ export interface TaskMeta {
   fix: FixContext | null;
   /** Failure summary / human note for the next fresh attempt's prompt. */
   previousFailure: string | null;
-  lastVerify: VerifyResultInput[];
+  /** Gate results of the last task verify (legacy meta: plain verify results, normalized when read). */
+  lastVerify: GateResult[];
   scope: ScopeReport | null;
   /** Sensitive changes found by the last verify (`core/sensitive.ts`). */
   sensitive: string[];
@@ -132,7 +134,13 @@ export function patchRunMeta(store: Store, runId: string, patch: Partial<RunMeta
 }
 
 export function taskMeta(store: Store, taskId: string): TaskMeta {
-  return { ...TASK_DEFAULTS, ...(store.getMeta<Partial<TaskMeta>>(`task:${taskId}`) ?? {}) };
+  const meta: TaskMeta = { ...TASK_DEFAULTS, ...(store.getMeta<Partial<TaskMeta>>(`task:${taskId}`) ?? {}) };
+  // Meta written before gates holds plain verify results.
+  return {
+    ...meta,
+    lastVerify: meta.lastVerify.map(normalizeGateResult),
+    fix: meta.fix ? { ...meta.fix, failedVerify: meta.fix.failedVerify.map(normalizeGateResult) } : null,
+  };
 }
 
 export function patchTaskMeta(store: Store, taskId: string, patch: Partial<TaskMeta>): TaskMeta {

@@ -243,7 +243,11 @@ describe('implementation lead', () => {
   }, 60_000);
 
   it('applies in-scope amendments at once and parks the others for the human', async () => {
-    h = await startHarness({ script: script([node('T1', { writes: ['src/t1.txt'] })], 1_500) });
+    h = await startHarness({
+      script: script([node('T1', { writes: ['src/t1.txt'] })], 1_500),
+      // T3's coder writes outside its declared touches: scope only warns.
+      files: { 'legion.json': JSON.stringify({ gates: { scope: 'warn' } }) },
+    });
     const harness = h;
     const { orchestrator, store } = harness.engine;
     const run = await approvedRun(harness);
@@ -257,7 +261,7 @@ describe('implementation lead', () => {
     expect(store.listTasks(run.id).map((t) => t.nodeId)).toEqual(['T1', 'T2']);
     expect(orchestrator.approvedPlan(run.id)?.version).toBe(2);
 
-    // Declares a write outside the plan's area; the fake coder still writes src/t3.txt (the scope check only warns).
+    // Declares a write outside the plan's area; the fake coder still writes src/t3.txt (scope only warns here).
     const t3 = node('T3', { writes: ['docs/t3.md'] });
     const pending = await host.addTask(asLead, t3);
     expect(pending).toMatchObject({ outcome: 'pending', planVersion: 3 });

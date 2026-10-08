@@ -28,6 +28,105 @@ import { withSessionDemo } from './sessions';
 
 const MIN = 60_000;
 
+/** Full gate output (`verifications.output`) for rows whose tail alone reads thin; others answer with the tail. */
+export const DEMO_GATE_OUTPUT: Record<string, string> = {
+  ver_authv2t1lint: [
+    '$ biome check .',
+    'auth/contracts.ts:41:18 lint/style/noNonNullAssertion ━━━━━━━━━━━━━━━━━━━━',
+    '',
+    '  ✖ Forbidden non-null assertion.',
+    '',
+    '    40 │   const rp = config.relyingParty;',
+    '  > 41 │   return { id: rp.id!, name: rp.name };',
+    '       │                  ^^^',
+    '',
+    '  ℹ Unsafe fix: Replace with optional chain operator ?. This operator includes runtime checks.',
+    '',
+    'Checked 214 files in 412ms. No fixes applied.',
+    'Found 1 problem.',
+  ].join('\n'),
+  ver_t4r2test: [
+    '$ vitest run db',
+    ' ✓ server/db/passkeys.repo.test.ts (6 tests) 412ms',
+    ' ✓ migrations/0042_passkeys.test.ts (4 tests) 1.2s',
+    '',
+    ' Test Files  2 passed (2)',
+    '      Tests  10 passed (10)',
+    '   Duration  2.3s',
+  ].join('\n'),
+};
+
+/** One gate result row for {@link gateRows}. */
+export interface DemoGate {
+  gate: string;
+  command: string;
+  summary: string;
+  durationMs: number;
+  outputTail?: string;
+  status?: 'pass' | 'fail' | 'skipped';
+  blocking?: boolean;
+}
+
+/** The built-in rows (`legion:scope`, `legion:secrets`), summarized the way the engine does. */
+export function builtinGates(changedFiles: number, addedLines: number): DemoGate[] {
+  return [
+    {
+      gate: 'scope',
+      command: 'legion:scope',
+      summary: `${changedFiles}/${changedFiles} files declared`,
+      durationMs: 0,
+    },
+    { gate: 'secrets', command: 'legion:secrets', summary: `no secrets in ${addedLines} added lines`, durationMs: 40 },
+  ];
+}
+
+/** The usual repo gates of the demo projects (test, typecheck, lint), all green unless overridden. */
+export function projectGates(
+  test: string,
+  patch: Partial<Record<'test' | 'typecheck' | 'lint', Partial<DemoGate>>> = {},
+) {
+  return [
+    { gate: 'test', command: 'pnpm test', summary: test, durationMs: 14_200, ...patch.test },
+    {
+      gate: 'typecheck',
+      command: 'pnpm typecheck',
+      summary: 'tsc --noEmit · 0 errors',
+      durationMs: 8_900,
+      ...patch.typecheck,
+    },
+    { gate: 'lint', command: 'pnpm lint', summary: 'Checked 412 files · 0 problems', durationMs: 1_200, ...patch.lint },
+  ] satisfies DemoGate[];
+}
+
+/**
+ * Verification rows in the engine's gate shape, one per gate, `createdAt` one ms apart. Ids are
+ * `${idPrefix}${gate}` (non-alphanumerics dropped).
+ */
+export function gateRows(
+  base: Pick<Verification, 'runId' | 'taskId' | 'attemptId' | 'phase' | 'createdAt'> & { idPrefix: string },
+  gates: readonly DemoGate[],
+): Verification[] {
+  const { idPrefix, ...row } = base;
+  return gates.map((g, i) => {
+    const status = g.status ?? 'pass';
+    const kind = g.command === 'legion:scope' ? 'scope' : g.command === 'legion:secrets' ? 'secrets' : 'command';
+    return {
+      ...row,
+      id: `${idPrefix}${g.gate.replace(/[^a-z0-9]/gi, '')}`,
+      command: g.command,
+      exitCode: status === 'fail' ? 1 : 0,
+      outputTail: g.outputTail ?? (kind === 'command' ? g.summary : ''),
+      durationMs: g.durationMs,
+      createdAt: base.createdAt + i,
+      gate: g.gate,
+      kind,
+      status,
+      summary: g.summary,
+      blocking: g.blocking ?? true,
+    };
+  });
+}
+
 export interface DemoWorld {
   runs: Run[];
   plans: Plan[];
@@ -392,30 +491,54 @@ export function createDemoWorld(now = Date.now()): DemoWorld {
     },
   ];
   const verificationsA: Verification[] = [
-    {
-      id: 'ver_authv2t1pm01',
-      runId: A,
-      taskId: t1.id,
-      attemptId: null,
-      phase: 'post_merge',
-      command: 'pnpm typecheck && pnpm test',
-      exitCode: 0,
-      outputTail: '✓ 212 passed',
-      durationMs: 41_000,
-      createdAt: now - 24 * MIN,
-    },
-    {
-      id: 'ver_authv2t4vf01',
-      runId: A,
-      taskId: t4.id,
-      attemptId: 'att_authv2t4code',
-      phase: 'task',
-      command: 'pnpm vitest run db',
-      exitCode: 0,
-      outputTail: '✓ 9 passed',
-      durationMs: 6_100,
-      createdAt: now - 12 * MIN,
-    },
+    // T1's gates: lint is configured non-blocking in this repo, so its failure only warns.
+    ...gateRows(
+      {
+        idPrefix: 'ver_authv2t1',
+        runId: A,
+        taskId: t1.id,
+        attemptId: 'att_authv2t1code',
+        phase: 'task',
+        createdAt: now - 30 * MIN,
+      },
+      [
+        ...projectGates('✓ 31 passed (1.9s)', {
+          lint: {
+            status: 'fail',
+            blocking: false,
+            summary: '1 warning treated as error: noNonNullAssertion',
+            outputTail:
+              'auth/contracts.ts:41:18 lint/style/noNonNullAssertion  Forbidden non-null assertion.\n\nChecked 214 files · 1 problem',
+          },
+        }),
+        ...builtinGates(3, 96),
+      ],
+    ),
+    ...gateRows(
+      {
+        idPrefix: 'ver_authv2t1pm',
+        runId: A,
+        taskId: t1.id,
+        attemptId: null,
+        phase: 'post_merge',
+        createdAt: now - 24 * MIN,
+      },
+      [
+        { gate: 'typecheck', command: 'pnpm typecheck', summary: 'tsc --noEmit · 0 errors', durationMs: 9_200 },
+        { gate: 'test', command: 'pnpm test', summary: '✓ 212 passed', durationMs: 31_800 },
+      ],
+    ),
+    ...gateRows(
+      {
+        idPrefix: 'ver_authv2t4vf',
+        runId: A,
+        taskId: t4.id,
+        attemptId: 'att_authv2t4code',
+        phase: 'task',
+        createdAt: now - 12 * MIN,
+      },
+      [{ gate: 'test', command: 'pnpm vitest run db', summary: '✓ 9 passed', durationMs: 6_100 }],
+    ),
   ];
 
   // --- Run B: PDF export (PR ready) ----------------------------------------------------------------

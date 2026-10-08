@@ -16,6 +16,7 @@ import {
   AgentMessageSchema,
   AttemptSchema,
   EngineKindSchema,
+  GatesConfigSchema,
   InboxItemSchema,
   InboxResolutionSchema,
   McpServerNameSchema,
@@ -24,6 +25,7 @@ import {
   PlanAnnotationSchema,
   PlanSchema,
   PresentationSchema,
+  ProjectGatesSchema,
   ProjectSchema,
   QuestionAnswerSchema,
   ReviewSchema,
@@ -563,6 +565,21 @@ export const rpcContract = {
   'projects.info': { input: ByProject, output: ProjectInfoSchema },
   /** The project's other checkouts (git worktrees), Legion's own matched to their run and task. */
   'projects.checkouts': { input: ByProject, output: z.array(CheckoutSchema) },
+  /** The project's gates: its legion.json `gates` and `verify`, the detected gates, and the effective result. */
+  'projects.gates': { input: ByProject, output: ProjectGatesSchema },
+  /**
+   * Write the `gates` key of the project's legion.json (`gates: null` removes it; `verify`, when given,
+   * replaces `verify`), keeping every other key. `conflict` when `revision` no longer matches the file.
+   */
+  'projects.setGates': {
+    input: z.object({
+      projectId: IdSchema,
+      revision: z.string().nullable(),
+      gates: GatesConfigSchema.nullable(),
+      verify: z.array(z.string().min(1)).optional(),
+    }),
+    output: ProjectGatesSchema,
+  },
 
   // project files: read-only, confined to the checkout's root, ignored files invisible -------------
   // `checkout`: one of the project's checkouts (`projects.checkouts`); absent/null = the main one.
@@ -831,6 +848,11 @@ export const rpcContract = {
   'diff.get': {
     input: z.object({ target: DiffTargetSchema, contextLines: z.number().int().min(0).max(100) }),
     output: DiffResultSchema,
+  },
+  /** A verification's full output (capped), or null when only its `outputTail` was kept (legacy rows). */
+  'verifications.output': {
+    input: z.object({ verificationId: IdSchema }),
+    output: z.object({ output: z.string().nullable() }),
   },
 
   // terminals (transfer a MessagePort with `open`) -----------------------------------------------
