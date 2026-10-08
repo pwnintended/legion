@@ -3,10 +3,12 @@
  * findings tracked across review rounds (resolved ones are kept, struck through) and why a task waits for
  * a human.
  */
+import { gateCounts } from '@engine/orchestrator/core/gates';
 import { checkScope } from '@engine/orchestrator/core/scope';
 import type {
   Attempt,
   FindingSeverity,
+  GateStatus,
   InboxItem,
   PlanAnnotation,
   Review,
@@ -26,13 +28,20 @@ export interface Gate {
   key: string;
   kind: GateKind;
   label: string;
-  /** null = not run yet / running. */
+  /** null = not run yet / running, or skipped (see `status`). */
   ok: boolean | null;
+  /** pass / fail / skipped; skipped gates are listed but not counted. */
+  status: GateStatus;
+  /** A failing non-blocking gate only warns. */
+  blocking: boolean;
   /** One short line of evidence (`10/10 · 2.3s`, `4/4 files declared`). */
   evidence: string;
-  /** Full output (expandable), if any. */
+  /** Output tail (expandable), if any. */
   detail: string | null;
+  /** The command it ran; null for Legion's built-in gates. */
   command: string | null;
+  /** The persisted row (its full output via `verifications.output`); null for the client-side scope check. */
+  verificationId: string | null;
 }
 
 const ORDER: Record<GateKind, number> = { tests: 0, typecheck: 1, lint: 2, verify: 3, scope: 4, secrets: 5 };
@@ -75,15 +84,72 @@ function seconds(ms: number): string {
   return ms >= 60_000 ? `${Math.round(ms / 60_000)}m` : `${(ms / 1000).toFixed(1)}s`;
 }
 
-/** Verifications of the task's most recent verified attempt (one per command, latest wins). */
+/** `line · 2.3s`: the line clipped, the duration left out when the line already has one. */
+function evidenceLine(line: string, durationMs: number | null): string {
+  return [
+    line.length > 48 ? `${line.slice(0, 47)}…` : line,
+    durationMs === null || /\d(\.\d+)?m?s\b/.test(line) ? null : seconds(durationMs),
+  ]
+    .filter(Boolean)
+    .join(' · ');
+}
+
+/** A structured gate row (engine with gates); legacy rows have no gate fields. */
+function isGateRow(v: Verification): boolean {
+  return typeof v.gate === 'string' && v.gate !== '' && typeof v.status === 'string';
+}
+
+/**
+ * Verifications of the task's most recent verified attempt: one per gate (by gate name, or by command on
+ * legacy rows), latest wins.
+ */
 export function latestVerifications(verifications: readonly Verification[], taskId: string): Verification[] {
   const mine = verifications.filter((v) => v.taskId === taskId && v.phase === 'task');
   const last = mine.reduce<Verification | null>((a, v) => (!a || v.createdAt > a.createdAt ? v : a), null);
   if (!last) return [];
   const group = mine.filter((v) => v.attemptId === last.attemptId);
-  const byCommand = new Map<string, Verification>();
-  for (const v of group.sort((a, b) => a.createdAt - b.createdAt)) byCommand.set(v.command, v);
-  return [...byCommand.values()];
+  const byGate = new Map<string, Verification>();
+  for (const v of group.sort((a, b) => a.createdAt - b.createdAt)) byGate.set(v.gate || v.command, v);
+  return [...byGate.values()];
+}
+
+function structuredGate(v: Verification): Gate {
+  const status = v.status as GateStatus;
+  // Built-in gates (`legion:scope`, `legion:secrets`) have no command worth showing.
+  const builtin = v.kind === 'scope' || v.kind === 'secrets' ? v.kind : null;
+  return {
+    key: v.id,
+    kind: builtin ?? classifyCommand(v.command),
+    label: builtin ? GATE_LABEL[builtin] : (v.gate as string),
+    ok: status === 'skipped' ? null : status === 'pass',
+    status,
+    blocking: v.blocking ?? true,
+    evidence: evidenceLine(
+      v.summary || lastLine(v.outputTail) || status,
+      status === 'skipped' || builtin ? null : v.durationMs,
+    ),
+    detail: v.outputTail || v.summary || null,
+    command: builtin ? null : v.command,
+    verificationId: v.id,
+  };
+}
+
+/** A row from before gates: classified by its command, always blocking. */
+function legacyGate(v: Verification): Gate {
+  const kind = classifyCommand(v.command);
+  const ok = v.exitCode === null ? false : v.exitCode === 0;
+  return {
+    key: v.id,
+    kind,
+    label: kind === 'verify' ? commandLabel(v.command) : GATE_LABEL[kind],
+    ok,
+    status: ok ? 'pass' : 'fail',
+    blocking: true,
+    evidence: evidenceLine(lastLine(v.outputTail), v.durationMs),
+    detail: v.outputTail || null,
+    command: v.command,
+    verificationId: v.id,
+  };
 }
 
 export function gatesFor(input: {
@@ -92,36 +158,23 @@ export function gatesFor(input: {
   /** Files the task changed (diff or file_change events); null = unknown. */
   changedFiles: readonly string[] | null;
 }): Gate[] {
-  const gates: Gate[] = input.verifications.map((v) => {
-    const kind = classifyCommand(v.command);
-    const tail = lastLine(v.outputTail);
-    return {
-      key: v.id,
-      kind,
-      label: kind === 'verify' ? commandLabel(v.command) : GATE_LABEL[kind],
-      ok: v.exitCode === null ? false : v.exitCode === 0,
-      evidence: [
-        tail.length > 48 ? `${tail.slice(0, 47)}…` : tail,
-        /\d(\.\d+)?m?s\b/.test(tail) ? null : seconds(v.durationMs),
-      ]
-        .filter(Boolean)
-        .join(' · '),
-      detail: v.outputTail || null,
-      command: v.command,
-    };
-  });
-  if (input.node && input.changedFiles && input.changedFiles.length > 0) {
+  const gates: Gate[] = input.verifications.map((v) => (isGateRow(v) ? structuredGate(v) : legacyGate(v)));
+  // The engine records a scope gate since gates exist; before that, check the scope here (informational).
+  const persistedScope = input.verifications.some((v) => isGateRow(v) && v.kind === 'scope');
+  if (!persistedScope && input.node && input.changedFiles && input.changedFiles.length > 0) {
     const scope = checkScope(input.node, input.changedFiles);
     const total = scope.inScope.length + scope.outOfScope.length;
+    const ok = scope.outOfScope.length === 0;
     gates.push({
       key: 'scope',
       kind: 'scope',
       label: 'Scope',
-      ok: scope.outOfScope.length === 0,
-      evidence:
-        scope.outOfScope.length === 0
-          ? `${total}/${total} files declared`
-          : `${scope.outOfScope.length} outside: ${scope.outOfScope.slice(0, 2).join(', ')}`,
+      ok,
+      status: ok ? 'pass' : 'fail',
+      blocking: false,
+      evidence: ok
+        ? `${total}/${total} files declared`
+        : `${scope.outOfScope.length} outside: ${scope.outOfScope.slice(0, 2).join(', ')}`,
       detail: [
         `declared: ${input.node.touches.map((t) => `${t.mode} ${t.glob}`).join(', ') || 'nothing'}`,
         `changed:  ${scope.inScope.join(', ') || '—'}`,
@@ -130,9 +183,59 @@ export function gatesFor(input: {
         .filter(Boolean)
         .join('\n'),
       command: null,
+      verificationId: null,
     });
   }
   return gates.sort((a, b) => ORDER[a.kind] - ORDER[b.kind]);
+}
+
+/** Files the task's coder attempts changed (their diffstats), in first-seen order. */
+export function taskChangedFiles(
+  attempts: readonly Pick<Attempt, 'id' | 'taskId' | 'role'>[],
+  diffstats: Readonly<Record<string, { files: readonly string[] } | undefined>>,
+  taskId: string,
+): string[] {
+  const files = new Set<string>();
+  for (const a of attempts) {
+    if (a.taskId !== taskId || a.role !== 'coder') continue;
+    for (const f of diffstats[a.id]?.files ?? []) files.add(f);
+  }
+  return [...files];
+}
+
+/**
+ * A task's gates as the review pack and the merge-gate card show them: the latest attempt's rows, plus the
+ * client-side scope check over the changed files when no scope row was persisted (legacy runs).
+ */
+export function taskGates(input: {
+  taskId: string;
+  node: Pick<TaskNode, 'touches'> | null;
+  /** The run's verifications (any phase, any task). */
+  verifications: readonly Verification[];
+  /** The run's attempts. */
+  attempts: readonly Pick<Attempt, 'id' | 'taskId' | 'role'>[];
+  diffstats: Readonly<Record<string, { files: readonly string[] } | undefined>>;
+}): Gate[] {
+  return gatesFor({
+    node: input.node,
+    verifications: latestVerifications(input.verifications, input.taskId),
+    changedFiles: taskChangedFiles(input.attempts, input.diffstats, input.taskId),
+  });
+}
+
+/**
+ * The "N/N green" chip: skipped gates don't count. ok when every counted gate passed, warn when only
+ * non-blocking gates failed, bad when a blocking one did (idle when nothing counted).
+ */
+export function gatesChip(gates: readonly Pick<Gate, 'status' | 'blocking'>[]): {
+  green: number;
+  total: number;
+  warnings: number;
+  tone: 'ok' | 'warn' | 'bad' | 'idle';
+} {
+  const { green, total, blockingFailed, warnings } = gateCounts(gates);
+  const tone = total === 0 ? 'idle' : blockingFailed > 0 ? 'bad' : warnings > 0 ? 'warn' : 'ok';
+  return { green, total, warnings, tone };
 }
 
 // ---------------------------------------------------------------------------------------------
