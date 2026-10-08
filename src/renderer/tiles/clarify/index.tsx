@@ -22,6 +22,7 @@ import {
 } from '../../attachments/Attachments';
 import type { AttachmentDraft } from '../../attachments/model';
 import { Icon } from '../../chrome/icons';
+import { codeSpans, OptionRadios } from '../../chrome/options';
 import { Chip, Kbd } from '../../chrome/ui';
 import type { TileProps } from '../../layout/types';
 import { errorMessage } from '../session/actions';
@@ -145,29 +146,22 @@ function Questions({ item, runId, planner }: { item: InboxItemOf<'question'>; ru
                 <div className="cl-q-head">
                   <span className="cl-num mono">{n + 1}</span>
                   <span className="cl-question" id={`${ids}-${q.id}`}>
-                    {q.question}
+                    {codeSpans(q.question)}
                   </span>
                 </div>
                 {q.options.length ? (
-                  <div className="cl-options" role="radiogroup" aria-labelledby={`${ids}-${q.id}`}>
-                    {q.options.map((option) => (
-                      // biome-ignore lint/a11y/useSemanticElements: option chips, not native radios
-                      <button
-                        key={option}
-                        type="button"
-                        role="radio"
-                        aria-checked={a?.option === option}
-                        className="opt-chip"
-                        onClick={() => set(q.id, { option: a?.option === option ? null : option })}
-                      >
-                        {a?.option === option ? <Icon name="check" size={12} strokeWidth={2.6} /> : null}
-                        {option}
-                      </button>
-                    ))}
+                  <div className="cl-options">
+                    <OptionRadios
+                      options={q.options}
+                      value={a?.option ?? null}
+                      onChange={(option) => set(q.id, { option })}
+                      labelledBy={`${ids}-${q.id}`}
+                    />
                   </div>
                 ) : null}
                 <input
                   className="cl-note"
+                  data-quiet={q.options.length > 0 || undefined}
                   value={a?.note ?? ''}
                   aria-label={`Answer to question ${n + 1}`}
                   placeholder={q.options.length ? 'Add a note (optional)…' : 'Your answer…'}
@@ -226,7 +220,7 @@ function Answered({ item }: { item: InboxItemOf<'question'> }) {
             <li key={q.id} className="cl-q">
               <div className="cl-q-head">
                 <span className="cl-num mono">{n + 1}</span>
-                <span className="cl-question">{q.question}</span>
+                <span className="cl-question">{codeSpans(q.question)}</span>
               </div>
               <div className={answer === ASSUME ? 'cl-answer faint' : 'cl-answer'}>
                 {answer === ASSUME ? 'Planner assumes' : answer}

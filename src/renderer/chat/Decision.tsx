@@ -11,6 +11,7 @@ import { latestPlan, tasksOfRun } from '../app/data';
 import { rpc, useData, useHasOrigin } from '../app/hooks';
 import { useReducedMotionPref } from '../app/prefs';
 import { Icon } from '../chrome/icons';
+import { codeSpans, OptionButtons } from '../chrome/options';
 import { Chip, Kbd } from '../chrome/ui';
 import { formatCost, formatStamp, type Tone } from '../layout/describe';
 import { jumpToItem } from '../overlays/nav';
@@ -189,21 +190,9 @@ function QuestionBody({ item }: { item: InboxItemOf<'question'> }) {
     void resolve(item, { kind: 'question', answers: [{ questionId: question.id, answer: text }] }, 'answer');
   return (
     <div className="ch-card-body">
-      <p className="ch-question">{question.question}</p>
+      <p className="ch-question">{codeSpans(question.question)}</p>
       {question.options.length ? (
-        <div className="ch-options">
-          {question.options.map((option) => (
-            <button
-              key={option}
-              type="button"
-              className="opt-chip"
-              disabled={pending?.state === 'pending'}
-              onClick={() => send(option)}
-            >
-              {option}
-            </button>
-          ))}
-        </div>
+        <OptionButtons options={question.options} disabled={pending?.state === 'pending'} onPick={send} />
       ) : null}
       <form
         className="ch-inline-form"
