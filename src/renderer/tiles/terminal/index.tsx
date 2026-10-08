@@ -5,6 +5,7 @@ import { Terminal } from '@xterm/xterm';
 import '@xterm/xterm/css/xterm.css';
 import { useEffect, useRef, useState } from 'react';
 import { useEngine } from '../../app/engine';
+import { IS_MAC, terminalClipboardKey } from '../../app/keys';
 import { prefsStore } from '../../app/prefs';
 import { useSetTileParams } from '../../layout/TileFrame';
 import type { TileProps } from '../../layout/types';
@@ -105,14 +106,25 @@ export default function TerminalTile({ tileId, runId, params, focused, visible }
 
     // Locked mode: everything goes to the program except ⌘-chords, which bubble to the app.
     term.attachCustomKeyEventHandler((event) => {
-      if (event.type === 'keydown' && event.metaKey) {
-        if (event.key === 'c' && term.hasSelection()) {
+      if (event.type !== 'keydown') return true;
+      const clipboard = terminalClipboardKey(event);
+      if (clipboard === 'copy') {
+        if (term.hasSelection()) {
           void navigator.clipboard.writeText(term.getSelection()).catch(() => {});
           event.preventDefault();
         }
         return false;
       }
-      return true;
+      if (clipboard === 'paste') {
+        event.preventDefault();
+        void navigator.clipboard
+          .readText()
+          .then((text) => text && term.paste(text))
+          .catch(() => {});
+        return false;
+      }
+      // ⌘ chords are Legion's and the menu's (⌘V pastes natively), never the shell's.
+      return !(IS_MAC && event.metaKey);
     });
     // Native paste (⌘V, context menu) is handled by xterm's textarea, including bracketed paste.
     term.onData((data) => live.port?.postMessage({ type: 'input', data }));
@@ -306,7 +318,7 @@ export default function TerminalTile({ tileId, runId, params, focused, visible }
       <div className="flex h-[22px] shrink-0 items-center gap-2 border-b border-surface0 bg-mantle px-2.5 font-mono text-[10px] text-overlay2">
         <span
           className="rounded-sm bg-surface0 px-1.5 py-px font-sans text-[10.5px] font-medium text-subtext0"
-          title="Keys go to the terminal. Only ⌘-chords reach Legion."
+          title={`Keys go to the terminal. Only ${IS_MAC ? '⌘-chords' : 'Ctrl+Shift and Ctrl+Alt chords'} reach Legion.`}
         >
           locked
         </span>

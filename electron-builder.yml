@@ -18,3 +18,12 @@ mac:
     - target: dir
   hardenedRuntime: true
   identity: null
+linux:
+  # `pnpm package` builds the unpacked dir (dist/linux[-arm64]-unpacked); `pnpm dist` an AppImage.
+  category: Development
+  executableName: legion
+  synopsis: Orchestrates Claude Code and Codex agents from issue to draft PR.
+  # Docks match running windows to the launcher entry by app_id / WM_CLASS = package.json desktopName.
+  syncDesktopName: true
+  target:
+    - target: AppImage

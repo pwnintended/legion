@@ -7,6 +7,7 @@ import { builtinCommands, registerCommands } from './app/commands';
 import { demoLive, isDemoMode } from './app/demo-mode';
 import { EngineProvider } from './app/engine';
 import { EngineConnection } from './app/engine-connection';
+import { syncWindowControls } from './app/platform';
 import { applyAppearance } from './app/prefs';
 import { uiStore } from './app/store';
 import { connectStore, type EngineClient } from './app/sync';
@@ -15,6 +16,7 @@ const root = document.getElementById('root');
 if (!root) throw new Error('#root missing');
 
 applyAppearance();
+syncWindowControls();
 
 /** The fixture world (and the engine code it borrows for plan validation) only loads in demo mode. */
 async function createClient(demo: boolean): Promise<EngineClient> {

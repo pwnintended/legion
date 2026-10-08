@@ -79,7 +79,7 @@ test('full run, chat first: composer → assistant → clarify → plan → appr
     await shot(window, 'empty');
 
     // ⌘⇧N → composer; pick the repo through the picker's Browse… (the folder dialog is answered by the test hook).
-    await window.keyboard.press('Meta+Shift+n');
+    await window.keyboard.press('ControlOrMeta+Shift+n');
     const composer = window.getByTestId('composer');
     await expect(composer).toBeVisible();
     await composer.locator('textarea').fill('Add a demo feature\n\nThe widgets repo needs a small feature with docs.');
@@ -88,7 +88,7 @@ test('full run, chat first: composer → assistant → clarify → plan → appr
     await expect(composer.getByTestId('repo-status')).toContainText('main', { timeout: 15_000 });
     await expect(composer.getByTestId('repo-picker')).toHaveAttribute('title', repo);
     await shot(window, 'composer');
-    await composer.locator('textarea').press('Meta+Enter');
+    await composer.locator('textarea').press('ControlOrMeta+Enter');
     await expect(composer).toBeHidden({ timeout: 15_000 });
 
     // The run opens on its conversation: the request, and the assistant's reply as it hands it to the planner.
@@ -128,7 +128,7 @@ test('full run, chat first: composer → assistant → clarify → plan → appr
 
     // T3's coder asks to run a linter: ⌘U brings its card into view; accept it there.
     await expect(window.getByTestId('needs-you').locator('.tb-needs-count')).toHaveText('1', { timeout: 30_000 });
-    await window.keyboard.press('Meta+u');
+    await window.keyboard.press('ControlOrMeta+u');
     const approval = card('approval');
     await expect(approval).toContainText('markdownlint');
     await expect(approval).toBeInViewport();
@@ -163,16 +163,16 @@ test('full run, chat first: composer → assistant → clarify → plan → appr
     await shot(window, 'pr-ready');
 
     // Among the agents (⌘E): the route map, every task merged; T2's Review tab shows its review's round trip.
-    await window.keyboard.press('Meta+e');
+    await window.keyboard.press('ControlOrMeta+e');
     const map = window.getByTestId('route-panel');
     await expect(map).toBeVisible();
     await expect(map.locator('.rm-counts')).toContainText('all merged');
     await expect(window.getByTestId('route-pr')).toContainText('Ready for you');
     const station = window.getByTestId('station-pane');
     // Up to the top of the map (⌘⌥K), then down (⌘⌥J) to T2, wherever its wave folded it.
-    for (let i = 0; i < 8; i++) await window.keyboard.press('Meta+Alt+k');
+    for (let i = 0; i < 8; i++) await window.keyboard.press('ControlOrMeta+Alt+k');
     for (let i = 0; i < 6 && (await station.getAttribute('data-station')) !== 'task:T2'; i++) {
-      await window.keyboard.press('Meta+Alt+j');
+      await window.keyboard.press('ControlOrMeta+Alt+j');
       await window.waitForTimeout(150);
     }
     await expect(station).toHaveAttribute('data-station', 'task:T2');
@@ -180,7 +180,7 @@ test('full run, chat first: composer → assistant → clarify → plan → appr
     const rounds = window.getByTestId('review-tile').getByRole('tablist', { name: 'Review rounds' });
     await expect(rounds.getByRole('tab')).toHaveText([/Round 1/, /Round 2/]);
     await shot(window, 't2-review');
-    await window.keyboard.press('Meta+e');
+    await window.keyboard.press('ControlOrMeta+e');
     await expect(chat).toBeVisible();
 
     await pr.getByTestId('chat-create-pr').click();

@@ -196,7 +196,7 @@ function Questions({ item, runId, planner }: { item: InboxItemOf<'question'>; ru
         {state.status === 'error' ? <span className="cl-error">{state.message}</span> : null}
         <button type="submit" className="btn btn-primary" disabled={busy} data-testid="clarify-submit">
           {state.status === 'sending' ? 'Sending…' : uploading ? 'Uploading…' : 'Send answers'}
-          <Kbd>⌘⏎</Kbd>
+          <Kbd chord="Mod+Enter" />
         </button>
       </div>
       {drop.dragging ? (

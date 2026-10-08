@@ -2,7 +2,14 @@
  * Keybinding strings: `Mod+Alt+H`, `Mod+Shift+Enter`, `Escape`, `H`. `Mod` = ⌘ on macOS (Ctrl elsewhere).
  * Letters, digits and brackets match on `event.code` (so ⌥ doesn't turn H into ˙, nor ⇧ [ into {); named
  * keys match on `event.key`.
+ *
+ * Off macOS, ⌘ and ⌃ are the same key (Ctrl), so a binding's `Ctrl` there means Ctrl, unless the binding also has
+ * `Mod` (⌘⌃ on macOS): then it is Ctrl+Super. And Ctrl is what terminals and vim run on, so inside them a bare
+ * Ctrl+<letter> is theirs, not Legion's (`yieldsToControlKeys`).
  */
+import { IS_MAC } from './platform';
+
+export { IS_MAC };
 
 export interface Chord {
   mod: boolean;
@@ -21,8 +28,6 @@ export interface KeyEventLike {
   altKey: boolean;
   shiftKey: boolean;
 }
-
-export const IS_MAC = typeof navigator === 'undefined' || /Mac|iPhone|iPad/.test(navigator.platform ?? '');
 
 const ALIASES: Record<string, string> = {
   esc: 'Escape',
@@ -68,15 +73,20 @@ function eventKey(event: KeyEventLike): string {
 }
 
 export function matchesChord(chord: Chord, event: KeyEventLike, mac = IS_MAC): boolean {
-  const mod = mac ? event.metaKey : event.ctrlKey;
-  const ctrl = mac ? event.ctrlKey : false;
+  const { ctrl, meta } = physicalModifiers(chord, mac);
   return (
-    chord.mod === mod &&
+    ctrl === event.ctrlKey &&
+    meta === event.metaKey &&
     chord.alt === event.altKey &&
     chord.shift === event.shiftKey &&
-    chord.ctrl === ctrl &&
     chord.key === eventKey(event)
   );
+}
+
+/** Which of Ctrl and Meta (⌘ on macOS, Super elsewhere) a chord holds down. */
+function physicalModifiers(chord: Chord, mac: boolean): { ctrl: boolean; meta: boolean } {
+  if (mac) return { ctrl: chord.ctrl, meta: chord.mod };
+  return { ctrl: chord.mod || chord.ctrl, meta: chord.mod && chord.ctrl };
 }
 
 const SYMBOLS: Record<string, string> = {
@@ -91,15 +101,42 @@ const SYMBOLS: Record<string, string> = {
   ' ': 'Space',
 };
 
-/** `Mod+Alt+H` → `⌘⌥H` (mac) / `Ctrl+Alt+H`. */
+/** `Mod+Alt+H` → `⌘⌥H` (mac) / `Ctrl+Alt+H`; `Mod+Ctrl+H` → `⌃⌘H` / `Ctrl+Super+H`. */
 export function formatChord(binding: string, mac = IS_MAC): string {
   const chord = parseChord(binding);
   const key = SYMBOLS[chord.key] ?? chord.key;
   if (mac)
     return `${chord.ctrl ? '⌃' : ''}${chord.alt ? '⌥' : ''}${chord.shift ? '⇧' : ''}${chord.mod ? '⌘' : ''}${key}`;
-  return [chord.ctrl || chord.mod ? 'Ctrl' : '', chord.alt ? 'Alt' : '', chord.shift ? 'Shift' : '', key]
+  const { ctrl, meta } = physicalModifiers(chord, mac);
+  return [ctrl ? 'Ctrl' : '', meta ? 'Super' : '', chord.alt ? 'Alt' : '', chord.shift ? 'Shift' : '', key]
     .filter(Boolean)
     .join('+');
+}
+
+/** The modifiers of a binding as a prefix for hints: `Mod+Alt` → `⌘⌥` (mac) / `Ctrl+Alt+`. */
+export function formatModifiers(modifiers: string, mac = IS_MAC): string {
+  return formatChord(`${modifiers}+X`, mac).slice(0, -1);
+}
+
+/**
+ * Off macOS, does a chord give way to a focused terminal or vim editor (`ownsControlKeys`)? A bare Ctrl+<letter or
+ * symbol> does: readline and vim need Ctrl+U, Ctrl+P, Ctrl+W… Chords with Shift, Alt or Super, and Ctrl+<digit,
+ * Enter, Tab, arrow> stay Legion's. On macOS nothing yields: Legion's chords are ⌘, the shell's are ⌃.
+ */
+export function yieldsToControlKeys(chord: Chord, mac = IS_MAC): boolean {
+  if (mac || !(chord.mod || chord.ctrl) || chord.alt || chord.shift || (chord.mod && chord.ctrl)) return false;
+  return chord.key.length === 1 && !/[0-9]/.test(chord.key);
+}
+
+/**
+ * The terminal's clipboard chords: ⌘C copies on macOS (⌘V is the native paste); elsewhere Ctrl+C and Ctrl+V go
+ * to the shell, so Ctrl+Shift+C copies and Ctrl+Shift+V pastes, as in every Linux terminal.
+ */
+export function terminalClipboardKey(event: KeyEventLike, mac = IS_MAC): 'copy' | 'paste' | null {
+  const key = eventKey(event);
+  if (mac) return event.metaKey && !event.ctrlKey && !event.altKey && !event.shiftKey && key === 'C' ? 'copy' : null;
+  if (!event.ctrlKey || !event.shiftKey || event.altKey || event.metaKey) return null;
+  return key === 'C' ? 'copy' : key === 'V' ? 'paste' : null;
 }
 
 /** Does the event target accept text (so plain keys must pass through)? */
@@ -129,4 +166,14 @@ export function ownsPlainKeys(target: EventTarget | null): boolean {
 export function isTerminal(target: EventTarget | null): boolean {
   if (!target || typeof (target as Element).closest !== 'function') return false;
   return (target as Element).closest('[data-terminal], .xterm, [data-tile-kind="terminal"] [data-tile-body]') !== null;
+}
+
+/**
+ * Does the target run on Ctrl keys of its own (see `yieldsToControlKeys`)? Terminals do, and anything marked
+ * `data-ctrl-keys` (the code editor in vim mode).
+ */
+export function ownsControlKeys(target: EventTarget | null): boolean {
+  if (isTerminal(target)) return true;
+  if (!target || typeof (target as Element).closest !== 'function') return false;
+  return (target as Element).closest('[data-ctrl-keys]') !== null;
 }

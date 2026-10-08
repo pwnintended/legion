@@ -223,10 +223,10 @@ describe('binary resolution', () => {
     await writeFile(join(bin, 'codex'), '#!/bin/sh\n');
     await writeFile(join(bin, 'plain'), '');
     await chmod(join(bin, 'codex'), 0o755);
-    expect(await resolveBinary('codex', { PATH: `/nonexistent:${bin}` })).toBe(join(bin, 'codex'));
-    expect(await resolveBinary('plain', { PATH: bin })).toBeNull();
-    expect(await resolveBinary('codex', { PATH: '' })).toBeNull();
-    expect(await resolveBinary(join(bin, 'codex'), {})).toBe(join(bin, 'codex'));
+    expect(resolveBinary('codex', { PATH: `/nonexistent:${bin}` })).toBe(join(bin, 'codex'));
+    expect(resolveBinary('plain', { PATH: bin })).toBeNull();
+    expect(resolveBinary('codex', { PATH: '' })).toBeNull();
+    expect(resolveBinary(join(bin, 'codex'), {})).toBe(join(bin, 'codex'));
   });
 });
 

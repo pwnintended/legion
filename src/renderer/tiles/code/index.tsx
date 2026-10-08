@@ -56,6 +56,8 @@ registerCommands([
     category: 'Tile',
     keybinding: 'Mod+S',
     priority: 1,
+    // vim has no Ctrl+S of its own: saving keeps working in vim mode off macOS.
+    overControlKeys: true,
     when: (ctx) => focusedTab(ctx) !== null,
     run: (ctx) => {
       const tab = focusedTab(ctx);
@@ -176,7 +178,7 @@ function SelectionBar({
       >
         <Icon name="spark" size={12} />
         Start a run about this…
-        {focused ? <Kbd>⌘⏎</Kbd> : null}
+        {focused ? <Kbd chord="Mod+Enter" /> : null}
       </button>
       <button
         type="button"

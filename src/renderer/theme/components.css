@@ -830,6 +830,21 @@ body {
 }
 
 /* Title bar breadcrumb */
+/*
+ * The title bar keeps clear of the native window controls. macOS (inset): the traffic lights sit in the start
+ * padding (TitleBar sets it). Linux / Windows (overlay): the controls cover part of the bar, and the
+ * titlebar-area-* env variables give the free box; where they're missing, assume the controls are at the end.
+ */
+.tb-overlay {
+  padding-left: calc(env(titlebar-area-x, 0px) + 10px);
+  padding-right: calc(
+    100vw -
+    env(titlebar-area-x, 0px) -
+    env(titlebar-area-width, calc(100vw - var(--tb-end-fallback, 0px))) +
+    10px
+  );
+}
+
 .tb-crumb {
   all: unset;
   cursor: pointer;

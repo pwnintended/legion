@@ -5,6 +5,7 @@
  */
 import type { Attempt } from '@shared/domain';
 import { useLayoutEffect, useRef, useState } from 'react';
+import { formatChord } from '../app/keys';
 import {
   AttachButton,
   AttachmentTray,
@@ -124,7 +125,7 @@ export function ChatComposer({
       <div className="ch-composer-row">
         <AttachButton draft={entry.draft} testId="chat-attach" />
         <span className="ch-composer-hint" aria-hidden="true">
-          {busy ? '⌘⏎ interrupt and send' : '⇧⏎ new line'}
+          {busy ? `${formatChord('Mod+Enter')} interrupt and send` : '⇧⏎ new line'}
         </span>
         {busy ? (
           <button

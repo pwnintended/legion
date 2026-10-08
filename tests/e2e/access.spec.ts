@@ -34,7 +34,7 @@ test('settings: one model field per role follows the engine; MCP servers and ski
   const { app, window, home } = await launchDemo();
   try {
     await expect(window.getByTestId('titlebar')).toContainText('Add passkey (WebAuthn) login', { timeout: 30_000 });
-    await window.keyboard.press('Meta+,');
+    await window.keyboard.press('ControlOrMeta+,');
     const settings = window.getByTestId('settings');
     await expect(settings).toBeVisible();
 

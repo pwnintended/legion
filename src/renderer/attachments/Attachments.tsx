@@ -19,6 +19,7 @@ import { SPRING } from '../theme/motion';
 import { Markdown } from '../tiles/session/Markdown';
 import { AttachmentDraft, base64ToBlob, type DraftItem, type DraftSnapshot } from './model';
 import './attachments.css';
+import { formatChord, IS_MAC } from '../app/keys';
 
 // ---------------------------------------------------------------------------------------------
 // Drafts
@@ -434,9 +435,9 @@ export function AttachButton({
     <button
       type="button"
       className={`at-attach ${text ? '' : 'at-attach-icon'} ${className}`}
-      title="Attach files (⌘⇧A) · or paste / drop them"
+      title={`Attach files (${formatChord('Mod+Shift+A')}) · or paste / drop them`}
       aria-label="Attach files"
-      aria-keyshortcuts="Meta+Shift+A"
+      aria-keyshortcuts={IS_MAC ? 'Meta+Shift+A' : 'Control+Shift+A'}
       data-testid={testId}
       // Keep focus (and the caret) in the text field.
       onMouseDown={(event) => event.preventDefault()}

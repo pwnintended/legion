@@ -8,6 +8,7 @@ import type { FileEntry, FileList, FileMatch } from '@shared/rpc';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { commandTooltip } from '../../app/commands';
 import { rpc } from '../../app/hooks';
+import { matchesChord, parseChord } from '../../app/keys';
 import { openFile } from '../../app/project-actions';
 import { fetchQuery, isStale, peekQuery, useQueryVersion } from '../../app/query';
 import { Icon } from '../../chrome/icons';
@@ -188,11 +189,12 @@ export default function FilesTile({ params, focused, visible }: TileProps<'files
     setExpanded((current) => new Set([...current, ...parents]));
   }, [openPath]);
 
-  // ⌘F inside the files tile focuses the filter.
+  // ⌘F (Ctrl+F off macOS) inside the files tile focuses the filter.
   useEffect(() => {
     if (!focused) return;
+    const findChord = parseChord('Mod+F');
     const onKey = (event: KeyboardEvent) => {
-      if (event.key === 'f' && event.metaKey && !event.shiftKey && !event.altKey) {
+      if (matchesChord(findChord, event)) {
         event.preventDefault();
         inputRef.current?.focus();
         inputRef.current?.select();
@@ -227,7 +229,7 @@ export default function FilesTile({ params, focused, visible }: TileProps<'files
           </button>
         ) : (
           <span className="ft-hint" title={commandTooltip('file.goto')}>
-            <Kbd>⌘P</Kbd>
+            <Kbd chord="Mod+P" />
           </span>
         )}
       </div>

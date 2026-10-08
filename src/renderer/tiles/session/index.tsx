@@ -49,6 +49,7 @@ import { EscalationCard, type EscalationItem, resolveEscalation } from './escala
 import { Glyph } from './glyphs';
 import { Row, type RowContext, SentRow } from './Rows';
 import './session.css';
+import { formatChord } from '../../app/keys';
 import { entryTs, type TimelineRow, timelineCursor, type Working } from './timeline';
 
 // ---------------------------------------------------------------------------------------------
@@ -688,7 +689,7 @@ function SteerBar({
           <>
             <span className="ss-keys" aria-hidden="true">
               <span className="kbd">⏎ queue</span>
-              <span className="kbd">⌘⏎ now</span>
+              <span className="kbd">{formatChord('Mod+Enter')} now</span>
             </span>
             <button
               type="button"

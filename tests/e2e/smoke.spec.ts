@@ -42,6 +42,7 @@ test('launches, connects the renderer to the engine over MessagePort RPC, and sh
         'pickFiles',
         'platform',
         'requestEnginePort',
+        'setTitleBarColors',
         'showItemInFolder',
       ],
     });

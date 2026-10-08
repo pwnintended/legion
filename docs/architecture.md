@@ -1,6 +1,6 @@
 # Legion architecture
 
-Legion is a macOS desktop app (Electron + TypeScript) that takes an issue through
+Legion is a desktop app for macOS and Linux (Electron + TypeScript) that takes an issue through
 **clarify → plan → task DAG → parallel coding agents → cross-engine review → integration branch → draft PR**,
 driving both **Claude Code** and **Codex** through their own CLIs. The UI is a niri-style scrollable tiling
 workspace. Background research lives in `docs/research/`; the visual reference is the mockup at
@@ -13,7 +13,7 @@ document disagree, fix one of them in the same change.
 
 | Topic | Decision |
 |---|---|
-| Platform | macOS (arm64 + x64) first. Don't break Linux needlessly, but don't test it. |
+| Platform | macOS and Linux (arm64 + x64). Windows is not supported yet; OS-specific behaviour goes behind the platform interfaces (§3 "Platforms") so it can be added as one more implementation. |
 | Claude Code | Spawn the user's installed `claude` CLI: `claude -p --input-format stream-json --output-format stream-json --verbose --include-partial-messages`. No Agent SDK. Auth = the user's own login (never touch tokens). |
 | Codex | Spawn `codex app-server` (JSON-RPC 2.0 over stdio). Types generated with `codex app-server generate-ts --experimental` and committed. Auth = the user's own `codex login`. |
 | Approvals | In-band for both engines, surfaced as `approval_request` events → inbox → `session.respond()`. Claude: `--permission-prompt-tool stdio` → `can_use_tool` control requests on stdout, answered with a `control_response` on stdin. Codex: `item/*/requestApproval` server requests. |
@@ -91,18 +91,48 @@ renderer        React UI; reconnects after reload and resumes the event stream f
 ```
 
 - Main resolves `PATH` from the user's login shell (`$SHELL -ilc 'printf %s "$PATH"'`) at startup and
-  passes it to the engine via `env`. GUI-launched apps do not inherit it.
+  passes it, and the login shell itself as `SHELL`, to the engine via `env`. GUI-launched apps (Finder/Dock, a
+  Linux `.desktop` launcher) do not inherit them.
 - Port wiring: the engine posts `ready` on `parentPort`; only then does main create a `MessageChannelMain` per
   renderer (`connect` to the engine, `legion:engine-port` to the renderer). The preload forwards the port to the
   page with `window.postMessage` (ports can't cross contextBridge). The renderer asks for a port on every load;
   main re-wires every renderer after an engine restart (exponential backoff, counter reset after 60 s healthy).
-- `LEGION_HOME` overrides the data dir (`~/Library/Application Support/Legion`); when set, Chromium's profile
+- `LEGION_HOME` overrides the data dir (`<appData>/Legion`: `~/Library/Application Support/Legion` on macOS,
+  `~/.config/Legion` on Linux); when set, Chromium's profile
   goes to `$LEGION_HOME/chromium` so isolated instances don't share the single-instance lock.
-- The window uses `vibrancy: 'under-window'` with an opaque `#11111b` background (no white flash). Vibrancy
+- macOS: the window uses `vibrancy: 'under-window'` with an opaque `#11111b` background (no white flash). Vibrancy
   only shows through if the window background is made transparent; that is a design decision for chrome/.
 - The engine must not import `electron` except behind `process.parentPort` checks, so it can run in plain
   Node (tests, headless runs). `node:sqlite` is used precisely so the DB works in both.
 - Engine state survives renderer reloads. On engine start it reconciles the DB with reality (§9).
+
+### Platforms
+
+Every process asks one interface what to do differently per OS instead of branching on `process.platform`; each
+interface has one implementation per OS, picked once at startup. `shared/platform.ts` (pure) names the OS
+(`Os = 'mac' | 'linux' | 'windows'`, `osOf(process.platform)`) and holds what two processes must agree on: the
+title bar (`titleBarFor(os)`: macOS insets the traffic lights into Legion's title bar, elsewhere the native window
+controls are drawn over its end with Window Controls Overlay, and the renderer keeps clear of them through the
+`titlebar-area-*` CSS env variables).
+
+| Process | Interface | Covers | Implementations |
+|---|---|---|---|
+| main | `MainPlatform` (`main/platform/`) | BrowserWindow chrome, recolouring overlay controls on theme change, the child environment (login-shell `PATH` + `SHELL`), quit on last window | `mac.ts`, `linux.ts` |
+| engine | `EnginePlatform` (`engine/platform/`) | the interactive shell a terminal tile opens, finding executables (`claude`, `codex`, settings paths) | `posix.ts` (macOS + Linux) |
+| renderer | `app/platform.ts` + `app/keys.ts` | `OS`/`IS_MAC`, the title bar spec, how UI copy names the file manager; chord matching and labels | constants per `Os` |
+
+Keyboard: bindings are written once (`Mod+K`); `Mod` is ⌘ on macOS and Ctrl elsewhere, a binding's own `Ctrl` is
+⌃ on macOS and Ctrl elsewhere, and `Mod+Ctrl` becomes Ctrl+Super off macOS. Off macOS Ctrl is also what shells and
+vim run on, so a focused terminal (or an element marked `data-ctrl-keys`, the vim editor) keeps bare Ctrl+<letter>
+(`yieldsToControlKeys`); the terminal copies and pastes with Ctrl+Shift+C/V. UI copy never spells a chord out:
+`<Kbd chord="Mod+Enter" />`, `formatChord`, `formatModifiers`.
+
+Adding an OS (Windows is the open one): implement `MainPlatform` and `EnginePlatform`, map the `Os` in each
+`IMPLEMENTATIONS` table (Windows maps to the Linux / POSIX ones until then), add an `electron-builder.yml` section
+and a `packagedLayout()` case in `tests/e2e/packaged.spec.ts`. Known Windows work outside these seams: `.cmd` shims
+can't be spawned without a shell, process trees must be killed explicitly (no signals), skill and `auth.json`
+symlinks need junctions or Developer Mode, `legion.json` commands assume `sh`, and absolute paths aren't always
+`/…`. `scripts/linux/check.sh [unit|e2e|packaged|all]` runs the Linux checks in Docker from any host.
 
 ## 4. Stack
 
@@ -576,7 +606,7 @@ refer to it, but the presentation reaches the human as the agent made it, not pa
 
 ## 9. Git & filesystem conventions
 
-- Worktrees: `~/Library/Application Support/Legion/worktrees/<repoHash>/<runId>/<taskId>/` and `.../_integration/`.
+- Worktrees: `<data dir>/worktrees/<repoHash>/<runId>/<taskId>/` and `.../_integration/`.
   Never touch the user's main checkout's working tree or index.
 - Branches: `legion/<runShort>/integration`, `legion/<runShort>/<taskId>-<slug>`.
 - A per-repo mutex serializes ref-changing git commands. `gc.auto=0` on repos Legion manages while runs are active.
@@ -607,8 +637,8 @@ refer to it, but the presentation reaches the human as the agent made it, not pa
 - Per-repo config `legion.json` (optional): `{ setup?: string[], verify?: string[], copy?: string[],
   symlink?: string[], highRiskGlobs?: string[], installCommand?: string,
   lockfileCommand?: string }`.
-- App data: `~/Library/Application Support/Legion/legion.db` and `attachments/` (override with `LEGION_HOME` for
-  tests).
+- App data: `<data dir>/legion.db` and `attachments/` (the data dir is `<appData>/Legion`, §3; override with
+  `LEGION_HOME` for tests).
 
 ### 5.1 Projects (`engine/projects/`, migration 004)
 

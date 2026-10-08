@@ -12,6 +12,10 @@ import {
 import { initialData } from './data';
 import { actions, dataStore, initialUi, uiStore } from './store';
 
+// The key events here are macOS ones (⌘ = metaKey): pin the OS so the suite means the same on every host.
+// commands-linux.test.ts covers Ctrl as Mod.
+vi.mock('./platform', async (importOriginal) => ({ ...(await importOriginal()), OS: 'mac', IS_MAC: true }));
+
 interface FakeKey {
   key: string;
   code: string;

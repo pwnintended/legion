@@ -4,6 +4,7 @@
  * stands and what needs the human live in the conversation (progress strip, needs-you bar) and the title bar.
  */
 import { useActiveRun, useRateLimits, useRunCost, useUi } from '../app/hooks';
+import { formatChord, IS_MAC, formatModifiers as mods } from '../app/keys';
 import { formatCost } from '../layout/describe';
 import { Bar } from './ui';
 
@@ -21,14 +22,14 @@ export function StatusBar() {
     >
       {view === 'agents' ? (
         <span className="faint" data-testid="map-hint">
-          ⌘E/Esc board · ⌘⌥J/K stations · ⌘⌥H/L tabs
+          {`${formatChord('Mod+E')}/Esc board · ${mods('Mod+Alt')}J/K stations · ${mods('Mod+Alt')}H/L tabs`}
         </span>
       ) : null}
       {view === 'code' ? (
         <span className="faint" data-testid="code-hint">
           {locked
-            ? 'keys go to the terminal · ⌘-chords still work · ⌘⌥H/L leave it'
-            : '⌘T terminal · ⌘D/⌘⇧D split · ⌘⌥HJKL focus · ⌘⌥⇧ move · ⌘⌃ resize · ⌘⌥T/S/E tabs·stack·split · ⌘1–9 workspaces'}
+            ? `keys go to the terminal · ${IS_MAC ? '⌘-chords' : 'Ctrl+Shift and Ctrl+Alt chords'} still work · ${mods('Mod+Alt')}H/L leave it`
+            : `${formatChord('Mod+T')} terminal · ${formatChord('Mod+D')}/${formatChord('Mod+Shift+D')} split · ${mods('Mod+Alt')}HJKL focus · ${mods('Mod+Alt+Shift')} move · ${mods('Mod+Ctrl')} resize · ${mods('Mod+Alt')}T/S/E tabs·stack·split · ${mods('Mod')}1–9 workspaces`}
         </span>
       ) : null}
 

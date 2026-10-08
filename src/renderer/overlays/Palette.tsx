@@ -13,6 +13,7 @@ import { type CommandView, executeCommand, useCommands } from '../app/commands';
 import { attemptsOfRun, latestPlan, tasksOfRun } from '../app/data';
 import { useActiveRunId, useData, useLayout, useUi } from '../app/hooks';
 import { formatChord } from '../app/keys';
+import { FILE_MANAGER } from '../app/platform';
 import { openProject } from '../app/project-actions';
 import { selectProjects, selectWorkspaceRuns } from '../app/projects';
 import { TASK_SHORT } from '../app/status-words';
@@ -108,7 +109,7 @@ function taskEntries(
     out.push({
       id: `finder:${task.id}`,
       group,
-      title: `Reveal ${id} worktree in Finder`,
+      title: `Reveal ${id} worktree in ${FILE_MANAGER}`,
       value: `reveal finder worktree open ${id} ${title}`,
       keywords: [id],
       icon: 'branch',

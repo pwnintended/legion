@@ -10,6 +10,7 @@ import { useStore } from 'zustand';
 import { createStore } from 'zustand/vanilla';
 import { confirmAction } from '../../../app/confirm';
 import { rpc } from '../../../app/hooks';
+import { formatChord } from '../../../app/keys';
 import { invalidateQueries } from '../../../app/query';
 import { toast } from '../../../overlays/nav';
 import { fileKey } from '../../project/kit';
@@ -198,7 +199,7 @@ export async function confirmClose(tabIds: readonly string[]): Promise<boolean> 
     const names = dirty.map((m) => m.path);
     const discard = await confirmAction({
       title: dirty.length === 1 ? `Discard your changes to ${names[0]}?` : `Discard changes to ${dirty.length} files?`,
-      body: ['They are not saved (⌘S saves). Closing throws them away.'],
+      body: [`They are not saved (${formatChord('Mod+S')} saves). Closing throws them away.`],
       items: dirty.length > 1 ? names : undefined,
       confirmLabel: 'Discard changes',
       cancelLabel: 'Keep editing',

@@ -10,6 +10,7 @@ import type { DiscoveredRepo, RecentRepo, RepoBranches, RepoInspection } from '@
 import { type ReactNode, useEffect, useId, useMemo, useRef, useState } from 'react';
 import { seededBase, seededText, takeComposerSeed } from '../app/composer-seed';
 import { rpc, useActiveRun, useEngines, useSettings } from '../app/hooks';
+import { formatChord } from '../app/keys';
 import { adoptRun } from '../app/run-actions';
 import { actions } from '../app/store';
 import {
@@ -402,7 +403,7 @@ export function ComposerOverlay() {
             style={{ marginLeft: 'auto' }}
             aria-label={expanded ? 'Shrink the composer' : 'Expand the composer'}
             aria-pressed={expanded}
-            title={expanded ? 'Shrink  ⌘⇧E' : 'Expand  ⌘⇧E'}
+            title={`${expanded ? 'Shrink' : 'Expand'}  ${formatChord('Mod+Shift+E')}`}
             data-testid="composer-expand"
             onClick={toggleExpanded}
           >
@@ -576,7 +577,7 @@ export function ComposerOverlay() {
                 data-testid="composer-submit"
               >
                 {creating ? 'Creating…' : viaAssistant ? 'Ask' : 'Plan it'}
-                <Kbd>⌘⏎</Kbd>
+                <Kbd chord="Mod+Enter" />
               </button>
               {blocked && !creating ? (
                 <span id={`${ids}-blocked`} role="tooltip" className="cmp-tip" data-testid="composer-blocked">

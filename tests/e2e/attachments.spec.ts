@@ -131,7 +131,7 @@ test('attachments: paste, drop, dialog, preview, remove, then the planner receiv
     await expect(window.getByTestId('connection-status')).toHaveText('connected', { timeout: 30_000 });
 
     // The composer with a repository and a description.
-    await window.keyboard.press('Meta+Shift+n');
+    await window.keyboard.press('ControlOrMeta+Shift+n');
     const composer = window.getByTestId('composer');
     await expect(composer).toBeVisible();
     const textarea = composer.locator('textarea');
@@ -231,7 +231,7 @@ test('attachments: paste, drop, dialog, preview, remove, then the planner receiv
     // The draft (attachments included) survives closing the composer.
     await window.keyboard.press('Escape');
     await expect(composer).toHaveCount(0);
-    await window.keyboard.press('Meta+Shift+n');
+    await window.keyboard.press('ControlOrMeta+Shift+n');
     await expect(composer).toBeVisible();
     await expect(chips).toHaveCount(3);
 
@@ -242,7 +242,7 @@ test('attachments: paste, drop, dialog, preview, remove, then the planner receiv
     await setSize(app, window, [1280, 800]);
 
     // Create the run: the assistant takes the request (and its attachments) and hands it to the planner.
-    await textarea.press('Meta+Enter');
+    await textarea.press('ControlOrMeta+Enter');
     await expect(composer).toBeHidden({ timeout: 15_000 });
 
     // Clarify, as a card in the chat: the issue's attachments are listed; a screenshot pasted into an answer
@@ -254,14 +254,14 @@ test('attachments: paste, drop, dialog, preview, remove, then the planner receiv
     await expect(chat.locator('.ch-you-files').first().getByTestId('attachment-chip')).toHaveCount(3);
     // Among the agents (⌘E and back): the planner is at work, so the route map's Plan station shows the
     // plan-to-be, which lists them as the issue's attachments.
-    await window.keyboard.press('Meta+e');
+    await window.keyboard.press('ControlOrMeta+e');
     await expect(window.getByTestId('route-map')).toBeVisible();
     await expect(window.getByTestId('station-pane')).toHaveAttribute('data-station', 'plan');
     await expect(
       window.locator('[data-tile-kind="plan"]').getByTestId('run-attachments').getByTestId('attachment-chip'),
     ).toHaveCount(3);
     await shot(window, 'plan-attachments');
-    await window.keyboard.press('Meta+e');
+    await window.keyboard.press('ControlOrMeta+e');
     await expect(clarify).toBeVisible();
     await clarify.getByRole('radio', { name: 'Yes, add docs' }).click();
     const note = clarify.locator('.cl-note').first();

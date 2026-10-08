@@ -2,6 +2,7 @@ import { statSync } from 'node:fs';
 import type { TerminalTarget } from '@shared/rpc';
 import { RpcError, toEndpoint } from '@shared/rpc-transport';
 import type { EngineContext } from '../context';
+import { enginePlatform } from '../platform';
 import type { EngineRpcServer } from '../rpc/server';
 import { PtyManager, type PtyOpenOptions } from './manager';
 import { createNodePtySpawn } from './node-pty';
@@ -58,8 +59,8 @@ export function registerTerminalHandlers(
   const resolveTarget = (target: TerminalTarget): Omit<PtyOpenOptions, 'cols' | 'rows'> => {
     if (target.kind === 'shell') {
       assertDirectory(target.cwd);
-      const shell = ctx.env.SHELL || process.env.SHELL || '/bin/zsh';
-      return { cmd: shell, args: ['-l'], cwd: target.cwd, env: ptyEnv(ctx.env), detachedTtlMs: shellTtl };
+      const shell = enginePlatform().interactiveShell(ctx.env);
+      return { ...shell, cwd: target.cwd, env: ptyEnv(ctx.env), detachedTtlMs: shellTtl };
     }
     return (options.resolveAttempt ?? defaultResolveAttempt(ctx))(target.attemptId);
   };

@@ -55,7 +55,7 @@ export class CodexEngine implements AgentEngine {
 
   private async open(opts: SessionOptions, mode: OpenMode): Promise<AgentSession> {
     const binary = this.options.binary ?? 'codex';
-    const command = await resolveBinary(binary, opts.env);
+    const command = resolveBinary(binary, opts.env);
     if (!command) throw new Error(`${binary} not found on PATH`);
     const home = await prepareCodexHome(this.options.codexHome, opts.env);
     const { skills } = sessionExtras(opts);
@@ -111,7 +111,7 @@ export class CodexEngine implements AgentEngine {
       error: null,
       probedAt: Date.now(),
     };
-    const path = await resolveBinary(binary, env);
+    const path = resolveBinary(binary, env);
     if (!path) return { ...base, error: `${binary} not found on PATH` };
     const info: EngineInfo = { ...base, installed: true, path };
     try {
