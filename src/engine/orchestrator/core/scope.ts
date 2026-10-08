@@ -1,5 +1,6 @@
 /** Scope check (§8 Verify): actual changed files vs the node's declared `touches`. */
-import type { TaskNode } from '@shared/domain';
+import type { GateScopeMode, TaskNode } from '@shared/domain';
+import type { GateResult } from './gates';
 import { globMatchesPath, normalizeGlob } from './glob';
 
 export interface ScopeReport {
@@ -42,4 +43,39 @@ export function checkScope(
   }
   const unusedTouches = [...new Set(writes)].filter((g) => !used.has(g));
   return { inScope, outOfScope, readOnly, unusedTouches, ok: outOfScope.length === 0 };
+}
+
+/** Out-of-scope files the summary names before `+N more`. */
+const SUMMARY_FILES = 3;
+
+/**
+ * The built-in `scope` gate: pass when every changed file is covered by a write touch (or `alwaysAllowed`),
+ * else fail, blocking only in `block` mode.
+ */
+export function scopeGateResult(report: ScopeReport, mode: GateScopeMode): GateResult {
+  const outside = report.outOfScope;
+  const passed = outside.length === 0;
+  const total = report.inScope.length + outside.length;
+  const named = outside.slice(0, SUMMARY_FILES).join(', ');
+  const more = outside.length > SUMMARY_FILES ? ` +${outside.length - SUMMARY_FILES} more` : '';
+  const readOnly = new Set(report.readOnly);
+  return {
+    name: 'scope',
+    kind: 'scope',
+    command: 'legion:scope',
+    source: 'builtin',
+    status: passed ? 'pass' : 'fail',
+    blocking: mode === 'block',
+    exitCode: passed ? 0 : 1,
+    durationMs: null,
+    summary: passed ? `${total}/${total} files declared` : `${outside.length} outside: ${named}${more}`,
+    outputTail: passed
+      ? ''
+      : [
+          `Changed files outside the task's declared touches (${outside.length}):`,
+          ...outside.map((p) => `- ${p}${readOnly.has(p) ? ' (declared read-only)' : ''}`),
+          '',
+          'Revert these changes, or keep each one minimal and justify it in your summary.',
+        ].join('\n'),
+  };
 }

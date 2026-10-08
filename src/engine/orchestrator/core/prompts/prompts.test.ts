@@ -1,6 +1,7 @@
 import type { ReviewFinding } from '@shared/domain';
 import { describe, expect, it } from 'vitest';
-import { checkScope } from '../scope';
+import type { GateResult } from '../gates';
+import { checkScope, scopeGateResult } from '../scope';
 import { makeNode } from '../testing';
 import {
   type AgentPrompt,
@@ -195,6 +196,66 @@ describe('coder prompts', () => {
     expect(prompt.prompt).not.toContain('Review findings');
   });
 
+  it('fixer after failed gates', () => {
+    const scope = scopeGateResult(checkScope(node, ['src/reports/csv.ts', 'src/app.ts']), 'block');
+    const secrets: GateResult = {
+      name: 'secrets',
+      kind: 'secrets',
+      command: 'legion:secrets',
+      source: 'builtin',
+      status: 'fail',
+      blocking: true,
+      exitCode: 1,
+      durationMs: 40,
+      summary: '1 secret: src/reports/config.ts:3',
+      outputTail: 'src/reports/config.ts:3 aws-access-key const key = "AKIA…"',
+    };
+    const test: GateResult = {
+      ...verifyFail,
+      name: 'test',
+      kind: 'command',
+      source: 'task',
+      status: 'fail',
+      blocking: true,
+      summary: 'Tests 1 failed (4)',
+    };
+    const lint: GateResult = {
+      name: 'lint',
+      kind: 'command',
+      command: 'pnpm lint',
+      source: 'detected',
+      status: 'fail',
+      blocking: false,
+      exitCode: 1,
+      durationMs: 800,
+      summary: 'Found 2 warnings',
+      outputTail: 'src/reports/csv.ts:4 noUnusedVariables',
+    };
+    const prompt = buildFixerPrompt({
+      node,
+      findings: [],
+      unmetCriteria: [],
+      failedVerify: [scope, secrets, test, lint, verifyFail],
+      round: 1,
+      maxRounds: 2,
+    });
+    expect(prompt.prompt).toContain('## Failed verification');
+    expect(prompt.prompt).toContain('- **scope**: failed — 1 outside: src/app.ts');
+    expect(prompt.prompt).toContain('- src/app.ts');
+    expect(prompt.prompt).toContain('Revert these changes, or keep each one minimal and justify it');
+    expect(prompt.prompt).toContain('- **secrets**: failed, 0.0s — 1 secret: src/reports/config.ts:3');
+    expect(prompt.prompt).toContain('src/reports/config.ts:3 aws-access-key');
+    expect(prompt.prompt).not.toContain('legion:scope');
+    expect(prompt.prompt).not.toContain('legion:secrets');
+    expect(prompt.prompt).toContain(
+      '- **test** (`pnpm vitest run src/reports/csv.test.ts`): failed (exit 1), 2.3s — Tests 1 failed (4)',
+    );
+    expect(prompt.prompt).toContain('- **lint** (`pnpm lint`): warning, 0.8s — Found 2 warnings');
+    // A legacy result (task meta from before gates) renders as before.
+    expect(prompt.prompt).toContain('- `pnpm vitest run src/reports/csv.test.ts`: failed (exit 1), 2.3s');
+    expect(prompt.prompt).toContain('FAIL csv.test.ts > quotes newlines');
+  });
+
   it('resolver', () => {
     const prompt = buildResolverPrompt({
       node,
@@ -228,6 +289,51 @@ describe('review prompts', () => {
     expect(prompt).toMatchSnapshot();
     expectEngineNeutral(prompt);
     expect(prompt.prompt).toContain('Out of scope: `src/app.ts`');
+  });
+
+  it('reviewer sees passed and skipped gates without their output', () => {
+    const prompt = buildReviewerPrompt({
+      issue,
+      node,
+      planSummary,
+      upstream,
+      diff,
+      startSha: 'abc1234',
+      verify: [
+        {
+          ...verifyFail,
+          exitCode: 0,
+          outputTail: 'all green',
+          name: 'test',
+          kind: 'command',
+          source: 'task',
+          status: 'pass',
+          blocking: true,
+          summary: 'Tests 4 passed (4)',
+        },
+        scopeGateResult(checkScope(node, ['src/reports/csv.ts']), 'warn'),
+        {
+          command: 'legion:secrets',
+          exitCode: null,
+          outputTail: '',
+          durationMs: null,
+          name: 'secrets',
+          kind: 'secrets',
+          source: 'builtin',
+          status: 'skipped',
+          blocking: false,
+          summary: 'secret scan off',
+        },
+      ] satisfies GateResult[],
+      scope: checkScope(node, ['src/reports/csv.ts']),
+      round: 0,
+    });
+    expect(prompt.prompt).toContain(
+      '- **test** (`pnpm vitest run src/reports/csv.test.ts`): passed, 2.3s — Tests 4 passed (4)',
+    );
+    expect(prompt.prompt).toContain('- **scope**: passed — 1/1 files declared');
+    expect(prompt.prompt).toContain('- **secrets**: skipped — secret scan off');
+    expect(prompt.prompt).not.toContain('all green');
   });
 
   it('reviewer re-review clips huge diffs', () => {

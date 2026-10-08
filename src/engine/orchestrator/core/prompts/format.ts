@@ -1,5 +1,6 @@
 /** Markdown building blocks shared by the prompt builders. */
 import type { ReviewCriterion, ReviewFinding, TaskNode } from '@shared/domain';
+import type { GateResult } from '../gates';
 import type { ScopeReport } from '../scope';
 import type { AttachmentNote, IssueInput, RepoInput, UpstreamSummary, VerifyResultInput } from './types';
 
@@ -200,20 +201,57 @@ export function formatUpstream(upstream: readonly UpstreamSummary[]): string {
     .join('\n\n');
 }
 
-export function formatVerifyResults(results: readonly VerifyResultInput[]): string {
+/**
+ * Verification results as a bullet list, failures with their output tail. Gate results show by name with
+ * their status and summary (built-in gates without a command); legacy results by their command.
+ */
+export function formatVerifyResults(results: readonly (VerifyResultInput | GateResult)[]): string {
   if (results.length === 0) return '(no verification results)';
-  return results
-    .map((r) => {
-      const outcome =
-        r.exitCode === null ? 'killed / timed out' : r.exitCode === 0 ? 'passed' : `failed (exit ${r.exitCode})`;
-      const duration = r.durationMs != null ? `, ${(r.durationMs / 1000).toFixed(1)}s` : '';
-      const tailText = r.exitCode === 0 ? '' : r.outputTail.trim();
-      return join(
-        `- \`${r.command}\`: ${outcome}${duration}`,
-        tailText ? fence(clipTail(tailText, PROMPT_LIMITS.verifyTailChars), 'text') : null,
-      );
-    })
-    .join('\n');
+  return results.map((r) => (isGateResult(r) ? formatGateResult(r) : formatLegacyVerifyResult(r))).join('\n');
+}
+
+function isGateResult(r: VerifyResultInput | GateResult): r is GateResult {
+  return 'name' in r && 'status' in r && typeof r.name === 'string' && typeof r.status === 'string';
+}
+
+function formatDuration(durationMs: number | null | undefined): string {
+  return durationMs != null ? `, ${(durationMs / 1000).toFixed(1)}s` : '';
+}
+
+function formatTail(text: string): string | null {
+  const tail = text.trim();
+  return tail ? fence(clipTail(tail, PROMPT_LIMITS.verifyTailChars), 'text') : null;
+}
+
+function formatLegacyVerifyResult(r: VerifyResultInput): string {
+  const outcome =
+    r.exitCode === null ? 'killed / timed out' : r.exitCode === 0 ? 'passed' : `failed (exit ${r.exitCode})`;
+  return join(
+    `- \`${r.command}\`: ${outcome}${formatDuration(r.durationMs)}`,
+    r.exitCode === 0 ? null : formatTail(r.outputTail),
+  );
+}
+
+function formatGateResult(r: GateResult): string {
+  const builtin = r.kind !== 'command';
+  const outcome =
+    r.status === 'pass'
+      ? 'passed'
+      : r.status === 'skipped'
+        ? 'skipped'
+        : !r.blocking
+          ? 'warning'
+          : builtin || r.exitCode === 0
+            ? 'failed'
+            : r.exitCode === null
+              ? 'killed / timed out'
+              : `failed (exit ${r.exitCode})`;
+  const command = builtin ? '' : ` (\`${r.command}\`)`;
+  const summary = r.summary.trim() ? ` — ${r.summary.trim()}` : '';
+  return join(
+    `- **${r.name}**${command}: ${outcome}${formatDuration(r.durationMs)}${summary}`,
+    r.status === 'fail' ? formatTail(r.outputTail) : null,
+  );
 }
 
 export function formatFindings(findings: readonly ReviewFinding[]): string {
