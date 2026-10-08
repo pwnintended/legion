@@ -483,11 +483,6 @@
   font-weight: 500;
   color: var(--text);
 }
-.ch-options {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-}
 .ch-actions {
   display: flex;
   flex-wrap: wrap;
@@ -627,7 +622,7 @@
 .ch-embed .cl-intro-subject {
   display: inline;
 }
-.ch-embed .cl-note {
+.ch-embed .cl-note:not([data-quiet]) {
   background: var(--base);
 }
 

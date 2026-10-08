@@ -121,36 +121,138 @@
   border-radius: 8px;
   font-size: 12.5px;
 }
-.opt-chip {
+/* Option rows (chrome/options.tsx): a question's options, in the clarify tile and chat question cards. Options are
+   often sentences, so each is a full-width row: a soft fill at rest, a mauve tint and dot when picked, no outline. */
+.opt-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.opt {
   all: unset;
   box-sizing: border-box;
   cursor: pointer;
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  min-height: 28px;
-  padding: 4px 11px;
-  border-radius: 999px;
-  border: 1.5px solid var(--surface1);
-  font-size: 12.5px;
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  width: 100%;
+  padding: 8px 12px;
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--surface0) 42%, transparent);
   color: var(--subtext1);
+  font-size: 13px;
+  line-height: 1.5;
+  /* Forced colors draw this as the row's edge; everywhere else the fill is the edge. */
+  outline: 1px solid transparent;
+  outline-offset: -1px;
   transition:
-    border-color 0.15s,
-    background-color 0.15s,
-    color 0.15s;
+    background-color 0.15s var(--ease-out),
+    color 0.15s var(--ease-out);
 }
-.opt-chip:hover {
-  border-color: var(--overlay0);
+.opt:hover {
+  background: color-mix(in srgb, var(--surface0) 78%, transparent);
   color: var(--text);
 }
-.opt-chip:focus-visible {
+.opt:active {
+  background: var(--surface0);
+}
+.opt:focus-visible {
   outline: 2px solid var(--mauve);
   outline-offset: 2px;
 }
-.opt-chip[aria-checked="true"] {
-  border-color: var(--mauve);
-  background: color-mix(in srgb, var(--mauve) 12%, transparent);
+.opt[aria-checked="true"] {
+  background: color-mix(in srgb, var(--mauve) 13%, transparent);
   color: var(--text);
+}
+.opt[aria-checked="true"]:hover {
+  background: color-mix(in srgb, var(--mauve) 17%, transparent);
+}
+.opt:disabled {
+  cursor: default;
+  opacity: 0.5;
+  background: color-mix(in srgb, var(--surface0) 42%, transparent);
+  color: var(--subtext1);
+}
+/* The radio: a ring sitting on the first line, its dot grows in when picked. */
+.opt-mark {
+  flex: none;
+  position: relative;
+  width: 14px;
+  height: 14px;
+  margin-top: 2.75px;
+  border-radius: 50%;
+  box-shadow: inset 0 0 0 1.5px var(--overlay0);
+  transition: box-shadow 0.15s var(--ease-out);
+}
+.opt-mark::after {
+  content: "";
+  position: absolute;
+  inset: 3.5px;
+  border-radius: 50%;
+  background: var(--mauve);
+  transform: scale(0);
+  transition: transform 0.2s var(--ease-out);
+}
+.opt:hover .opt-mark {
+  box-shadow: inset 0 0 0 1.5px var(--overlay2);
+}
+.opt[aria-checked="true"] .opt-mark {
+  box-shadow: inset 0 0 0 1.5px var(--mauve);
+}
+.opt[aria-checked="true"] .opt-mark::after {
+  transform: scale(1);
+}
+.opt-text {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: break-word;
+  text-wrap: pretty;
+}
+.opt-text code,
+.cl-question code,
+.ch-question code {
+  font-family: var(--font-code);
+  font-feature-settings: "zero" 0;
+  font-size: 0.88em;
+  padding: 1px 4px;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--surface1) 55%, transparent);
+  color: var(--text);
+  white-space: nowrap;
+  box-decoration-break: clone;
+  -webkit-box-decoration-break: clone;
+}
+:is(.opt-text, .cl-question, .ch-question) code[data-wrap] {
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+.opt-tag {
+  display: inline-block;
+  margin-right: 7px;
+  padding: 0 6px;
+  border-radius: 5px;
+  font-size: 10.5px;
+  font-weight: 600;
+  line-height: 17px;
+  letter-spacing: 0.02em;
+  vertical-align: 1px;
+  color: var(--peach);
+  background: color-mix(in srgb, var(--peach) 13%, transparent);
+}
+/* Answer-on-click rows (chat question card): an arrow says the click sends. */
+.opt-go {
+  flex: none;
+  margin-top: 3.25px;
+  color: var(--mauve);
+  opacity: 0;
+  transform: translateX(-3px);
+  transition:
+    opacity 0.15s var(--ease-out),
+    transform 0.2s var(--ease-out);
+}
+.opt:is(:hover, :focus-visible):not(:disabled) .opt-go {
+  opacity: 1;
+  transform: none;
 }
 
 /* Composer ---------------------------------------------------------------------------------- */
