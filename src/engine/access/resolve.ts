@@ -3,7 +3,7 @@
  * (`settings.access`). Pure apart from the skill folders it reads. Coordinating roles never get any.
  */
 import { join } from 'node:path';
-import type { McpServer, Role, Settings } from '@shared/domain';
+import type { EngineKind, McpServer, Role, Settings } from '@shared/domain';
 import { ACCESS_ROLES, type SessionSkills } from '@shared/engine';
 import type { AvailableSkill } from '@shared/rpc';
 import { CLAUDE_PROJECT_SKILLS, CODEX_PROJECT_SKILLS, skillsIn, skillsInAll, userSkillRoots } from '../util/skills';
@@ -64,4 +64,37 @@ export async function availableSkills(home: string, repoPath: string | null): Pr
       out.set(skill.name, { name: skill.name, description: skill.description, scope: 'project' });
   }
   return [...out.values()].sort((a, b) => a.name.localeCompare(b.name));
+}
+
+/**
+ * Skills a direct session (role `session`) on `engine` can be asked for by name: what that CLI finds by itself
+ * (its own user folder and the repo's), or, under an allowlist, the allowed ones it can reach (allowed user
+ * skills are exposed to either engine; a repo skill is only found in its engine's folder).
+ * @param codexHome Legion's own CODEX_HOME: Codex sessions don't see the user's `~/.codex`
+ */
+export async function invocableSkills(
+  settings: Pick<Settings, 'access'>,
+  projectId: string | null,
+  engine: EngineKind,
+  home: string,
+  codexHome: string,
+  repoPath: string,
+): Promise<AvailableSkill[]> {
+  const allow = (projectId && settings.access[projectId]?.session?.skills) || null;
+  const userRoots = allow
+    ? userSkillRoots(home)
+    : engine === 'claude'
+      ? [join(home, '.claude', 'skills')]
+      : [join(codexHome, 'skills'), join(codexHome, 'skills', '.system')];
+  const out = new Map<string, AvailableSkill>();
+  for (const skill of await skillsInAll(userRoots)) {
+    out.set(skill.name, { name: skill.name, description: skill.description, scope: 'user' });
+  }
+  const repoRoot = join(repoPath, engine === 'claude' ? CLAUDE_PROJECT_SKILLS : CODEX_PROJECT_SKILLS);
+  for (const skill of await skillsIn(repoRoot)) {
+    out.set(skill.name, { name: skill.name, description: skill.description, scope: 'project' });
+  }
+  return [...out.values()]
+    .filter((skill) => !allow || allow.includes(skill.name))
+    .sort((a, b) => a.name.localeCompare(b.name));
 }

@@ -211,6 +211,7 @@ export class DemoClient implements EngineClient {
         return structuredClone(w.settings);
       }
       case 'skills.list':
+      case 'skills.invocable':
         return [
           { name: 'tdd', description: 'Test-driven development, red-green-refactor.', scope: 'user' },
           { name: 'code-review', description: 'Review the current diff for bugs.', scope: 'user' },

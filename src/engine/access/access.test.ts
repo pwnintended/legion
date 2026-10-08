@@ -5,7 +5,7 @@ import { DEFAULT_SETTINGS, type Settings } from '@shared/domain';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { approve, type Harness, node, planOutput, report, startHarness, taskIdIn } from '../orchestrator/test-harness';
 import { discoverMcpServers } from './discover';
-import { availableSkills, resolveAccess } from './resolve';
+import { availableSkills, invocableSkills, resolveAccess } from './resolve';
 
 let root: string;
 beforeEach(() => {
@@ -69,6 +69,48 @@ describe('availableSkills', () => {
       { name: 'shared', description: 'from repo', scope: 'project' },
     ]);
     expect((await availableSkills(home, null)).map((s) => s.name)).toEqual(['mine', 'shared']);
+  });
+});
+
+describe('invocableSkills', () => {
+  const names = (list: { name: string }[]) => list.map((s) => s.name);
+
+  it("offers what each CLI finds by itself: its own user folder and the repo's", async () => {
+    const home = join(root, 'home');
+    const codexHome = join(root, 'codex-home');
+    const repo = join(root, 'repo');
+    skill(join(home, '.claude', 'skills'), 'a', 'claude-user');
+    skill(join(home, '.agents', 'skills'), 'b', 'agents-user');
+    skill(join(codexHome, 'skills', '.system'), 'c', 'codex-system');
+    skill(join(repo, '.claude', 'skills'), 'd', 'claude-repo');
+    skill(join(repo, '.agents', 'skills'), 'e', 'codex-repo');
+    const none = settings({});
+    expect(names(await invocableSkills(none, null, 'claude', home, codexHome, repo))).toEqual([
+      'claude-repo',
+      'claude-user',
+    ]);
+    expect(names(await invocableSkills(none, null, 'codex', home, codexHome, repo))).toEqual([
+      'codex-repo',
+      'codex-system',
+    ]);
+  });
+
+  it("narrows to the project's session allowlist, which exposes user skills to either engine", async () => {
+    const home = join(root, 'home');
+    const repo = join(root, 'repo');
+    skill(join(home, '.claude', 'skills'), 'a', 'claude-user');
+    skill(join(home, '.agents', 'skills'), 'b', 'agents-user');
+    skill(join(repo, '.claude', 'skills'), 'd', 'claude-repo');
+    skill(join(repo, '.agents', 'skills'), 'e', 'codex-repo');
+    const s = settings({ p1: { session: { mcp: [], skills: ['agents-user', 'claude-repo', 'codex-repo'] } } });
+    expect(names(await invocableSkills(s, 'p1', 'claude', home, root, repo))).toEqual(['agents-user', 'claude-repo']);
+    expect(names(await invocableSkills(s, 'p1', 'codex', home, root, repo))).toEqual(['agents-user', 'codex-repo']);
+    // Another role's grant doesn't apply to direct sessions.
+    const coder = settings({ p1: { coder: { mcp: [], skills: [] } } });
+    expect(names(await invocableSkills(coder, 'p1', 'claude', home, root, repo))).toEqual([
+      'claude-repo',
+      'claude-user',
+    ]);
   });
 });
 

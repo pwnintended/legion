@@ -293,6 +293,24 @@
   min-height: max(236px, calc(100vh - 400px));
   max-height: max(236px, calc(100vh - 400px));
 }
+/* Skill suggestions (session composer): under the line being typed, inside the text field. */
+.cmp-skills {
+  position: absolute;
+  z-index: 4;
+  width: 360px;
+  max-height: 232px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 4px;
+  background: var(--base);
+  border: 1.5px solid var(--surface1);
+  border-radius: 10px;
+  box-shadow: 0 14px 36px color-mix(in srgb, var(--shadow) 55%, transparent);
+  animation: pk-in 0.12s var(--ease-out) both;
+}
+.cmp-skills[data-side="top"] {
+  animation-name: pk-in-up;
+}
 .cmp-link {
   position: absolute;
   left: 10px;
@@ -797,6 +815,11 @@
   text-overflow: ellipsis;
   color: var(--text);
   font-weight: 500;
+}
+/* A skill row in the session composer: the name gets a little more room than a repo's. */
+.cmp-skill .pk-name {
+  max-width: 60%;
+  font-size: 12.5px;
 }
 .pk-ref {
   max-width: 100%;

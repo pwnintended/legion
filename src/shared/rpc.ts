@@ -517,6 +517,14 @@ export const rpcContract = {
     input: z.object({ projectId: IdSchema.nullable() }),
     output: z.array(AvailableSkillSchema),
   },
+  /**
+   * Skills a direct session (⌘⇧N) in `repoPath` on `engine` can be asked for by name (`/name` for Claude,
+   * `$name` for Codex): the CLI's own user folder and the repo's, narrowed by the project's `session` allowlist.
+   */
+  'skills.invocable': {
+    input: z.object({ repoPath: z.string(), engine: EngineKindSchema }),
+    output: z.array(AvailableSkillSchema),
+  },
   /** MCP servers already configured for Claude Code (`~/.claude.json`, the project's `.mcp.json`), to import. */
   'mcpServers.discover': {
     input: z.object({ projectId: IdSchema.nullable() }),

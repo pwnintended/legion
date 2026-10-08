@@ -6,13 +6,14 @@
  *   paste a GitHub / Linear URL, pick a base branch and the planner engine; ⌘⏎ starts the assistant or the planner.
  * Both pick a repository the same way (recent, found on this Mac, a typed path, Browse… ⌘O, or a folder dropped
  * from Finder) and focus the new run. Screenshots and files attach by paste (⌘V), drop or the Attach button (⌘⇧A).
- * The draft, attachments included, survives closing the overlay and switching modes.
+ * The draft, attachments included, survives closing the overlay and switching modes. In a session, `/` (Claude) or
+ * `$` (Codex) offers the skills the agent can be asked for (`skills.invocable`).
  */
 import type { EngineKind } from '@shared/domain';
 import type { EngineInfo } from '@shared/engine';
 import { examplePath, separator } from '@shared/paths';
-import type { DiscoveredRepo, RecentRepo, RepoBranches, RepoInspection } from '@shared/rpc';
-import { type ReactNode, useEffect, useId, useMemo, useRef, useState } from 'react';
+import type { AvailableSkill, DiscoveredRepo, RecentRepo, RepoBranches, RepoInspection } from '@shared/rpc';
+import { type ReactNode, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { seededBase, seededText, takeComposerSeed } from '../app/composer-seed';
 import { rpc, useActiveRun, useEngines, useSettings } from '../app/hooks';
 import { formatChord } from '../app/keys';
@@ -36,6 +37,7 @@ import { errorMessage } from '../tiles/session/actions';
 import { BranchPicker, RepoPicker } from './Picker';
 import { abbreviatePath, baseName, mergeRepos, pathFromFileUrl } from './picker-model';
 import { OverlayPanel } from './Shell';
+import { applySkill, rankSkills, type SkillQuery, skillQuery, skillSigil } from './skill-complete';
 
 interface Draft {
   text: string;
@@ -260,6 +262,21 @@ function Composer({ mode }: { mode: ComposerMode }) {
     };
   }, [root]);
 
+  // The skills a session here can be asked for (they differ per engine).
+  const [skills, setSkills] = useState<AvailableSkill[]>([]);
+  useEffect(() => {
+    setSkills([]);
+    if (!session || !root) return;
+    let cancelled = false;
+    rpc('skills.invocable', { repoPath: root, engine })
+      .then((list) => !cancelled && setSkills(list))
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [session, root, engine]);
+  const skillMenu = useSkillMenu(textRef, text, setText, session ? skills : [], skillSigil(engine));
+
   const activeRepo = activeRun?.repoPath ?? null;
   const repoLists = useMemo(
     () => mergeRepos(recent, found, activeRepo ? [activeRepo] : []),
@@ -477,13 +494,18 @@ function Composer({ mode }: { mode: ComposerMode }) {
               spellCheck
               placeholder={
                 session
-                  ? 'Ask about the code or describe a change. Paste a screenshot if it helps…'
+                  ? `Ask about the code or describe a change. Type ${skillSigil(engine)} for a skill, paste a screenshot if it helps…`
                   : 'Describe an issue or feature, paste a GitHub / Linear URL or a screenshot…'
               }
               aria-invalid={attempted && !!textError}
               aria-describedby={`${ids}-text-note`}
-              onChange={(event) => setText(event.target.value)}
+              {...skillMenu.inputProps(`${ids}-skills`)}
+              onChange={(event) => {
+                setText(event.target.value);
+                skillMenu.noteCaret(event.target);
+              }}
             />
+            {skillMenu.open ? <SkillList id={`${ids}-skills`} menu={skillMenu} /> : null}
             {link ? (
               <span className="cmp-link" data-testid="composer-link">
                 <Icon name={link.provider === 'github' ? 'pr' : 'list'} size={12} />
@@ -655,6 +677,212 @@ function Composer({ mode }: { mode: ComposerMode }) {
         {drop.dragging ? <DropHint intent={dragIntent(drop.dragging)} /> : null}
       </div>
     </OverlayPanel>
+  );
+}
+
+type SkillMenu = ReturnType<typeof useSkillMenu>;
+
+/** The skill suggestions for a textarea: where the reference is, which skills match, and the keys that pick one. */
+function useSkillMenu(
+  textRef: React.RefObject<HTMLTextAreaElement | null>,
+  text: string,
+  setText: (text: string) => void,
+  skills: readonly AvailableSkill[],
+  sigil: '/' | '$',
+) {
+  const [caret, setCaret] = useState<number | null>(null);
+  const [active, setActive] = useState(0);
+  // Esc hides the list until the reference changes.
+  const [dismissed, setDismissed] = useState<string | null>(null);
+  const placed = useRef<number | null>(null);
+
+  const at: SkillQuery | null = caret === null ? null : skillQuery(text, caret, sigil);
+  const key = at ? `${at.start}:${at.query}` : null;
+  const matches = useMemo(() => (at ? rankSkills(skills, at.query) : []), [skills, at?.query, at]);
+  const open = !!at && matches.length > 0 && dismissed !== key;
+
+  // biome-ignore lint/correctness/useExhaustiveDependencies: a new query starts at the best match.
+  useEffect(() => setActive(0), [key]);
+  // After a pick, put the caret behind the inserted name.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: runs when the picked text has rendered.
+  useLayoutEffect(() => {
+    const el = textRef.current;
+    if (placed.current === null || !el) return;
+    el.setSelectionRange(placed.current, placed.current);
+    setCaret(placed.current);
+    placed.current = null;
+  }, [text]);
+
+  const noteCaret = (el: HTMLTextAreaElement) =>
+    setCaret(el.selectionStart === el.selectionEnd ? el.selectionStart : null);
+
+  const pick = (skill: AvailableSkill) => {
+    if (!at) return;
+    const next = applySkill(text, at, skill.name, sigil);
+    placed.current = next.caret;
+    setText(next.text);
+    textRef.current?.focus();
+  };
+
+  const onKeyDown = (event: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (!open || event.nativeEvent.isComposing || event.metaKey || event.ctrlKey || event.altKey) return;
+    const move = (delta: number) => setActive((i) => (i + delta + matches.length) % matches.length);
+    if (event.key === 'ArrowDown') move(1);
+    else if (event.key === 'ArrowUp') move(-1);
+    else if ((event.key === 'Enter' || event.key === 'Tab') && !event.shiftKey) {
+      const skill = matches[Math.min(active, matches.length - 1)];
+      if (skill) pick(skill);
+    } else if (event.key === 'Escape') setDismissed(key);
+    else return;
+    event.preventDefault();
+    event.stopPropagation();
+  };
+
+  return {
+    open,
+    matches,
+    active: Math.min(active, matches.length - 1),
+    sigil,
+    pick,
+    noteCaret,
+    setActive,
+    /** Where the list goes: by the line the reference is on, in the text wrap's coordinates. */
+    anchor: (): CaretPoint | null => {
+      const el = textRef.current;
+      return el && at ? caretPoint(el, at.start) : null;
+    },
+    inputProps: (listId: string) => ({
+      'aria-autocomplete': 'list' as const,
+      'aria-controls': open ? listId : undefined,
+      'aria-expanded': open,
+      'aria-activedescendant': open ? `${listId}-${Math.min(active, matches.length - 1)}` : undefined,
+      // While the list is up, its keys (Esc above all) are the text field's, not the overlay's.
+      'data-local-keys': open || undefined,
+      onKeyDown,
+      onSelect: (event: React.SyntheticEvent<HTMLTextAreaElement>) => noteCaret(event.currentTarget),
+      onBlur: () => setCaret(null),
+      onFocus: (event: React.FocusEvent<HTMLTextAreaElement>) => noteCaret(event.currentTarget),
+    }),
+  };
+}
+
+interface CaretPoint {
+  /** Top and bottom of the line, left of the character, in the textarea's offset parent. */
+  top: number;
+  bottom: number;
+  left: number;
+  /** Room below the line inside the textarea. */
+  below: number;
+}
+
+/** Where `index` sits in a textarea, relative to its offset parent (a hidden mirror of the text measures it). */
+function caretPoint(el: HTMLTextAreaElement, index: number): CaretPoint {
+  const style = getComputedStyle(el);
+  const mirror = document.createElement('div');
+  for (const prop of [
+    'boxSizing',
+    'width',
+    'paddingTop',
+    'paddingRight',
+    'paddingBottom',
+    'paddingLeft',
+    'borderTopWidth',
+    'borderRightWidth',
+    'borderBottomWidth',
+    'borderLeftWidth',
+    'fontFamily',
+    'fontSize',
+    'fontWeight',
+    'lineHeight',
+    'letterSpacing',
+    'tabSize',
+  ] as const) {
+    mirror.style[prop] = style[prop];
+  }
+  Object.assign(mirror.style, {
+    position: 'absolute',
+    visibility: 'hidden',
+    whiteSpace: 'pre-wrap',
+    overflowWrap: 'break-word',
+    top: '0',
+    left: '-9999px',
+  });
+  mirror.textContent = el.value.slice(0, index);
+  const mark = document.createElement('span');
+  mark.textContent = '\u200b';
+  mirror.appendChild(mark);
+  document.body.appendChild(mirror);
+  const line = Number.parseFloat(style.lineHeight) || mark.offsetHeight;
+  const top = mark.offsetTop - el.scrollTop;
+  const left = mark.offsetLeft - el.scrollLeft;
+  mirror.remove();
+  return {
+    top: el.offsetTop + top,
+    bottom: el.offsetTop + top + line,
+    left: el.offsetLeft + left,
+    below: el.clientHeight - top - line,
+  };
+}
+
+/** Height the list may take (its max-height plus a gap). */
+const LIST_ROOM = 240;
+
+function SkillList({ id, menu }: { id: string; menu: SkillMenu }) {
+  const listRef = useRef<HTMLDivElement>(null);
+  const point = menu.anchor();
+  // Under the line, or above it when the text field has no room left below.
+  const above = !!point && point.below < LIST_ROOM && point.top > LIST_ROOM;
+  useLayoutEffect(() => {
+    listRef.current?.querySelector<HTMLElement>(`[id="${CSS.escape(`${id}-${menu.active}`)}"]`)?.scrollIntoView({
+      block: 'nearest',
+    });
+  }, [id, menu.active]);
+  return (
+    <div
+      ref={listRef}
+      id={id}
+      role="listbox"
+      aria-label="Skills"
+      className="cmp-skills"
+      data-testid="composer-skills"
+      data-side={above ? 'top' : 'bottom'}
+      style={
+        point
+          ? {
+              top: above ? undefined : point.bottom + 4,
+              bottom: above ? `calc(100% - ${point.top - 4}px)` : undefined,
+              left: `max(0px, min(${point.left - 6}px, calc(100% - 360px)))`,
+            }
+          : undefined
+      }
+    >
+      {menu.matches.map((skill, i) => (
+        // biome-ignore lint/a11y/useKeyWithClickEvents: the keyboard picks from the text field (aria-activedescendant)
+        <div
+          key={skill.name}
+          id={`${id}-${i}`}
+          role="option"
+          tabIndex={-1}
+          aria-selected={i === menu.active}
+          className="pk-row pk-row-tight cmp-skill"
+          data-active={i === menu.active}
+          title={skill.description || undefined}
+          // Keep focus (and the caret) in the text field.
+          onMouseDown={(event) => event.preventDefault()}
+          onMouseMove={() => i !== menu.active && menu.setActive(i)}
+          onClick={() => menu.pick(skill)}
+        >
+          <span className="pk-main">
+            <span className="pk-name mono">
+              {menu.sigil}
+              {skill.name}
+            </span>
+            {skill.description ? <span className="pk-path">{skill.description}</span> : null}
+          </span>
+          {skill.scope === 'project' ? <span className="pk-tag pk-tag-quiet">repo</span> : null}
+        </div>
+      ))}
+    </div>
   );
 }
 
