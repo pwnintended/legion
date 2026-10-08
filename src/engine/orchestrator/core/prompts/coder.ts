@@ -1,4 +1,7 @@
-/** Workspace-write roles: coder, fixer (follow-up in the coder session) and merge-conflict resolver. */
+/**
+ * Workspace-write roles: coder, fixer (follow-up in the coder session), final fixer (the integration branch after
+ * the final review) and merge-conflict resolver.
+ */
 import type { TaskNode } from '@shared/domain';
 import {
   bullets,
@@ -21,15 +24,19 @@ import {
   type AgentPrompt,
   type CoderPromptInput,
   DEFAULT_TOOL_NAMES,
+  type FinalFixerPromptInput,
   type FixerPromptInput,
   type ResolverPromptInput,
   type ToolNames,
 } from './types';
 
-function workspaceRules(tools: ToolNames, extra: readonly string[] = []): string {
+const TASK_SCOPE =
+  'Stay in scope: do this task and nothing else. Change only the files covered by the declared touches. If another file must change, keep that change minimal and explain it in your summary. Do not refactor or reformat unrelated code.';
+
+function workspaceRules(tools: ToolNames, extra: readonly string[] = [], scope = TASK_SCOPE): string {
   return bullets([
     'Work only inside the current working directory. It is a git worktree dedicated to this job; do not read or write files of other checkouts and do not `cd` outside it.',
-    'Stay in scope: do this task and nothing else. Change only the files covered by the declared touches. If another file must change, keep that change minimal and explain it in your summary. Do not refactor or reformat unrelated code.',
+    scope,
     'Do not commit, push, create or switch branches, rebase, reset, stash or otherwise change git state. Legion commits your work with the commit message you provide. Reading history and diffs is fine.',
     'Do not install new dependencies unless the task requires it.',
     `Report progress with \`${tools.reportProgress}\` at meaningful milestones (one short line each).`,
@@ -159,6 +166,59 @@ export function buildFixerPrompt(input: FixerPromptInput): AgentPrompt {
         tools,
         input.structuredReport === true,
         'the commit message for the whole task (not just this round), in the same style as before.',
+      ),
+    ),
+  );
+  return { systemPrompt, prompt };
+}
+
+/**
+ * Final fixer: the final review found blockers in the combined change. A coder session in the integration
+ * worktree (resumed across rounds, or fresh) fixes them; Legion commits, re-verifies and reviews again.
+ */
+export function buildFinalFixerPrompt(input: FinalFixerPromptInput): AgentPrompt {
+  const tools = input.tools ?? DEFAULT_TOOL_NAMES;
+  const systemPrompt = join(
+    'You are a coding agent in Legion, an orchestrator that implemented an issue as several tasks written by different coding agents in parallel. Every task was reviewed and merged into the integration branch; a final reviewer then read the combined change and found problems. You fix them in the integration worktree.',
+    section(
+      'Rules',
+      workspaceRules(
+        tools,
+        [presentRule(tools)],
+        'Stay in scope: fix the findings you are given and nothing else. Several tasks wrote this code, so change whatever files the fixes need, but keep each change minimal and do not refactor or reformat unrelated code.',
+      ),
+    ),
+  );
+  const prompt = join(
+    `Final fix round ${input.round} of ${input.maxRounds} on \`${input.integrationRef}\` (the combined change \`${input.baseRef}...${input.integrationRef}\`).`,
+    input.humanNote?.trim() ? section('Note from the human', input.humanNote.trim()) : null,
+    input.findings.length > 0 ? section('Final review findings to address', formatFindings(input.findings)) : null,
+    input.unmetCriteria.length > 0
+      ? section('Requirements the final reviewer did not consider met', formatCriteria(input.unmetCriteria))
+      : null,
+    section('Original issue', formatIssue(input.issue)),
+    section(
+      'Verify commands',
+      bullets(
+        input.verifyCommands.map((c) => `\`${c}\``),
+        '(none declared; run the tests that cover the code you change)',
+      ),
+    ),
+    section(
+      'How to fix',
+      bullets([
+        `Read the change with \`git diff ${input.baseRef}...HEAD\` and the code around each finding before you edit.`,
+        'Address every item above. Fix the cause, not the symptom: do not weaken or delete tests to make them pass.',
+        'Keep the behavior of the merged tasks intact; they were each reviewed. Prefer the smallest change that makes the whole coherent.',
+        'If you are confident a finding is wrong, do not change the code for it; explain why in your summary. A fresh final reviewer will read your explanation.',
+      ]),
+    ),
+    section(
+      'When you are done',
+      finishInstructions(
+        tools,
+        input.structuredReport === true,
+        'an imperative subject of at most 72 characters describing this fix (for example "Register the CSV exporter with the report menu"), optionally followed by a blank line and a short body.',
       ),
     ),
   );

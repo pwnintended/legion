@@ -14,7 +14,7 @@ import {
 } from '@shared/domain';
 import { RpcError } from '@shared/rpc-transport';
 import { decideEscalation, decideHumanGate, taskStatusPath } from './core';
-import { createPr, enterPrReady, mergeLocally } from './finalize';
+import { createPr, enterPrReady, finalFixContext, mergeLocally } from './finalize';
 import { patchRunMeta, patchTaskMeta, taskMeta } from './meta';
 import { dismissal, type Orchestrator } from './orchestrator';
 import { answerClarify, approvePlan, requestPlanRevision } from './planner';
@@ -273,6 +273,19 @@ async function applyRunEscalation(
       enterPrReady(o, run.id);
       return;
     }
+  }
+  if (resolution.action === 'retry' && item.payload.reason === 'final_review' && run.status === 'finalizing') {
+    // Another final fix round with a fresh budget, on the latest final review's findings and the human's note.
+    const review = o.store
+      .listReviews(run.id)
+      .filter((r) => r.taskId === null)
+      .at(-1);
+    patchRunMeta(o.store, run.id, {
+      finalFixRounds: 0,
+      finalFix: review
+        ? finalFixContext(review, resolution.note)
+        : { findings: [], unmetCriteria: [], humanNote: resolution.note },
+    });
   }
   o.startFinalize(run.id);
 }
