@@ -27,13 +27,17 @@ export async function prepareCodexSkills(
   codexHome: string,
   tempDir: string,
 ): Promise<PreparedCodexSkills> {
-  const present = [
-    ...(await skillsIn(join(cwd, CODEX_PROJECT_SKILLS))),
-    ...(await skillsIn(join(codexHome, 'skills'))),
-    ...(await skillsIn(join(codexHome, 'skills', '.system'))),
-  ];
-  const disabled = [...new Set(present.map((skill) => skill.name))].filter((name) => !skills.allow.includes(name));
-  const allowedUser = skills.user.filter((skill) => skills.allow.includes(skill.name));
+  const { allow } = skills;
+  // Without an allowlist nothing is turned off: the user skills are only added.
+  const present = allow
+    ? [
+        ...(await skillsIn(join(cwd, CODEX_PROJECT_SKILLS))),
+        ...(await skillsIn(join(codexHome, 'skills'))),
+        ...(await skillsIn(join(codexHome, 'skills', '.system'))),
+      ]
+    : [];
+  const disabled = [...new Set(present.map((skill) => skill.name))].filter((name) => !allow?.includes(name));
+  const allowedUser = skills.user.filter((skill) => !allow || allow.includes(skill.name));
   if (allowedUser.length === 0) return { extraRoot: null, disabled };
   const extraRoot = join(tempDir, 'skills');
   mkdirSync(extraRoot, { recursive: true });

@@ -1,17 +1,21 @@
 /**
  * Direct sessions (`runs.session`, ⌘⇧N): one agent (role `session`) the human talks to, working in the project's
- * checkout itself. No worktree, no plan, no review: the run stays in `session` while the agent's process lives,
- * idle between turns, and the human talks to it with `sessions.send` like any live session. The loop below only
- * keeps that process open: it resumes the engine session after a crash or an engine restart, and gives up after
- * `MAX_SESSION_FAILURES` failures in a row. Stopping the run (`runs.cancel`) or archiving it ends it.
+ * checkout itself. No worktree, no plan, no review: the run stays in `session` until it is archived or stopped.
+ * The agent's process lives only while it works: when its turn ends the loop below stops it (the attempt
+ * succeeds), and the human's next `sessions.send` resumes the engine session with that message, as a new
+ * attempt. A turn cut off by a crash or an engine restart is resumed at once; an idle session is not woken.
+ * The loop gives up after `MAX_SESSION_FAILURES` failures in a row.
  */
 import { basename } from 'node:path';
+import type { AttachmentRef } from '@shared/attachments';
 import type { Run } from '@shared/domain';
+import type { SessionAttachment } from '@shared/engine';
 import type { RpcInput } from '@shared/rpc';
+import { RpcError } from '@shared/rpc-transport';
 import type { AgentPrompt } from './core';
 import type { AgentRun } from './live-session';
 import { patchRunMeta, runMeta } from './meta';
-import { AgentFailure, Closed, type Orchestrator, sleep } from './orchestrator';
+import { AgentFailure, Closed, type Orchestrator, type SessionLoopHandle, sleep } from './orchestrator';
 import { insertRun } from './planner';
 
 /** Consecutive failures to open or keep the session before the run fails. */
@@ -49,16 +53,54 @@ function sessionPrompt(run: Run, text: string): AgentPrompt {
   };
 }
 
+type HumanSend = SessionLoopHandle['sends'][number];
+
+/** What the agent's process opens with. */
+interface SessionInput {
+  text: string;
+  attachments: readonly SessionAttachment[] | null;
+  /** The text is the human's: recorded in the transcript as theirs. */
+  human: { text: string; attachments: readonly AttachmentRef[] } | null;
+}
+
+/** The first prompt, the human's next message, or the turn a restart cut off; null = wait for the human. */
+function nextInput(o: Orchestrator, run: Run, loop: SessionLoopHandle): SessionInput | null {
+  const meta = runMeta(o.store, run.id);
+  if (!meta.sessionAttemptId) {
+    const human = { text: run.issueText, attachments: run.attachments ?? [] };
+    return { text: run.issueText, attachments: o.runAttachments(run), human };
+  }
+  const send = loop.sends.shift();
+  if (send) return { text: send.text, attachments: o.attachments.forSession(send.attachments), human: send };
+  if (meta.sessionTurnOpen) {
+    return {
+      text: 'Legion restarted this session in the middle of your turn. Continue where you left off.',
+      attachments: null,
+      human: null,
+    };
+  }
+  return null;
+}
+
 /** The session loop of one run; returns when the run is no longer in `session` or the session is given up. */
-export async function runSession(o: Orchestrator, runId: string): Promise<void> {
+export async function runSession(o: Orchestrator, runId: string, loop: SessionLoopHandle): Promise<void> {
   let session: AgentRun | null = null;
   try {
     for (;;) {
       o.assertOpen();
-      if (o.store.requireRun(runId).status !== 'session') break;
+      const woken = loop.wake.promise;
+      const run = o.store.requireRun(runId);
+      if (run.status !== 'session') break;
       if (!session) {
-        session = await openSession(o, o.store.requireRun(runId));
+        const input = nextInput(o, run, loop);
+        if (!input) {
+          await woken;
+          continue;
+        }
+        session = await openSession(o, run, input);
         if (!session) break;
+        // Sent while it opened.
+        for (const send of loop.sends.splice(0)) await deliver(o, session, send, 'next');
       }
       const turn = await session.nextTurn();
       o.assertOpen();
@@ -72,8 +114,17 @@ export async function runSession(o: Orchestrator, runId: string): Promise<void> 
         await o.finishAttempt(session, 'failed', message);
         session = null;
         if (!(await noteFailure(o, runId, message))) break;
-      } else if (!turn.isError && runMeta(o.store, runId).sessionFailures > 0) {
+        continue;
+      }
+      if (!turn.isError && runMeta(o.store, runId).sessionFailures > 0) {
         patchRunMeta(o.store, runId, { sessionFailures: 0 });
+      }
+      // Nothing more for it to do: stop the process until the human writes again.
+      if (!session.inTurn && session.sending === 0) {
+        patchRunMeta(o.store, runId, { sessionTurnOpen: false });
+        const failed = turn.isError && turn.reason !== 'interrupted';
+        await o.finishAttempt(session, failed ? 'failed' : 'succeeded', failed ? (turn.error?.message ?? null) : null);
+        session = null;
       }
     }
   } catch (error) {
@@ -84,14 +135,41 @@ export async function runSession(o: Orchestrator, runId: string): Promise<void> 
   }
 }
 
-async function openSession(o: Orchestrator, run: Run): Promise<AgentRun | null> {
+/** A message of the human's into the session's running process. */
+async function deliver(o: Orchestrator, session: AgentRun, send: HumanSend, priority: 'now' | 'next') {
+  patchRunMeta(o.store, session.attempt.runId, { sessionTurnOpen: true });
+  session.record({ type: 'user_message', text: send.text, attachments: send.attachments, priority });
+  await session.steer(send.text, priority, send.attachments.length ? o.attachments.forSession(send.attachments) : null);
+}
+
+/**
+ * `sessions.send` to a direct session (whichever of its attempts the human addressed): into the running turn, or
+ * the session's process reopens with it.
+ */
+export async function sendToDirectSession(
+  o: Orchestrator,
+  runId: string,
+  send: HumanSend,
+  priority: 'now' | 'next',
+): Promise<void> {
+  const run = o.store.requireRun(runId);
+  if (run.status !== 'session') throw new RpcError('failed_precondition', `the session is ${run.status}`);
+  const live = [...o.live.values()].find((s) => s.attempt.runId === runId && s.attempt.role === 'session' && !s.closed);
+  if (live?.takenOver) throw new RpcError('failed_precondition', 'the session is taken over in a terminal');
+  if (live) return deliver(o, live, send, priority);
+  o.startSession(runId);
+  const loop = o.sessionLoops.get(runId);
+  if (!loop) throw new RpcError('failed_precondition', 'the engine is shutting down');
+  loop.sends.push(send);
+  o.wakeSession(runId);
+}
+
+async function openSession(o: Orchestrator, run: Run, input: SessionInput): Promise<AgentRun | null> {
   const engine = run.plannerEngine;
   const meta = runMeta(o.store, run.id);
   const resumeSessionId = meta.sessionSessionId;
   await o.waitForEngine(engine);
-  const prompt = resumeSessionId
-    ? sessionPrompt(run, 'Legion restarted this session. Continue where you left off, or wait for the human.')
-    : sessionPrompt(run, run.issueText);
+  const prompt = sessionPrompt(run, input.text);
   try {
     const session = await o.openSession({
       run,
@@ -105,14 +183,13 @@ async function openSession(o: Orchestrator, run: Run): Promise<AgentRun | null> 
       cwd: run.repoPath,
       resumeSessionId,
       parentAttemptId: null,
-      attachments: resumeSessionId ? null : o.runAttachments(run),
-      // The first message is the human's; a resumed session's wake is Legion's own.
-      humanMessage:
-        resumeSessionId || meta.sessionAttemptId ? null : { text: run.issueText, attachments: run.attachments ?? [] },
+      attachments: input.attachments,
+      humanMessage: input.human,
     });
     patchRunMeta(o.store, run.id, {
       sessionAttemptId: session.attempt.id,
       sessionSessionId: session.sessionId || resumeSessionId,
+      sessionTurnOpen: true,
     });
     return session;
   } catch (error) {
@@ -120,11 +197,11 @@ async function openSession(o: Orchestrator, run: Run): Promise<AgentRun | null> 
     const failure = error instanceof AgentFailure ? error.failure : null;
     if (failure?.kind === 'rate_limited') {
       if (o.limitedUntil(engine) === null) o.registerRateLimit(engine, null);
-      return openSession(o, run);
+      return openSession(o, run, input);
     }
     const message = failure?.message ?? (error as Error).message;
     if (resumeSessionId) patchRunMeta(o.store, run.id, { sessionSessionId: null });
-    return (await noteFailure(o, run.id, message)) ? openSession(o, o.store.requireRun(run.id)) : null;
+    return (await noteFailure(o, run.id, message)) ? openSession(o, o.store.requireRun(run.id), input) : null;
   }
 }
 
@@ -157,6 +234,7 @@ export async function endSession(o: Orchestrator, runId: string): Promise<Run> {
     o.dismissOpen(runId, () => true, 'session ended');
     return o.store.transitionRun(runId, 'session', 'done');
   });
+  o.wakeSession(runId);
   const live = [...o.live.values()].filter((session) => session.attempt.runId === runId);
   await Promise.allSettled(
     live.map(async (session) => {

@@ -166,6 +166,8 @@ export class ClaudeEngine implements AgentEngine {
     if (!binary) throw new Error('claude CLI not found on PATH');
 
     const extras = sessionExtras(opts);
+    // With the user's own settings the CLI finds their skills itself; only an allowlist needs preparing.
+    const skills = opts.userSettings && !extras.skills?.allow ? null : extras.skills;
     let tempDir: string | null = null;
     let mcpConfigPath: string | null = null;
     const cleanup = () => {
@@ -175,15 +177,15 @@ export class ClaudeEngine implements AgentEngine {
     let skillsPluginDir: string | null = null;
     let disabledSkills: string[] = [];
     try {
-      if (opts.mcp || Object.keys(extras.extraMcp).length > 0 || extras.skills) {
+      if (opts.mcp || Object.keys(extras.extraMcp).length > 0 || skills) {
         tempDir = mkdtempSync(join(tmpdir(), 'legion-claude-'));
       }
       if (tempDir && (opts.mcp || Object.keys(extras.extraMcp).length > 0)) {
         mcpConfigPath = join(tempDir, 'mcp.json');
         writeFileSync(mcpConfigPath, JSON.stringify(mcpConfig(opts.mcp, extras.extraMcp)), { mode: 0o600 });
       }
-      if (tempDir && extras.skills) {
-        const prepared = await prepareSkills(extras.skills, opts.cwd, tempDir);
+      if (tempDir && skills) {
+        const prepared = await prepareSkills(skills, opts.cwd, tempDir);
         skillsPluginDir = prepared.pluginDir;
         disabledSkills = prepared.disabled;
       }

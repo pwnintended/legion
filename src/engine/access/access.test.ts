@@ -42,6 +42,29 @@ describe('resolveAccess', () => {
     expect(await resolveAccess(s, 'p1', 'coder', root)).toEqual({ extraMcp: { linear }, skills: null });
   });
 
+  it("gives a direct session the user's skills unless an allowlist says otherwise", async () => {
+    const mine = skill(join(root, '.claude', 'skills'), 'mine', 'mine');
+    const shared = skill(join(root, '.agents', 'skills'), 'shared', 'shared');
+    const user = [
+      { name: 'mine', dir: mine },
+      { name: 'shared', dir: shared },
+    ];
+    expect((await resolveAccess(settings({}), 'p1', 'session', root)).skills).toEqual({ allow: null, user });
+    expect((await resolveAccess(settings({}), null, 'session', root)).skills).toEqual({ allow: null, user });
+    const byDefault = settings({ p1: { session: { mcp: ['linear'], skills: null } } });
+    expect(await resolveAccess(byDefault, 'p1', 'session', root)).toEqual({
+      extraMcp: { linear },
+      skills: { allow: null, user },
+    });
+    const only = settings({ p1: { session: { mcp: [], skills: ['shared'] } } });
+    expect((await resolveAccess(only, 'p1', 'session', root)).skills).toEqual({
+      allow: ['shared'],
+      user: [{ name: 'shared', dir: shared }],
+    });
+    // Other roles keep the CLI's own set.
+    expect((await resolveAccess(settings({}), 'p1', 'coder', root)).skills).toBeNull();
+  });
+
   it('resolves an allowlist to the user skill folders it names', async () => {
     const zebra = skill(join(root, '.claude', 'skills'), 'zebra', 'zebra');
     skill(join(root, '.claude', 'skills'), 'other', 'other');
@@ -75,7 +98,7 @@ describe('availableSkills', () => {
 describe('invocableSkills', () => {
   const names = (list: { name: string }[]) => list.map((s) => s.name);
 
-  it("offers what each CLI finds by itself: its own user folder and the repo's", async () => {
+  it("offers the user's skills and the repo's for that engine", async () => {
     const home = join(root, 'home');
     const codexHome = join(root, 'codex-home');
     const repo = join(root, 'repo');
@@ -89,7 +112,10 @@ describe('invocableSkills', () => {
       'claude-repo',
       'claude-user',
     ]);
+    // Codex runs in Legion's home: it is handed both user folders.
     expect(names(await invocableSkills(none, null, 'codex', home, codexHome, repo))).toEqual([
+      'agents-user',
+      'claude-user',
       'codex-repo',
       'codex-system',
     ]);

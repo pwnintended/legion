@@ -11,6 +11,7 @@ import { useShallow } from 'zustand/react/shallow';
 import { type CommandContext, registerCommands } from '../app/commands';
 import { attemptsOfRun, latestPlan, messagesOfRun, openInbox, tasksOfRun } from '../app/data';
 import { useData, useLayout, useUi } from '../app/hooks';
+import { paneBindings } from '../app/keys';
 import { dataStore, uiStore } from '../app/store';
 import { Icon } from '../chrome/icons';
 import { displayEngine, ENGINE_LABEL, taskEngine } from '../layout/describe';
@@ -791,7 +792,7 @@ function DependencyLinks({
 }
 
 // ---------------------------------------------------------------------------------------------
-// Keyboard: ⌘⌥J/K walk the stations, ⌘⌥H/L the tabs (the agents view only; the code view's strip owns them)
+// Keyboard: ⌥J/K (or ⌘⌥J/K) walk the stations, ⌥H/L the tabs (the agents view only; the code view's strip owns them)
 // ---------------------------------------------------------------------------------------------
 
 const onMap = (ctx: CommandContext) => ctx.ui.view === 'agents' && ctx.activeRunId !== null && ctx.ui.overlay === null;
@@ -844,7 +845,7 @@ registerCommands([
     id: 'map.next',
     title: 'Next station on the route map',
     category: 'Focus',
-    keybinding: ['Mod+Alt+J', 'Mod+Alt+Down'],
+    keybinding: [...paneBindings('J'), 'Mod+Alt+Down'],
     repeatable: true,
     when: onMap,
     run: (ctx) => stepStation(ctx, 1),
@@ -853,7 +854,7 @@ registerCommands([
     id: 'map.prev',
     title: 'Previous station on the route map',
     category: 'Focus',
-    keybinding: ['Mod+Alt+K', 'Mod+Alt+Up'],
+    keybinding: [...paneBindings('K'), 'Mod+Alt+Up'],
     repeatable: true,
     when: onMap,
     run: (ctx) => stepStation(ctx, -1),
@@ -862,7 +863,7 @@ registerCommands([
     id: 'map.tabNext',
     title: 'Next tab of the station',
     category: 'Focus',
-    keybinding: ['Mod+Alt+L', 'Mod+Alt+Right'],
+    keybinding: [...paneBindings('L'), 'Mod+Alt+Right'],
     when: onMap,
     run: (ctx) => stepTab(ctx, 1),
   },
@@ -870,7 +871,7 @@ registerCommands([
     id: 'map.tabPrev',
     title: 'Previous tab of the station',
     category: 'Focus',
-    keybinding: ['Mod+Alt+H', 'Mod+Alt+Left'],
+    keybinding: [...paneBindings('H'), 'Mod+Alt+Left'],
     when: onMap,
     run: (ctx) => stepTab(ctx, -1),
   },

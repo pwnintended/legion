@@ -60,9 +60,7 @@ export function TitleBar() {
   const lit: View = view === 'agents' ? 'chat' : view;
   return (
     <header
-      className={`drag flex flex-none items-center gap-3 border-b border-[var(--chrome-line)] bg-mantle ${
-        TITLE_BAR.style === 'overlay' ? 'tb-overlay' : 'pr-2.5'
-      }`}
+      className={`drag flex flex-none items-center gap-3 ${TITLE_BAR.style === 'overlay' ? 'tb-overlay' : 'pr-2.5'}`}
       style={titleBarStyle}
       data-testid="titlebar"
     >

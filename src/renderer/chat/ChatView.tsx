@@ -123,7 +123,8 @@ function closedReason(run: Run, live: Attempt | null, hadAssistant: boolean, ses
       return `This session ended. Start a new one with ${formatChord('Mod+Shift+N')}.`;
     if (run.status === 'cancelled') return 'This session was stopped.';
     if (run.status === 'failed') return `This session failed. Start a new one with ${formatChord('Mod+Shift+N')}.`;
-    if (live?.status !== 'running') return 'The session is not running. Legion reopens it in a moment.';
+    // Its agent stops between turns; a message reopens it.
+    if (!live) return 'The session is starting.';
     return null;
   }
   if (run.archived)

@@ -172,6 +172,11 @@ export interface LeadLoopHandle {
   wake: ReturnType<typeof deferred<void>>;
 }
 
+/** A direct session's loop: its wake signal, and what the human sent while its agent was stopped. */
+export interface SessionLoopHandle extends LeadLoopHandle {
+  sends: { text: string; attachments: AttachmentRef[] }[];
+}
+
 /** A blocked `wait_for_reply` / `ask_lead` of one attempt. */
 type MessageWaiter = {
   replyTo: string | null;
@@ -261,7 +266,7 @@ export class Orchestrator {
   /** Assistant loops by run id (`assistant.ts`). */
   readonly assistantLoops = new Map<string, LeadLoopHandle>();
   /** Direct session loops by run id (`session-run.ts`). */
-  readonly sessionLoops = new Set<string>();
+  readonly sessionLoops = new Map<string, SessionLoopHandle>();
   closed = false;
   /** Stopped on close (timers set up by the wiring, e.g. PR polling). */
   readonly disposers: (() => void)[] = [];
@@ -568,6 +573,8 @@ export class Orchestrator {
       ),
       // Reviewers, the finalizer and research agents read worktrees that coders wrote: never trust their config.
       untrustedWorkdir: UNTRUSTED_WORKDIR_ROLES.has(params.role),
+      // A direct session is the human's own: like their plain CLI, unless an allowlist narrows its skills.
+      userSettings: params.role === 'session' && !access.skills?.allow,
       outputSchema: params.outputSchema,
       mcp: token && this.mcp ? { url: this.mcp.url, token } : null,
       ...(Object.keys(access.extraMcp).length > 0 ? { extraMcp: access.extraMcp } : {}),
@@ -1130,7 +1137,7 @@ export class Orchestrator {
     assistant(runId: string, loop: LeadLoopHandle): Promise<void>;
     assistantEnabled(runId: string): boolean;
     /** A direct session's loop (`session-run.ts`). */
-    session(runId: string): Promise<void>;
+    session(runId: string, loop: SessionLoopHandle): Promise<void>;
     assistantTools: {
       startImplementation(binding: McpBinding, request: StartImplementationRequest): { runId: string; status: string };
       runStatus(binding: McpBinding): AssistantRunStatus;
@@ -1169,8 +1176,21 @@ export class Orchestrator {
   startSession(runId: string): void {
     if (this.closed || this.sessionLoops.has(runId) || !this.flows) return;
     const flows = this.flows;
-    this.sessionLoops.add(runId);
-    this.background(`session ${runId}`, () => flows.session(runId).finally(() => this.sessionLoops.delete(runId)));
+    const loop: SessionLoopHandle = { wake: deferred<void>(), sends: [] };
+    this.sessionLoops.set(runId, loop);
+    this.background(`session ${runId}`, () =>
+      flows.session(runId, loop).finally(() => {
+        if (this.sessionLoops.get(runId) === loop) this.sessionLoops.delete(runId);
+      }),
+    );
+  }
+
+  /** A message for the direct session, or its run moved on: its loop looks again. */
+  wakeSession(runId: string): void {
+    const loop = this.sessionLoops.get(runId);
+    if (!loop) return;
+    loop.wake.resolve();
+    loop.wake = deferred<void>();
   }
 
   /** Keep every direct session open (after an engine restart; called from the tick). */

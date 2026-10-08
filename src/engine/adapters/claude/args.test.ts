@@ -96,6 +96,18 @@ describe('buildClaudeArgs', () => {
     expect(args).not.toContain('--setting-sources');
   });
 
+  it("runs a human's own session (userSettings) like plain claude", () => {
+    const opts = base({ role: 'session', permission: permissionProfileFor('session'), userSettings: true });
+    const args = buildClaudeArgs({ opts, sessionId: 's' });
+    expect(flag(args, '--setting-sources')).toBe('user,project,local');
+    expect(args).not.toContain('--settings');
+    expect(args).not.toContain('--strict-mcp-config');
+    // An untrusted working directory still wins.
+    const untrusted = buildClaudeArgs({ opts: { ...opts, untrustedWorkdir: true } });
+    expect(untrusted).toContain('--setting-sources=');
+    expect(untrusted).toContain('--strict-mcp-config');
+  });
+
   it('gives a verify command with shell syntax only its exact rule', () => {
     expect(bashRules('pnpm test')).toEqual(['Bash(pnpm test)', 'Bash(pnpm test *)']);
     expect(bashRules('pnpm build && pnpm test')).toEqual(['Bash(pnpm build && pnpm test)']);

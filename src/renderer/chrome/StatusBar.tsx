@@ -4,7 +4,7 @@
  * stands and what needs the human live in the conversation (progress strip, needs-you bar) and the title bar.
  */
 import { useActiveRun, useRateLimits, useRunCost, useUi } from '../app/hooks';
-import { formatChord, IS_MAC, formatModifiers as mods } from '../app/keys';
+import { formatChord, IS_MAC, formatModifiers as mods, PANE_MODIFIERS } from '../app/keys';
 import { formatCost } from '../layout/describe';
 import { Bar } from './ui';
 
@@ -17,19 +17,19 @@ export function StatusBar() {
 
   return (
     <footer
-      className="mono flex h-[26px] flex-none items-center gap-3.5 overflow-hidden border-t border-[var(--chrome-line)] bg-mantle px-2.5 text-[11px] whitespace-nowrap text-overlay2"
+      className="mono flex h-[26px] flex-none items-center gap-3.5 overflow-hidden px-2.5 text-[11px] whitespace-nowrap text-overlay2"
       data-testid="statusbar"
     >
       {view === 'agents' ? (
         <span className="faint" data-testid="map-hint">
-          {`${formatChord('Mod+E')}/Esc board · ${mods('Mod+Alt')}J/K stations · ${mods('Mod+Alt')}H/L tabs`}
+          {`${formatChord('Mod+E')}/Esc board · ${mods(PANE_MODIFIERS)}J/K stations · ${mods(PANE_MODIFIERS)}H/L tabs`}
         </span>
       ) : null}
       {view === 'code' ? (
         <span className="faint" data-testid="code-hint">
           {locked
-            ? `keys go to the terminal · ${IS_MAC ? '⌘-chords' : 'Ctrl+Shift and Ctrl+Alt chords'} still work · ${mods('Mod+Alt')}H/L leave it`
-            : `${formatChord('Mod+T')} terminal · ${formatChord('Mod+D')}/${formatChord('Mod+Shift+D')} split · ${mods('Mod+Alt')}HJKL focus · ${mods('Mod+Alt+Shift')} move · ${mods('Mod+Ctrl')} resize · ${mods('Mod+Alt')}T/S/E tabs·stack·split · ${mods('Mod')}1–9 workspaces`}
+            ? `keys go to the terminal · ${IS_MAC ? '⌘-chords' : 'Ctrl+Shift and Ctrl+Alt chords'} still work · ${mods(PANE_MODIFIERS)}HJKL leave it`
+            : `${formatChord('Mod+T')} terminal · ${formatChord('Mod+D')}/${formatChord('Mod+Shift+D')} split · ${mods(PANE_MODIFIERS)}HJKL focus · ${mods(`${PANE_MODIFIERS}+Shift`)} move · ${mods('Mod+Ctrl')} resize · ${mods('Mod+Alt')}T/S/E tabs·stack·split · ${mods('Mod')}1–9 workspaces`}
         </span>
       ) : null}
 

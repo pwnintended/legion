@@ -112,7 +112,37 @@ export function isAltGraph(event: { getModifierState?: (key: string) => boolean 
   return typeof event.getModifierState === 'function' && event.getModifierState('AltGraph');
 }
 
-/** `Mod+Alt+H` → `⌘⌥H` (mac) / `Ctrl+Alt+H`; `Mod+Ctrl+H` → `⌃⌘H` / `Ctrl+Super+H` (`Ctrl+Win+H`). */
+/**
+ * On macOS ⌥ types characters: ˙∆˚¬ for ⌥HJKL on a US layout, but `@` for ⌥L on a German one. A ⌥-chord (no ⌘
+ * or ⌃) that types a plain ASCII character is that character, never a command.
+ */
+export function typesOptionCharacter(event: KeyEventLike, mac = IS_MAC): boolean {
+  if (!mac || !event.altKey || event.metaKey || event.ctrlKey) return false;
+  return event.key.length === 1 && event.key >= ' ' && event.key <= '~';
+}
+
+/**
+ * Is a chord Legion's even inside a text field or terminal? ⌘/Ctrl chords are, and on macOS ⌥ ones too (only the
+ * pane keys use a bare ⌥; the terminal doesn't use ⌥ as Meta).
+ */
+export function isCommandChord(chord: Chord, mac = IS_MAC): boolean {
+  return chord.mod || chord.ctrl || (mac && chord.alt);
+}
+
+/** The modifiers that move between panes: ⌥ on macOS, Ctrl+Alt elsewhere (Alt+letter is the menu's and the shell's). */
+export const PANE_MODIFIERS = IS_MAC ? 'Alt' : 'Mod+Alt';
+
+/**
+ * The bindings of a pane-navigation key (`H`, `Left`): ⌥H on macOS, plus ⌘⌥H as before. Arrows stay ⌘⌥ (⌥ arrows
+ * move by word and line in a text field). `extra` adds modifiers: `Shift+` to move the tile instead.
+ */
+export function paneBindings(key: string, extra = '', mac = IS_MAC): string[] {
+  const chords = [`Mod+Alt+${extra}${key}`];
+  if (mac && key.length === 1) chords.unshift(`Alt+${extra}${key}`);
+  return chords;
+}
+
+/** `Mod+Alt+H` → `⌘⌥H` (mac) / `Ctrl+Alt+H`;`Mod+Ctrl+H` → `⌃⌘H` / `Ctrl+Super+H` (`Ctrl+Win+H`). */
 export function formatChord(binding: string, mac = IS_MAC): string {
   const chord = parseChord(binding);
   const key = SYMBOLS[chord.key] ?? chord.key;

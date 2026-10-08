@@ -104,7 +104,8 @@ export default function TerminalTile({ tileId, runId, params, focused, visible }
     setStatus('connecting');
     setDetail(null);
 
-    // Locked mode: everything goes to the program except ⌘-chords, which bubble to the app.
+    // Locked mode: everything goes to the program except ⌘-chords, which bubble to the app (⌥HJKL never gets
+    // here: the app's capture listener takes it first).
     term.attachCustomKeyEventHandler((event) => {
       if (event.type !== 'keydown') return true;
       const clipboard = terminalClipboardKey(event);
@@ -318,7 +319,7 @@ export default function TerminalTile({ tileId, runId, params, focused, visible }
       <div className="flex h-[22px] shrink-0 items-center gap-2 border-b border-surface0 bg-mantle px-2.5 font-mono text-[10px] text-overlay2">
         <span
           className="rounded-sm bg-surface0 px-1.5 py-px font-sans text-[10.5px] font-medium text-subtext0"
-          title={`Keys go to the terminal. Only ${IS_MAC ? '⌘-chords' : 'Ctrl+Shift and Ctrl+Alt chords'} reach Legion.`}
+          title={`Keys go to the terminal. Only ${IS_MAC ? '⌘-chords and ⌥HJKL' : 'Ctrl+Shift and Ctrl+Alt chords'} reach Legion.`}
         >
           locked
         </span>

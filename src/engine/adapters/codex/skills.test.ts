@@ -39,6 +39,22 @@ describe('prepareCodexSkills', () => {
     expect(readlinkSync(join(temp, 'skills', 'zebra'))).toBe(zebra);
   });
 
+  it('without an allowlist, links every user skill and disables nothing', async () => {
+    const repo = join(root, 'repo');
+    skill(join(repo, '.agents', 'skills'), 'keep', 'keep');
+    const zebra = skill(join(root, 'mine'), 'zebra', 'zebra');
+    const temp = join(root, 'temp');
+    mkdirSync(temp);
+    const prepared = await prepareCodexSkills(
+      { allow: null, user: [{ name: 'zebra', dir: zebra }] },
+      repo,
+      join(root, 'h'),
+      temp,
+    );
+    expect(prepared).toEqual({ extraRoot: join(temp, 'skills'), disabled: [] });
+    expect(readlinkSync(join(temp, 'skills', 'zebra'))).toBe(zebra);
+  });
+
   it('has no extra root when no user skill is allowed', async () => {
     const prepared = await prepareCodexSkills({ allow: [], user: [] }, join(root, 'r'), join(root, 'h'), root);
     expect(prepared).toEqual({ extraRoot: null, disabled: [] });

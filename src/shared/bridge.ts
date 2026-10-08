@@ -19,6 +19,7 @@ export const COMMAND_IDS = [
   'inbox.open',
   'palette.open',
   'focus.nextUrgent',
+  'view.agents',
   'view.code',
   'code.panel',
   'code.close',

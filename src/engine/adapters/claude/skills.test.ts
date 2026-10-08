@@ -56,6 +56,17 @@ describe('prepareSkills', () => {
     expect(lstatSync(join(temp, 'skills-plugin', 'skills', 'zebra')).isSymbolicLink()).toBe(true);
   });
 
+  it('without an allowlist, links every user skill and turns nothing off', async () => {
+    const repo = join(root, 'repo');
+    skill(join(repo, '.claude', 'skills'), 'keep', 'keep');
+    const zebra = skill(join(root, 'home'), 'zebra', 'zebra');
+    const temp = join(root, 'temp');
+    mkdirSync(temp);
+    const prepared = await prepareSkills({ allow: null, user: [{ name: 'zebra', dir: zebra }] }, repo, temp);
+    expect(prepared).toEqual({ pluginDir: join(temp, 'skills-plugin'), disabled: [] });
+    expect(readlinkSync(join(temp, 'skills-plugin', 'skills', 'zebra'))).toBe(zebra);
+  });
+
   it('builds no plugin when no user skill is allowed', async () => {
     const prepared = await prepareSkills({ allow: [], user: [] }, join(root, 'empty'), root);
     expect(prepared).toEqual({ pluginDir: null, disabled: [] });

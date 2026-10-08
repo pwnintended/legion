@@ -41,6 +41,8 @@ export interface RunMeta {
   sessionAttemptId: string | null;
   sessionSessionId: string | null;
   sessionFailures: number;
+  /** The direct session's agent was given a turn that has not ended (still set after a restart: it was cut off). */
+  sessionTurnOpen: boolean;
   /** A plan version proposed by the lead that waits for, or just got, the human's answer. */
   amendment: {
     planId: string;
@@ -110,6 +112,7 @@ const RUN_DEFAULTS: RunMeta = {
   sessionAttemptId: null,
   sessionSessionId: null,
   sessionFailures: 0,
+  sessionTurnOpen: false,
   amendment: null,
 };
 

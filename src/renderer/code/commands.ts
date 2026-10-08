@@ -1,7 +1,8 @@
 /**
- * The Code view's keyboard, i3-style, every binding a ⌘-chord (terminals keep every other key):
+ * The Code view's keyboard, i3-style, every binding a ⌘-chord or ⌥ HJKL (terminals keep every other key):
  * - ⌘T a terminal beside the focused tile (along its longer side), ⌘D one to its right, ⌘⇧D one below.
- * - ⌘⌥ HJKL / arrows focus, ⌘⌥⇧ HJKL / arrows move the tile, ⌘⌃ HJKL / arrows resize it.
+ * - ⌥ HJKL focus, ⌥⇧ HJKL move the tile (also ⌘⌥ / ⌘⌥⇧ HJKL and arrows; off macOS only those), ⌘⌃ HJKL / arrows
+ *   resize it.
  * - ⌘⌥T tabbed, ⌘⌥S stacked, ⌘⌥E split (again: the other way) for the container around the focused tile.
  * - ⌘F the focused tile alone (Esc tiles again), ⌘W close the viewer's tab or the terminal, ⌘S save the file.
  * - Inside the editor, ⌘F (find) and ⌘D (select the next occurrence) are the editor's.
@@ -10,6 +11,7 @@
  *   new workspace, ⌘B the side panel.
  */
 import type { Command, CommandContext } from '../app/commands';
+import { paneBindings } from '../app/keys';
 import { activeProjectOf } from '../app/store';
 import {
   closeFocused,
@@ -86,7 +88,7 @@ export function codeCommands(): Command[] {
       id: `code.focus.${dir}`,
       title: `Focus the tile ${dir === 'up' ? 'above' : dir === 'down' ? 'below' : `to the ${dir}`}`,
       category: 'Focus',
-      keybinding: keys.map((k) => `Mod+Alt+${k}`),
+      keybinding: keys.flatMap((k) => paneBindings(k)),
       priority: 1,
       repeatable: true,
       when: (ctx) => inCode(ctx) && tileCount() > 1,
@@ -102,7 +104,7 @@ export function codeCommands(): Command[] {
       id: `code.move.${dir}`,
       title: `Move the tile ${name(dir)}`,
       category: 'Layout',
-      keybinding: keys.map((k) => `Mod+Alt+Shift+${k}`),
+      keybinding: keys.flatMap((k) => paneBindings(k, 'Shift+')),
       priority: 1,
       repeatable: true,
       when: (ctx) => inCode(ctx) && tileCount() > 1,

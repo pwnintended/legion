@@ -3,8 +3,10 @@ import {
   formatChord,
   type KeyEventLike,
   matchesChord,
+  paneBindings,
   parseChord,
   terminalClipboardKey,
+  typesOptionCharacter,
   yieldsToControlKeys,
 } from './keys';
 
@@ -79,6 +81,25 @@ describe('keybindings', () => {
     expect(yields('Ctrl+Tab')).toBe(false);
     expect(yields('Escape')).toBe(false);
     expect(yields('Mod+U', true)).toBe(false);
+  });
+
+  it('moves between panes with ⌥ HJKL on macOS (⌘⌥ still works), Ctrl+Alt elsewhere; arrows stay ⌘⌥', () => {
+    expect(paneBindings('H', '', true)).toEqual(['Alt+H', 'Mod+Alt+H']);
+    expect(paneBindings('L', 'Shift+', true)).toEqual(['Alt+Shift+L', 'Mod+Alt+Shift+L']);
+    expect(paneBindings('Left', '', true)).toEqual(['Mod+Alt+Left']);
+    expect(paneBindings('H', '', false)).toEqual(['Mod+Alt+H']);
+    expect(formatChord('Alt+H', true)).toBe('⌥H');
+    expect(matchesChord(parseChord('Alt+H'), key({ key: '˙', code: 'KeyH', altKey: true }), true)).toBe(true);
+    expect(matchesChord(parseChord('Alt+H'), key({ key: '˙', code: 'KeyH', altKey: true, metaKey: true }), true)).toBe(
+      false,
+    );
+  });
+
+  it('on macOS, a ⌥ key that types an ASCII character is that character (⌥L is @ on a German layout)', () => {
+    expect(typesOptionCharacter(key({ key: '@', code: 'KeyL', altKey: true }), true)).toBe(true);
+    expect(typesOptionCharacter(key({ key: '¬', code: 'KeyL', altKey: true }), true)).toBe(false);
+    expect(typesOptionCharacter(key({ key: 'l', code: 'KeyL', altKey: true, metaKey: true }), true)).toBe(false);
+    expect(typesOptionCharacter(key({ key: '@', code: 'KeyL', altKey: true }), false)).toBe(false);
   });
 
   it("maps the terminal's clipboard chords per OS", () => {

@@ -120,11 +120,12 @@ export interface McpConnection {
 
 /**
  * The skills a session may use (`settings.access`, resolved by the orchestrator). Absent = the CLI's own
- * default set. `allow` names every permitted skill; `user` is the part of it that lives in the user's skill
- * folders, with the directory to expose (repo skills are found in the working directory by the adapter).
+ * default set. `allow` names every permitted skill (null: no allowlist, the CLI's own set plus `user`); `user` is
+ * the part that lives in the user's skill folders, with the directory to expose (repo skills are found in the
+ * working directory by the adapter).
  */
 export interface SessionSkills {
-  allow: readonly string[];
+  allow: readonly string[] | null;
   user: readonly { name: string; dir: string }[];
 }
 
@@ -188,6 +189,12 @@ export interface SessionOptions {
    * Codex: no project docs (`AGENTS.md`). Absent/false = the repo's own project settings apply.
    */
   untrustedWorkdir?: boolean;
+  /**
+   * Run like a plain CLI started by the human: the user's own settings, skills, plugins, hooks and MCP servers
+   * apply (a direct session without a skill allowlist). Claude only; `untrustedWorkdir` wins. Absent/false =
+   * Legion's config isolation.
+   */
+  userSettings?: boolean;
   /** Files sent with `prompt` (the first message of this start/resume only). */
   attachments?: readonly SessionAttachment[] | null;
 }

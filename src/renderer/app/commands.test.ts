@@ -177,6 +177,32 @@ describe('key dispatch', () => {
     }
   });
 
+  it('⌥ HJKL is a command chord on macOS: it reaches Legion from a text field or terminal, unless it types ASCII', () => {
+    const off = registerCommand({
+      id: 'test.pane',
+      title: 'Pane left',
+      keybinding: ['Alt+H', 'Mod+Alt+H'],
+      run: () => void ran.push('test.pane'),
+    });
+    try {
+      const textarea = { tagName: 'TEXTAREA', isContentEditable: false, closest: () => null };
+      const terminal = {
+        tagName: 'TEXTAREA',
+        isContentEditable: false,
+        closest: (selector: string) => (selector.includes('.xterm') ? {} : null),
+      };
+      const optH = (target: unknown, key = '˙') => keydown({ key, code: 'KeyH', altKey: true, target });
+      expect(handleKeyDown(optH(textarea) as unknown as KeyboardEvent)).toBe(true);
+      expect(handleKeyDown(optH(terminal) as unknown as KeyboardEvent)).toBe(true);
+      const ascii = optH(textarea, '@');
+      expect(handleKeyDown(ascii as unknown as KeyboardEvent)).toBe(false);
+      expect(ascii.prevented).toBe(false);
+      expect(ran).toEqual(['test.pane', 'test.pane']);
+    } finally {
+      off();
+    }
+  });
+
   it('runs action commands once per press: a held key (auto-repeat) is swallowed, navigation repeats', () => {
     const off = registerCommands([
       { id: 'test.approve', title: 'Approve', keybinding: 'A', run: () => void ran.push('test.approve') },

@@ -21,11 +21,12 @@ export interface PreparedSkills {
 /** Folder-safe form of a skill name. */
 const folderName = (name: string): string => name.replace(/[^A-Za-z0-9._-]/g, '_');
 
-/** Build the plugin under `tempDir` and list the repo skills of `cwd` to turn off. */
+/** Build the plugin under `tempDir` and list the repo skills of `cwd` to turn off (none without an allowlist). */
 export async function prepareSkills(skills: SessionSkills, cwd: string, tempDir: string): Promise<PreparedSkills> {
-  const repoSkills = await skillsIn(join(cwd, CLAUDE_PROJECT_SKILLS));
-  const disabled = repoSkills.map((skill) => skill.name).filter((name) => !skills.allow.includes(name));
-  const allowedUser = skills.user.filter((skill) => skills.allow.includes(skill.name));
+  const { allow } = skills;
+  const repoSkills = allow ? await skillsIn(join(cwd, CLAUDE_PROJECT_SKILLS)) : [];
+  const disabled = repoSkills.map((skill) => skill.name).filter((name) => !allow?.includes(name));
+  const allowedUser = skills.user.filter((skill) => !allow || allow.includes(skill.name));
   if (allowedUser.length === 0) return { pluginDir: null, disabled };
 
   const pluginDir = join(tempDir, 'skills-plugin');

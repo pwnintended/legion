@@ -21,6 +21,7 @@ export const MENU_ACCELERATORS: Partial<Record<CommandId, string>> = {
   'inbox.open': 'CmdOrCtrl+I',
   'palette.open': 'CmdOrCtrl+K',
   'focus.nextUrgent': 'CmdOrCtrl+U',
+  'view.agents': 'CmdOrCtrl+E',
   'view.code': 'CmdOrCtrl+Shift+E',
   'code.panel': 'CmdOrCtrl+B',
   'code.close': 'CmdOrCtrl+W',
@@ -103,6 +104,7 @@ export function buildMenuTemplate({ appName, isMac, isDev, send }: MenuTemplateO
   const view: MenuItemConstructorOptions = {
     label: 'View',
     submenu: [
+      item('Agents', 'view.agents'),
       item('Code', 'view.code'),
       item('Side Panel', 'code.panel'),
       item('Close Tab or Terminal', 'code.close'),

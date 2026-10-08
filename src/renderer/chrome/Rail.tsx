@@ -337,7 +337,7 @@ export function Rail() {
   return (
     <aside
       aria-label="Projects"
-      className="flex w-[236px] flex-none flex-col gap-1 border-r border-[var(--chrome-line)] bg-mantle px-2.5 py-3 max-[760px]:hidden"
+      className="my-2.5 ml-2.5 flex w-[236px] flex-none flex-col gap-1 overflow-hidden rounded-[var(--radius)] border-[length:var(--border-w)] border-[var(--chrome-line)] bg-mantle px-2.5 py-3 max-[760px]:hidden"
     >
       <div className="rail-head">
         <span className="sec">Projects</span>

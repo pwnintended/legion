@@ -281,7 +281,9 @@ verify command containing shell syntax gets only its exact `Bash(<cmd>)` rule, n
 Config isolation: Claude runs with `--strict-mcp-config --mcp-config <legion only>` (written to a 0600 temp
 file so the bearer token stays out of `ps`), explicit `--setting-sources project` (keeps the repo's CLAUDE.md
 and `.claude/settings.json`, ignores the user's global hooks/plugins/settings) and `--settings
-'{"autoMemoryEnabled":false}'` (otherwise the agent may write `~/.claude/projects/<cwd>/memory/`). Variables of a
+'{"autoMemoryEnabled":false}'` (otherwise the agent may write `~/.claude/projects/<cwd>/memory/`). The exception
+is a direct session (⌘⇧N) without a skill allowlist (`SessionOptions.userSettings`): it is the human's own, so
+Claude runs like plain `claude` (`--setting-sources user,project,local`, the user's MCP servers, no flag settings). Variables of a
 *parent* Claude Code session (`CLAUDECODE`, `CLAUDE_CODE_SESSION_ID`, …) are stripped from the child env. Codex runs with a
 Legion-owned `CODEX_HOME` (`<dataDir>/codex-home`) containing only a **symlink** to the user's `auth.json`
 (codex writes it in place, so token refreshes reach the user's file; `app-server` has no `--ignore-user-config`)
@@ -676,8 +678,11 @@ through `sessions.send` on the assistant attempt: its process stays alive and id
 `workspace_write` like a coder) with `cwd` = the project's checkout itself: no worktree, no plan, no review, no
 integration branch. Its system prompt only says where it works and that committing is the human's (the
 `ALWAYS_DENIED` git rules still apply). The human talks to it with `sessions.send`; approvals go to the inbox like a
-coder's. The loop keeps the process open: after a crash or an engine restart it resumes the engine session
-(`RunMeta.sessionSessionId`); `MAX_SESSION_FAILURES` (3) failures in a row fail the run. `runs.cancel` stops it;
+coder's. The process lives only while the agent works: when its turn ends the loop stops it (the attempt succeeds),
+and the human's next `sessions.send` (to any of the run's session attempts) resumes the engine session
+(`RunMeta.sessionSessionId`) with that message as a new attempt. A turn cut off by a crash or an engine restart
+(`RunMeta.sessionTurnOpen`) is resumed at once with a "continue" prompt; a session that was waiting for the human is
+not woken. `MAX_SESSION_FAILURES` (3) failures in a row fail the run. `runs.cancel` stops it;
 `runs.archive` ends it as `done` without `force` (nothing in it can be lost: the edits are already in the checkout).
 Takeover resumes it in a terminal in the checkout. The UI shows it as a conversation (§11) with the agent's tool
 calls between its words and no progress strip; the full run composer stays on the palette ("New run with a plan…")

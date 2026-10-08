@@ -1,9 +1,11 @@
 /**
  * The board's keyboard (conversation view only; the agents view keeps its own bindings for the same chords):
- * ⌘N new conversation tile, ⌘⌥ HJKL / arrows focus, ⌘F monocle (Esc leaves it), ⌘⇧⏎ make master, ⌘W hide.
- * The tiles hold text fields, so every binding is a ⌘-chord except Esc, which never fires while typing.
+ * ⌘N new conversation tile, ⌥ HJKL (also ⌘⌥ HJKL / arrows) focus, ⌘F monocle (Esc leaves it), ⌘⇧⏎ make master, ⌘W hide.
+ * The tiles hold text fields, so every binding is a ⌘- or ⌥-chord except Esc, which never fires while typing.
+ * Off macOS, ⌥ HJKL is Ctrl+Alt HJKL.
  */
 import type { Command, CommandContext } from '../app/commands';
+import { paneBindings } from '../app/keys';
 import { activeProjectOf } from '../app/store';
 import { type Direction, neighbour } from './arrange';
 import { boardActions, boardOf, boardStore, NEW } from './state';
@@ -36,7 +38,7 @@ export function boardCommands(): Command[] {
       id: `board.focus.${dir}`,
       title: `Focus the tile ${dir === 'up' ? 'above' : dir === 'down' ? 'below' : `to the ${dir}`}`,
       category: 'Focus',
-      keybinding: keys.map((k) => `Mod+Alt+${k}`),
+      keybinding: keys.flatMap((k) => paneBindings(k)),
       priority: 1,
       repeatable: true,
       when: (ctx) => onBoard(ctx) && (boardStore.getState().view?.ids.length ?? 0) > 1,

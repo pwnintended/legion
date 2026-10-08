@@ -61,6 +61,7 @@ export async function cancelRun(o: Orchestrator, runId: string): Promise<Run> {
     o.dismissOpen(runId, () => true, 'run cancelled');
     return o.store.transitionRun(runId, run.status, 'cancelled');
   });
+  o.wakeSession(runId);
   const live = [...o.live.values()].filter((session) => session.attempt.runId === runId);
   await Promise.allSettled(
     live.map(async (session) => {

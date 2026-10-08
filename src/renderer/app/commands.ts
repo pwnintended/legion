@@ -4,7 +4,8 @@
  * via `window.postMessage({ type: 'legion:command', id })`).
  *
  * Keyboard rules:
- * - ⌘-chords work everywhere, including text inputs, unless the command sets `inInput: false`.
+ * - ⌘-chords work everywhere, including text inputs, unless the command sets `inInput: false`. On macOS ⌥-chords
+ *   (the pane keys) count as ⌘-chords, unless they type an ASCII character (keys.ts `typesOptionCharacter`).
  * - Plain keys (Escape) never fire while typing in an input, unless the command sets `inInput: true`.
  * - Terminals are "locked": everything except ⌘-chords passes through to them.
  * - Overlays own their keys: while one is open, only commands marked `inOverlay` (opening/closing/switching
@@ -26,12 +27,14 @@ import { rpc } from './hooks';
 import {
   formatChord,
   isAltGraph,
+  isCommandChord,
   isTerminal,
   isTextInput,
   matchesChord,
   ownsControlKeys,
   ownsPlainKeys,
   parseChord,
+  typesOptionCharacter,
   yieldsToControlKeys,
 } from './keys';
 import {
@@ -256,6 +259,7 @@ export function handleKeyDown(event: KeyboardEvent): boolean {
   // A confirm dialog is up: it owns every key (Esc must not close the overlay underneath).
   if (isConfirmOpen()) return false;
   if (['Meta', 'Control', 'Alt', 'Shift', 'AltGraph'].includes(event.key) || isAltGraph(event)) return false;
+  if (typesOptionCharacter(event)) return false;
   // A popover (picker list) owns its plain keys: Esc closes it, not the overlay underneath.
   if (!event.metaKey && !event.ctrlKey && ownsPlainKeys(event.target)) return false;
   const inInput = isTextInput(event.target);
@@ -267,7 +271,7 @@ export function handleKeyDown(event: KeyboardEvent): boolean {
       if (!matchesChord(chord, event)) continue;
       // Off macOS, a terminal or vim editor keeps its Ctrl keys (it handles the event; the menu doesn't fire).
       if (ctrlKeysOwned && !command.overControlKeys && yieldsToControlKeys(chord)) continue;
-      if (!keyGuard(command, ctx, { modChord: chord.mod || chord.ctrl, inInput, inTerminal })) continue;
+      if (!keyGuard(command, ctx, { modChord: isCommandChord(chord), inInput, inTerminal })) continue;
       event.preventDefault();
       event.stopPropagation();
       // Auto-repeat of a held key: swallowed unless the command is meant to repeat.

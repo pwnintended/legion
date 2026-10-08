@@ -2,7 +2,7 @@
  * A project's board: every conversation in the project still going (or holding a decision for you) as a tile,
  * tiled like a window manager: the master on the left, the rest stacked on the right (see arrange.ts). Each tile
  * is the whole conversation, answerable in place. ⌘N splits a new-conversation tile in; with nothing going, that
- * tile alone is the project's page. Keyboard: ⌘⌥ arrows / HJKL focus, ⌘F monocle, ⌘⇧⏎ master, ⌘W hide.
+ * tile alone is the project's page. Keyboard: ⌥ HJKL (⌘⌥ HJKL / arrows) focus, ⌘F monocle, ⌘⇧⏎ master, ⌘W hide.
  */
 import type { Project } from '@shared/domain';
 import { AnimatePresence, motion } from 'motion/react';

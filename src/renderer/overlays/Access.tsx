@@ -366,6 +366,7 @@ function ProjectAccess({
             {ACCESS_ROLE_LIST.map(({ role, label, note }) => (
               <RoleAccess
                 key={`${projectId}:${role}`}
+                role={role}
                 label={label}
                 note={note}
                 access={settings.access[projectId]?.[role] ?? NO_ACCESS}
@@ -385,6 +386,7 @@ function ProjectAccess({
 }
 
 function RoleAccess({
+  role,
   label,
   note,
   access,
@@ -392,6 +394,7 @@ function RoleAccess({
   skills,
   onChange,
 }: {
+  role: AccessRole;
   label: string;
   note: string;
   access: AgentAccess;
@@ -456,7 +459,11 @@ function RoleAccess({
           onChange={(mode) => onChange({ ...access, skills: mode === 'default' ? null : (access.skills ?? []) })}
         />
         {access.skills === null ? (
-          <span className="st-note">The CLI’s own set: its bundled skills and the repo’s.</span>
+          <span className="st-note">
+            {role === 'session'
+              ? 'Like your own CLI: your settings and skills, plus the repo’s.'
+              : 'The CLI’s own set: its bundled skills and the repo’s.'}
+          </span>
         ) : shown.length === 0 && skills !== null ? (
           <span className="st-note">No skills found. The agent gets none.</span>
         ) : null}

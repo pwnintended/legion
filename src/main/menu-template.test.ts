@@ -48,6 +48,7 @@ describe('menu template', () => {
       'inbox.open': 'CmdOrCtrl+I',
       'palette.open': 'CmdOrCtrl+K',
       'focus.nextUrgent': 'CmdOrCtrl+U',
+      'view.agents': 'CmdOrCtrl+E',
       'view.code': 'CmdOrCtrl+Shift+E',
       'code.panel': 'CmdOrCtrl+B',
       'code.close': 'CmdOrCtrl+W',

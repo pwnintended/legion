@@ -45,8 +45,9 @@ export const CLI_EXTRA_SKILLS: readonly string[] = ['plugin-authoring'];
  * (`disabledSkills`) that are not on it; user skills only exist when the session's plugin brings them.
  */
 export function flagSettings(skills: SessionOptions['skills'], disabledSkills: readonly string[] = []): object {
-  if (!skills) return LEGION_FLAG_SETTINGS;
-  const off = [...new Set([...CLI_EXTRA_SKILLS, ...disabledSkills])].filter((name) => !skills.allow.includes(name));
+  const allow = skills?.allow;
+  if (!allow) return LEGION_FLAG_SETTINGS;
+  const off = [...new Set([...CLI_EXTRA_SKILLS, ...disabledSkills])].filter((name) => !allow.includes(name));
   return {
     ...LEGION_FLAG_SETTINGS,
     disableBundledSkills: true,
@@ -228,10 +229,15 @@ export function buildClaudeArgs({
   // Config isolation: only the repo's own settings (CLAUDE.md, .claude/settings.json), only Legion's MCP.
   // A cwd with agent-written content (reviewer, finalizer) gets no setting source at all: a coder could
   // have planted hooks or permission rules in the worktree's .claude/ (the CLI reads '' as "none").
+  // A human's own session (`userSettings`) runs like plain `claude`: every source, the user's MCP servers too.
+  const userSettings = !!opts.userSettings && !opts.untrustedWorkdir;
   if (opts.untrustedWorkdir) args.push('--setting-sources=');
+  else if (userSettings) args.push('--setting-sources', 'user,project,local');
   else args.push('--setting-sources', 'project');
-  args.push('--settings', JSON.stringify(flagSettings(extras.skills, disabledSkills)));
-  args.push('--strict-mcp-config');
+  if (!userSettings) {
+    args.push('--settings', JSON.stringify(flagSettings(extras.skills, disabledSkills)));
+    args.push('--strict-mcp-config');
+  }
   if (opts.mcp || Object.keys(extras.extraMcp).length > 0) {
     args.push('--mcp-config', mcpConfigPath ?? JSON.stringify(mcpConfig(opts.mcp, extras.extraMcp)));
   }

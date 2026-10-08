@@ -63,7 +63,7 @@ export function createOrchestrator(options: OrchestratorOptions): Orchestrator {
     spawnResearch: (binding, request) => spawnResearch(o, binding, request),
     assistant: (runId, loop) => runAssistant(o, runId, loop),
     assistantEnabled: (runId) => assistantEnabled(o, runId),
-    session: (runId) => runSession(o, runId),
+    session: (runId, loop) => runSession(o, runId, loop),
     assistantTools: {
       startImplementation: (binding, request) => startImplementation(o, binding, request),
       runStatus: (binding) => runStatus(o, binding),

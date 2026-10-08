@@ -2,6 +2,7 @@
  * The conversation (demo mode): the passkeys run opens on its chat with the assistant's relayed updates, the
  * lead's status folded under a reply, a coder's screenshots and the lead's document, the open approval as a card
  * (answered in place, it becomes a receipt), the progress strip, a task dot to the agents' route map and ⌘E back,
+ * the strip's Agents door,
  * the project's board with a new conversation, and its code. Screenshots of each go to test-results/chat/.
  */
 import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
@@ -113,6 +114,18 @@ test('the run is a conversation: updates, presentations, decisions, the agents o
     // ⌘E back to the conversation; a reply goes to the assistant and shows at once.
     await window.keyboard.press('ControlOrMeta+e');
     await expect(chat).toBeVisible();
+
+    // The strip's end is the way in without knowing ⌘E: a labelled door that wears its key.
+    const door = chat.getByTestId('chat-agents-door');
+    await expect(door).toContainText('Agents');
+    await expect(door.locator('.kbd')).toBeVisible();
+    await chat.getByTestId('chat-progress').screenshot({ path: join(shots, 'progress-door.png') });
+    await door.click();
+    await expect(window.getByTestId('titlebar-agents')).toBeVisible();
+    await expect(window.getByTestId('route-map')).toBeVisible();
+    await window.keyboard.press('ControlOrMeta+e');
+    await expect(chat).toBeVisible();
+
     await chat.getByTestId('chat-input').fill('Ship it behind a feature flag, please.');
     await window.keyboard.press('Enter');
     await expect(chat.locator('.ch-you-text').last()).toHaveText('Ship it behind a feature flag, please.');

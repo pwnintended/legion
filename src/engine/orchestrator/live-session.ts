@@ -63,6 +63,8 @@ export class AgentRun {
   humanInterrupt = false;
   /** A turn is running (from the prompt or a send until its `turn_complete`). */
   inTurn = false;
+  /** `steer` calls the engine has not taken yet (Codex holds one that missed the running turn until it ends). */
+  sending = 0;
   private readonly results: TurnResult[] = [];
   private waiter: ((result: TurnResult) => void) | null = null;
   private exitCode: number | null = null;
@@ -85,6 +87,11 @@ export class AgentRun {
 
   get takenOver(): boolean {
     return this.takeover !== null;
+  }
+
+  /** Closed or closing: nothing more can be sent into it. */
+  get closed(): boolean {
+    return this.closing || this.ended;
   }
 
   start(): void {
@@ -120,7 +127,12 @@ export class AgentRun {
   ): Promise<void> {
     if (priority === 'now' && this.inTurn) this.humanInterrupt = true;
     this.inTurn = true;
-    await this.session.send(text, priority, attachments);
+    this.sending += 1;
+    try {
+      await this.session.send(text, priority, attachments);
+    } finally {
+      this.sending -= 1;
+    }
   }
 
   /** Record an event that did not come from the engine (the human's own messages) in the transcript. */

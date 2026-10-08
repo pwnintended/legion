@@ -9,6 +9,7 @@ import type { Attempt } from '@shared/domain';
 import { RpcError } from '@shared/rpc-transport';
 import { type PtyOpenOptions, ptyEnv } from '../pty';
 import type { Orchestrator } from './orchestrator';
+import { sendToDirectSession } from './session-run';
 
 function liveSession(o: Orchestrator, attemptId: string) {
   o.store.requireAttempt(attemptId);
@@ -26,6 +27,12 @@ export async function sendToSession(
   priority: 'now' | 'next',
   attachmentIds: readonly string[] | null = null,
 ): Promise<void> {
+  const attempt = o.store.requireAttempt(attemptId);
+  if (attempt.role === 'session') {
+    const refs = o.attachments.refs(attachmentIds);
+    if (refs.length) o.attachments.claim(refs, attempt.runId);
+    return sendToDirectSession(o, attempt.runId, { text, attachments: refs }, priority);
+  }
   const session = liveSession(o, attemptId);
   const refs = o.attachments.refs(attachmentIds);
   if (refs.length) o.attachments.claim(refs, session.attempt.runId);
@@ -36,7 +43,8 @@ export async function sendToSession(
 /** Stop the current turn; the session then waits for a human message (`sessions.send`). */
 export async function interruptSession(o: Orchestrator, attemptId: string): Promise<void> {
   const session = liveSession(o, attemptId);
-  session.humanInterrupt = true;
+  // A direct session's loop sees the interrupted turn end, and stops the process until the human writes.
+  if (session.attempt.role !== 'session') session.humanInterrupt = true;
   await session.session.interrupt();
 }
 

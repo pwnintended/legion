@@ -1,15 +1,17 @@
 /**
  * The run at a glance, pinned above the conversation: where it is (plan › execute n/m › integrate › PR) and one
- * dot per task. Hovering a dot says what that agent is doing; clicking it opens the task among the agents.
+ * dot per task. Hovering a dot says what that agent is doing; clicking it opens the task among the agents. Once
+ * there are agents, the strip's end is the way in to them (⌘E on the focused tile).
  */
 import type { InboxItem, Run, Task, TaskNode, TaskStatus } from '@shared/domain';
 import { Fragment } from 'react';
 import { useShallow } from 'zustand/react/shallow';
-import { latestPlan, tasksOfRun } from '../app/data';
+import { hasAgents, latestPlan, tasksOfRun } from '../app/data';
 import { useData, useNow } from '../app/hooks';
 import { TASK_WORD } from '../app/status-words';
 import { actions, uiStore } from '../app/store';
 import { Icon } from '../chrome/icons';
+import { CommandKbd, commandTooltip } from '../chrome/ui';
 import { formatDuration } from '../layout/describe';
 import { sessionTileOf } from '../tiles/session/actions';
 
@@ -104,6 +106,7 @@ export function Progress({ run }: { run: Run }) {
   );
   const open = useData(useShallow((s) => openItemsOf(s.inbox, run.id)));
   const now = useNow(15_000, run.status === 'planning' || run.status === 'clarifying');
+  const agents = useData((s) => hasAgents(s, run.id));
   if (run.status === 'chatting') return null;
   // What waits on the human outranks what the agents are doing: a task with an open item is the human's, and a
   // budget stop (or a pause) means nothing is working, whatever the task statuses say.
@@ -157,24 +160,44 @@ export function Progress({ run }: { run: Run }) {
             ) : null}
           </span>
         ) : null}
-        {halted && open.length ? (
-          <span className="ch-working-count" data-tone="attention">
-            Paused · waiting for you
-          </span>
-        ) : working ? (
-          <span className="ch-working-count" title="Tasks with an agent on them right now">
-            {working} task{working === 1 ? '' : 's'} in progress
-          </span>
-        ) : sorted.length && open.length ? (
-          <span className="ch-working-count" data-tone="attention">
-            Waiting for you
-          </span>
-        ) : sorted.length && line ? (
-          <span className="ch-working-count">{line}</span>
-        ) : null}
+        <div className="ch-progress-end">
+          {halted && open.length ? (
+            <span className="ch-working-count" data-tone="attention">
+              Paused · waiting for you
+            </span>
+          ) : working ? (
+            <span className="ch-working-count" title="Tasks with an agent on them right now">
+              {working} task{working === 1 ? '' : 's'} in progress
+            </span>
+          ) : sorted.length && open.length ? (
+            <span className="ch-working-count" data-tone="attention">
+              Waiting for you
+            </span>
+          ) : sorted.length && line ? (
+            <span className="ch-working-count">{line}</span>
+          ) : null}
+          {agents ? (
+            <button
+              type="button"
+              className="btn btn-ghost btn-sm ch-agents-door"
+              title={commandTooltip('view.agents', "Show this conversation's agents")}
+              onClick={() => openAgents(run.id)}
+              data-testid="chat-agents-door"
+            >
+              <Icon name="agents" size={13} />
+              <span className="ch-agents-door-label">Agents</span>
+              <CommandKbd id="view.agents" />
+            </button>
+          ) : null}
+        </div>
       </div>
     </div>
   );
+}
+
+function openAgents(runId: string): void {
+  actions.setActiveRun(runId);
+  actions.setView('agents');
 }
 
 function openTask(task: Task): void {

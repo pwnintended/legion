@@ -142,6 +142,10 @@
   white-space: nowrap;
   text-overflow: ellipsis;
 }
+/* ⌘E opens the focused tile's agents, so only the focused tile shows the key on its strip's door. */
+.bd-tile[data-quiet] .ch-agents-door .kbd {
+  display: none;
+}
 /* The head's pill counts and jumps to what waits; a quiet tile does not repeat it in its dock. */
 .bd-tile[data-quiet] .ch-needs-bar {
   display: none;
@@ -207,6 +211,9 @@
 }
 @container tile (max-width: 440px) {
   .bd-head .chip {
+    display: none;
+  }
+  .ch-agents-door .kbd {
     display: none;
   }
 }
