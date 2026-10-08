@@ -634,7 +634,12 @@ export const InboxResolutionSchemas = {
     /** Files attached to the answers (clarify); absent = none. */
     attachments: z.array(AttachmentRefSchema).nullish(),
   }),
-  plan_signoff: z.object({ approved: z.boolean(), feedback: z.string().nullable() }),
+  plan_signoff: z.object({
+    approved: z.boolean(),
+    feedback: z.string().nullable(),
+    /** Who asked for the changes: the assistant on the human's word in the conversation. Absent = the human. */
+    by: z.enum(['human', 'assistant']).nullish(),
+  }),
   escalation: z.object({ action: EscalationResolutionActionSchema, note: z.string().nullable() }),
   pr_ready: z.object({
     approved: z.boolean(),

@@ -18,13 +18,13 @@ import {
 } from '@shared/domain';
 import type { RpcInput } from '@shared/rpc';
 import { RpcError } from '@shared/rpc-transport';
-import type { AssistantRunStatus, McpBinding, StartImplementationRequest } from '../mcp';
-import { buildAssistantPrompt, buildAssistantWakePrompt, messageLine, renderMessages } from './core';
+import type { AssistantRunStatus, McpBinding, RevisePlanResult, StartImplementationRequest } from '../mcp';
+import { buildAssistantPrompt, buildAssistantWakePrompt, messageLine, planDocument, renderMessages } from './core';
 import { board } from './lead';
 import type { AgentRun } from './live-session';
 import { patchRunMeta, runMeta } from './meta';
 import { AgentFailure, Closed, type LeadLoopHandle, type Orchestrator, sleep } from './orchestrator';
-import { insertRun, startPlanner } from './planner';
+import { insertRun, requestPlanRevision, startPlanner } from './planner';
 
 /** Consecutive failures to open or keep the assistant session before the run continues without one. */
 export const MAX_ASSISTANT_FAILURES = 3;
@@ -99,7 +99,9 @@ export function resolvedItemLine(item: InboxItem): string | null {
     return `the human answered the planner's questions:\n${answers.join('\n')}`;
   }
   if (item.kind === 'plan_signoff') {
-    const resolution = item.resolution as { approved: boolean; feedback: string | null } | null;
+    const resolution = item.resolution as { approved: boolean; feedback: string | null; by?: string | null } | null;
+    // The assistant's own revise_plan: it knows.
+    if (resolution?.by === 'assistant') return null;
     if (resolution?.approved) return `the human approved plan v${item.payload.version}`;
     if (resolution?.feedback)
       return `the human asked for changes to plan v${item.payload.version}: ${clip(resolution.feedback)}`;
@@ -335,4 +337,58 @@ export function runStatus(o: Orchestrator, binding: McpBinding): AssistantRunSta
     prUrl: run.prUrl,
     error: run.error,
   };
+}
+
+/** `read_plan` for the assistant: the latest version, headed with where it stands. */
+export function readPlanForAssistant(o: Orchestrator, binding: McpBinding, section: string | null): string {
+  const run = o.store.requireRun(binding.runId);
+  const plan = o.store.latestPlan(run.id);
+  if (!plan) {
+    return run.status === 'chatting'
+      ? 'There is no plan: the work has not been started (start_implementation).'
+      : `There is no plan yet: the planner is ${run.status === 'clarifying' ? 'looking at the brief' : 'exploring the repository and drafting it'}.`;
+  }
+  const title = plan.approvedAt
+    ? `Approved plan (v${plan.version})`
+    : run.status === 'awaiting_approval'
+      ? `Plan v${plan.version}: a draft waiting for the human's sign-off`
+      : run.status === 'planning'
+        ? `Plan v${plan.version}: the planner is drafting the next version`
+        : run.status === 'executing'
+          ? `Plan v${plan.version}: a change the lead proposed, waiting for the human's sign-off`
+          : `Plan v${plan.version} (not approved; the run is ${run.status})`;
+  return planDocument({ version: plan.version, markdown: plan.markdown, nodes: plan.dag.nodes }, section, title);
+}
+
+/**
+ * `revise_plan`: the human's changes into the plan before sign-off. While the planner works they go to it as a
+ * brief (into its running turn, or its next step); a plan waiting for sign-off is turned down with them, as the
+ * human's "request changes" would, and the planner drafts the next version.
+ */
+export async function revisePlan(o: Orchestrator, binding: McpBinding, changes: string): Promise<RevisePlanResult> {
+  const text = changes.trim();
+  if (!text) throw new Error('say what should change');
+  const run = o.store.requireRun(binding.runId);
+  const plan = o.store.latestPlan(run.id);
+  switch (run.status) {
+    case 'chatting':
+      throw new Error('there is no plan yet: put the changes in the brief of start_implementation');
+    case 'clarifying':
+    case 'planning': {
+      const message = await o.mcpHost.sendMessage(binding, { to: 'planner', kind: 'brief', body: text, replyTo: null });
+      const delivered = o.store.getMessage(message.id)?.deliveredAt != null;
+      return { outcome: delivered ? 'steered' : 'queued', planVersion: plan?.version ?? null };
+    }
+    case 'awaiting_approval': {
+      if (!plan) throw new Error('the run has no plan');
+      requestPlanRevision(o, run.id, plan.id, text, 'assistant');
+      return { outcome: 'revising', planVersion: plan.version };
+    }
+    default:
+      throw new Error(
+        isTerminal(RUN_TRANSITIONS, run.status)
+          ? `the run is ${run.status}; its plan can no longer be revised`
+          : `the plan was signed off and the run is ${run.status}: brief the lead instead`,
+      );
+  }
 }

@@ -3,7 +3,14 @@
  * (`engine/index.ts`) adds the MCP server, terminals, RPC handlers and recovery. See README.md.
  */
 import type { PtyProcess, PtySpawn } from '../pty';
-import { assistantEnabled, runAssistant, runStatus, startImplementation } from './assistant';
+import {
+  assistantEnabled,
+  readPlanForAssistant,
+  revisePlan,
+  runAssistant,
+  runStatus,
+  startImplementation,
+} from './assistant';
 import { PR_POLL_MS, startPrPolling } from './cleanup';
 import { finalize } from './finalize';
 import { addTask, amendTask, cancelTask, leadEnabled, planStatus, runLead } from './lead';
@@ -57,6 +64,8 @@ export function createOrchestrator(options: OrchestratorOptions): Orchestrator {
     assistantTools: {
       startImplementation: (binding, request) => startImplementation(o, binding, request),
       runStatus: (binding) => runStatus(o, binding),
+      readPlan: (binding, section) => readPlanForAssistant(o, binding, section),
+      revisePlan: (binding, changes) => revisePlan(o, binding, changes),
     },
   };
   const pollMs = options.prPollMs ?? PR_POLL_MS;

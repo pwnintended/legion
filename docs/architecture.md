@@ -347,7 +347,8 @@ tools are in §8.4:
   `wait_for_reply` in one blocking call
 - `spawn_research({title, brief, mode})` (coordinators) — open a researcher (`single`) or a research lead (`team`) as
   the caller's child; its report comes back as a `report` message (§8.5)
-- `start_implementation({title, brief, clarify})`, `run_status()` (assistant only, §8.6)
+- `start_implementation({title, brief, clarify})`, `run_status()`, `read_plan({section?})`, `revise_plan({changes})`
+  (assistant only, §8.6)
 
 Every agent also has `present({title, caption?, files?, markdown?})` (§8.7): files and/or a markdown document to
 show the human in the run's conversation. Coordinators have no files, so their schema offers `markdown` only.
@@ -580,8 +581,14 @@ through `sessions.send` on the assistant attempt: its process stays alive and id
 - **Tools** (role `assistant`): `start_implementation({title, brief, clarify})` moves the run to `clarifying` or
   `planning` with the brief as the issue text (the usual flow follows: clarify questions and plan sign-off in the
   inbox, then the lead, whose parent is the assistant); `run_status` (status, plan, every task, what waits for the
-  human, PR); plus the coordinator tools (`list_agents`, `send_message`, `wait_for_reply`, `spawn_research`,
-  research cap 3). A conversation that never starts work stays `chatting` until archived or cancelled.
+  human, PR); `read_plan({section?})`, the latest plan version headed with where it stands (a draft waiting for
+  sign-off, being revised, approved, or a change the lead proposed); `revise_plan({changes})`, the human's changes
+  into the plan until it is signed off: while the planner clarifies or drafts it is a `brief` to the planner (see
+  below), and while a plan waits for sign-off it is a requested revision like the human's (`requestPlanRevision`;
+  the resolution carries `by: "assistant"`, the receipt says so, and the assistant is not told its own change
+  back). After approval it is refused (the lead takes briefs). Plus the coordinator tools (`list_agents`,
+  `send_message`, `wait_for_reply`, `spawn_research`, research cap 3). A conversation that never starts work stays
+  `chatting` until archived or cancelled.
 - **Steering the planner**: planner attempts of a run with an assistant are its children (reviewers likewise sit
   under the lead). Neither has mailbox tools. A message to a working agent that is not waiting for it (a planner via
   `to: "planner"`, a coder, a reviewer) is passed into its running turn as a queued user message, like a human

@@ -375,6 +375,71 @@ describe('the assistant', () => {
     );
   }, 60_000);
 
+  it('reads the plan and revises it until it is signed off', async () => {
+    const rec = recorder();
+    const plannerPrompts: string[] = [];
+    h = await startHarness({
+      script: (ctx) => {
+        if (ctx.opts.role !== 'planner') return script(ctx, 'claude');
+        plannerPrompts.push(ctx.message);
+        const settings = ctx.message.includes('settings panel');
+        return [{ kind: 'delay', ms: 600 }, planOutput(settings ? [node('T1'), node('T2')] : [node('T1')])];
+      },
+      assistant: rec.assistant,
+    });
+    const harness = h;
+    const { orchestrator, store } = harness.engine;
+    const { run, assistant } = await chat(harness, 'Add gates.');
+    await harness.waitFor(() => rec.turns.length === 1, 'first turn');
+    const host = orchestrator.mcpHost;
+    const asAssistant = binding(store.requireAttempt(assistant.id));
+    expect(await host.readPlan(asAssistant, null)).toMatch(/no plan: the work has not been started/);
+    await expect(host.revisePlan(asAssistant, 'x')).rejects.toThrow(/start_implementation/);
+
+    host.startImplementation(asAssistant, { title: 'Gates', brief: 'Add gates.', clarify: false });
+    await harness.waitFor(() => store.requireRun(run.id).status === 'awaiting_approval', 'plan v1');
+    const draft = await host.readPlan(asAssistant, null);
+    expect(draft).toContain("# Plan v1: a draft waiting for the human's sign-off");
+    expect(draft).toContain('### T1: Task T1');
+    expect(await host.readPlan(asAssistant, 'T1: Task T1')).toContain('**Goal**');
+
+    // The plan waits for sign-off: the assistant turns it down with the human's changes.
+    const v1 = store.latestPlan(run.id);
+    expect(await host.revisePlan(asAssistant, 'Add a settings panel.')).toEqual({
+      outcome: 'revising',
+      planVersion: 1,
+    });
+    const signoff = store
+      .listInbox({ runId: run.id, includeResolved: true })
+      .find((i) => i.kind === 'plan_signoff' && i.payload.planId === v1?.id);
+    expect(signoff?.resolution).toEqual({
+      approved: false,
+      feedback: 'Add a settings panel.',
+      by: 'assistant',
+    });
+    expect(store.requireRun(run.id).status).toBe('planning');
+    expect(await host.readPlan(asAssistant, null)).toContain('# Plan v1: the planner is drafting the next version');
+
+    // While the next version is drafted, more changes reach the planner's running turn.
+    await harness.waitFor(
+      () => store.listAttempts(run.id).some((a) => a.role === 'planner' && a.status === 'running'),
+      'revising planner',
+    );
+    expect(await host.revisePlan(asAssistant, 'Name it Gates.')).toEqual({ outcome: 'steered', planVersion: 1 });
+    const revising = harness.claude.sessions.filter((s) => s.opts.role === 'planner').at(-1);
+    expect(revising?.session.sent.map((m) => m.text).join('\n')).toContain('Name it Gates.');
+
+    await harness.waitFor(() => store.latestPlan(run.id)?.version === 2, 'plan v2');
+    expect(plannerPrompts.some((p) => p.includes('Add a settings panel.'))).toBe(true);
+    expect(store.latestPlan(run.id)?.dag.nodes.map((n) => n.id)).toEqual(['T1', 'T2']);
+    await harness.waitFor(() => rec.messages().some((m) => m.includes('plan v2 waits')), 'v2 news');
+    expect(rec.messages().join('\n')).not.toContain('the human asked for changes');
+
+    await harness.client.call('runs.approvePlan', { runId: run.id, planId: store.latestPlan(run.id)?.id as string });
+    expect(await host.readPlan(asAssistant, null)).toContain('# Approved plan (v2)');
+    await expect(host.revisePlan(asAssistant, 'x')).rejects.toThrow(/brief the lead/);
+  }, 60_000);
+
   it('fails a conversation whose assistant keeps dying, and refuses to chat when disabled', async () => {
     h = await startHarness({ script, assistant: () => [{ kind: 'fail', message: 'boom', exitCode: 1 }] });
     const harness = h;

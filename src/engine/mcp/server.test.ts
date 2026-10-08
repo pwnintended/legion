@@ -23,6 +23,7 @@ interface Calls {
   research: Array<[string, string, string]>;
   start: Array<[string, boolean]>;
   present: Array<[McpBinding, PresentRequest]>;
+  revise: string[];
 }
 
 function fakeHost() {
@@ -37,6 +38,7 @@ function fakeHost() {
     research: [],
     start: [],
     present: [],
+    revise: [],
   };
   const pendingAsks: Array<(a: string) => void> = [];
   const pendingWaits: Array<(m: AgentMessage | null) => void> = [];
@@ -122,6 +124,10 @@ function fakeHost() {
       prUrl: null,
       error: null,
     }),
+    revisePlan: (_b, changes) => {
+      calls.revise.push(changes);
+      return { outcome: 'revising', planVersion: 1 };
+    },
   };
   return { host, calls, pendingAsks, pendingWaits };
 }
@@ -393,7 +399,7 @@ describe('legion mcp server', () => {
       parentAttemptId: null,
     };
 
-    it('start the work and read its status; the assistant also gets the coordinator tools', async () => {
+    it('start the work, read its status and plan, revise the plan; the assistant also gets the coordinator tools', async () => {
       const c = await connect(srv.issueToken(assistant));
       const names = (await c.listTools()).tools.map((t) => t.name).sort();
       expect(names).toEqual(
@@ -401,8 +407,10 @@ describe('legion mcp server', () => {
           'approve',
           'list_agents',
           'present',
+          'read_plan',
           'report_progress',
           'request_human_input',
+          'revise_plan',
           'run_status',
           'send_message',
           'spawn_research',
@@ -422,6 +430,14 @@ describe('legion mcp server', () => {
         ['Again', false],
       ]);
       expect(JSON.parse((await call(c, 'run_status', {})).text)).toMatchObject({ status: 'chatting', tasks: [] });
+      expect(JSON.parse((await call(c, 'read_plan', { section: 'Approach' })).text)).toEqual({
+        markdown: 'part Approach',
+      });
+      expect(JSON.parse((await call(c, 'revise_plan', { changes: 'Add a settings panel.' })).text)).toEqual({
+        outcome: 'revising',
+        planVersion: 1,
+      });
+      expect(f.calls.revise).toEqual(['Add a settings panel.']);
     });
   });
 

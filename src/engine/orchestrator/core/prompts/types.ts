@@ -29,6 +29,7 @@ export interface ToolNames {
   readonly waitForReply: string;
   readonly startImplementation: string;
   readonly runStatus: string;
+  readonly revisePlan: string;
   readonly present: string;
 }
 
@@ -48,6 +49,7 @@ export const DEFAULT_TOOL_NAMES: ToolNames = {
   waitForReply: 'wait_for_reply',
   startImplementation: 'start_implementation',
   runStatus: 'run_status',
+  revisePlan: 'revise_plan',
   present: 'present',
 };
 
