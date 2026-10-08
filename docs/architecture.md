@@ -426,11 +426,13 @@ A gate is a named check with a structured result. Kinds (`GateKind`): `command` 
 them plus `verification_outputs` (full output, capped at 1 MB, excluded from snapshots), served lazily by
 `verifications.output`. Legacy rows (gate fields null) are classified from their command.
 
-**Resolution** (`resolveGates({config, detected, taskCommands})`), in order; a command runs once and colliding
-names get `-2`, `-3`, ...:
+**Resolution** (`resolveGates({config, detected, taskCommands})`), in order. A command (trimmed) runs once, under
+the first source that names it; colliding names, and the built-in names `scope` and `secrets`
+(`BUILTIN_GATE_NAMES`), get `-2`, `-3`, ...:
 1. legion.json `gates.commands` (source `config`); a string is blocking, `{run, blocking}` may be non-blocking, and
-   `false` suppresses that name;
-2. legacy `verify` entries (source `verify`), named by `gateNameFor(command)` (`pnpm test` → `test`);
+   `false` suppresses that name (for `verify` entries and detected gates);
+2. legacy `verify` entries (source `verify`), named by `gateNameFor(command)` (`pnpm test` → `test`); one whose
+   command differs from a same-named configured gate still runs, suffixed (`test-2`);
 3. detected gates whose name isn't defined or suppressed above (source `detected`, only when `gates.detect` is on);
 4. the task's own `verify.commands` (source `task`).
 
@@ -453,8 +455,9 @@ only `node` exists: `test`, `typecheck` (`typecheck` / `type-check`) and `lint` 
 **Flow.** Task verify runs `runGates` over the resolved command gates, then scope and secrets, then the unchanged
 sensitive-change check; `decideAfterVerify(task, gatesPassed(results))` — only failed **blocking** gates fail it,
 non-blocking failures are warnings. The failed blocking `GateResult`s go into `fix.failedVerify` and so into the
-coder's fix brief. Post-merge verify runs the install (if any) and then the task's **command** gates only (scope and
-secrets are task-level); only blocking failures reset / revert the merge (`verify_failed`). Final verify runs the
+coder's fix brief. Post-merge verify runs the install (if any), then the task's command gates plus scope and
+secrets over the squash (`preSha..mergedSha`, via `builtinGates`), so edits a conflict resolver made after task
+verify are gated too; only blocking failures reset / revert the merge (`verify_failed`). Final verify runs the
 repo-level command gates, falling back to the merged nodes' verify commands when none resolve, and escalates with
 the failing gate names. The review pack and the merge-gate card show `gateCounts` as "N/N green"; the PR body has
 a Gate column.
@@ -463,7 +466,8 @@ a Gate column.
 `projects.gates({projectId})` returns `ProjectGates` (the file's `gates` and `verify`, the detected gates and
 package manager, the resolved gates with their source, the effective settings and a `revision` = sha256 of the
 file text, null when absent). `projects.setGates({projectId, revision, gates, verify?})` (`engine/projects/gates.ts`)
-rejects a stale revision (`conflict`), invalid names, blank or duplicate entries (including `verify`), replaces only
+rejects a stale revision (`conflict`), invalid names, command gates named `scope` / `secrets`, blank or duplicate
+entries (including `verify`), replaces only
 `gates` (and `verify` when given; `gates: null` removes the key) while keeping the other keys, key order, indent
 and trailing newline, and writes atomically. **Settings → Gates** (`renderer/overlays/Gates.tsx`, logic in
 `gates-model.ts`) is the per-project editor over these two calls: detection toggle, command gates with a blocking

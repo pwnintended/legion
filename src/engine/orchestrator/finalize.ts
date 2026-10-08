@@ -127,12 +127,12 @@ function gateResultOf(v: Verification): GateResult {
   };
 }
 
-/** The latest result of every final verify gate (by gate name; by command for legacy rows), in run order. */
+/** The latest result of every final verify gate (by kind and gate name; by command for legacy rows), in run order. */
 function latestFinalVerify(o: Orchestrator, runId: string): GateResult[] {
   const latest = new Map<string, GateResult>();
   for (const v of o.store.listVerifications(runId)) {
     if (v.phase !== 'final') continue;
-    const key = v.gate ? `gate:${v.gate}` : `command:${v.command}`;
+    const key = v.gate ? `gate:${v.kind ?? 'command'}:${v.gate}` : `command:${v.command}`;
     latest.delete(key);
     latest.set(key, gateResultOf(v));
   }

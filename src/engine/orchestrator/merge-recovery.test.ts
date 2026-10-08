@@ -2,6 +2,7 @@
  * Merge bookkeeping across failures and crashes: a merge row stays `pending` until integration is back at
  * a known state, and recovery only ever rolls back the newest unfinished merge when it is still HEAD.
  */
+import { randomBytes } from 'node:crypto';
 import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { Merge, Run } from '@shared/domain';
@@ -232,13 +233,16 @@ describe('post-merge gates', () => {
     const merges = store.listMerges(run.id);
     expect(merges.map((m) => m.status)).toEqual(['reverted', 'merged']);
     expect(merges[0]?.error).toContain('integ');
-    // Every gate (the task's own verify command included) ran and was recorded, not just up to the failure.
+    // Every gate (the task's own verify command and the built-ins included) ran and was recorded, not just up
+    // to the failure.
     const first = postMergeRows(harness, run)
-      .slice(0, 3)
+      .slice(0, 5)
       .sort((a, b) => (a.gate ?? '').localeCompare(b.gate ?? ''));
     expect(first.map((r) => [r.gate, r.status, r.blocking])).toEqual([
       ['integ', 'fail', true],
       ['other', 'pass', true],
+      ['scope', 'pass', true],
+      ['secrets', 'pass', true],
       ['test', 'pass', true],
     ]);
     expect(fixPrompts).toHaveLength(1);
@@ -260,9 +264,55 @@ describe('post-merge gates', () => {
     expect(fixPrompts).toEqual([]);
     expect(store.listMerges(run.id).map((m) => m.status)).toEqual(['merged']);
     const rows = postMergeRows(harness, run).sort((a, b) => (a.gate ?? '').localeCompare(b.gate ?? ''));
-    expect(rows.map((r) => [r.gate, r.status, r.blocking, r.summary])).toEqual([
-      ['advisory', 'fail', false, 'JUST A WARNING'],
-      ['test', 'pass', true, 'passed'],
+    expect(rows.map((r) => [r.gate, r.status, r.blocking])).toEqual([
+      ['advisory', 'fail', false],
+      ['scope', 'pass', true],
+      ['secrets', 'pass', true],
+      ['test', 'pass', true],
     ]);
+    expect(rows[0]?.summary).toBe('JUST A WARNING');
+  }, 60_000);
+
+  it("gates a conflict resolver's edits: a secret it adds reverts the merge and goes into a fix round", async () => {
+    // Built at runtime so no token-shaped literal lives in the source.
+    const secret = `${'gh'}p_${randomBytes(18).toString('hex')}`;
+    const fixPrompts: string[] = [];
+    let resolvers = 0;
+    const conflicting: Script = (ctx) => {
+      if (ctx.opts.role === 'planner') return [planOutput([node('T1'), node('T2')])];
+      if (ctx.opts.role === 'reviewer' || ctx.opts.role === 'finalizer') return [approve(ctx)];
+      if (ctx.opts.role === 'resolver') {
+        resolvers++;
+        return [{ kind: 'write_file', path: 'shared.txt', content: `both\ntoken = ${secret}\n` }, report('Resolve')];
+      }
+      if (ctx.message.startsWith('Fix round')) fixPrompts.push(ctx.message);
+      const id = taskIdIn(ctx.message);
+      return [
+        { kind: 'write_file', path: `src/${id.toLowerCase()}.txt`, content: `${id}\n` },
+        { kind: 'write_file', path: 'shared.txt', content: `from ${id}\n` },
+        report(`Implement ${id}`),
+      ];
+    };
+    h = await startHarness({
+      script: conflicting,
+      // The tasks write outside their touches on purpose (to conflict): scope only warns.
+      files: { 'shared.txt': 'base\n', 'legion.json': JSON.stringify({ gates: { scope: 'warn' } }) },
+    });
+    const harness = h;
+    const run = await startRun(harness);
+    await harness.waitFor(() => runOf(harness, run.id).status === 'pr_ready', 'pr_ready', 30_000);
+    const store = harness.engine.store;
+    expect(resolvers).toBe(1);
+    // Task verify ran before the resolver: only the post-merge scan over the squash saw the secret.
+    const reverted = store.listMerges(run.id).filter((m) => m.status === 'reverted');
+    expect(reverted).toHaveLength(1);
+    const secrets = postMergeRows(harness, run).filter((r) => r.gate === 'secrets');
+    expect(secrets.map((r) => r.status)).toEqual(['pass', 'fail', 'pass']);
+    expect(fixPrompts).toHaveLength(1);
+    expect(fixPrompts[0]).toContain('shared.txt:2');
+    expect(fixPrompts[0]).not.toContain(secret);
+    expect(store.listTasks(run.id).every((t) => t.status === 'merged')).toBe(true);
+    const integration = runOf(harness, run.id).integrationBranch as string;
+    expect(await harness.repo.git('show', `${integration}:shared.txt`)).not.toContain(secret);
   }, 60_000);
 });

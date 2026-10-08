@@ -19,7 +19,6 @@ import {
   createWorktree,
   git,
   gitText,
-  LOCKFILES,
   mergeIntoTaskBranch,
   provisionFiles,
   removeWorktree,
@@ -34,23 +33,17 @@ import {
   buildFixerPrompt,
   buildReviewerPrompt,
   checkScope,
-  countAddedLines,
   decideAfterCoderTurn,
   decideAfterFailure,
   decideAfterReview,
   decideAfterVerify,
   type Failure,
-  type GateResult,
   gatesPassed,
   markdownSection,
   PLAN_FILE,
   packageScriptsChanged,
   planDocument,
-  resolveGateSettings,
   reviewerEngineFor,
-  scanSecrets,
-  scopeGateResult,
-  secretsGateResult,
   sensitivePaths,
   type TaskDecision,
   taskStatusPath,
@@ -59,7 +52,14 @@ import {
 import type { AgentRun } from './live-session';
 import { type FixContext, patchTaskMeta, taskMeta } from './meta';
 import { AgentFailure, Closed, type Orchestrator } from './orchestrator';
-import { confirmedIntegrationSha, resolveTaskGates, runGates, runVerification, taskDiffBase } from './worktrees';
+import {
+  builtinGates,
+  confirmedIntegrationSha,
+  resolveTaskGates,
+  runGates,
+  runVerification,
+  taskDiffBase,
+} from './worktrees';
 
 type Step = 'next' | 'park';
 
@@ -459,7 +459,6 @@ async function verify(o: Orchestrator, run: Run, task: Task): Promise<Step> {
   const node = o.nodeOf(task);
   const worktree = task.worktreePath as string;
   const config = await o.config(run);
-  const settings = resolveGateSettings(config);
   const attemptId = lastCoderAttemptId(o, task);
   const commands = await runGates(o, {
     run,
@@ -473,21 +472,19 @@ async function verify(o: Orchestrator, run: Run, task: Task): Promise<Step> {
   // formatter rewrites). Discard it so a later commit never sweeps it into the task.
   await cleanWorktree(worktree, taskMeta(o.store, task.id).provisioned);
   const base = await taskDiffBase(run, task, worktree);
-  const changed = base ? touchedPaths(await changedFiles(worktree, base, 'HEAD')) : [];
-  const alwaysAllowed = config?.installCommand ? LOCKFILES.map((l) => `**/${l.file}`) : [];
-  const scope = checkScope(node, changed, alwaysAllowed);
-  const builtins: GateResult[] = [scopeGateResult(scope, settings.scope)];
-  if (settings.secrets.mode !== 'off') {
-    const started = Date.now();
-    const diff = base ? await gitText(worktree, ['diff', '--no-color', '--no-ext-diff', base, 'HEAD']) : '';
-    o.assertOpen();
-    const findings = scanSecrets(diff, { allow: settings.secrets.allow });
-    builtins.push(secretsGateResult(findings, settings, countAddedLines(diff), Date.now() - started));
-  }
-  const recorded = await runGates(o, { run, task, attemptId, phase: 'task', gates: [], builtins, cwd: worktree });
+  const builtins = await builtinGates(o, { node, config, cwd: worktree, base, head: 'HEAD' });
+  const recorded = await runGates(o, {
+    run,
+    task,
+    attemptId,
+    phase: 'task',
+    gates: [],
+    builtins: builtins.results,
+    cwd: worktree,
+  });
   const results = [...commands.results, ...recorded.results];
-  const sensitive = base ? await sensitiveChanges(worktree, base, changed) : [];
-  patchTaskMeta(o.store, task.id, { lastVerify: results, scope, sensitive });
+  const sensitive = base ? await sensitiveChanges(worktree, base, builtins.changed) : [];
+  patchTaskMeta(o.store, task.id, { lastVerify: results, scope: builtins.scope, sensitive });
   const current = o.store.requireTask(task.id);
   const decision = decideAfterVerify(current, gatesPassed(results), o.limits());
   const failed = results.filter((r) => r.status === 'fail' && r.blocking);

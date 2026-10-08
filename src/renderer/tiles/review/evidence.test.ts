@@ -223,6 +223,21 @@ describe('structured gates', () => {
     );
     expect(latest.map((x) => x.id)).toEqual(['v4', 'v3']);
   });
+
+  it('keeps a command gate and a built-in gate of the same name apart', () => {
+    // Rows from before command gates were kept off the built-in names: a failing command called `scope`
+    // must not hide behind the passing built-in scope row recorded after it.
+    const verifications = [
+      g('v1', 'scope', 'fail', { kind: 'command', command: 'pnpm check-scope', createdAt: 1 }),
+      g('v2', 'secrets', 'fail', { kind: 'command', command: 'gitleaks detect', createdAt: 2 }),
+      g('v3', 'scope', 'pass', { createdAt: 3 }),
+      g('v4', 'secrets', 'pass', { createdAt: 4 }),
+    ];
+    const latest = latestVerifications(verifications, 'task_1');
+    expect(latest.map((x) => x.id)).toEqual(['v1', 'v2', 'v3', 'v4']);
+    const gates = gatesFor({ node: null, verifications: latest, changedFiles: null });
+    expect(gatesChip(gates)).toMatchObject({ green: 2, total: 4, tone: 'bad' });
+  });
 });
 
 describe('findings across rounds', () => {

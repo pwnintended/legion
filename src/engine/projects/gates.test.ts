@@ -344,6 +344,10 @@ describe('writeProjectGates', () => {
       code: 'bad_request',
       message: expect.stringMatching(/empty command/),
     });
+    await expect(attempt({ revision, gates: { commands: { secrets: 'gitleaks detect' } } })).rejects.toMatchObject({
+      code: 'bad_request',
+      message: expect.stringMatching(/gate "secrets": a built-in gate's name/),
+    });
     await expect(attempt({ revision, gates: { secrets: { allow: [' '] } } })).rejects.toMatchObject({
       code: 'bad_request',
       message: expect.stringMatching(/secrets\.allow: empty glob/),

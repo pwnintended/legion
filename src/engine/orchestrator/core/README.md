@@ -98,7 +98,8 @@ Also: `checkScope(node, changedPaths, alwaysAllowed)` (§8 scope check), `review
 ## Gates — `gates.ts`, `secrets.ts`, `scope.ts`
 
 Architecture §8.0. `resolveGates({config, detected, taskCommands})` → `GateSpec[]` (config > `verify` >
-detected > task commands; `false` suppresses a name; a command runs once), `gateNameFor(command)`,
+detected > task commands; `false` suppresses a name; a command runs once; `BUILTIN_GATE_NAMES` are never given
+to a command gate), `gateNameFor(command)`,
 `resolveGateSettings(config)` (defaults: detect on, scope `block`, secrets `block`, no allowlist),
 `gatesPassed(results)` (no failed blocking gate), `gateCounts(results)` (`N/N green`), `normalizeGateResult`
 (legacy rows). `scanSecrets(diff, {allow})` / `secretsGateResult(...)` (skips lockfiles, `allow` globs,

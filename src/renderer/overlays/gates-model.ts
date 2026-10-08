@@ -4,7 +4,7 @@
  * didn't touch keep their original shape (`"test": "pnpm test"` stays a string, `secrets: "warn"` stays bare),
  * so loading and saving without edits writes back exactly what was there.
  */
-import { gateNameFor, resolveGates } from '@engine/orchestrator/core/gates';
+import { BUILTIN_GATE_NAMES, gateNameFor, resolveGates } from '@engine/orchestrator/core/gates';
 import {
   type GateCommandConfig,
   GateNameSchema,
@@ -30,6 +30,8 @@ export interface CommandRow {
 export interface GlobRow {
   id: string;
   glob: string;
+  /** The glob as loaded, written back as is while the row is unchanged; null for new rows. */
+  raw: string | null;
 }
 
 export interface GatesForm {
@@ -72,7 +74,7 @@ export function formFromProjectGates(project: Pick<ProjectGates, 'gates' | 'veri
   const next = () => `g${++seq}`;
   const gates = project.gates;
   const commands = Object.entries(gates?.commands ?? {}).map(([name, value]) => rowOf(next(), name, value));
-  const allow = project.settings.secrets.allow.map((glob) => ({ id: next(), glob }));
+  const allow = project.settings.secrets.allow.map((glob) => ({ id: next(), glob, raw: glob }));
   return {
     base: gates,
     baseVerify: [...project.verify],
@@ -155,7 +157,7 @@ export function removeVerify(form: GatesForm, index: number): GatesForm {
 
 export function addGlob(form: GatesForm): GatesForm {
   const seq = form.seq + 1;
-  return { ...form, seq, allow: [...form.allow, { id: `g${seq}`, glob: '' }] };
+  return { ...form, seq, allow: [...form.allow, { id: `g${seq}`, glob: '', raw: null }] };
 }
 
 export function updateGlob(form: GatesForm, id: string, glob: string): GatesForm {
@@ -170,7 +172,10 @@ export function removeGlob(form: GatesForm, id: string): GatesForm {
 // Validation and output
 // ---------------------------------------------------------------------------------------------
 
-/** Names valid for `GateNameSchema` and unique, commands and allowlist globs not empty. */
+/**
+ * Names valid for `GateNameSchema`, unique and not a built-in gate's (suppressing one with `false` is fine: that
+ * targets a detected script), commands and allowlist globs not empty.
+ */
 export function validateGatesForm(form: GatesForm): GatesFormErrors {
   const errors: GatesFormErrors = { commands: {}, allow: {} };
   const counts = new Map<string, number>();
@@ -182,6 +187,8 @@ export function validateGatesForm(form: GatesForm): GatesFormErrors {
     else if (!GateNameSchema.safeParse(name).success)
       row.name = 'Lowercase letters, digits and : . _ - (max 40, starting with a letter or digit).';
     else if ((counts.get(name) ?? 0) > 1) row.name = `There is more than one gate called ${name}.`;
+    else if (!c.off && BUILTIN_GATE_NAMES.includes(name))
+      row.name = `${name} is the name of a built-in gate; pick another name.`;
     if (!c.off && c.run.trim() === '') row.run = 'Enter the command to run.';
     if (row.name || row.run) errors.commands[c.id] = row;
   }
@@ -207,13 +214,14 @@ function sameValue(a: unknown, b: unknown): boolean {
   );
 }
 
+/** An unchanged row as loaded (whitespace and all); an edited one trimmed, in its shortest shape. */
 function commandValue(row: CommandRow): GateCommandConfig {
   if (row.off) return false;
-  const run = row.run.trim();
   if (row.raw !== null) {
     const loaded = rowOf(row.id, row.name, row.raw);
-    if (!loaded.off && loaded.run === run && loaded.blocking === row.blocking) return row.raw;
+    if (!loaded.off && loaded.run === row.run && loaded.blocking === row.blocking) return row.raw;
   }
+  const run = row.run.trim();
   return row.blocking ? run : { run, blocking: false };
 }
 
@@ -231,7 +239,8 @@ export function gatesConfigFromForm(form: GatesForm): GatesSave {
   }
   if (has('scope') || form.scope !== 'block') gates.scope = form.scope;
 
-  const allow = form.allow.map((g) => g.glob.trim());
+  // Untouched globs keep their whitespace: it can be part of a file name.
+  const allow = form.allow.map((g) => (g.glob === g.raw ? g.raw : g.glob.trim()));
   const secrets = base.secrets;
   if (typeof secrets === 'object') {
     gates.secrets = {

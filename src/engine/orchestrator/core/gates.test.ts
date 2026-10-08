@@ -176,6 +176,31 @@ describe('resolveGates', () => {
     ]);
   });
 
+  it('runs a command configured under two names once, under the first name', () => {
+    const gates = resolveGates({
+      config: { gates: { commands: { first: 'pnpm test', second: ' pnpm test ', other: 'pnpm lint' } } },
+      detected: [],
+      taskCommands: [],
+    });
+    expect(gates.map((g) => [g.name, g.command])).toEqual([
+      ['first', 'pnpm test'],
+      ['other', 'pnpm lint'],
+    ]);
+  });
+
+  it('never gives a command gate the name of a built-in gate', () => {
+    const gates = resolveGates({
+      config: { gates: { commands: { scope: 'pnpm check-scope' } } },
+      detected: [detected('secrets', 'pnpm run secrets')],
+      taskCommands: ['make scope'],
+    });
+    expect(gates.map((g) => [g.name, g.source])).toEqual([
+      ['scope-2', 'config'],
+      ['secrets-2', 'detected'],
+      ['make-scope', 'task'],
+    ]);
+  });
+
   it('keeps suffixed names within 40 characters', () => {
     const long = 'a'.repeat(40);
     const gates = resolveGates({
@@ -235,6 +260,12 @@ describe('normalizeGateResult', () => {
       status: 'fail',
       summary: 'killed or timed out',
       durationMs: 5,
+    });
+    // Only the builtin commands themselves, not inherited object properties.
+    expect(normalizeGateResult({ command: 'toString', exitCode: 0, outputTail: '' })).toMatchObject({
+      name: 'tostring',
+      kind: 'command',
+      source: 'verify',
     });
     expect(normalizeGateResult({ command: 'legion:scope', exitCode: 0, outputTail: '' })).toMatchObject({
       name: 'scope',

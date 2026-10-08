@@ -43,6 +43,7 @@ import { patchTaskMeta, taskMeta } from './meta';
 import { AgentFailure, Closed, type Orchestrator, type ParkReason } from './orchestrator';
 import { coderTurn } from './tasks';
 import {
+  builtinGates,
   ensureIntegrationWorktree,
   ensureWorktree,
   integrationKeep,
@@ -154,14 +155,22 @@ async function mergeTask(o: Orchestrator, run: Run, task: Task): Promise<Outcome
           });
           failed = outcome.results.filter((r) => r.exitCode !== 0).map(normalizeGateResult);
         }
-        // Scope and secrets are task-level gates: post-merge runs the command gates only.
         if (failed.length === 0) {
+          // Scope and secrets again, over what actually lands: a conflict resolver's edits came after task verify.
+          const builtins = await builtinGates(o, {
+            node,
+            config,
+            cwd: integration,
+            base: preSha,
+            head: result.mergedSha,
+          });
           const outcome = await runGates(o, {
             run,
             task,
             attemptId: null,
             phase: 'post_merge',
             gates: await resolveTaskGates(o, run, node, config, integration),
+            builtins: builtins.results,
             cwd: integration,
           });
           failed = outcome.results.filter((r) => r.status === 'fail' && r.blocking);

@@ -6,6 +6,7 @@ import { tail } from '@shared/util';
 import {
   branchExists,
   type CommandResult,
+  changedFiles,
   cleanWorktree,
   createWorktree,
   detectProjectGates,
@@ -14,21 +15,29 @@ import {
   integrationBranchName,
   isAncestor,
   type LegionConfig,
+  LOCKFILES,
   provisionFiles,
   reconcile,
   removeWorktree,
   resolveSha,
   runShellCommand,
   runShellCommands,
+  touchedPaths,
   untrackedFiles,
   withRepoLock,
 } from '../git';
 import {
+  checkScope,
+  countAddedLines,
   type GateResult,
   type GateSpec,
   gatesPassed,
   resolveGateSettings,
   resolveGates,
+  type ScopeReport,
+  scanSecrets,
+  scopeGateResult,
+  secretsGateResult,
   summaryLine,
   type VerifyResultInput,
 } from './core';
@@ -155,6 +164,31 @@ export async function resolveTaskGates(
     : [];
   o.assertOpen();
   return resolveGates({ config, detected, taskCommands: node?.verify.commands ?? [] });
+}
+
+/**
+ * The built-in gates over the `base..head` diff in `cwd`: scope (against `node`'s touches) and, unless turned
+ * off, the secret scan. Task verify runs them over the task's own diff; post-merge runs them again over the
+ * squash, so edits a conflict resolver made after verify are gated too. `base` null: an empty diff.
+ */
+export async function builtinGates(
+  o: Orchestrator,
+  input: { node: TaskNode; config: LegionConfig | null; cwd: string; base: string | null; head: string },
+): Promise<{ results: GateResult[]; scope: ScopeReport; changed: string[] }> {
+  const { node, config, cwd, base, head } = input;
+  const settings = resolveGateSettings(config);
+  const changed = base ? touchedPaths(await changedFiles(cwd, base, head)) : [];
+  const alwaysAllowed = config?.installCommand ? LOCKFILES.map((l) => `**/${l.file}`) : [];
+  const scope = checkScope(node, changed, alwaysAllowed);
+  const results: GateResult[] = [scopeGateResult(scope, settings.scope)];
+  if (settings.secrets.mode !== 'off') {
+    const started = Date.now();
+    const diff = base ? await gitText(cwd, ['diff', '--no-color', '--no-ext-diff', base, head]) : '';
+    o.assertOpen();
+    const findings = scanSecrets(diff, { allow: settings.secrets.allow });
+    results.push(secretsGateResult(findings, settings, countAddedLines(diff), Date.now() - started));
+  }
+  return { results, scope, changed };
 }
 
 /** A finished command as a gate result of `spec`. */

@@ -11,7 +11,7 @@ applies it with CAS transitions through `Store`, runs git through `engine/git`, 
 | `live-session.ts` | `AgentRun`: one agent process bound to one attempt; turn results, takeover / hand-back |
 | `planner.ts` | `runs.create`, clarify, plan (validation retries), plan versions, revision, approval |
 | `tasks.ts` | the per-task driver (re-entrant by task status); task verify runs the gates (architecture §8.0) |
-| `merge.ts` | merge queue (post-merge verify on command gates; only blocking failures revert), conflict resolution (lockfiles, resolver sessions) |
+| `merge.ts` | merge queue (post-merge verify: command gates plus scope and secrets over the squash; only blocking failures revert), conflict resolution (lockfiles, resolver sessions) |
 | `finalize.ts` | integration verify (repo-level gates), final review, PR text, `runs.createPr` / `runs.mergeLocally` |
 | `cleanup.ts` | `runs.refreshPr` + polling of open PRs, `runs.archive` (§8 step 9; auto on PR merged/closed; `discard` removes what it would keep) |
 | `actions.ts` | human actions: pause/resume/cancel, `tasks.*`, `inbox.resolve` effects |

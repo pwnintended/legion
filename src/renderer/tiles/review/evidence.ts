@@ -100,8 +100,8 @@ function isGateRow(v: Verification): boolean {
 }
 
 /**
- * Verifications of the task's most recent verified attempt: one per gate (by gate name, or by command on
- * legacy rows), latest wins.
+ * Verifications of the task's most recent verified attempt: one per gate (by kind and gate name, so a command
+ * gate never shadows a built-in one; by command on legacy rows), latest wins.
  */
 export function latestVerifications(verifications: readonly Verification[], taskId: string): Verification[] {
   const mine = verifications.filter((v) => v.taskId === taskId && v.phase === 'task');
@@ -109,7 +109,9 @@ export function latestVerifications(verifications: readonly Verification[], task
   if (!last) return [];
   const group = mine.filter((v) => v.attemptId === last.attemptId);
   const byGate = new Map<string, Verification>();
-  for (const v of group.sort((a, b) => a.createdAt - b.createdAt)) byGate.set(v.gate || v.command, v);
+  for (const v of group.sort((a, b) => a.createdAt - b.createdAt)) {
+    byGate.set(isGateRow(v) ? `${v.kind ?? 'command'}:${v.gate}` : `legacy:${v.command}`, v);
+  }
   return [...byGate.values()];
 }
 

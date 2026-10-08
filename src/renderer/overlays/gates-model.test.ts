@@ -81,10 +81,34 @@ describe('round trip', () => {
     ['secrets with only an allowlist', { secrets: { allow: ['a/**', 'b/*.pem'] } }],
     ['secrets with an empty object', { secrets: {} }],
     ['empty commands', { commands: {} }],
+    [
+      'surrounding whitespace',
+      {
+        commands: { test: ' pnpm test ', e2e: { run: ' pnpm e2e', blocking: false } },
+        secrets: { allow: [' fixtures/**'] },
+      },
+    ],
   ])('keeps %s as it was', (_, gates) => {
     const form = formFromProjectGates(project(gates, ['pnpm test']));
     expect(gatesConfigFromForm(form)).toEqual({ gates });
     expect(isDirty(form)).toBe(false);
+  });
+
+  it('keeps untouched values verbatim when saving an unrelated edit, and trims edited ones', () => {
+    let form = formFromProjectGates(
+      project({
+        commands: { test: ' pnpm test ', lint: ' pnpm lint' },
+        secrets: { allow: [' fixtures/**', ' a/** '] },
+      }),
+    );
+    form = { ...form, scope: 'warn' };
+    form = updateCommand(form, row(form, 'lint').id, { run: ' pnpm lint --fix ' });
+    form = updateGlob(form, form.allow[1]?.id ?? '', ' b/** ');
+    expect(gatesConfigFromForm(form).gates).toEqual({
+      commands: { test: ' pnpm test ', lint: 'pnpm lint --fix' },
+      scope: 'warn',
+      secrets: { allow: [' fixtures/**', 'b/**'] },
+    });
   });
 });
 
@@ -224,6 +248,13 @@ describe('validateGatesForm', () => {
     expect(errors.commands[blank]?.name).toMatch(/name/);
     expect(errors.commands[bad]?.name).toMatch(/Lowercase/);
     expect(errors.commands[bad]?.run).toBeUndefined();
+  });
+
+  it('flags command gates named like a built-in gate, but not a suppressed detected one', () => {
+    let form = formFromProjectGates(project({ commands: { scope: 'pnpm check-scope' } }));
+    form = suppressGate(form, 'secrets');
+    const errors = validateGatesForm(form);
+    expect(errors.commands).toEqual({ [row(form, 'scope').id]: { name: expect.stringMatching(/built-in/) } });
   });
 
   it('flags empty commands and globs, but not suppressed names', () => {

@@ -122,10 +122,14 @@ function uniqueName(name: string, taken: ReadonlySet<string>): string {
   }
 }
 
+/** Names the built-in gates record under; a command gate never takes one (it gets a `-2` suffix instead). */
+export const BUILTIN_GATE_NAMES: readonly string[] = ['scope', 'secrets'];
+
 /**
  * The command gates to run, in order: legion.json `gates.commands` (`false` suppresses that name), legacy
  * `verify`, detected gates whose name isn't taken or suppressed (only with detection on), then the task's
- * commands that no gate already runs. A command runs once; colliding names get a `-2`, `-3`, ... suffix.
+ * commands that no gate already runs. A command runs once (the first source to name it wins); colliding
+ * names, and names of the built-in gates, get a `-2`, `-3`, ... suffix.
  */
 export function resolveGates(input: {
   readonly config: GatesConfigInput | null | undefined;
@@ -134,11 +138,12 @@ export function resolveGates(input: {
 }): GateSpec[] {
   const { config } = input;
   const gates: GateSpec[] = [];
-  const names = new Set<string>();
+  const names = new Set<string>(BUILTIN_GATE_NAMES);
   const commands = new Set<string>();
   /** Names `gates.commands` or `verify` define or suppress: never detected. */
   const reserved = new Set<string>();
   const add = (name: string, command: string, blocking: boolean, source: GateSource): void => {
+    if (commands.has(command.trim())) return;
     const unique = uniqueName(name, names);
     names.add(unique);
     commands.add(command.trim());
@@ -160,14 +165,11 @@ export function resolveGates(input: {
   }
   if (resolveGateSettings(config).detect) {
     for (const spec of input.detected) {
-      if (reserved.has(spec.name) || names.has(spec.name) || commands.has(spec.command.trim())) continue;
+      if (reserved.has(spec.name) || gates.some((g) => g.name === spec.name)) continue;
       add(spec.name, spec.command, spec.blocking, spec.source);
     }
   }
-  for (const command of input.taskCommands) {
-    if (commands.has(command.trim())) continue;
-    add(gateNameFor(command), command, true, 'task');
-  }
+  for (const command of input.taskCommands) add(gateNameFor(command), command, true, 'task');
   return gates;
 }
 
@@ -206,7 +208,7 @@ function isGateResult(v: VerifyResultInput | GateResult): v is GateResult {
 /** A structured result as is; a legacy verify result (task meta from before gates) as a blocking command gate. */
 export function normalizeGateResult(v: VerifyResultInput | GateResult): GateResult {
   if (isGateResult(v)) return v;
-  const kind = BUILTIN_KINDS[v.command] ?? 'command';
+  const kind = Object.hasOwn(BUILTIN_KINDS, v.command) ? (BUILTIN_KINDS[v.command] as GateKind) : 'command';
   const passed = v.exitCode === 0;
   return {
     command: v.command,

@@ -12,7 +12,7 @@ import { RpcError } from '@shared/rpc-transport';
 import { z } from 'zod';
 import { detectPackageManager, detectProjectGates } from '../git/detect';
 import { type LegionConfig, LegionConfigSchema } from '../git/provision';
-import { gateNameFor, resolveGateSettings, resolveGates } from '../orchestrator/core/gates';
+import { BUILTIN_GATE_NAMES, gateNameFor, resolveGateSettings, resolveGates } from '../orchestrator/core/gates';
 
 const FILE = 'legion.json';
 
@@ -99,6 +99,8 @@ function validateInput(input: WriteProjectGatesInput): { gates: GatesConfig | nu
     for (const [name, value] of Object.entries(input.gates.commands ?? {})) {
       const command = typeof value === 'string' ? value : value === false ? null : value?.run;
       if (command !== null && !command?.trim()) problems.push(`gate "${name}": empty command`);
+      if (command !== null && BUILTIN_GATE_NAMES.includes(name))
+        problems.push(`gate "${name}": a built-in gate's name`);
     }
     const secrets = input.gates.secrets;
     if (typeof secrets === 'object' && secrets !== null) {
