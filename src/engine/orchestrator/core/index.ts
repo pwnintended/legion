@@ -16,4 +16,5 @@ export * from './prompts';
 export * from './research';
 export * from './scheduler';
 export * from './scope';
+export * from './secrets';
 export * from './sensitive';
