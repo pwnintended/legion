@@ -1,12 +1,14 @@
-/** Worktree helpers of the lifecycle: integration worktree, task worktree restore, run-level verify. */
+/** Worktree helpers of the lifecycle: integration worktree, task worktree restore, run-level verify and gates. */
 import { mkdir, rm } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import type { Run, Task, TaskNode, VerificationPhase } from '@shared/domain';
+import { tail } from '@shared/util';
 import {
   branchExists,
   type CommandResult,
   cleanWorktree,
   createWorktree,
+  detectProjectGates,
   git,
   gitText,
   integrationBranchName,
@@ -16,11 +18,20 @@ import {
   reconcile,
   removeWorktree,
   resolveSha,
+  runShellCommand,
   runShellCommands,
   untrackedFiles,
   withRepoLock,
 } from '../git';
-import type { VerifyResultInput } from './core';
+import {
+  type GateResult,
+  type GateSpec,
+  gatesPassed,
+  resolveGateSettings,
+  resolveGates,
+  summaryLine,
+  type VerifyResultInput,
+} from './core';
 import { patchRunMeta, runMeta } from './meta';
 import type { Orchestrator } from './orchestrator';
 
@@ -117,6 +128,107 @@ export async function runVerification(
     });
   }
   return { ok: outcome.ok, results: outcome.results.map(toVerifyInput) };
+}
+
+/** Output a gate result keeps inline (the full output is stored separately, see `verifications.output`). */
+const GATE_TAIL_CHARS = 8000;
+/** Output a command gate collects in memory; the store keeps at most the last 1 MB of it. */
+const GATE_OUTPUT_CHARS = 1024 * 1024;
+
+/**
+ * The command gates `node` runs in `cwd`: legion.json `gates.commands`, legacy `verify`, the project gates
+ * detected in `cwd` (unless `gates.detect` is off) and the task's own verify commands (`node` null: the
+ * repo-level gates only).
+ */
+export async function resolveTaskGates(
+  o: Orchestrator,
+  run: Run,
+  node: TaskNode | null,
+  config: LegionConfig | null,
+  cwd: string,
+): Promise<GateSpec[]> {
+  const detected = resolveGateSettings(config).detect
+    ? await detectProjectGates(cwd).catch((error: unknown) => {
+        o.log.warn(`run ${run.id}: gate detection failed in ${cwd}: ${(error as Error).message}`);
+        return [];
+      })
+    : [];
+  o.assertOpen();
+  return resolveGates({ config, detected, taskCommands: node?.verify.commands ?? [] });
+}
+
+/** A finished command as a gate result of `spec`. */
+function commandGateResult(spec: GateSpec, r: CommandResult, output: string): GateResult {
+  const passed = r.exitCode === 0;
+  const fallback = passed
+    ? 'passed'
+    : r.timedOut
+      ? `timed out after ${Math.round(r.durationMs / 1000)}s`
+      : r.exitCode === null
+        ? 'killed'
+        : `exit code ${r.exitCode}`;
+  return {
+    command: spec.command,
+    exitCode: r.exitCode,
+    outputTail: tail(output, GATE_TAIL_CHARS),
+    durationMs: r.durationMs,
+    name: spec.name,
+    kind: 'command',
+    status: passed ? 'pass' : 'fail',
+    blocking: spec.blocking,
+    summary: r.exitCode === null ? fallback : summaryLine(output, fallback),
+    source: spec.source,
+  };
+}
+
+/**
+ * Run every command gate in `cwd` (no fail-fast: a failure doesn't skip the rest), then record one
+ * `Verification` per gate, the `builtins` (scope, secrets) included, with the full output. `ok` = no
+ * blocking gate failed.
+ */
+export async function runGates(
+  o: Orchestrator,
+  input: {
+    run: Run;
+    task: Task | null;
+    attemptId: string | null;
+    phase: VerificationPhase;
+    gates: readonly GateSpec[];
+    builtins?: readonly GateResult[];
+    cwd: string;
+  },
+): Promise<{ ok: boolean; results: GateResult[] }> {
+  const results: GateResult[] = [];
+  const record = (result: GateResult, output: string | null) => {
+    o.store.insertVerification({
+      runId: input.run.id,
+      taskId: input.task?.id ?? null,
+      attemptId: input.attemptId,
+      phase: input.phase,
+      command: result.command,
+      exitCode: result.exitCode,
+      outputTail: result.outputTail,
+      durationMs: Math.max(0, Math.round(result.durationMs ?? 0)),
+      gate: result.name,
+      kind: result.kind,
+      status: result.status,
+      summary: result.summary,
+      blocking: result.blocking,
+      output,
+    });
+    results.push(result);
+  };
+  for (const spec of input.gates) {
+    const r = await runShellCommand(spec.command, {
+      cwd: input.cwd,
+      env: { rootPath: input.run.repoPath, runId: input.run.id, taskId: input.task?.id ?? '_integration' },
+      maxOutputChars: GATE_OUTPUT_CHARS,
+    });
+    o.assertOpen();
+    record(commandGateResult(spec, r, r.outputTail), r.outputTail);
+  }
+  for (const builtin of input.builtins ?? []) record(builtin, builtin.outputTail || null);
+  return { ok: gatesPassed(results), results };
 }
 
 /** Copy/symlink files and run `legion.json` setup in the integration worktree, once per run. */

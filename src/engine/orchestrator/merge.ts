@@ -29,7 +29,14 @@ import {
   squashMergeIntoIntegration,
   touchedPaths,
 } from '../git';
-import { buildResolverPrompt, decideAfterMerge, globMatchesPath, taskStatusPath, writeGlobs } from './core';
+import {
+  buildResolverPrompt,
+  decideAfterMerge,
+  globMatchesPath,
+  normalizeGateResult,
+  taskStatusPath,
+  writeGlobs,
+} from './core';
 import type { AgentRun } from './live-session';
 import { patchTaskMeta, taskMeta } from './meta';
 import { AgentFailure, Closed, type Orchestrator, type ParkReason } from './orchestrator';
@@ -184,7 +191,7 @@ async function mergeTask(o: Orchestrator, run: Run, task: Task): Promise<Outcome
         fix: {
           findings: [],
           unmetCriteria: [],
-          failedVerify: failed,
+          failedVerify: failed.map(normalizeGateResult),
           humanNote: null,
           mergedIntegrationRef: integrationBranchName(run.id),
         },
