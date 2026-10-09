@@ -7,9 +7,10 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { Attempt } from '@shared/domain';
 import type { AgentEvent } from '@shared/events';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { FakeTurnContext } from '../adapters/fake';
 import type { McpBinding } from '../mcp';
+import { deferred } from '../util/async-queue';
 import { runMeta } from './meta';
 import {
   approve,
@@ -373,6 +374,51 @@ describe('the assistant', () => {
       () => rec.messages().some((m) => m.includes('the human asked for changes to plan v1: More mist please.')),
       'feedback relayed',
     );
+  }, 60_000);
+
+  it('passes a brief sent while the planner’s engine starts into its first turn', async () => {
+    const rec = recorder();
+    h = await startHarness({
+      script: (ctx) =>
+        ctx.opts.role === 'planner' ? [{ kind: 'delay', ms: 400 }, planOutput([node('T1')])] : script(ctx, 'claude'),
+      assistant: rec.assistant,
+    });
+    const harness = h;
+    const { orchestrator, store } = harness.engine;
+    const { run, assistant } = await chat(harness, 'Build the slice.');
+    await harness.waitFor(() => rec.turns.length === 1, 'first turn');
+    const asAssistant = binding(store.requireAttempt(assistant.id));
+
+    // Hold the planner's engine start: its attempt runs, its queue is drained, but it is not live yet.
+    const release = deferred<void>();
+    const starting = deferred<void>();
+    const start = harness.claude.start.bind(harness.claude);
+    vi.spyOn(harness.claude, 'start').mockImplementation(async (opts) => {
+      if (opts.role === 'planner') {
+        starting.resolve();
+        await release.promise;
+      }
+      return start(opts);
+    });
+    orchestrator.mcpHost.startImplementation(asAssistant, {
+      title: 'Slice',
+      brief: 'Build the slice.',
+      clarify: false,
+    });
+    await starting.promise;
+    const brief = await orchestrator.mcpHost.sendMessage(asAssistant, {
+      to: 'planner',
+      kind: 'brief',
+      body: 'Boreal forest, no port town.',
+      replyTo: null,
+    });
+    expect(store.getMessage(brief.id)?.deliveredAt).toBeNull();
+
+    release.resolve();
+    await harness.waitFor(() => store.getMessage(brief.id)?.deliveredAt, 'brief delivered');
+    const planner = harness.claude.sessions.filter((s) => s.opts.role === 'planner').at(-1);
+    expect(planner?.session.sent.map((m) => m.text).join('\n')).toContain('Boreal forest, no port town.');
+    await harness.waitFor(() => store.requireRun(run.id).status === 'awaiting_approval', 'plan');
   }, 60_000);
 
   it('reads the plan and revises it until it is signed off', async () => {

@@ -511,10 +511,20 @@ export class Orchestrator {
     const usable = this.registry.usable(params.engine);
     if (!usable.ok) throw new AgentFailure({ kind: 'auth', message: usable.reason });
     const engine: AgentEngine = this.registry.get(params.engine);
-    // The repository's prompt layer for this role (legion.json `prompts`, Settings → Agents), read at every start
-    // so a change reaches the next session. Read before the attempt exists: a message sent to it from here on
-    // must find it live or still queued, never queued after the queue was drained below.
-    const projectPrompt = (await this.config(params.run))?.prompts?.[params.role] ?? null;
+    // Everything slow comes before the attempt exists, so the window between draining its queue and its session
+    // going live (below) stays as short as the engine's own start: the repository's prompt layer for this role
+    // (legion.json `prompts`, Settings → Agents; read at every start so a change reaches the next session) and
+    // the project's MCP servers and skills for it (settings.access; a failure must not strand the attempt).
+    const [config, access] = await Promise.all([
+      this.config(params.run),
+      resolveAccess(this.settings(), params.run.projectId ?? null, params.role, this.ctx.env.HOME || homedir()).catch(
+        (error: unknown) => {
+          this.log.warn(`could not resolve agent access for ${params.role}: ${(error as Error).message}`);
+          return { extraMcp: {}, skills: null };
+        },
+      ),
+    ]);
+    const projectPrompt = config?.prompts?.[params.role] ?? null;
     this.assertOpen();
     const continued = params.resumeSessionId ? this.attemptsOfSession(params.run.id, params.resumeSessionId) : [];
     const parentAttemptId =
@@ -550,21 +560,11 @@ export class Orchestrator {
       }) ?? null;
     // Messages that arrived while this engine session was not running reach it with the resumed prompt. The
     // planner's are addressed to whichever planner attempt the sender saw, so it takes all of the run's.
-    const inherited = this.drainQueuedMessages(
+    const mailboxes = () =>
       params.role === 'planner'
         ? [attempt, ...this.store.listAttempts(params.run.id).filter((a) => a.role === 'planner')]
-        : [attempt, ...continued],
-    );
-    // The project's MCP servers and skills for this role (settings.access); a failure here must not strand the attempt.
-    const access = await resolveAccess(
-      this.settings(),
-      params.run.projectId ?? null,
-      params.role,
-      this.ctx.env.HOME || homedir(),
-    ).catch((error: unknown) => {
-      this.log.warn(`could not resolve agent access for ${params.role}: ${(error as Error).message}`);
-      return { extraMcp: {}, skills: null };
-    });
+        : [attempt, ...continued];
+    const inherited = this.drainQueuedMessages(mailboxes());
     // The human's layers over the role's system prompt: their replacement and additions, then the repository's.
     const custom = this.settings().roles[params.role].prompt;
     const opts: SessionOptions = {
@@ -618,6 +618,19 @@ export class Orchestrator {
     this.updatePower();
     if (session.id && session.id !== attempt.sessionId) this.store.updateAttempt(attempt.id, { sessionId: session.id });
     run.start();
+    // A message sent while the engine started found the attempt running but not live, so it was queued after the
+    // queue above was drained: pass it into the first turn now, as a live message would have been.
+    const late = this.drainQueuedMessages(
+      mailboxes(),
+      params.role === 'planner' ? PLANNER_STEER_NOTE : LIVE_MESSAGE_NOTE,
+    );
+    if (late) {
+      run.steer(late, 'next').catch((error: unknown) => {
+        this.log.warn(
+          `run ${params.run.id}: could not pass queued messages to ${params.role}: ${(error as Error).message}`,
+        );
+      });
+    }
     return run;
   }
 
@@ -627,7 +640,7 @@ export class Orchestrator {
   }
 
   /** Queued messages addressed to any of `attempts`, marked delivered and rendered for a prompt (null = none). */
-  private drainQueuedMessages(attempts: readonly Attempt[]): string | null {
+  private drainQueuedMessages(attempts: readonly Attempt[], note?: string): string | null {
     const seen = new Set<string>();
     const queued: AgentMessage[] = [];
     for (const attempt of attempts) {
@@ -638,7 +651,10 @@ export class Orchestrator {
     if (queued.length === 0) return null;
     queued.sort((a, b) => a.createdAt - b.createdAt || a.id.localeCompare(b.id));
     this.store.markDelivered(queued.map((m) => m.id));
-    return renderMessages(queued.map((m) => messageLine(m, this.agentName(m.fromAttemptId))));
+    return renderMessages(
+      queued.map((m) => messageLine(m, this.agentName(m.fromAttemptId))),
+      note,
+    );
   }
 
   /** How other agents refer to an attempt: `coder of T3 (att_…)`. */
