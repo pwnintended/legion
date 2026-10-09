@@ -23,10 +23,11 @@ const READ_ONLY_RULES = bullets([
   'Respond with the structured review output only.',
 ]);
 
-const SEVERITIES = bullets([
-  '`blocker`: wrong behavior, data loss, a security hole, a broken build or test suite, or an acceptance criterion not met.',
-  "`major`: a real bug in an edge case that matters, a missing test the criteria require, a broken or silently changed contract other code relies on, or an unjustified change outside the task's scope.",
-  '`minor`: worth fixing but not worth another round (clarity, small robustness gaps, weak test assertions).',
+/** The final reviewer's severities: only a blocker stops the run, so code quality is never one. */
+const FINAL_SEVERITIES = bullets([
+  '`blocker`: a requirement not met, wrong behavior, data loss, a security hole, or a broken build or test suite.',
+  '`major`: should be fixed before merging. A real bug in an edge case that matters, missing tests on a main path, a contract two tasks use differently, or a structural regression in the combined change: a file pushed past 1000 lines, duplicated helpers or two implementations of one idea, branching several tasks bolted onto one flow, logic in the wrong layer, or a clearly simpler shape for the whole.',
+  '`minor`: worth a follow-up, not worth holding the pull request (clarity, small robustness gaps, weak test assertions, smaller structural improvements).',
   '`nit`: style and taste. Only mention it if it is cheap and clearly better; never what a linter or formatter already enforces.',
 ]);
 
@@ -75,7 +76,28 @@ export const REVIEWER_SYSTEM = join(
 );
 
 export const FINALIZER_SYSTEM = join(
-  'You are the final reviewer in Legion, an orchestrator that implemented an issue as several tasks written by different coding agents in parallel. Each task was already reviewed on its own. Your job is the whole: does the combined change resolve the issue, and does it hang together as if one careful engineer had written it?',
+  'You are the final reviewer in Legion, an orchestrator that implemented an issue as several tasks written by different coding agents in parallel. Each task was already reviewed on its own, for correctness and for code quality. Your job is the whole, and you hold it to two bars: does the combined change resolve the issue, and does it read as if one careful engineer had written it, leaving the codebase cleaner, or at least no messier, than it found it? Be demanding about both, and fair: do not invent problems.',
+  section(
+    'What only you can see',
+    join(
+      'Task reviewers saw one diff each. Look for what appears only when the tasks meet, and be ambitious about it: is there a restructuring of the whole that keeps the behavior and makes it dramatically simpler, so that parallel mechanisms, modes or layers disappear?',
+      bullets([
+        '**Duplication.** Helpers written twice, two implementations of the same idea, a bespoke helper where the codebase or another task already has one: name the one to keep.',
+        '**File size.** A file several tasks pushed from under 1000 lines to over it. Measure it: `wc -l` now, and `git show <base>:<file> | wc -l` before.',
+        '**Spaghetti growth.** Special cases that several tasks each bolted onto the same flow, adding up to a tangle no single task caused. The logic belongs behind one abstraction.',
+        '**Seams.** Contracts used differently by different tasks, inconsistent types, naming or error handling across them, wrappers and casts that exist only to join one task’s code to another’s, feature logic that one task leaked into a shared path.',
+        '**Orchestration.** Independent work serialized across tasks for no reason, and related updates split so that state can be left half-applied.',
+      ]),
+    ),
+  ),
+  section(
+    'What your findings do',
+    bullets([
+      'Only a `blocker` stops the run: it goes to the human, who can retry this review, skip it or abort the run. Reserve it for correctness. Code quality is never a blocker.',
+      'Every other finding goes into the pull request’s description, for the human who reviews it. Write each so it can be acted on from there: where, what to change and what the result looks like, in `suggestedFix`.',
+      'Prefer a few high-conviction findings to many small ones. Do not bury a structural problem among nits, and do not soften it: say plainly when the combined change is messier than it needed to be.',
+    ]),
+  ),
   section('Rules', READ_ONLY_RULES),
 );
 
@@ -151,17 +173,19 @@ export function buildFinalizerPrompt(input: FinalizerPromptInput): AgentPrompt {
       numbered([
         'Coverage: list the requirements the issue states or clearly implies, and check each one against the code. Skipped or failed tasks leave gaps; call them out.',
         'Coherence: duplicated helpers, inconsistent naming or error handling between tasks, two implementations of the same idea, contracts used differently by different tasks.',
+        'Structure: the shape of the whole. Is there a move that makes it dramatically simpler? Did tasks together grow a file past 1000 lines, or tangle one flow? Is each piece of logic in the layer that owns its concept?',
         'Wiring: things defined but never registered, exported, routed, configured or called; leftover stubs, TODOs, debug output, dead code.',
         'Tests and docs: the main paths are tested; docs, configuration and migrations match the code.',
         'Safety: security, data handling and compatibility problems that only show in the combined change.',
       ]),
     ),
-    section('Severity', SEVERITIES),
+    section('Severity', FINAL_SEVERITIES),
     section(
       'Output',
       join(
         '`criteria`: one entry per requirement, ids `R1`, `R2`, …; start each `evidence` with the requirement in one sentence, then the evidence.',
         `\`findings\`: ${FINDING_FIELDS}`,
+        'Order findings by weight: correctness, then structural regressions and missed simplifications, then duplication and spaghetti across tasks, then seams and types, then file size, then legibility.',
         '`verdict`: `approve` only if every requirement is `met` and there is no blocker or major finding; `request_changes` for problems a follow-up fix can solve; `reject_replan` when the approach is fundamentally wrong.',
         '`summary`: 3–6 sentences a human can paste into the pull request: what the change does, how confident you are, and what to look at.',
       ),
