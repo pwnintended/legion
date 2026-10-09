@@ -5,6 +5,7 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { Run } from '@shared/domain';
+import { runShort } from '@shared/ids';
 import { afterEach, describe, expect, it } from 'vitest';
 import type { FakeTurnContext } from '../adapters/fake';
 import { runMeta } from './meta';
@@ -31,9 +32,10 @@ function recorder() {
   return { turns, script };
 }
 
-async function startSession(harness: Harness, prompt = 'Add a notes file.') {
+async function startSession(harness: Harness, prompt = 'Add a notes file.', worktree = false) {
   const run = await harness.client.call('runs.session', {
     repoPath: harness.repo.path,
+    worktree,
     prompt,
     engine: 'claude',
     model: null,
@@ -92,6 +94,28 @@ describe('a direct session', () => {
     expect(attempts.map((a) => a.role)).toEqual(['session', 'session']);
     expect(attempts[1]?.sessionId).toBe(attempts[0]?.sessionId);
     await stopped(harness, attempts[1]?.id as string);
+  }, 60_000);
+
+  it('works in a worktree of its own when asked, leaving the checkout alone', async () => {
+    const rec = recorder();
+    h = await startHarness({ script: rec.script });
+    const harness = h;
+    const { run, attempt } = await startSession(harness, 'Add a notes file.', true);
+    expect(run.integrationBranch).toBe(`legion/${runShort(run.id)}/integration`);
+    await harness.waitFor(() => rec.turns.length === 1, 'first turn');
+    const worktree = harness.engine.orchestrator.integrationPath(run);
+    expect(rec.turns[0]?.opts.cwd).toBe(worktree);
+    expect(rec.turns[0]?.opts.systemPrompt).toContain('worktree');
+    await harness.waitFor(() => existsSync(join(worktree, 'notes.txt')), 'the edit');
+    expect(existsSync(join(harness.repo.path, 'notes.txt'))).toBe(false);
+    expect(await harness.repo.git('rev-parse', '--abbrev-ref', 'HEAD')).toBe('main');
+    await stopped(harness, attempt.id);
+
+    // Archiving keeps the worktree with its uncommitted edit.
+    const archived = await harness.client.call('runs.archive', { runId: run.id });
+    expect(archived.status).toBe('done');
+    expect(archived.archiveReport?.kept.map((k) => k.kind)).toContain('worktree');
+    expect(existsSync(join(worktree, 'notes.txt'))).toBe(true);
   }, 60_000);
 
   it('is not woken by an engine restart while it waits for the human', async () => {

@@ -12,6 +12,8 @@
  *   overlays) are dispatched from the keyboard; everything else (⌘⏎ Focus layout, ⌘⌥H, plain tile keys, ...)
  *   passes through untouched to the overlay, so e.g. ⌘⏎ submits the composer even with focus on a button.
  *   `executeCommand` (palette, app menu) is not guarded: those callers decide for themselves.
+ * - The shortcuts sheet (? / ⌘?) owns every key but its own toggle: pressing a chord there looks it up instead
+ *   of running it.
  */
 import { useSyncExternalStore } from 'react';
 import { useStore } from 'zustand';
@@ -248,6 +250,7 @@ export function keyGuard(
   where: { modChord: boolean; inInput: boolean; inTerminal: boolean },
 ): boolean {
   if (ctx.ui.overlay !== null && !command.inOverlay) return false;
+  if (ctx.ui.overlay === 'keys' && command.id !== 'help.keys') return false;
   if (!where.modChord && where.inTerminal) return false;
   if (where.inInput && (where.modChord ? command.inInput === false : command.inInput !== true)) return false;
   return isEnabled(command, ctx);
@@ -483,6 +486,15 @@ export function builtinCommands(): Command[] {
       category: 'Overlay',
       keybinding: 'Mod+K',
       run: () => actions.toggleOverlay('palette'),
+    },
+    {
+      id: 'help.keys',
+      inOverlay: true,
+      title: 'Keyboard shortcuts',
+      category: 'App',
+      // ? when nothing is being typed; ⌘? everywhere, the composers and terminals included.
+      keybinding: ['Shift+?', 'Mod+Shift+?'],
+      run: () => actions.toggleOverlay('keys'),
     },
     {
       id: 'settings.open',

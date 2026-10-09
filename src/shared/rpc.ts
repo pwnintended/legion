@@ -705,11 +705,16 @@ export const rpcContract = {
   },
   /**
    * Start a direct session: a run in `session` whose agent (role `session`, the engine chosen) works in the project's
-   * checkout itself, no worktree, no plan; the human talks to it with `sessions.send`. Archiving it ends it as `done`.
+   * checkout itself, no plan; the human talks to it with `sessions.send`. Archiving it ends it as `done`. With
+   * `worktree`, it works in a worktree of its own instead (the run's integration worktree, on
+   * `legion/<run>/integration` cut from `baseRef`, default the checked-out branch), and the checkout is left alone.
    */
   'runs.session': {
     input: z.object({
       repoPath: z.string().min(1),
+      /** The branch the worktree starts from (with `worktree`; ignored without it). */
+      baseRef: z.string().nullish(),
+      worktree: z.boolean().optional(),
       prompt: z.string().min(1),
       engine: EngineKindSchema,
       model: z.string().nullable(),

@@ -1,6 +1,7 @@
 /**
  * Direct sessions (`runs.session`, ⌘⇧N): one agent (role `session`) the human talks to, working in the project's
- * checkout itself. No worktree, no plan, no review: the run stays in `session` until it is archived or stopped.
+ * checkout itself or, when asked, in a worktree of its own (the run's integration worktree). No plan, no review: the
+ * run stays in `session` until it is archived or stopped.
  * The agent's process lives only while it works: when its turn ends the loop below stops it (the attempt
  * succeeds), and the human's next `sessions.send` resumes the engine session with that message, as a new
  * attempt. A turn cut off by a crash or an engine restart is resumed at once; an idle session is not woken.
@@ -12,22 +13,28 @@ import type { Run } from '@shared/domain';
 import type { SessionAttachment } from '@shared/engine';
 import type { RpcInput } from '@shared/rpc';
 import { RpcError } from '@shared/rpc-transport';
+import { integrationBranchName } from '../git';
 import type { AgentPrompt } from './core';
 import type { AgentRun } from './live-session';
 import { patchRunMeta, runMeta } from './meta';
 import { AgentFailure, Closed, type Orchestrator, type SessionLoopHandle, sleep } from './orchestrator';
 import { insertRun } from './planner';
+import { acquireRepo } from './repo-gc';
+import { ensureIntegrationWorktree, provisionIntegration } from './worktrees';
 
 /** Consecutive failures to open or keep the session before the run fails. */
 export const MAX_SESSION_FAILURES = 3;
 
-/** `runs.session`: a run in `session` whose first message is the prompt; its agent opens at once. */
+/**
+ * `runs.session`: a run in `session` whose first message is the prompt; its agent opens at once. With `worktree`
+ * the run gets its integration branch and worktree (cut from the base) before the agent opens there.
+ */
 export async function createSession(o: Orchestrator, input: RpcInput<'runs.session'>): Promise<Run> {
   const run = await insertRun(
     o,
     {
       repoPath: input.repoPath,
-      baseRef: null,
+      baseRef: input.worktree ? (input.baseRef ?? null) : null,
       title: null,
       issueText: input.prompt,
       issueUrl: null,
@@ -37,18 +44,41 @@ export async function createSession(o: Orchestrator, input: RpcInput<'runs.sessi
     },
     'session',
   );
+  if (!input.worktree) {
+    o.startSession(run.id);
+    return run;
+  }
+  try {
+    await ensureIntegrationWorktree(o, run);
+  } catch (error) {
+    const message = `could not create the worktree: ${(error as Error).message}`;
+    o.store.transitionRun(run.id, 'session', 'failed', { error: message });
+    throw new RpcError('failed_precondition', message);
+  }
+  await acquireRepo(o, run);
+  const next = o.store.updateRun(run.id, { integrationBranch: integrationBranchName(run.id) });
   o.startSession(run.id);
-  return run;
+  return next;
+}
+
+/** Where the session's agent works: its worktree (a run with an integration branch) or the checkout itself. */
+export function sessionCwd(o: Orchestrator, run: Run): string {
+  return run.integrationBranch ? o.integrationPath(run) : run.repoPath;
 }
 
 function sessionPrompt(run: Run, text: string): AgentPrompt {
   const project = basename(run.repoPath);
+  const where = run.integrationBranch
+    ? [
+        `You are working in a git worktree of ${project} of your own (branch ${run.integrationBranch}, cut from ${run.baseRef}), in a conversation with the human.`,
+        "Do what they ask here, and answer their questions. Your edits stay in this worktree; the human's own checkout is not touched.",
+      ]
+    : [
+        `You are working directly in the human's own checkout of ${project} (branch ${run.baseRef}), in a conversation with them.`,
+        'Do what they ask here, and answer their questions. Your edits land in their working tree as they are.',
+      ];
   return {
-    systemPrompt: [
-      `You are working directly in the human's own checkout of ${project} (branch ${run.baseRef}), in a conversation with them.`,
-      'Do what they ask here, and answer their questions. Your edits land in their working tree as they are.',
-      "Don't commit or push: the human does that.",
-    ].join(' '),
+    systemPrompt: [...where, "Don't commit or push: the human does that."].join(' '),
     prompt: text,
   };
 }
@@ -171,6 +201,11 @@ async function openSession(o: Orchestrator, run: Run, input: SessionInput): Prom
   await o.waitForEngine(engine);
   const prompt = sessionPrompt(run, input.text);
   try {
+    // A worktree session: its worktree back if it went missing, provisioned (copies, setup) once.
+    if (run.integrationBranch) {
+      await ensureIntegrationWorktree(o, run);
+      await provisionIntegration(o, run, await o.config(run));
+    }
     const session = await o.openSession({
       run,
       taskId: null,
@@ -180,7 +215,7 @@ async function openSession(o: Orchestrator, run: Run, input: SessionInput): Prom
       effort: o.settings().roles.session.effort,
       prompt,
       outputSchema: null,
-      cwd: run.repoPath,
+      cwd: sessionCwd(o, run),
       resumeSessionId,
       parentAttemptId: null,
       attachments: input.attachments,

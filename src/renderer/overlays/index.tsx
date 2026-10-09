@@ -1,5 +1,5 @@
 /**
- * Overlay host, mounted once by App: shows the session composer (⌘⇧N), the run composer, palette (⌘K), settings, ... from
+ * Overlay host, mounted once by App: shows the session composer (⌘⇧N), the run composer, palette (⌘K), settings, the shortcuts sheet (?), ... from
  * `uiStore.overlay`, restores focus when it closes, and renders transient toasts.
  */
 import { AnimatePresence, motion } from 'motion/react';
@@ -11,6 +11,7 @@ import { AddProjectOverlay } from './AddProject';
 import { ComposerOverlay, SessionComposerOverlay } from './Composer';
 import { ConfirmHost } from './Confirm';
 import { GoToFileOverlay } from './GoToFile';
+import { KeysOverlay } from './Keys';
 import { useToasts } from './nav';
 import './overlays.css';
 import './projects.css';
@@ -24,6 +25,7 @@ const VIEWS: Record<Overlay, () => React.JSX.Element> = {
   settings: SettingsOverlay,
   addProject: AddProjectOverlay,
   goto: GoToFileOverlay,
+  keys: KeysOverlay,
 };
 
 /** Put focus back where it was (a rail button, ...) or on the focused tile once an overlay closes. */

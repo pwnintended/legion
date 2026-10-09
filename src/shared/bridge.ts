@@ -29,6 +29,7 @@ export const COMMAND_IDS = [
   'project.add',
   'file.goto',
   'project.search',
+  'help.keys',
 ] as const;
 export type CommandId = (typeof COMMAND_IDS)[number];
 

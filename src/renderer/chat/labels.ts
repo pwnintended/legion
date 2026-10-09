@@ -5,6 +5,7 @@ import type { DataState } from '../app/data';
 import { latestPlan } from '../app/data';
 import { displayEngine, formatCost } from '../layout/describe';
 import { approvalLabel } from '../tiles/session/approval';
+import { askedQuestions, sentAnswers } from '../tiles/session/user-input';
 
 export interface AgentLabel {
   /** `T3 · Enrollment UI`, `Lead`, `Researcher`. */
@@ -57,6 +58,12 @@ export const DECISION_TITLE: Record<InboxItem['kind'], string> = {
   budget: 'Budget',
 };
 
+/** A card's title; an agent's question through its engine's own tool reads as a question, not an approval. */
+export function decisionTitle(item: InboxItem): string {
+  if (item.kind === 'approval' && askedQuestions(item.payload.tool, item.payload.input)) return DECISION_TITLE.question;
+  return DECISION_TITLE[item.kind];
+}
+
 const ESCALATION_DONE: Record<string, string> = {
   retry: 'retried',
   restart: 'started over',
@@ -77,6 +84,15 @@ export function receiptText(item: InboxItem, taskLabel: string | null): string {
       const subject = approvalLabel(item.payload.tool, item.payload.input);
       const decision = resolutionOf(item)?.decision;
       if (!decision) return `${subject}: lapsed when the agent's turn ended`;
+      const questions = askedQuestions(item.payload.tool, item.payload.input);
+      if (questions) {
+        if (decision.behavior === 'deny') return `Skipped: ${subject}`;
+        const answers = sentAnswers(item.payload.tool, decision.updatedInput);
+        // A secret answer (Codex `isSecret`) stays off the receipt.
+        return answers.length && !questions.some((q) => q.secret)
+          ? `Answered: ${answers.join('; ')}`
+          : `Answered: ${subject}`;
+      }
       if (decision.behavior === 'deny') return `Denied ${subject}`;
       return decision.scope === 'session' ? `Allowed ${subject} for the rest of ${task}` : `Allowed ${subject}`;
     }

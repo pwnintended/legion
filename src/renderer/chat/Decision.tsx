@@ -30,7 +30,8 @@ import {
   useMergeGate,
 } from '../tiles/session/escalation';
 import { Markdown } from '../tiles/session/Markdown';
-import { agentLabel, DECISION_TITLE, receiptText, receiptTone } from './labels';
+import { askedQuestions, QuestionForm } from '../tiles/session/user-input';
+import { agentLabel, decisionTitle, receiptText, receiptTone } from './labels';
 import { AgentName } from './Presentation';
 
 function resolve(item: InboxItem, resolution: InboxResolution, choice = 'accept') {
@@ -112,11 +113,11 @@ function DecisionCard({ item }: { item: InboxItem }) {
     <section
       className="ch-card ch-decision"
       data-kind={item.kind}
-      aria-label={`${DECISION_TITLE[item.kind]} waiting for you`}
+      aria-label={`${decisionTitle(item)} waiting for you`}
       data-testid="chat-decision"
     >
       <header className="ch-card-head">
-        <Chip tone={KIND_TONE[item.kind]}>{DECISION_TITLE[item.kind]}</Chip>
+        <Chip tone={KIND_TONE[item.kind]}>{decisionTitle(item)}</Chip>
         {agent ? <AgentName agent={agent} /> : null}
         <time className="ch-time">{formatStamp(item.createdAt)}</time>
         <button
@@ -171,6 +172,13 @@ function DecisionBody({ item }: { item: InboxItem }) {
 }
 
 function ApprovalBody({ item }: { item: InboxItemOf<'approval'> }) {
+  const questions = askedQuestions(item.payload.tool, item.payload.input);
+  if (questions)
+    return (
+      <div className="ch-card-body">
+        <QuestionForm item={item} questions={questions} compact />
+      </div>
+    );
   const subject = describeApproval(item.payload.tool, item.payload.input);
   return (
     <div className="ch-card-body">

@@ -7,6 +7,7 @@ import { Kbd } from '../../chrome/ui';
 import { type ApprovalChoice, resolveApproval, usePendingResolution } from './actions';
 import { Glyph } from './glyphs';
 import { commandText, toolPath } from './timeline';
+import { askedQuestions, QuestionForm, questionsLabel } from './user-input';
 
 export type ApprovalSubject =
   | { kind: 'command'; command: string }
@@ -61,8 +62,10 @@ export function describeApproval(tool: string, input: unknown): ApprovalSubject 
   return { kind: 'other', tool, text };
 }
 
-/** One-line label: `pnpm add …` / `Edit web/src/x.ts` / `WebFetch`. */
+/** One-line label: `pnpm add …` / `Edit web/src/x.ts` / `WebFetch` / a question's header. */
 export function approvalLabel(tool: string, input: unknown): string {
+  const questions = askedQuestions(tool, input);
+  if (questions) return questionsLabel(questions);
   const subject = describeApproval(tool, input);
   if (subject.kind === 'command') return subject.command;
   if (subject.kind === 'edit') return `Edit ${subject.path}`;
@@ -166,6 +169,18 @@ export function ApprovalButtons({
 
 /** The peach inline card in the session timeline. */
 export function ApprovalCard({ item, focused }: { item: InboxItemOf<'approval'>; focused: boolean }) {
+  const questions = askedQuestions(item.payload.tool, item.payload.input);
+  if (questions)
+    return (
+      <section className="ap-card" data-testid="approval-card" aria-label="Question for you">
+        <div className="ap-title">
+          <Glyph name="warn" size={14} />
+          {questions.length > 1 ? 'Questions for you' : 'Question for you'}
+          <span className="ap-tool mono">{item.payload.tool}</span>
+        </div>
+        <QuestionForm item={item} questions={questions} />
+      </section>
+    );
   const subject = describeApproval(item.payload.tool, item.payload.input);
   return (
     <section className="ap-card" data-testid="approval-card" aria-label="Approval needed">

@@ -22,6 +22,7 @@ import {
   type Task,
 } from '@shared/domain';
 import type { AgentEvent, ServerEvent, ServerEventBody } from '@shared/events';
+import { runShort } from '@shared/ids';
 import type {
   DiscoveredRepo,
   ProcedureName,
@@ -850,7 +851,7 @@ export class DemoClient implements EngineClient {
   private createSession(input: RpcInput<'runs.session'>): Run {
     const created = this.createRun({
       repoPath: input.repoPath,
-      baseRef: null,
+      baseRef: input.worktree ? (input.baseRef ?? null) : null,
       title: null,
       issueText: input.prompt,
       issueUrl: null,
@@ -859,7 +860,10 @@ export class DemoClient implements EngineClient {
       skipClarify: false,
       attachmentIds: input.attachmentIds,
     });
-    const run = this.updateRun(created.id, { status: 'session' });
+    const run = this.updateRun(created.id, {
+      status: 'session',
+      integrationBranch: input.worktree ? `legion/${runShort(created.id)}/integration` : null,
+    });
     const attempt: Attempt = {
       id: `att_${run.id.slice(4)}s`,
       runId: run.id,

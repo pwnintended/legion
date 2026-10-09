@@ -10,6 +10,7 @@ import { ApprovalCard, approvalLabel } from './approval';
 import { Glyph, type GlyphName } from './glyphs';
 import { Markdown } from './Markdown';
 import type { TimelineRow } from './timeline';
+import { askedQuestions } from './user-input';
 
 export interface RowContext {
   engine: EngineKind;
@@ -269,6 +270,7 @@ function ApprovalRow({
   const resolution = decision;
   const allowed = decision?.behavior === 'allow';
   const scope = decision?.behavior === 'allow' ? decision.scope : null;
+  const asked = askedQuestions(row.tool, row.input) !== null;
   return (
     <Ev
       icon={glyph(resolution ? (allowed ? 'check' : 'x') : 'shield')}
@@ -276,7 +278,17 @@ function ApprovalRow({
     >
       <div className="ev-note" data-testid="approval-resolved">
         <span className="ev-note-label">
-          {resolution ? (allowed ? (scope === 'session' ? 'Accepted for task' : 'Accepted') : 'Denied') : 'Asked'}
+          {resolution
+            ? asked
+              ? allowed
+                ? 'Answered'
+                : 'Skipped'
+              : allowed
+                ? scope === 'session'
+                  ? 'Accepted for task'
+                  : 'Accepted'
+                : 'Denied'
+            : 'Asked'}
         </span>
         <span className="mono ev-note-mono">{label}</span>
       </div>

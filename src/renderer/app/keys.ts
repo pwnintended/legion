@@ -68,6 +68,8 @@ function eventKey(event: KeyEventLike): string {
   // Brackets by position, so ⇧ (which makes them braces) doesn't change the key.
   if (event.code === 'BracketLeft') return '[';
   if (event.code === 'BracketRight') return ']';
+  // ⌘⇧/ can report the unshifted '/': with Shift it is still '?'.
+  if (event.code === 'Slash' && event.shiftKey && event.key === '/') return '?';
   if (event.key.length === 1) return event.key.toUpperCase();
   return event.key;
 }
@@ -142,16 +144,32 @@ export function paneBindings(key: string, extra = '', mac = IS_MAC): string[] {
   return chords;
 }
 
+/** Keys that are typed with Shift on every layout, so their caps leave ⇧ out (`Shift+?` is `?`, `Mod+Shift+?` `⌘?`). */
+const SHIFTED_KEYS = new Set(['?']);
+
 /** `Mod+Alt+H` → `⌘⌥H` (mac) / `Ctrl+Alt+H`;`Mod+Ctrl+H` → `⌃⌘H` / `Ctrl+Super+H` (`Ctrl+Win+H`). */
 export function formatChord(binding: string, mac = IS_MAC): string {
   const chord = parseChord(binding);
   const key = SYMBOLS[chord.key] ?? chord.key;
-  if (mac)
-    return `${chord.ctrl ? '⌃' : ''}${chord.alt ? '⌥' : ''}${chord.shift ? '⇧' : ''}${chord.mod ? '⌘' : ''}${key}`;
+  const shift = chord.shift && !SHIFTED_KEYS.has(chord.key);
+  if (mac) return `${chord.ctrl ? '⌃' : ''}${chord.alt ? '⌥' : ''}${shift ? '⇧' : ''}${chord.mod ? '⌘' : ''}${key}`;
   const { ctrl, meta } = physicalModifiers(chord, mac);
-  return [ctrl ? 'Ctrl' : '', meta ? META_NAME : '', chord.alt ? 'Alt' : '', chord.shift ? 'Shift' : '', key]
+  return [ctrl ? 'Ctrl' : '', meta ? META_NAME : '', chord.alt ? 'Alt' : '', shift ? 'Shift' : '', key]
     .filter(Boolean)
     .join('+');
+}
+
+/** The cap for a pressed key, as `formatChord` would write its binding: ⌘⇧K, ⌥J, Ctrl+Alt+H. */
+export function formatEvent(event: KeyEventLike, mac = IS_MAC): string {
+  const key = eventKey(event);
+  const mods = mac
+    ? [event.ctrlKey && 'Ctrl', event.metaKey && 'Mod']
+    : [event.ctrlKey && 'Mod', event.metaKey && 'Ctrl'];
+  const parts = [...mods, event.altKey && 'Alt', event.shiftKey && 'Shift'].filter(Boolean);
+  // `+` and space can't sit in a binding string: show them as they are.
+  if (key === '+' || key === ' ')
+    return `${parts.length ? formatModifiers(parts.join('+'), mac) : ''}${key === ' ' ? 'Space' : '+'}`;
+  return formatChord([...parts, key].join('+'), mac);
 }
 
 /** The modifiers of a binding as a prefix for hints: `Mod+Alt` → `⌘⌥` (mac) / `Ctrl+Alt+`. */

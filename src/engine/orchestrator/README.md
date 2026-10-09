@@ -21,7 +21,7 @@ applies it with CAS transitions through `Store`, runs git through `engine/git`, 
 | `lead.ts` | the implementation lead (§8.4): the per-run lead loop (open, wake with news, resume after a crash, give up) and its tools (`plan_status`, `add_task`, `amend_task`, `cancel_task`, amendment sign-off) |
 | `research.ts` | research agents (§8.5): `spawn_research` (caps, depth), the driver that posts the agent's `ResearchReport` to its parent |
 | `assistant.ts` | the assistant (§8.6): `runs.chat`, the per-run assistant loop (wakes on messages, status changes, inbox items), `start_implementation`, `run_status` |
-| `session-run.ts` | direct sessions (§8.8): `runs.session`, the per-run loop of the one `session` agent in the checkout (stopped between turns, resumed by the human's next message or after a restart cut off its turn, given up), ending it on archive |
+| `session-run.ts` | direct sessions (§8.8): `runs.session`, the per-run loop of the one `session` agent in the checkout or its own worktree (stopped between turns, resumed by the human's next message or after a restart cut off its turn, given up), ending it on archive |
 | `registry.ts` | `EngineRegistry` (Claude, Codex, fakes; probes, usability) |
 | `pr-host.ts` | `PrHost` (`ghPrHost` for the app, `FakePrHost` for tests and demo mode) |
 | `demo.ts` | the scripted agent of `LEGION_FAKE_ENGINES=1` |

@@ -35,7 +35,7 @@ import { buildTimeline, type TimelineRow } from '../tiles/session/timeline';
 import '../tiles/session/session.css';
 import { ChatComposer } from './Composer';
 import { Decision } from './Decision';
-import { agentLabel, DECISION_TITLE } from './labels';
+import { agentLabel, decisionTitle } from './labels';
 import { AgentName, Presentation } from './Presentation';
 import { Progress } from './Progress';
 import {
@@ -635,7 +635,7 @@ function NeedsYou({ runId, open }: { runId: string; open: ReturnType<typeof open
       <span className="ch-needs-items">
         {open.slice(0, 4).map(({ item, key }) => (
           <button key={key} type="button" className="ch-needs-chip" onClick={() => actions.focusChatItem(runId, key)}>
-            {DECISION_TITLE[item.kind]}
+            {decisionTitle(item)}
             {item.taskId && tasks[item.taskId] ? <span className="mono"> {tasks[item.taskId]?.nodeId}</span> : null}
           </button>
         ))}

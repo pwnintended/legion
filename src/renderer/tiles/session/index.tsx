@@ -51,6 +51,7 @@ import { Row, type RowContext, SentRow } from './Rows';
 import './session.css';
 import { formatChord } from '../../app/keys';
 import { entryTs, type TimelineRow, timelineCursor, type Working } from './timeline';
+import { askedQuestions } from './user-input';
 
 // ---------------------------------------------------------------------------------------------
 // Keyboard: a / A / d answer the focused session's pending approval
@@ -65,6 +66,8 @@ function focusedApproval(ctx: CommandContext) {
     openInbox(ctx.data.inbox, ctx.activeRunId).find(
       (i): i is Extract<InboxItem, { kind: 'approval' }> =>
         i.kind === 'approval' &&
+        // A question needs its answers: A/⇧A/D would send none.
+        askedQuestions(i.payload.tool, i.payload.input) === null &&
         ((params.attemptId !== null && i.attemptId === params.attemptId) ||
           (params.taskId !== null && i.taskId === params.taskId)),
     ) ?? null
@@ -246,6 +249,8 @@ export default function SessionTile({ tileId, runId, params, focused }: TileProp
   const fallback = useData((s) => resolveSessionAttempt(s, params));
   const attempt = (chosen ? attempts.find((a) => a.id === chosen) : null) ?? fallback;
   const node = useTaskNode(runId, task?.nodeId);
+  // A direct session started in a worktree works on the run's integration branch, not in the checkout.
+  const inWorktree = useData((s) => !!(runId && s.runs[runId]?.integrationBranch));
 
   const transcript = useTranscript(attempt?.id);
   // Incremental: a live event folds one entry into the timeline instead of rebuilding it.
@@ -372,7 +377,7 @@ export default function SessionTile({ tileId, runId, params, focused }: TileProp
         <div className="ss-sub mono">
           {attempt.role !== 'coder' ? (
             <Chip tone={attempt.role === 'reviewer' || attempt.role === 'finalizer' ? 'accent' : 'idle'}>
-              {ROLE_LABEL[attempt.role]}
+              {attempt.role === 'session' && inWorktree ? 'session · edits its worktree' : ROLE_LABEL[attempt.role]}
             </Chip>
           ) : null}
           {task?.branch ? (

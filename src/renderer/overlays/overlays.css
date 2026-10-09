@@ -1004,6 +1004,162 @@
   color: var(--overlay2);
 }
 
+/* Shortcuts sheet (? / ⌘?) --------------------------------------------------------------------- */
+.keys-search {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--surface0);
+}
+.keys-search-icon {
+  color: var(--overlay2);
+  flex: none;
+}
+.keys-input {
+  all: unset;
+  flex: 1;
+  min-width: 0;
+  height: 32px;
+  font-size: 14px;
+  color: var(--text);
+  caret-color: var(--mauve);
+  user-select: text;
+}
+.keys-input::placeholder {
+  color: var(--overlay1);
+}
+.keys-input::selection {
+  background: color-mix(in srgb, var(--mauve) 26%, transparent);
+}
+/* The chord being looked up: the sheet's one loud cap. */
+.keys-token {
+  flex: none;
+  font-family: var(--font-code);
+  font-size: 13px;
+  line-height: 1;
+  padding: 5px 8px;
+  border-radius: 6px;
+  color: var(--mauve);
+  background: color-mix(in srgb, var(--mauve) 12%, var(--crust));
+  border: 1px solid color-mix(in srgb, var(--mauve) 45%, transparent);
+  box-shadow: 0 2px 8px color-mix(in srgb, var(--mauve) 14%, transparent);
+}
+.keys-list {
+  max-height: calc(100vh - 230px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 6px 20px 14px;
+  scrollbar-width: thin;
+  scrollbar-color: var(--surface1) transparent;
+}
+.keys-group {
+  padding-top: 12px;
+}
+.keys-group + .keys-group {
+  margin-top: 6px;
+  border-top: 1px solid var(--hairline);
+}
+.keys-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 20px;
+  margin: 0 0 4px;
+}
+.keys-here {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 18px;
+  padding: 0 7px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--mauve);
+  background: color-mix(in srgb, var(--mauve) 12%, transparent);
+}
+.keys-here::before {
+  content: "";
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: currentColor;
+}
+.keys-rows {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  columns: 2;
+  column-gap: 36px;
+}
+.keys-row {
+  break-inside: avoid;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 30px;
+  font-size: 13px;
+  color: var(--subtext1);
+  border-bottom: 1px solid color-mix(in srgb, var(--hairline) 70%, transparent);
+}
+.keys-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.keys-where {
+  flex: none;
+  font-family: var(--font-code);
+  font-size: 10.5px;
+  color: var(--overlay1);
+}
+.keys-caps {
+  flex: none;
+  display: inline-flex;
+  gap: 4px;
+}
+.keys-cap {
+  transition:
+    color 160ms ease-out,
+    background-color 160ms ease-out,
+    border-color 160ms ease-out;
+}
+.keys-cap[data-hit="true"] {
+  color: var(--mauve);
+  background: color-mix(in srgb, var(--mauve) 12%, var(--crust));
+  border-color: color-mix(in srgb, var(--mauve) 45%, transparent);
+}
+/* Not available right now (judged as the sheet opened): still listed, quieter. */
+.keys-row[data-off="true"] {
+  color: var(--overlay1);
+}
+.keys-row[data-off="true"] .keys-cap {
+  color: var(--overlay1);
+}
+/* The other views, while browsing: there to be found, not read. */
+.keys-group[data-dim="true"] .keys-row {
+  color: var(--overlay2);
+}
+.keys-group[data-dim="true"] .keys-cap {
+  color: var(--overlay1);
+  background: transparent;
+}
+.keys-empty {
+  margin: 0;
+  padding: 34px 12px 26px;
+  text-align: center;
+  font-size: 13px;
+  color: var(--subtext0);
+}
+@media (max-width: 720px) {
+  .keys-rows {
+    columns: 1;
+  }
+}
+
 /* Toasts ------------------------------------------------------------------------------------ */
 .toasts {
   position: fixed;

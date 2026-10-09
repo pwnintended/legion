@@ -56,6 +56,7 @@ describe('menu template', () => {
       'project.add': 'CmdOrCtrl+O',
       'file.goto': 'CmdOrCtrl+P',
       'project.search': 'CmdOrCtrl+Shift+F',
+      'help.keys': 'CmdOrCtrl+?',
     });
   });
 

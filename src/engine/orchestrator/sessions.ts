@@ -9,7 +9,7 @@ import type { Attempt } from '@shared/domain';
 import { RpcError } from '@shared/rpc-transport';
 import { type PtyOpenOptions, ptyEnv } from '../pty';
 import type { Orchestrator } from './orchestrator';
-import { sendToDirectSession } from './session-run';
+import { sendToDirectSession, sessionCwd } from './session-run';
 
 function liveSession(o: Orchestrator, attemptId: string) {
   o.store.requireAttempt(attemptId);
@@ -64,8 +64,8 @@ export function attemptTerminal(o: Orchestrator, attempt: Attempt): Omit<PtyOpen
   if (!attempt.sessionId) throw new RpcError('failed_precondition', 'the attempt has no resumable session yet');
   const run = o.store.requireRun(attempt.runId);
   const task = attempt.taskId ? o.store.getTask(attempt.taskId) : null;
-  // A direct session works in the checkout itself.
-  const cwd = attempt.role === 'session' ? run.repoPath : (task?.worktreePath ?? o.integrationPath(run));
+  // A direct session works in the checkout itself, or in its own worktree.
+  const cwd = attempt.role === 'session' ? sessionCwd(o, run) : (task?.worktreePath ?? o.integrationPath(run));
   if (!isDirectory(cwd)) throw new RpcError('failed_precondition', `the attempt's worktree is gone: ${cwd}`);
   const info = o.registry.info(attempt.engine);
   if (attempt.engine === 'claude') {

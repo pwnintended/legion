@@ -1,7 +1,8 @@
 /**
  * Composer, in two modes:
  * - `session` (⌘⇧N): a direct session. Say what you want, pick a repository and an engine; ⌘⏎ opens one agent
- *   working in that checkout (`runs.session`), no plan.
+ *   working in that checkout (`runs.session`), no plan. "Work in a new worktree" (⌘⇧W) gives it a worktree of its own,
+ *   cut from a base branch, and leaves the checkout alone.
  * - `run` ("Branch and engine…" from a new conversation, "Start a run about these lines"): describe the work or
  *   paste a GitHub / Linear URL, pick a base branch and the planner engine; ⌘⏎ starts the assistant or the planner.
  * Both pick a repository the same way (recent, found on this Mac, a typed path, Browse… ⌘O, or a folder dropped
@@ -45,8 +46,10 @@ interface Draft {
   base: string;
   engine: EngineKind | null;
   clarify: boolean;
+  /** A session works in a worktree of its own. */
+  worktree: boolean;
 }
-let saved: Draft = { text: '', repoPath: null, base: '', engine: null, clarify: true };
+let saved: Draft = { text: '', repoPath: null, base: '', engine: null, clarify: true, worktree: false };
 /** The composer's attachments: kept (uploaded drafts) while the overlay is closed. */
 const savedAttachments = createDraft();
 
@@ -159,6 +162,9 @@ function Composer({ mode }: { mode: ComposerMode }) {
     saved.engine ?? settings?.roles[session ? 'session' : 'planner'].engine ?? 'claude',
   );
   const [clarify, setClarify] = useState(saved.clarify);
+  const [worktree, setWorktree] = useState(saved.worktree);
+  // A session in its own worktree picks a base branch like a run; in place, it works on whatever is checked out.
+  const inPlace = session && !worktree;
   // With the assistant on (Settings → Agents), the prompt starts a conversation; off, it goes to the planner.
   const viaAssistant = !session && settings?.assistant.enabled !== false;
   const [recent, setRecent] = useState<RecentRepo[]>([]);
@@ -184,8 +190,8 @@ function Composer({ mode }: { mode: ComposerMode }) {
   });
 
   useEffect(() => {
-    saved = { text, repoPath, base, engine, clarify };
-  }, [text, repoPath, base, engine, clarify]);
+    saved = { text, repoPath, base, engine, clarify, worktree };
+  }, [text, repoPath, base, engine, clarify, worktree]);
 
   useEffect(() => {
     let cancelled = false;
@@ -353,6 +359,8 @@ function Composer({ mode }: { mode: ComposerMode }) {
                 ? 'Attachments are still uploading…'
                 : null;
   const branchState = branches && branches.root === root ? branches.value : null;
+  // The picker shows '' as the default branch; a session left alone would start from the checked-out one.
+  const baseShown = base.trim() || branchState?.default || inspection?.defaultBranch || null;
 
   const submit = async () => {
     setAttempted(true);
@@ -366,6 +374,8 @@ function Composer({ mode }: { mode: ComposerMode }) {
       const run = session
         ? await rpc('runs.session', {
             repoPath: inspection?.root ?? repoPath,
+            baseRef: worktree ? baseShown : null,
+            worktree,
             prompt: text.trim(),
             engine,
             model: null,
@@ -391,7 +401,7 @@ function Composer({ mode }: { mode: ComposerMode }) {
               skipClarify: !clarify,
               attachmentIds: savedAttachments.ids,
             });
-      saved = { text: '', repoPath, base: '', engine, clarify };
+      saved = { text: '', repoPath, base: '', engine, clarify, worktree };
       savedAttachments.clear();
       actions.closeOverlay();
       // Into the store first: the run's `run.updated` may still be on its way, and an active run the store
@@ -435,6 +445,9 @@ function Composer({ mode }: { mode: ComposerMode }) {
         } else if (event.key.toLowerCase() === 'o' && (event.metaKey || event.ctrlKey) && !event.shiftKey) {
           event.preventDefault();
           void chooseFolder();
+        } else if (session && event.key.toLowerCase() === 'w' && (event.metaKey || event.ctrlKey) && event.shiftKey) {
+          event.preventDefault();
+          setWorktree((value) => !value);
         } else {
           attachShortcut(savedAttachments, event);
         }
@@ -538,7 +551,7 @@ function Composer({ mode }: { mode: ComposerMode }) {
                 onBrowse={() => void chooseFolder()}
               />
             </div>
-            {session ? null : (
+            {inPlace ? null : (
               <div className="cmp-field cmp-base">
                 <label htmlFor={`${ids}-base`} className="cmp-small">
                   Base branch
@@ -606,6 +619,7 @@ function Composer({ mode }: { mode: ComposerMode }) {
             home={home}
             error={repoPath ? repoError : attempted ? repoError : null}
             session={session}
+            inPlace={inPlace}
             fix={
               noCommits ? (
                 <>
@@ -627,7 +641,17 @@ function Composer({ mode }: { mode: ComposerMode }) {
           {engineError ? <span className="cmp-error">{engineError}</span> : null}
 
           <div className="cmp-foot">
-            {viaAssistant || session ? null : (
+            {session ? (
+              <label className="cmp-check" title={`Toggle  ${formatChord('Mod+Shift+W')}`}>
+                <input
+                  type="checkbox"
+                  checked={worktree}
+                  data-testid="composer-worktree"
+                  onChange={(event) => setWorktree(event.target.checked)}
+                />
+                Work in a new worktree
+              </label>
+            ) : viaAssistant ? null : (
               <label className="cmp-check">
                 <input type="checkbox" checked={clarify} onChange={(event) => setClarify(event.target.checked)} />
                 Let the planner ask clarifying questions first
@@ -667,11 +691,13 @@ function Composer({ mode }: { mode: ComposerMode }) {
             </span>
           ) : null}
           <p className="cmp-hint">
-            {session
+            {inPlace
               ? `The agent works in your checkout${checkedOut ? ` on ${checkedOut}` : ''}, no worktree and no plan. Its edits land as they are; committing is up to you.`
-              : viaAssistant
-                ? 'The assistant answers, researches the repo when needed, and hands a brief to the planner when you want the work done. Nothing runs until you approve the plan.'
-                : `The planner reads the repo${clarify ? ', asks up to 5 clarifying questions,' : ''} then drafts the task DAG for your sign-off. Nothing runs until you approve it.`}
+              : session
+                ? `The agent works in a worktree of its own, on a new branch from ${baseShown ?? 'the checked-out branch'}, no plan. Your checkout is left alone; committing there is up to you.`
+                : viaAssistant
+                  ? 'The assistant answers, researches the repo when needed, and hands a brief to the planner when you want the work done. Nothing runs until you approve the plan.'
+                  : `The planner reads the repo${clarify ? ', asks up to 5 clarifying questions,' : ''} then drafts the task DAG for your sign-off. Nothing runs until you approve it.`}
           </p>
         </form>
         {drop.dragging ? <DropHint intent={dragIntent(drop.dragging)} /> : null}
@@ -917,14 +943,17 @@ function RepoStatus({
   error,
   fix = null,
   session = false,
+  inPlace = session,
 }: {
   id: string;
   inspect: Inspect;
   path: string | null;
   home: string | null;
   error: string | null;
-  /** A direct session works in the checkout: say which branch it is on, and nothing about PRs or worktrees. */
+  /** A direct session: nothing about PRs. */
   session?: boolean;
+  /** It works in the checkout itself (not a worktree of its own): say which branch it is on. */
+  inPlace?: boolean;
   /** An action that resolves `error` (e.g. the first commit). */
   fix?: ReactNode;
 }) {
@@ -972,7 +1001,7 @@ function RepoStatus({
           </span>
         </>
       ) : null}
-      {session ? (
+      {inPlace ? (
         <>
           {sep}
           {r.currentBranch ? (
@@ -1006,7 +1035,7 @@ function RepoStatus({
           {gh}
         </>
       )}
-      {!session && r.dirty ? (
+      {!inPlace && r.dirty ? (
         <>
           {sep}
           <span className="faint" title="Legion works in its own worktrees; your checkout is never touched">

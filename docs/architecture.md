@@ -676,15 +676,18 @@ through `sessions.send` on the assistant attempt: its process stays alive and id
 ⌘⇧N skips the whole flow: `runs.session({repoPath, prompt, engine, model, attachmentIds})` creates a run in status
 **`session`** (base ref = the checked-out branch) and opens one agent (role `session`, `settings.roles.session`,
 `workspace_write` like a coder) with `cwd` = the project's checkout itself: no worktree, no plan, no review, no
-integration branch. Its system prompt only says where it works and that committing is the human's (the
-`ALWAYS_DENIED` git rules still apply). The human talks to it with `sessions.send`; approvals go to the inbox like a
+integration branch. With `worktree: true` ("Work in a new worktree", ⌘⇧W in the composer) the run gets its
+integration branch and worktree instead, cut from `baseRef` (the composer's base branch picker), provisioned like a
+run's (copy/symlink/setup), and `cwd` = that worktree: the checkout is left alone, and `runs.archive` keeps the
+worktree while it has uncommitted edits and the branch while it has work found nowhere else. Its system prompt only
+says where it works and that committing is the human's (the `ALWAYS_DENIED` git rules still apply). The human talks to it with `sessions.send`; approvals go to the inbox like a
 coder's. The process lives only while the agent works: when its turn ends the loop stops it (the attempt succeeds),
 and the human's next `sessions.send` (to any of the run's session attempts) resumes the engine session
 (`RunMeta.sessionSessionId`) with that message as a new attempt. A turn cut off by a crash or an engine restart
 (`RunMeta.sessionTurnOpen`) is resumed at once with a "continue" prompt; a session that was waiting for the human is
 not woken. `MAX_SESSION_FAILURES` (3) failures in a row fail the run. `runs.cancel` stops it;
-`runs.archive` ends it as `done` without `force` (nothing in it can be lost: the edits are already in the checkout).
-Takeover resumes it in a terminal in the checkout. The UI shows it as a conversation (§11) with the agent's tool
+`runs.archive` ends it as `done` without `force` (nothing in it can be lost: the edits are already in the checkout,
+or kept in its worktree). Takeover resumes it in a terminal where it works. The UI shows it as a conversation (§11) with the agent's tool
 calls between its words and no progress strip; the full run composer stays on the palette ("New run with a plan…")
 and on the new-conversation tile.
 

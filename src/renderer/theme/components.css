@@ -199,6 +199,43 @@ body {
   color: var(--on-fill);
 }
 
+/* Status bar: the way to every key, at its left end. */
+.sb-keys {
+  all: unset;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 18px;
+  padding: 0 6px 0 3px;
+  margin-left: -3px;
+  border-radius: 5px;
+  color: var(--overlay2);
+  cursor: pointer;
+  transition:
+    color 120ms ease-out,
+    background-color 120ms ease-out;
+}
+.sb-keys .kbd {
+  min-width: 8px;
+  padding: 2px 4px;
+  font-size: 10px;
+  text-align: center;
+  transition:
+    color 120ms ease-out,
+    border-color 120ms ease-out;
+}
+.sb-keys:hover {
+  color: var(--subtext1);
+  background: var(--surface0);
+}
+.sb-keys:hover .kbd {
+  color: var(--mauve);
+  border-color: color-mix(in srgb, var(--mauve) 45%, transparent);
+}
+.sb-keys:focus-visible {
+  box-shadow: var(--glow-focus);
+}
+
 .sec {
   font-size: 10.5px;
   letter-spacing: 0.08em;

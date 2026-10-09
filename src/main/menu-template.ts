@@ -29,6 +29,7 @@ export const MENU_ACCELERATORS: Partial<Record<CommandId, string>> = {
   'project.add': 'CmdOrCtrl+O',
   'file.goto': 'CmdOrCtrl+P',
   'project.search': 'CmdOrCtrl+Shift+F',
+  'help.keys': 'CmdOrCtrl+?',
 };
 
 export function buildMenuTemplate({ appName, isMac, isDev, send }: MenuTemplateOptions): MenuItemConstructorOptions[] {
@@ -135,7 +136,7 @@ export function buildMenuTemplate({ appName, isMac, isDev, send }: MenuTemplateO
   const help: MenuItemConstructorOptions = {
     label: 'Help',
     role: 'help',
-    submenu: [],
+    submenu: [item('Keyboard Shortcuts', 'help.keys')],
   };
 
   return [...(isMac ? [app] : []), file, edit, run, view, windowMenu, help];

@@ -700,6 +700,49 @@
   color: var(--red);
 }
 
+/* An agent's own question tool (tiles/session/user-input.tsx): in the approval card and chat cards. */
+.uq {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.uq-q {
+  all: unset;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.uq-head {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.uq-header {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--overlay2);
+}
+.uq-question {
+  font-size: 13.5px;
+  line-height: 1.5;
+  font-weight: 500;
+  color: var(--text);
+  overflow-wrap: break-word;
+}
+.uq-desc {
+  display: block;
+  font-size: 12px;
+  color: var(--overlay2);
+}
+.uq .opt[data-multi] .opt-mark,
+.uq .opt[data-multi] .opt-mark::after {
+  border-radius: 4px;
+}
+.uq-other {
+  flex: none;
+}
+
 /* Footer: steer bar + jump pill --------------------------------------------------------------- */
 .ss-steer {
   position: relative;
