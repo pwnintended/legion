@@ -6,7 +6,7 @@
  */
 import type { Role } from '@shared/domain';
 import { assistantSystem } from './assistant';
-import { coderSystem, fixerSystem, resolverSystem } from './coder';
+import { coderSystem, finalFixerSystem, fixerSystem, resolverSystem } from './coder';
 import { leadSystem } from './lead';
 import { PLANNER_SYSTEM } from './planner';
 import { researcherSystem, researchLeadSystem } from './research';
@@ -42,6 +42,12 @@ export function builtinSystemPrompts(role: Role, projectName = 'your-project'): 
           label: 'Fix round',
           when: 'A fresh session for a fix round, when the coder’s own session can’t be resumed.',
           text: fixerSystem(tools),
+        },
+        {
+          id: 'final-fix',
+          label: 'Final fix',
+          when: 'A fix round on the integration branch after the final review found blockers.',
+          text: finalFixerSystem(tools),
         },
       ];
     case 'reviewer':

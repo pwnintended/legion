@@ -518,6 +518,72 @@ The \`markdown\` field is what the human approves and what every coder reads as 
 Respond with the structured output only: \`{"markdown": "...", "dag": {"nodes": [...]}}\`. Each node has \`id\`, \`title\`, \`goal\` (2–5 sentences: what and why), \`kind\` (contracts | feature | test | refactor | docs | integration), \`dependsOn\`, \`acceptanceCriteria\` (\`{id, text}\`), \`touches\` (\`{glob, mode}\`), \`size\` (S | M | L), \`verify\` (\`{commands}\`), \`contextHints\` (\`{files, notes}\`), \`agent\` (\`{effort}\`) and \`risk\` (low | med | high)."
 `;
 
+exports[`review prompts > final fixer 1`] = `
+{
+  "prompt": "Final fix round 1 of 2 on \`legion/abc12345/integration\` (the combined change \`main...legion/abc12345/integration\`).
+
+## Note from the human
+
+Keep the old header order.
+
+## Final review findings to address
+
+1. **[blocker] Newlines are not quoted** — \`src/reports/csv.ts:12\`
+
+   A field containing \`\\n\` is emitted raw, which splits the row.
+
+   Suggested fix: Quote fields matching /[",\\n\\r]/.
+
+## Requirements the final reviewer did not consider met
+
+- **R2** (unmet): The export ignores the active filters.
+
+## Original issue
+
+**Add CSV export to the reports page**
+
+Source: https://github.com/acme/app/issues/42
+
+\`\`\`text
+Users want to download the monthly report as CSV.
+
+The export must respect the active filters.
+\`\`\`
+
+## Verify commands
+
+- \`pnpm test\`
+
+## How to fix
+
+- Read the change with \`git diff main...HEAD\` and the code around each finding before you edit.
+- Address every item above. Fix the cause, not the symptom: do not weaken or delete tests to make them pass.
+- Keep the behavior of the merged tasks intact; they were each reviewed. Prefer the smallest change that makes the whole coherent.
+- If you are confident a finding is wrong, do not change the code for it; explain why in your summary. A fresh final reviewer will read your explanation.
+
+## When you are done
+
+1. Run every verify command of the task, and the repository-wide verify commands if there are any, and make them pass. If one cannot pass for reasons outside this task, say so explicitly in your summary.
+2. Call \`mark_task_done\` with:
+   - \`summary\`: what you changed and why, decisions you made, anything the reviewer should look at closely (a few short paragraphs or bullets);
+   - \`commitMessage\`: an imperative subject of at most 72 characters describing this fix (for example "Register the CSV exporter with the report menu"), optionally followed by a blank line and a short body.
+
+Then end your turn with the final task report as structured output: \`status\` (done | blocked | partial), \`summary\`, \`commitMessage\`, \`criteria\` (each acceptance criterion with met | unmet | unclear and concrete evidence) and \`notes\` (follow-ups or risky spots, or null).",
+  "systemPrompt": "You are a coding agent in Legion, an orchestrator that implemented an issue as several tasks written by different coding agents in parallel. Every task was reviewed and merged into the integration branch; a final reviewer then read the combined change and found problems. You fix them in the integration worktree.
+
+## Rules
+
+- Work only inside the current working directory. It is a git worktree dedicated to this job; do not read or write files of other checkouts and do not \`cd\` outside it.
+- Stay in scope: fix the findings you are given and nothing else. Several tasks wrote this code, so change whatever files the fixes need, but keep each change minimal and do not refactor or reformat unrelated code.
+- Do not commit, push, create or switch branches, rebase, reset, stash or otherwise change git state. Legion commits your work with the commit message you provide. Reading history and diffs is fine.
+- Do not install new dependencies unless the task requires it.
+- Report progress with \`report_progress\` at meaningful milestones (one short line each).
+- Finish by calling \`mark_task_done\`; until you do, Legion considers the work unfinished.
+- Do not wait for a human when you can decide yourself: when something is ambiguous, choose what is most consistent with the plan and the codebase, and record the decision in your summary. Call \`request_human_input\` only when you truly cannot proceed (contradictory requirements, missing access, a destructive choice only a human can make).
+- When your work produces something the human should see rather than read about (a screenshot of UI you changed, a generated report or diagram), show it with \`present\` before you finish: save it under the system temp dir (never in the worktree), one call per thing, with a caption saying what to look at. Skip it when there is nothing visual or nothing new to show.",
+}
+`;
+
 exports[`review prompts > finalizer 1`] = `
 {
   "prompt": "Review the combined change \`main...legion/abc12345/integration\`. The working directory is the integration branch.
@@ -605,8 +671,8 @@ Task reviewers saw one diff each. Look for what appears only when the tasks meet
 
 ## What your findings do
 
-- Only a \`blocker\` stops the run: it goes to the human, who can retry this review, skip it or abort the run. Reserve it for correctness. Code quality is never a blocker.
-- Every other finding goes into the pull request’s description, for the human who reviews it. Write each so it can be acted on from there: where, what to change and what the result looks like, in \`suggestedFix\`.
+- Only a \`blocker\` stops the run. It starts a final fix round: a coder fixes your blocker and major findings on the integration branch, then the whole change is verified and reviewed again. When the rounds run out it goes to the human. Reserve \`blocker\` for correctness; code quality is never a blocker.
+- A \`major\` finding is fixed in a round only when a blocker starts one. Every finding that is not fixed goes into the pull request’s description, for the human who reviews it. Write each so a coder or that human can act on it: where, what to change and what the result looks like, in \`suggestedFix\`.
 - Prefer a few high-conviction findings to many small ones. Do not bury a structural problem among nits, and do not soften it: say plainly when the combined change is messier than it needed to be.
 
 ## Rules

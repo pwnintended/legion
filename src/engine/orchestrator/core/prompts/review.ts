@@ -93,8 +93,8 @@ export const FINALIZER_SYSTEM = join(
   section(
     'What your findings do',
     bullets([
-      'Only a `blocker` stops the run: it goes to the human, who can retry this review, skip it or abort the run. Reserve it for correctness. Code quality is never a blocker.',
-      'Every other finding goes into the pull request’s description, for the human who reviews it. Write each so it can be acted on from there: where, what to change and what the result looks like, in `suggestedFix`.',
+      'Only a `blocker` stops the run. It starts a final fix round: a coder fixes your blocker and major findings on the integration branch, then the whole change is verified and reviewed again. When the rounds run out it goes to the human. Reserve `blocker` for correctness; code quality is never a blocker.',
+      'A `major` finding is fixed in a round only when a blocker starts one. Every finding that is not fixed goes into the pull request’s description, for the human who reviews it. Write each so a coder or that human can act on it: where, what to change and what the result looks like, in `suggestedFix`.',
       'Prefer a few high-conviction findings to many small ones. Do not bury a structural problem among nits, and do not soften it: say plainly when the combined change is messier than it needed to be.',
     ]),
   ),
@@ -160,12 +160,24 @@ export function buildFinalizerPrompt(input: FinalizerPromptInput): AgentPrompt {
     const summary = t.summary?.trim() ? clipMiddle(t.summary.trim().replace(/\s+/g, ' '), 600) : '(no summary)';
     return `**${t.node.id}: ${t.node.title}** (${t.status}${t.verdict ? `, review: ${t.verdict}` : ''}): ${summary}`;
   });
+  const round = input.round ?? 0;
+  const previous =
+    round > 0
+      ? section(
+          `Re-review after final fix round ${round}`,
+          join(
+            'A coder was asked to fix the findings below on the integration branch. Check each one: drop it if it is fixed, raise it again (same title) if it is not. Do not move the goalposts: raise new findings only for real problems, including ones the fix introduced.',
+            formatFindings(input.previousFindings ?? []),
+          ),
+        )
+      : null;
   const prompt = join(
     `Review the combined change \`${input.baseRef}...${input.integrationRef}\`. The working directory is the integration branch.`,
     section('Original issue', formatIssue(input.issue)),
     section('Approved plan', demoteHeadings(clipMiddle(input.planMarkdown.trim(), PROMPT_LIMITS.planChars))),
     section('Tasks', bullets(taskRows)),
     section('Final verification on the integration branch', formatVerifyResults(input.verify)),
+    previous,
     section('Diff stat', fence(input.diffStat.replace(/^\n+|\s+$/g, '') || '(empty)', 'text')),
     section('Diff', fence(clipMiddle(input.diff, PROMPT_LIMITS.diffChars), 'diff')),
     section(

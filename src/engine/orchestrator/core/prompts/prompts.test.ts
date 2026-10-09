@@ -9,6 +9,7 @@ import {
   buildAssistantWakePrompt,
   buildClarifyPrompt,
   buildCoderPrompt,
+  buildFinalFixerPrompt,
   buildFinalizerPrompt,
   buildFixerPrompt,
   buildLeadPrompt,
@@ -376,6 +377,41 @@ describe('review prompts', () => {
       verify: [{ command: 'pnpm test', exitCode: 0, outputTail: '', durationMs: 9000 }],
     });
     expect(prompt).toMatchSnapshot();
+    expectEngineNeutral(prompt);
+  });
+
+  it('finalizer re-review after a final fix round', () => {
+    const prompt = buildFinalizerPrompt({
+      issue,
+      planMarkdown: planSummary,
+      baseRef: 'main',
+      integrationRef: 'legion/abc12345/integration',
+      tasks: [{ node, status: 'merged', summary: 'Added toCsv.', verdict: 'approve' }],
+      diffStat: '',
+      diff,
+      verify: [],
+      round: 1,
+      previousFindings: [blocker],
+    });
+    expect(prompt.prompt).toContain('## Re-review after final fix round 1');
+    expect(prompt.prompt).toContain(blocker.title);
+  });
+
+  it('final fixer', () => {
+    const prompt = buildFinalFixerPrompt({
+      issue,
+      baseRef: 'main',
+      integrationRef: 'legion/abc12345/integration',
+      findings: [blocker],
+      unmetCriteria: [{ id: 'R2', status: 'unmet', evidence: 'The export ignores the active filters.' }],
+      verifyCommands: ['pnpm test'],
+      round: 1,
+      maxRounds: 2,
+      humanNote: 'Keep the old header order.',
+      structuredReport: true,
+    });
+    expect(prompt).toMatchSnapshot();
+    expect(prompt.systemPrompt).not.toContain('declared touches');
     expectEngineNeutral(prompt);
   });
 });

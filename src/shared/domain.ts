@@ -86,7 +86,8 @@ export type RunStatus = z.infer<typeof RunStatusSchema>;
 /**
  * Run lifecycle. `paused` is a separate flag, not a status.
  * - integrating: every task is terminal; full verify on the integration branch.
- * - finalizing: final holistic review over base...integration.
+ * - finalizing: final holistic review over base...integration; blockers go to a final fix round on the
+ *   integration branch, then back to integrating (verify) and finalizing (review again).
  * - pr_ready: waiting for the human PR gate; `runs.createPr` pushes and opens the draft PR → done, or
  *   `runs.mergeLocally` merges into the local base branch (no remote needed) → done.
  */
@@ -101,7 +102,7 @@ export const RUN_TRANSITIONS: TransitionTable<RunStatus> = {
   awaiting_approval: ['planning', 'executing', 'failed', 'cancelled'],
   executing: ['integrating', 'failed', 'cancelled'],
   integrating: ['executing', 'finalizing', 'failed', 'cancelled'],
-  finalizing: ['executing', 'pr_ready', 'failed', 'cancelled'],
+  finalizing: ['executing', 'integrating', 'pr_ready', 'failed', 'cancelled'],
   pr_ready: ['finalizing', 'done', 'failed', 'cancelled'],
   done: [],
   failed: [],

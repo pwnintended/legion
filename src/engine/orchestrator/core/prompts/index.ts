@@ -1,6 +1,6 @@
 export { buildAssistantPrompt, buildAssistantWakePrompt } from './assistant';
 export { type BuiltinPromptVariant, builtinSystemPrompts } from './builtin';
-export { buildCoderPrompt, buildFixerPrompt, buildResolverPrompt } from './coder';
+export { buildCoderPrompt, buildFinalFixerPrompt, buildFixerPrompt, buildResolverPrompt } from './coder';
 export {
   clipMiddle,
   clipTail,
