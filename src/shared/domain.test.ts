@@ -91,8 +91,33 @@ describe('settings', () => {
     });
     expect(next.concurrency.global).toBe(3);
     expect(next.concurrency.perEngine).toEqual({ claude: 3, codex: 1, fake: 8 });
-    expect(next.roles.reviewer).toEqual({ engine: 'codex', models: { claude: 'opus', codex: null }, effort: null });
+    expect(next.roles.reviewer).toEqual({
+      engine: 'codex',
+      models: { claude: 'opus', codex: null },
+      effort: null,
+      prompt: { append: '', replace: null },
+    });
     expect(() => applySettingsPatch(DEFAULT_SETTINGS, { concurrency: { global: 0 } })).toThrow();
+  });
+
+  it('patches a role prompt one layer at a time', () => {
+    const added = applySettingsPatch(DEFAULT_SETTINGS, { roles: { coder: { prompt: { append: 'Run pnpm lint.' } } } });
+    expect(added.roles.coder.prompt).toEqual({ append: 'Run pnpm lint.', replace: null });
+    const replaced = applySettingsPatch(added, { roles: { coder: { prompt: { replace: 'You write code.' } } } });
+    expect(replaced.roles.coder.prompt).toEqual({ append: 'Run pnpm lint.', replace: 'You write code.' });
+    expect(
+      applySettingsPatch(replaced, { roles: { coder: { prompt: { replace: null } } } }).roles.coder.prompt,
+    ).toEqual({ append: 'Run pnpm lint.', replace: null });
+  });
+
+  it('gives settings stored before role prompts existed empty ones', () => {
+    const stored = { roles: { coder: { engine: 'codex', models: { claude: null, codex: 'gpt-5' }, effort: 'high' } } };
+    expect(normalizeSettings(stored).roles.coder).toEqual({
+      engine: 'codex',
+      models: { claude: null, codex: 'gpt-5' },
+      effort: 'high',
+      prompt: { append: '', replace: null },
+    });
   });
 
   it('normalizes partial or invalid stored settings', () => {

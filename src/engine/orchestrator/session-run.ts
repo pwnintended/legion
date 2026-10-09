@@ -14,7 +14,7 @@ import type { SessionAttachment } from '@shared/engine';
 import type { RpcInput } from '@shared/rpc';
 import { RpcError } from '@shared/rpc-transport';
 import { integrationBranchName } from '../git';
-import type { AgentPrompt } from './core';
+import { type AgentPrompt, sessionSystem } from './core';
 import type { AgentRun } from './live-session';
 import { patchRunMeta, runMeta } from './meta';
 import { AgentFailure, Closed, type Orchestrator, type SessionLoopHandle, sleep } from './orchestrator';
@@ -67,18 +67,12 @@ export function sessionCwd(o: Orchestrator, run: Run): string {
 }
 
 function sessionPrompt(run: Run, text: string): AgentPrompt {
-  const project = basename(run.repoPath);
-  const where = run.integrationBranch
-    ? [
-        `You are working in a git worktree of ${project} of your own (branch ${run.integrationBranch}, cut from ${run.baseRef}), in a conversation with the human.`,
-        "Do what they ask here, and answer their questions. Your edits stay in this worktree; the human's own checkout is not touched.",
-      ]
-    : [
-        `You are working directly in the human's own checkout of ${project} (branch ${run.baseRef}), in a conversation with them.`,
-        'Do what they ask here, and answer their questions. Your edits land in their working tree as they are.',
-      ];
   return {
-    systemPrompt: [...where, "Don't commit or push: the human does that."].join(' '),
+    systemPrompt: sessionSystem({
+      project: basename(run.repoPath),
+      baseRef: run.baseRef,
+      worktreeBranch: run.integrationBranch,
+    }),
     prompt: text,
   };
 }

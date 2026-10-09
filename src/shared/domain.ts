@@ -581,6 +581,28 @@ export const ProjectGatesSchema = z.object({
 });
 export type ProjectGates = z.infer<typeof ProjectGatesSchema>;
 
+/** Longest prompt addition (global or per project), in characters. */
+export const PROMPT_ADDITION_MAX = 20_000;
+/** Longest replacement of a role's built-in system prompt, in characters. */
+export const PROMPT_REPLACE_MAX = 60_000;
+
+/** legion.json `prompts`: per role, instructions added after that role's system prompt in this repository. */
+export const PromptsConfigSchema = z.partialRecord(RoleSchema, z.string().max(PROMPT_ADDITION_MAX));
+export type PromptsConfig = z.infer<typeof PromptsConfigSchema>;
+
+/** A project's prompt additions as Settings → Agents edits them (legion.json is the source of truth). */
+export const ProjectPromptsSchema = z.object({
+  /** Absolute path of the project's legion.json. */
+  path: z.string(),
+  exists: z.boolean(),
+  /** sha256 of the file's text; null when absent. `projects.setPrompts` refuses a stale revision. */
+  revision: z.string().nullable(),
+  /** Why legion.json is invalid (editing is disabled), or null. */
+  error: z.string().nullable(),
+  prompts: PromptsConfigSchema,
+});
+export type ProjectPrompts = z.infer<typeof ProjectPromptsSchema>;
+
 export const VerificationPhaseSchema = z.enum(['setup', 'task', 'post_merge', 'final']);
 export type VerificationPhase = z.infer<typeof VerificationPhaseSchema>;
 
@@ -820,11 +842,24 @@ export type EventRow = z.infer<typeof EventRowSchema>;
 // Settings
 // ---------------------------------------------------------------------------------------------
 
+/**
+ * The human's changes to a role's system prompt (`core/prompts/layers.ts`). A project's legion.json `prompts`
+ * adds to it per repository; only the global layer can replace Legion's prompt.
+ */
+export const RolePromptSchema = z.object({
+  /** Instructions added after the role's system prompt (Legion's, or `replace`). '' = none. */
+  append: z.string().max(PROMPT_ADDITION_MAX),
+  /** Used instead of Legion's built-in system prompt, for every variant of the role. null = the built-in. */
+  replace: z.string().max(PROMPT_REPLACE_MAX).nullable(),
+});
+export type RolePrompt = z.infer<typeof RolePromptSchema>;
+
 export const RoleDefaultsSchema = z.object({
   engine: EngineKindSchema,
   /** Model per engine (the reviewer engine depends on the coder, so both are configured). null = CLI default. */
   models: z.object({ claude: z.string().nullable(), codex: z.string().nullable() }),
   effort: EffortSchema.nullable(),
+  prompt: RolePromptSchema,
 });
 export type RoleDefaults = z.infer<typeof RoleDefaultsSchema>;
 
@@ -942,6 +977,7 @@ const roleDefaults = (engine: EngineKind): RoleDefaults => ({
   engine,
   models: { claude: null, codex: null },
   effort: null,
+  prompt: { append: '', replace: null },
 });
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -976,6 +1012,7 @@ const RoleDefaultsPatchSchema = z
     engine: EngineKindSchema,
     models: SettingsSchema.shape.roles.shape.planner.shape.models.partial(),
     effort: EffortSchema.nullable(),
+    prompt: RolePromptSchema.partial(),
   })
   .partial();
 

@@ -31,6 +31,14 @@
   align-items: flex-end;
   padding-bottom: 44px;
 }
+/* A sheet takes the window inside an even margin (less on small windows), up to the panel's own width. */
+.ovl-place-sheet {
+  align-items: center;
+  padding: clamp(16px, 4.5vh, 40px) clamp(12px, 3vw, 40px);
+}
+.ovl.ovl-sheet {
+  flex: 1 1 auto;
+}
 .ovl {
   position: relative;
   pointer-events: auto;
@@ -1229,19 +1237,19 @@
 }
 
 /* Settings ---------------------------------------------------------------------------------- */
+/* A sheet: section nav on mantle at the left, one page at a time on base at the right. */
 .st {
   display: flex;
   min-height: 0;
   flex: 1;
-  height: min(640px, calc(100vh - 180px));
 }
 .st-nav {
   flex: none;
-  width: 150px;
+  width: 196px;
   display: flex;
   flex-direction: column;
   gap: 2px;
-  padding: 12px 8px;
+  padding: 14px 10px;
   border-right: 1px solid var(--surface0);
   background: var(--mantle);
 }
@@ -1249,22 +1257,34 @@
   all: unset;
   box-sizing: border-box;
   cursor: pointer;
-  height: 30px;
+  height: 32px;
   padding: 0 10px;
-  border-radius: 7px;
+  border-radius: 8px;
   display: flex;
   align-items: center;
-  font-size: 12.5px;
+  gap: 9px;
+  font-size: 13px;
   color: var(--subtext0);
+  transition:
+    color 0.15s,
+    background-color 0.15s;
+}
+.st-nav-icon {
+  flex: none;
+  color: var(--overlay1);
   transition: color 0.15s;
 }
-/* A table of contents, not a list of tabs: the section in view is the one set bright and heavier. */
 .st-nav-item:hover {
   color: var(--text);
+  background: color-mix(in srgb, var(--surface0) 55%, transparent);
 }
-.st-nav-item[aria-current="true"] {
+.st-nav-item[aria-current="page"] {
   color: var(--text);
-  font-weight: 600;
+  background: var(--surface0);
+}
+.st-nav-item[aria-current="page"] .st-nav-icon,
+.st-nav-item:hover .st-nav-icon {
+  color: var(--subtext1);
 }
 .st-nav-item:focus-visible {
   outline: 2px solid var(--mauve);
@@ -1277,40 +1297,73 @@
   overflow-x: hidden;
   overflow-y: auto;
   overscroll-behavior: contain;
-  /* Room at the end so the last section can scroll to the top (nav jumps). */
-  padding: 4px 22px 240px;
+  padding: 30px clamp(20px, 4vw, 44px) 56px;
+  container: st / inline-size;
+}
+.st-page {
+  max-width: 760px;
+  margin: 0 auto;
+}
+.st-page[data-wide] {
+  max-width: 1040px;
+}
+.st-page[hidden] {
+  display: none;
 }
 .st-section {
-  padding: 18px 0 20px;
-  border-bottom: 1px solid var(--surface0);
-}
-.st-section:last-child {
-  border-bottom: none;
+  padding: 0;
 }
 .st-empty {
   display: flex;
   flex-direction: column;
   align-items: flex-start;
   gap: 10px;
+  max-width: 760px;
+  margin: 0 auto;
+}
+.st-page-head {
+  display: flex;
+  align-items: flex-end;
+  gap: 24px;
+  margin-bottom: 26px;
 }
 .st-h {
-  margin: 0 0 4px;
-  font-size: 14px;
+  margin: 0 0 6px;
+  font-size: 19px;
   font-weight: 600;
+  line-height: 1.3;
+  letter-spacing: -0.012em;
   color: var(--text);
 }
 .st-sub {
-  margin: 20px 0 2px;
-  font-size: 12.5px;
+  margin: 34px 0 4px;
+  font-size: 13px;
   font-weight: 600;
-  color: var(--subtext1);
+  color: var(--text);
 }
 .st-lede {
-  margin: 2px 0 12px;
-  font-size: 12px;
-  line-height: 1.5;
+  margin: 0 0 14px;
+  font-size: 12.5px;
+  line-height: 1.55;
   color: var(--subtext0);
-  max-width: 62ch;
+  max-width: 68ch;
+}
+.st-page-head .st-lede {
+  margin-bottom: 0;
+}
+@media (max-width: 1100px) {
+  .st-nav {
+    width: 168px;
+  }
+  .ag-body {
+    grid-template-columns: 212px minmax(0, 1fr);
+    gap: 24px;
+  }
+}
+.st-engines {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(330px, 1fr));
+  gap: 12px;
 }
 .st-label {
   font-size: 12.5px;
@@ -1508,6 +1561,526 @@
 @keyframes st-spin {
   to {
     transform: rotate(360deg);
+  }
+}
+
+/* Settings → Agents: the role list beside the role's detail, and its prompt as a route of layers. */
+.ag-planner {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 6px;
+}
+.ag-body {
+  display: grid;
+  grid-template-columns: 236px minmax(0, 1fr);
+  gap: 32px;
+  align-items: start;
+}
+.ag-pick {
+  display: none;
+}
+.ag-list {
+  position: sticky;
+  top: 0;
+  /* Never taller than the page it sits on (sheet margins, the head, the page's top padding). */
+  max-height: calc(100vh - 2 * clamp(16px, 4.5vh, 40px) - 110px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 6px;
+  border-radius: 12px;
+  background: var(--mantle);
+  border: 1px solid var(--surface0);
+  outline: none;
+}
+.ag-group-label {
+  padding: 8px 10px 4px;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--overlay1);
+}
+.ag-item {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  height: 34px;
+  padding: 0 10px;
+  border-radius: 8px;
+  cursor: pointer;
+  font-size: 13px;
+  color: var(--subtext1);
+  transition:
+    background-color 0.12s,
+    color 0.12s;
+}
+.ag-item:hover {
+  background: color-mix(in srgb, var(--surface0) 55%, transparent);
+  color: var(--text);
+}
+.ag-item[aria-selected="true"] {
+  background: var(--surface0);
+  color: var(--text);
+  font-weight: 500;
+}
+.ag-item:focus-visible {
+  outline: 2px solid var(--mauve);
+  outline-offset: -2px;
+}
+.ag-item-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* Has text of the human's own (lavender core); unsaved legion.json text (a hollow ring: not yet). */
+.ag-mark {
+  flex: none;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--lavender);
+}
+.ag-mark[data-unsaved] {
+  background: transparent;
+  box-shadow: inset 0 0 0 1.5px var(--lavender);
+  width: 7px;
+  height: 7px;
+}
+.ag-item-meta {
+  margin-left: auto;
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 96px;
+  font-size: 11.5px;
+  font-weight: 400;
+  color: var(--overlay1);
+}
+.ag-item-meta > span:last-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ag-item-meta .mono {
+  font-size: 11px;
+}
+.ag-engine-dot {
+  flex: none;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--overlay0);
+}
+.ag-item[data-engine="claude"] .ag-engine-dot {
+  background: var(--mauve);
+}
+.ag-item[data-engine="codex"] .ag-engine-dot {
+  background: var(--teal);
+}
+.ag-detail {
+  min-width: 0;
+  container: agd / inline-size;
+}
+.ag-name {
+  margin: 0;
+  font-size: 17px;
+  font-weight: 600;
+  line-height: 1.3;
+  letter-spacing: -0.01em;
+  color: var(--text);
+}
+.ag-note {
+  margin: 4px 0 0;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--subtext0);
+}
+.ag-run {
+  display: grid;
+  grid-template-columns: 136px minmax(0, 300px) 136px;
+  gap: 12px;
+  margin-top: 18px;
+}
+.ag-na {
+  height: 32px;
+  display: flex;
+  align-items: center;
+}
+.ag-run-note {
+  margin: 8px 0 0;
+}
+.ag-prompt-head {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin-top: 30px;
+  padding-top: 24px;
+  border-top: 1px solid var(--hairline);
+}
+.ag-prompt-title {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+}
+.ag-variants {
+  display: inline-flex;
+  gap: 2px;
+  padding: 2px;
+  border-radius: 9px;
+  background: var(--mantle);
+}
+.ag-variant {
+  all: unset;
+  box-sizing: border-box;
+  cursor: pointer;
+  height: 24px;
+  padding: 0 10px;
+  display: inline-flex;
+  align-items: center;
+  border-radius: 6px;
+  font-size: 12px;
+  color: var(--subtext0);
+  transition:
+    color 0.12s,
+    background-color 0.12s;
+}
+.ag-variant:hover {
+  color: var(--text);
+}
+.ag-variant[aria-selected="true"] {
+  background: var(--surface0);
+  color: var(--text);
+}
+.ag-variant:focus-visible {
+  outline: 2px solid var(--mauve);
+  outline-offset: 1px;
+}
+/* The route: one straight 2px trunk through a ring per layer, top to bottom in reading order. */
+.ag-route {
+  list-style: none;
+  margin: 18px 0 0;
+  padding: 0 0 0 32px;
+}
+.ag-stop {
+  position: relative;
+  padding-bottom: 28px;
+}
+.ag-stop::before {
+  content: "";
+  position: absolute;
+  left: -25px;
+  top: 21px;
+  bottom: 3px;
+  width: 2px;
+  border-radius: 1px;
+  background: var(--surface1);
+}
+.ag-stop-end {
+  padding-bottom: 0;
+}
+.ag-stop-end::before {
+  display: none;
+}
+.ag-ring {
+  position: absolute;
+  left: -32px;
+  top: 3px;
+  width: 16px;
+  height: 16px;
+  box-sizing: border-box;
+  border-radius: 50%;
+  border: 2px solid var(--surface2);
+  background: var(--base);
+}
+.ag-stop[data-state="empty"] .ag-ring {
+  border-style: dashed;
+}
+.ag-stop[data-state="set"] .ag-ring {
+  border-color: var(--lavender);
+  background: radial-gradient(circle, var(--lavender) 0 3px, var(--base) 3.5px);
+}
+.ag-stop[data-state="end"] .ag-ring {
+  border-color: var(--overlay1);
+  background: radial-gradient(circle, var(--overlay1) 0 3px, var(--base) 3.5px);
+}
+.ag-stop-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 22px;
+}
+.ag-stop-head > .btn,
+.ag-stop-head > .chip,
+.ag-stop-head > .select-wrap {
+  flex: none;
+}
+.ag-stop-head .select-wrap {
+  min-width: 150px;
+}
+.ag-stop-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+}
+.ag-stop-title {
+  flex: none;
+}
+.ag-stop-meta {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11.5px;
+  color: var(--overlay2);
+}
+.ag-stop-note {
+  margin: 4px 0 10px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--subtext0);
+  max-width: 72ch;
+}
+.ag-text {
+  position: relative;
+  max-height: 172px;
+  overflow: hidden;
+  padding: 12px 14px;
+  border-radius: 10px;
+  background: var(--mantle);
+  border: 1px solid var(--surface0);
+  font-size: 12.5px;
+  line-height: 1.62;
+  color: var(--subtext1);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  user-select: text;
+  mask-image: linear-gradient(to bottom, #000 calc(100% - 56px), transparent);
+}
+.ag-text[data-open] {
+  max-height: none;
+  mask-image: none;
+}
+.ag-received[data-open] {
+  max-height: min(560px, 60vh);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+.ag-quiet {
+  color: var(--subtext0);
+}
+/* The human's own text in the joined prompt: one continuous lavender wash, bleeding into the padding. */
+.ag-own {
+  display: block;
+  margin: 14px -8px 0;
+  padding: 8px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--lavender) 8%, transparent);
+  color: var(--text);
+}
+.ag-more {
+  all: unset;
+  cursor: pointer;
+  margin-top: 6px;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+  color: var(--subtext0);
+  border-radius: 5px;
+  transition: color 0.12s;
+}
+.ag-more:hover {
+  color: var(--text);
+}
+.ag-more:focus-visible {
+  outline: 2px solid var(--mauve);
+  outline-offset: 2px;
+}
+.ag-more svg {
+  transition: transform 0.2s var(--ease-out);
+}
+.ag-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+.ag-textarea {
+  all: unset;
+  box-sizing: border-box;
+  display: block;
+  width: 100%;
+  field-sizing: content;
+  min-height: 96px;
+  max-height: 440px;
+  overflow-y: auto;
+  resize: vertical;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: var(--crust);
+  border: 1.5px solid var(--surface0);
+  font-size: 13px;
+  line-height: 1.55;
+  color: var(--text);
+  white-space: pre-wrap;
+  user-select: text;
+  transition: border-color 0.15s;
+}
+.ag-textarea::placeholder {
+  color: var(--overlay1);
+}
+.ag-textarea:hover:not(:focus):not(:disabled) {
+  border-color: var(--surface1);
+}
+.ag-textarea:focus {
+  border-color: var(--mauve);
+}
+.ag-textarea:disabled {
+  opacity: 0.6;
+}
+.ag-editor[data-invalid] .ag-textarea {
+  border-color: var(--red);
+}
+.ag-count {
+  font-variant-numeric: tabular-nums;
+}
+.ag-confirm {
+  min-width: 0;
+  margin: 4px 0 12px;
+  padding: 11px 13px;
+  border-radius: 10px;
+  background: var(--mantle);
+  border: 1px solid var(--surface1);
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--subtext1);
+  max-width: 72ch;
+}
+.ag-confirm-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 10px;
+}
+.ag-missing {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin: 8px 0 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--subtext0);
+  max-width: 72ch;
+}
+.ag-missing svg {
+  flex: none;
+  margin-top: 2px;
+  color: var(--overlay2);
+}
+.ag-missing code {
+  padding: 0 4px;
+  border-radius: 4px;
+  background: var(--surface0);
+  font-size: 11.5px;
+  color: var(--text);
+}
+.ag-compare {
+  margin-top: 12px;
+}
+.ag-compare > summary {
+  cursor: pointer;
+  width: max-content;
+  margin-bottom: 8px;
+  font-size: 12px;
+  color: var(--subtext0);
+  border-radius: 5px;
+}
+.ag-compare > summary:hover {
+  color: var(--text);
+}
+.ag-compare > summary::marker {
+  color: var(--overlay1);
+}
+.ag-compare > summary:focus-visible {
+  outline: 2px solid var(--mauve);
+  outline-offset: 2px;
+}
+.ag-save {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px 10px;
+  margin-top: 10px;
+}
+.ag-saved {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--green);
+}
+.ag-loading {
+  padding: 6px 0;
+}
+.ag-error {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  margin-top: 10px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: var(--mantle);
+  border: 1px solid var(--surface0);
+}
+/* Short windows: a denser list (the 960×600 minimum shows every role), the page starting nearer the top. */
+@media (max-height: 760px) {
+  .st-scroll {
+    padding-top: 22px;
+  }
+  .st-page-head {
+    margin-bottom: 18px;
+  }
+  .ag-list {
+    gap: 2px;
+  }
+  .ag-group-label {
+    padding: 6px 10px 2px;
+  }
+  .ag-item {
+    height: 28px;
+  }
+}
+@container st (max-width: 640px) {
+  .ag-body {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 20px;
+  }
+  .ag-list {
+    display: none;
+  }
+  .ag-pick {
+    display: block;
+    max-width: 260px;
+  }
+  .st-page-head {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 14px;
+  }
+  .ag-planner {
+    align-items: flex-start;
+  }
+}
+@container agd (max-width: 520px) {
+  .ag-run {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  }
+  .ag-run > :nth-child(2) {
+    grid-column: 1 / -1;
+    grid-row: 2;
   }
 }
 

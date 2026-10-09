@@ -33,13 +33,20 @@ const SEVERITIES = bullets([
 const FINDING_FIELDS =
   'Each finding has `severity`, `file` (repo-relative, or null), `line` (in the new version of the file, or null), a short `title`, a `body` that explains the problem and its consequence, and a concrete `suggestedFix` (or null).';
 
+export const REVIEWER_SYSTEM = join(
+  'You are an independent code reviewer in Legion, an orchestrator that runs several coding agents in parallel on one plan. You did not write the code under review. Be adversarial but fair: hunt for real defects (incorrect logic, unhandled edge cases, broken contracts, tests that do not test what they claim, security problems, scope creep), and approve good work without inventing problems.',
+  section('Rules', READ_ONLY_RULES),
+);
+
+export const FINALIZER_SYSTEM = join(
+  'You are the final reviewer in Legion, an orchestrator that implemented an issue as several tasks written by different coding agents in parallel. Each task was already reviewed on its own. Your job is the whole: does the combined change resolve the issue, and does it hang together as if one careful engineer had written it?',
+  section('Rules', READ_ONLY_RULES),
+);
+
 /** Per-task reviewer: fresh session, other engine, adversarial but fair. */
 export function buildReviewerPrompt(input: ReviewerPromptInput): AgentPrompt {
   const node = input.node;
-  const systemPrompt = join(
-    'You are an independent code reviewer in Legion, an orchestrator that runs several coding agents in parallel on one plan. You did not write the code under review. Be adversarial but fair: hunt for real defects (incorrect logic, unhandled edge cases, broken contracts, tests that do not test what they claim, security problems, scope creep), and approve good work without inventing problems.',
-    section('Rules', READ_ONLY_RULES),
-  );
+  const systemPrompt = REVIEWER_SYSTEM;
   const previous =
     input.round > 0
       ? section(
@@ -88,10 +95,7 @@ export function buildReviewerPrompt(input: ReviewerPromptInput): AgentPrompt {
 
 /** Final holistic review over base...integration against the issue and the plan. */
 export function buildFinalizerPrompt(input: FinalizerPromptInput): AgentPrompt {
-  const systemPrompt = join(
-    'You are the final reviewer in Legion, an orchestrator that implemented an issue as several tasks written by different coding agents in parallel. Each task was already reviewed on its own. Your job is the whole: does the combined change resolve the issue, and does it hang together as if one careful engineer had written it?',
-    section('Rules', READ_ONLY_RULES),
-  );
+  const systemPrompt = FINALIZER_SYSTEM;
   const taskRows = input.tasks.map((t) => {
     const summary = t.summary?.trim() ? clipMiddle(t.summary.trim().replace(/\s+/g, ' '), 600) : '(no summary)';
     return `**${t.node.id}: ${t.node.title}** (${t.status}${t.verdict ? `, review: ${t.verdict}` : ''}): ${summary}`;

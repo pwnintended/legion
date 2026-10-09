@@ -40,6 +40,7 @@ test('settings: one model field per role follows the engine; MCP servers and ski
 
     // One model field per role; switching the role's engine switches which model it edits.
     await settings.locator('.st-nav-item', { hasText: 'Agents' }).click();
+    await settings.locator('[data-role-item="coder"]').click();
     const coder = settings.locator('[data-role="coder"]');
     await expect(settings.getByLabel('Coder model')).toHaveCount(1);
     await expect(settings.getByLabel('Coder Claude model')).toHaveCount(0);

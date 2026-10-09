@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { access, copyFile, mkdir, readdir, readFile } from 'node:fs/promises';
 import { dirname, join, relative, resolve, sep } from 'node:path';
-import { GatesConfigSchema, type PackageManager as SharedPackageManager } from '@shared/domain';
+import { GatesConfigSchema, PromptsConfigSchema, type PackageManager as SharedPackageManager } from '@shared/domain';
 import { tail } from '@shared/util';
 import { execa } from 'execa';
 import { z } from 'zod';
@@ -24,6 +24,8 @@ export const LegionConfigSchema = z.object({
   lockfileCommand: z.string().min(1).optional(),
   /** Named gates run before review and merge (`verify` still works: each entry becomes a gate). */
   gates: GatesConfigSchema.optional(),
+  /** Per role, instructions added to that role's system prompt in this repository (Settings → Agents). */
+  prompts: PromptsConfigSchema.optional(),
 });
 export type LegionConfig = z.infer<typeof LegionConfigSchema>;
 

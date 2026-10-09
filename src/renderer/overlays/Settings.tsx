@@ -1,52 +1,36 @@
 /**
- * Settings (⌘,): engines (binary path, detected version and login, enable), agent defaults per role, run
- * limits (concurrency, budget, retries) and appearance. Gates (Gates.tsx) edit the project's legion.json instead
+ * Settings (⌘,): a sheet with a page per section: engines (binary path, detected version and login, enable),
+ * agents (engine, model, effort and prompt per role, AgentsSettings.tsx), access, gates, run limits (concurrency,
+ * budget, retries) and appearance. Gates (Gates.tsx) edit the project's legion.json instead
  * and save with their own button. Engine settings go through `settings.get/set` (each
  * valid field saves on commit: blur, ⏎ or a choice); appearance is a renderer preference (prefs.ts).
  */
-import type { Effort, EngineKind, Role, Settings, SettingsPatch } from '@shared/domain';
+import type { Settings, SettingsPatch } from '@shared/domain';
 import type { EngineInfo } from '@shared/engine';
-import { useEffect, useId, useRef, useState } from 'react';
+import { type ReactNode, useEffect, useId, useRef, useState } from 'react';
 import { commandTooltip } from '../app/commands';
 import { rpc, useEngines, useSettings, useUi } from '../app/hooks';
 import { type Flavour, type MotionPref, setPref, usePrefs } from '../app/prefs';
 import { actions, dataStore, type SettingsSection } from '../app/store';
-import { Icon } from '../chrome/icons';
+import { Icon, type IconName } from '../chrome/icons';
 import { CommandKbd, Dot } from '../chrome/ui';
 import { ENGINE_NAME } from '../layout/describe';
 import { errorMessage } from '../tiles/session/actions';
 import { AccessSection } from './Access';
+import { AgentsSection } from './AgentsSettings';
 import { GatesSection } from './Gates';
-import { ApprovalsControl, Field, Segmented, Select, Switch } from './SettingsControls';
+import { ApprovalsControl, Field, Segmented, Switch } from './SettingsControls';
 import { OverlayPanel } from './Shell';
 import { engineStatus, parseBinaryPath, parseBudget, parseModel, parseWhole } from './settings-model';
 
 const REAL: readonly ('claude' | 'codex')[] = ['claude', 'codex'];
-/** Mirrors EFFORTS in shared/domain.ts (not imported: values from there pull zod into this chunk). */
-const EFFORTS: readonly Effort[] = ['low', 'medium', 'high', 'xhigh', 'max'];
-const ROLES: { role: Role; label: string; note: string }[] = [
-  { role: 'planner', label: 'Planner', note: 'Clarifies and drafts the plan. Default for new runs.' },
-  { role: 'coder', label: 'Coder', note: 'Implements every task; plans never pick an engine or model.' },
-  { role: 'reviewer', label: 'Reviewer', note: 'Always the other engine than the coder.' },
-  { role: 'resolver', label: 'Resolver', note: 'Resolves merge conflicts.' },
-  { role: 'finalizer', label: 'Final review', note: 'Reviews base…integration before the PR.' },
-  { role: 'lead', label: 'Lead', note: 'Coordinates the coders after approval; talks, never touches files.' },
-  { role: 'researcher', label: 'Researcher', note: 'Read-only repository and web research on a brief.' },
-  { role: 'research_lead', label: 'Research lead', note: 'Splits a broad brief over researchers and synthesises.' },
-  { role: 'assistant', label: 'Assistant', note: 'Your conversation partner; starts the work and relays the lead.' },
-  {
-    role: 'session',
-    label: 'Session',
-    note: 'A direct session: edits your checkout, no plan. Default for new sessions.',
-  },
-];
-const SECTIONS: { id: SettingsSection; label: string }[] = [
-  { id: 'engines', label: 'Engines' },
-  { id: 'agents', label: 'Agents' },
-  { id: 'access', label: 'Access' },
-  { id: 'gates', label: 'Gates' },
-  { id: 'runs', label: 'Runs' },
-  { id: 'appearance', label: 'Appearance' },
+const SECTIONS: { id: SettingsSection; label: string; icon: IconName }[] = [
+  { id: 'engines', label: 'Engines', icon: 'terminal' },
+  { id: 'agents', label: 'Agents', icon: 'agents' },
+  { id: 'access', label: 'Access', icon: 'link' },
+  { id: 'gates', label: 'Gates', icon: 'check' },
+  { id: 'runs', label: 'Runs', icon: 'dag' },
+  { id: 'appearance', label: 'Appearance', icon: 'eye' },
 ];
 
 type SaveState = { kind: 'idle' | 'saving' | 'saved' } | { kind: 'error'; message: string };
@@ -60,31 +44,13 @@ export function SettingsOverlay() {
   const scrollRef = useRef<HTMLDivElement>(null);
   const savedTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const scrollTo = (id: SettingsSection, smooth = true) => {
+  // A page per section: switching starts the new one at its top.
+  const open = (id: SettingsSection) => {
     setSection(id);
-    const el = scrollRef.current?.querySelector<HTMLElement>(`[data-section="${id}"]`);
-    if (el && scrollRef.current)
-      scrollRef.current.scrollTo({ top: el.offsetTop - 12, behavior: smooth ? 'smooth' : 'auto' });
+    scrollRef.current?.scrollTo({ top: 0 });
   };
 
-  // biome-ignore lint/correctness/useExhaustiveDependencies: jump once, to the section asked for on open.
-  useEffect(() => {
-    if (requested) scrollTo(requested, false);
-  }, []);
   useEffect(() => () => void (savedTimer.current && clearTimeout(savedTimer.current)), []);
-
-  // Track the section in view (for the nav highlight).
-  const onScroll = () => {
-    const root = scrollRef.current;
-    if (!root) return;
-    let current: SettingsSection = 'engines';
-    for (const { id } of SECTIONS) {
-      const el = root.querySelector<HTMLElement>(`[data-section="${id}"]`);
-      if (el && el.offsetTop - 40 <= root.scrollTop) current = id;
-    }
-    if (root.scrollTop + root.clientHeight >= root.scrollHeight - 4) current = 'appearance';
-    setSection(current);
-  };
 
   const commit = async (patch: SettingsPatch): Promise<boolean> => {
     setSave({ kind: 'saving' });
@@ -101,9 +67,15 @@ export function SettingsOverlay() {
     }
   };
 
+  const page = (id: SettingsSection, content: ReactNode) => (
+    <div className="st-page" data-page={id} data-wide={id === 'agents' || undefined} hidden={section !== id}>
+      {content}
+    </div>
+  );
+
   return (
-    <OverlayPanel label="Settings" placement="center" width={780} top={64} testId="settings">
-      <div className="ovl-head">
+    <OverlayPanel label="Settings" placement="sheet" width="min(1180px, 100%)" top={40} testId="settings">
+      <div className="ovl-head st-head">
         <Icon name="settings" size={15} className="text-overlay2" />
         <span className="ovl-title">Settings</span>
         <CommandKbd id="settings.open" />
@@ -137,27 +109,28 @@ export function SettingsOverlay() {
               key={s.id}
               type="button"
               className="st-nav-item"
-              aria-current={section === s.id}
+              aria-current={section === s.id ? 'page' : undefined}
               data-autofocus={s.id === (requested ?? 'engines') || undefined}
-              onClick={() => scrollTo(s.id)}
+              onClick={() => open(s.id)}
             >
+              <Icon name={s.icon} size={14} className="st-nav-icon" />
               {s.label}
             </button>
           ))}
         </nav>
-        <div className="st-scroll" ref={scrollRef} onScroll={onScroll}>
+        <div className="st-scroll" ref={scrollRef} data-page={section}>
           {settings ? (
             <>
-              <EnginesSection settings={settings} engines={engines.list} commit={commit} />
-              <AgentsSection settings={settings} engines={engines.list} commit={commit} />
-              <AccessSection settings={settings} commit={commit} />
-              <GatesSection />
-              <RunsSection settings={settings} commit={commit} />
+              {page('engines', <EnginesSection settings={settings} engines={engines.list} commit={commit} />)}
+              {page('agents', <AgentsSection settings={settings} engines={engines.list} commit={commit} />)}
+              {page('access', <AccessSection settings={settings} commit={commit} />)}
+              {page('gates', <GatesSection />)}
+              {page('runs', <RunsSection settings={settings} commit={commit} />)}
             </>
-          ) : (
+          ) : section !== 'appearance' ? (
             <SettingsUnavailable />
-          )}
-          <AppearanceSection />
+          ) : null}
+          {page('appearance', <AppearanceSection />)}
         </div>
       </div>
     </OverlayPanel>
@@ -201,7 +174,7 @@ function EnginesSection({ settings, engines, commit }: { settings: Settings; eng
         Legion drives the CLIs you already use, with your own logins. Leave the path empty to find them on your shell's
         PATH.
       </p>
-      <div className="flex flex-col gap-2.5">
+      <div className="st-engines">
         {REAL.map((kind) => (
           <EngineCard
             key={kind}
@@ -315,102 +288,6 @@ function EngineCard({
 }
 
 // ---------------------------------------------------------------------------------------------
-// Agents
-// ---------------------------------------------------------------------------------------------
-
-function AgentsSection({ settings, engines, commit }: { settings: Settings; engines: EngineInfo[]; commit: Commit }) {
-  const id = useId();
-  const planner = settings.roles.planner.engine;
-  return (
-    <section className="st-section" data-section="agents" aria-labelledby="st-agents">
-      <h2 id="st-agents" className="st-h">
-        Agents
-      </h2>
-      <div className="st-row">
-        <div className="min-w-0 flex-1">
-          <div className="st-label" id={`${id}-planner`}>
-            Default planner
-          </div>
-          <div className="st-note">Preselected in the composer; you can still pick per run.</div>
-        </div>
-        <Segmented<EngineKind>
-          labelledBy={`${id}-planner`}
-          value={planner}
-          options={REAL.map((k) => ({ value: k, label: k === 'claude' ? 'Claude' : 'Codex', engine: k }))}
-          onChange={(engine) => void commit({ roles: { planner: { engine } } })}
-        />
-      </div>
-      <div className="st-sub">Defaults per role</div>
-      <p className="st-lede">
-        The model field follows the engine: pick an engine to see and set its model. Each engine keeps its own model per
-        role, because a reviewer's engine depends on its coder. Empty = the CLI's default model.
-      </p>
-      <div className="st-roles">
-        <div className="st-roles-head" aria-hidden="true">
-          <span>Role</span>
-          <span>Engine</span>
-          <span>Model</span>
-          <span>Effort</span>
-        </div>
-        {ROLES.map(({ role, label, note }) => {
-          const value = settings.roles[role];
-          const engineModel = value.engine === 'fake' ? null : value.models[value.engine];
-          return (
-            <div key={role} className="st-roles-row" data-role={role}>
-              <span className="min-w-0">
-                <span className="block text-[12.5px] font-medium">{label}</span>
-                <span className="st-note block truncate" title={note}>
-                  {note}
-                </span>
-              </span>
-              <span>
-                <Select
-                  label={`${label} engine`}
-                  value={value.engine}
-                  options={[
-                    ...REAL.map((k) => ({ value: k, label: k === 'claude' ? 'Claude' : 'Codex' })),
-                    ...(value.engine === 'fake' ? [{ value: 'fake', label: 'Fake' }] : []),
-                  ]}
-                  onChange={(engine) => void commit({ roles: { [role]: { engine: engine as EngineKind } } })}
-                />
-              </span>
-              <span>
-                {value.engine === 'fake' ? (
-                  <span className="st-note">n/a</span>
-                ) : (
-                  <Field
-                    // Keyed by engine so the draft never carries one engine's model name over to the other.
-                    key={value.engine}
-                    label={`${label} model`}
-                    hideLabel
-                    mono
-                    value={engineModel ?? ''}
-                    placeholder="default"
-                    suggestions={engines.find((e) => e.kind === value.engine)?.models}
-                    parse={parseModel}
-                    onCommit={(model) => commit({ roles: { [role]: { models: { [value.engine]: model } } } })}
-                  />
-                )}
-              </span>
-              <span>
-                <Select
-                  label={`${label} effort`}
-                  value={value.effort ?? ''}
-                  options={[{ value: '', label: 'default' }, ...EFFORTS.map((e) => ({ value: e, label: e }))]}
-                  onChange={(effort) =>
-                    void commit({ roles: { [role]: { effort: (effort || null) as Effort | null } } })
-                  }
-                />
-              </span>
-            </div>
-          );
-        })}
-      </div>
-    </section>
-  );
-}
-
-// ---------------------------------------------------------------------------------------------
 // Runs: concurrency, budget, limits
 // ---------------------------------------------------------------------------------------------
 
@@ -423,29 +300,34 @@ function RunsSection({ settings, commit }: { settings: Settings; commit: Commit 
         Runs
       </h2>
       <div className="st-sub mt-0">Coordination</div>
-      <p className="st-lede">
-        The assistant turns your prompt into a conversation that can start work; the lead coordinates the coders once a
-        plan is approved. Both only talk: they never touch files.
-      </p>
-      <div className="st-grid">
-        <div className="st-row">
-          <span className="st-label">Assistant</span>
-          <span className="flex-1" />
-          <Switch
-            label="Assistant"
-            checked={settings.assistant.enabled}
-            onChange={(enabled) => commit({ assistant: { enabled } })}
-          />
+      <p className="st-lede">Both only talk: they never touch files.</p>
+      <div className="st-row">
+        <div className="min-w-0 flex-1">
+          <div className="st-label">Assistant</div>
+          <div className="st-note">
+            You talk to an assistant that starts the work and keeps you posted. Off: the composer starts the planner
+            directly.
+          </div>
         </div>
-        <div className="st-row">
-          <span className="st-label">Implementation lead</span>
-          <span className="flex-1" />
-          <Switch
-            label="Implementation lead"
-            checked={settings.lead.enabled}
-            onChange={(enabled) => commit({ lead: { enabled } })}
-          />
+        <Switch
+          label="Assistant"
+          checked={settings.assistant.enabled}
+          onChange={(enabled) => commit({ assistant: { enabled } })}
+        />
+      </div>
+      <div className="st-row">
+        <div className="min-w-0 flex-1">
+          <div className="st-label">Implementation lead</div>
+          <div className="st-note">
+            Coordinates the coders once a plan is approved and answers their questions from it. Off: coders work from
+            the plan alone.
+          </div>
         </div>
+        <Switch
+          label="Implementation lead"
+          checked={settings.lead.enabled}
+          onChange={(enabled) => commit({ lead: { enabled } })}
+        />
       </div>
       <div className="st-row">
         <div className="min-w-0 flex-1">

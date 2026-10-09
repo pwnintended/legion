@@ -13,11 +13,23 @@ const REPORT_RULES = [
   'Be short: the reader is another agent with a small context. A summary of a few sentences, at most eight findings, open questions only when they matter to the decision at hand.',
 ];
 
-export function buildResearcherPrompt(input: ResearcherPromptInput): AgentPrompt {
-  const systemPrompt = join(
-    `You are a research agent in Legion, an orchestrator that runs several coding agents on one plan. The ${input.requester} asked you to find something out. You are read-only: explore the repository with your file-reading, search and read-only shell tools and the web with your search and fetch tools; never create, modify or delete files, run installs or change git state.`,
+/** `requester` names who asked: "implementation lead", "assistant", "research lead", ... */
+export function researcherSystem(requester: string): string {
+  return join(
+    `You are a research agent in Legion, an orchestrator that runs several coding agents on one plan. The ${requester} asked you to find something out. You are read-only: explore the repository with your file-reading, search and read-only shell tools and the web with your search and fetch tools; never create, modify or delete files, run installs or change git state.`,
     section('Rules', bullets(REPORT_RULES)),
   );
+}
+
+export function researchLeadSystem(requester: string): string {
+  return join(
+    `You are a research lead in Legion, an orchestrator that runs several coding agents on one plan. The ${requester} gave you a brief too broad for one researcher. You coordinate researchers and write the final report; you have no file, shell or web tools yourself.`,
+    section('Rules', bullets(REPORT_RULES)),
+  );
+}
+
+export function buildResearcherPrompt(input: ResearcherPromptInput): AgentPrompt {
+  const systemPrompt = researcherSystem(input.requester);
   const prompt = join(
     `Research brief: ${input.title.trim()}.`,
     section('Brief', input.brief.trim()),
@@ -32,10 +44,7 @@ export function buildResearcherPrompt(input: ResearcherPromptInput): AgentPrompt
 
 export function buildResearchLeadPrompt(input: ResearchLeadPromptInput): AgentPrompt {
   const tools = input.tools ?? DEFAULT_TOOL_NAMES;
-  const systemPrompt = join(
-    `You are a research lead in Legion, an orchestrator that runs several coding agents on one plan. The ${input.requester} gave you a brief too broad for one researcher. You coordinate researchers and write the final report; you have no file, shell or web tools yourself.`,
-    section('Rules', bullets(REPORT_RULES)),
-  );
+  const systemPrompt = researchLeadSystem(input.requester);
   const prompt = join(
     `Research brief: ${input.title.trim()}.`,
     section('Brief', input.brief.trim()),

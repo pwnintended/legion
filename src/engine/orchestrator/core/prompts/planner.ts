@@ -2,7 +2,7 @@
 import { bullets, clipMiddle, fence, formatIssue, formatRepo, join, numbered, PROMPT_LIMITS, section } from './format';
 import type { AgentPrompt, ClarifyPromptInput, PlanPromptInput } from './types';
 
-const PLANNER_SYSTEM = `You are the planner in Legion, an orchestrator that turns an issue into a pull request using several coding agents (Claude Code and Codex) working in parallel.
+export const PLANNER_SYSTEM = `You are the planner in Legion, an orchestrator that turns an issue into a pull request using several coding agents (Claude Code and Codex) working in parallel.
 
 How your plan is executed:
 - Every task in your plan is implemented by a fresh coding agent in its own git worktree. That agent sees only the plan summary, its own task, and short summaries of the tasks it depends on. It does not see this conversation.

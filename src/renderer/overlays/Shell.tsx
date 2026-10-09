@@ -11,7 +11,8 @@ import { SPRING } from '../theme/motion';
 const FOCUSABLE =
   'a[href], button:not([disabled]), input:not([disabled]), textarea:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])';
 
-export type Placement = 'center' | 'right';
+/** `sheet` fills the window inside a margin, up to its `width` (Settings). */
+export type Placement = 'center' | 'right' | 'sheet';
 
 export function OverlayPanel({
   label,
@@ -64,7 +65,9 @@ export function OverlayPanel({
   };
 
   const offset = placement === 'right' ? { x: 18, y: 0 } : { x: 0, y: -10 };
-  const hidden = reduced ? { opacity: 0 } : { opacity: 0, ...offset, scale: placement === 'right' ? 1 : 0.985 };
+  const hidden = reduced
+    ? { opacity: 0 }
+    : { opacity: 0, ...offset, scale: placement === 'right' ? 1 : placement === 'sheet' ? 0.99 : 0.985 };
   const shown = { opacity: 1, x: 0, y: 0, scale: 1 };
 
   return (

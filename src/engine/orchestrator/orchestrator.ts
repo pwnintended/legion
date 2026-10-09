@@ -64,6 +64,7 @@ import {
   type AgentPrompt,
   canMessage,
   coderEngine,
+  composeSystemPrompt,
   DEFAULT_TOOL_NAMES,
   type EnabledEngines,
   enabledEngines,
@@ -510,6 +511,11 @@ export class Orchestrator {
     const usable = this.registry.usable(params.engine);
     if (!usable.ok) throw new AgentFailure({ kind: 'auth', message: usable.reason });
     const engine: AgentEngine = this.registry.get(params.engine);
+    // The repository's prompt layer for this role (legion.json `prompts`, Settings → Agents), read at every start
+    // so a change reaches the next session. Read before the attempt exists: a message sent to it from here on
+    // must find it live or still queued, never queued after the queue was drained below.
+    const projectPrompt = (await this.config(params.run))?.prompts?.[params.role] ?? null;
+    this.assertOpen();
     const continued = params.resumeSessionId ? this.attemptsOfSession(params.run.id, params.resumeSessionId) : [];
     const parentAttemptId =
       params.parentAttemptId !== undefined ? params.parentAttemptId : (continued.at(-1)?.parentAttemptId ?? null);
@@ -559,11 +565,13 @@ export class Orchestrator {
       this.log.warn(`could not resolve agent access for ${params.role}: ${(error as Error).message}`);
       return { extraMcp: {}, skills: null };
     });
+    // The human's layers over the role's system prompt: their replacement and additions, then the repository's.
+    const custom = this.settings().roles[params.role].prompt;
     const opts: SessionOptions = {
       role: params.role,
       cwd: params.cwd,
       prompt: inherited ? `${inherited}\n\n---\n\n${params.prompt.prompt}` : params.prompt.prompt,
-      systemPrompt: params.prompt.systemPrompt,
+      systemPrompt: composeSystemPrompt(params.prompt.systemPrompt, { ...custom, project: projectPrompt }),
       model: params.model,
       effort: params.effort,
       permission: permissionProfileFor(

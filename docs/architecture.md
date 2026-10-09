@@ -478,6 +478,16 @@ and trailing newline, and writes atomically. **Settings → Gates** (`renderer/o
 flag and source badges (a `verify` entry can be moved into `gates.commands`), scope mode and secret-scan mode and
 allowlist. legion.json is a sensitive path for agents, so a coder can't silently relax gates.
 
+**Role prompts.** Every session's system prompt is layered in `Orchestrator.openSession`
+(`core/prompts/layers.ts` `composeSystemPrompt`): the role's built-in prompt, or the human's replacement
+(`settings.roles.<role>.prompt.replace`, global only, used for every variant of the role), then their additions for
+every project (`prompt.append`) under "## Additional instructions", then the repository's (legion.json
+`prompts.<role>`, read at every start) under "## Additional instructions for this repository". The first message
+(issue, plan, board) stays Legion's. `projects.prompts` / `projects.setPrompts({projectId, revision, prompts})`
+(`engine/projects/prompts.ts`, sharing `legion-file.ts` with gates) read and change that key with the same revision
+check and format-preserving write. **Settings → Agents** (`renderer/overlays/AgentsSettings.tsx`, project layer in
+`prompts-model.ts`) shows the layers as a route per role, with the built-in text from `core/prompts/builtin.ts`.
+
 ### 8.1 Lifecycle service (`engine/orchestrator/`)
 
 The service applies `core/` decisions with CAS transitions; every flow is re-entrant from the persisted state.

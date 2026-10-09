@@ -2,7 +2,7 @@
  * Direct sessions (`runs.session`): one agent in the project's checkout, talked to directly, stopped between
  * turns and resumed by the human's next message, ended by archiving or stopping the run.
  */
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { Run } from '@shared/domain';
 import { runShort } from '@shared/ids';
@@ -116,6 +116,28 @@ describe('a direct session', () => {
     expect(archived.status).toBe('done');
     expect(archived.archiveReport?.kept.map((k) => k.kind)).toContain('worktree');
     expect(existsSync(join(worktree, 'notes.txt'))).toBe(true);
+  }, 60_000);
+
+  it('sends the human’s prompt layers: their replacement, their additions, then the repository’s', async () => {
+    const rec = recorder();
+    h = await startHarness({
+      script: rec.script,
+      settings: {
+        roles: { session: { prompt: { append: 'Answer in one line.', replace: 'You pair with the human.' } } },
+      },
+    });
+    const harness = h;
+    writeFileSync(join(harness.repo.path, 'legion.json'), '{ "prompts": { "session": "Use pnpm, never npm." } }\n');
+    const { attempt } = await startSession(harness);
+    await harness.waitFor(() => rec.turns.length === 1, 'first turn');
+    expect(rec.turns[0]?.opts.systemPrompt).toBe(
+      [
+        'You pair with the human.',
+        '## Additional instructions\n\nAnswer in one line.',
+        '## Additional instructions for this repository\n\nUse pnpm, never npm.',
+      ].join('\n\n'),
+    );
+    await stopped(harness, attempt.id);
   }, 60_000);
 
   it('is not woken by an engine restart while it waits for the human', async () => {

@@ -465,6 +465,10 @@ test('settings, a failed task escalated to you, a finished run archived', async 
     await expect(settings).toBeVisible();
     await expect(settings.getByTestId('engine-claude')).toContainText('2.1.289');
     await expect(settings.getByTestId('engine-claude').getByTestId('engine-status')).toHaveText('logged in');
+    await window.waitForTimeout(400);
+    await window.screenshot({ path: join(shots, 'settings-engines.png') });
+    // A page per section: the limits live under Runs.
+    await settings.locator('.st-nav-item', { hasText: 'Runs' }).click();
     const global = settings.getByLabel('All engines');
     await global.fill('0');
     await global.press('Enter');

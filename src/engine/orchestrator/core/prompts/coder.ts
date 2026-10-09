@@ -63,6 +63,19 @@ function finishInstructions(tools: ToolNames, structuredReport: boolean, commitH
 
 const CODER_SYSTEM = `You are a coding agent in Legion, an orchestrator that runs several coding agents in parallel on one plan. You implement exactly one task of that plan in your own git worktree. Other agents implement the other tasks at the same time; independent reviewers check your work against the task's acceptance criteria before it is merged.`;
 
+/** The coder's system prompt; `lead` adds where to take questions the plan leaves open. */
+export function coderSystem(tools: ToolNames, lead: boolean): string {
+  return join(
+    CODER_SYSTEM,
+    section('Rules', workspaceRules(tools, [presentRule(tools), ...(lead ? [leadRule(tools)] : [])])),
+  );
+}
+
+/** The fixer's system prompt: the coder's, without the lead (a fix round answers to its findings). */
+export function fixerSystem(tools: ToolNames): string {
+  return coderSystem(tools, false);
+}
+
 /** Coder: implement one task node. */
 export function buildCoderPrompt(input: CoderPromptInput): AgentPrompt {
   const tools = input.tools ?? DEFAULT_TOOL_NAMES;
@@ -77,10 +90,7 @@ export function buildCoderPrompt(input: CoderPromptInput): AgentPrompt {
           ),
         )
       : null;
-  const systemPrompt = join(
-    CODER_SYSTEM,
-    section('Rules', workspaceRules(tools, [presentRule(tools), ...(input.lead ? [leadRule(tools)] : [])])),
-  );
+  const systemPrompt = coderSystem(tools, input.lead === true);
   const prompt = join(
     `Implement task ${node.id}: ${node.title}.`,
     section(
@@ -124,7 +134,7 @@ export function buildCoderPrompt(input: CoderPromptInput): AgentPrompt {
 export function buildFixerPrompt(input: FixerPromptInput): AgentPrompt {
   const tools = input.tools ?? DEFAULT_TOOL_NAMES;
   const node = input.node;
-  const systemPrompt = join(CODER_SYSTEM, section('Rules', workspaceRules(tools, [presentRule(tools)])));
+  const systemPrompt = fixerSystem(tools);
   const merged = input.mergedIntegrationRef
     ? `Your task passed review, but verification failed after merging it into the integration branch. Legion has merged \`${input.mergedIntegrationRef}\` into your branch, so your worktree now contains the other tasks' merged work. The failure is most likely an interaction between your change and theirs: fix it on your side and keep their behavior intact.`
     : null;
@@ -173,10 +183,9 @@ function briefSpec(node: TaskNode): string {
   );
 }
 
-/** Resolver: finish a conflicted merge of the integration branch into the task branch. */
-export function buildResolverPrompt(input: ResolverPromptInput): AgentPrompt {
-  const tools = input.tools ?? DEFAULT_TOOL_NAMES;
-  const systemPrompt = join(
+/** The merge-conflict resolver's system prompt. */
+export function resolverSystem(tools: ToolNames): string {
+  return join(
     'You are a merge-conflict resolver in Legion, an orchestrator that runs several coding agents in parallel on one plan. A task branch has to absorb the integration branch, which already contains other reviewed tasks, and the merge stopped with conflicts.',
     section(
       'Rules',
@@ -185,6 +194,12 @@ export function buildResolverPrompt(input: ResolverPromptInput): AgentPrompt {
       ]),
     ),
   );
+}
+
+/** Resolver: finish a conflicted merge of the integration branch into the task branch. */
+export function buildResolverPrompt(input: ResolverPromptInput): AgentPrompt {
+  const tools = input.tools ?? DEFAULT_TOOL_NAMES;
+  const systemPrompt = resolverSystem(tools);
   const install = input.installCommand ? `\`${input.installCommand}\`` : "the repository's install command";
   const prompt = join(
     `Resolve the merge of \`${input.integrationRef}\` into the branch of task ${input.node.id}: ${input.node.title}.`,

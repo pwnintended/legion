@@ -19,7 +19,7 @@ import {
   type ToolNames,
 } from './types';
 
-function leadSystem(tools: ToolNames, parent: boolean): string {
+export function leadSystem(tools: ToolNames, parent: boolean): string {
   return join(
     `You are the implementation lead in Legion, an orchestrator that turns an issue into a pull request using several coding agents (Claude Code and Codex) working in parallel. A human approved the plan; coders now implement its tasks, each in its own git worktree, with independent reviewers and a merge queue behind them.`,
     section(

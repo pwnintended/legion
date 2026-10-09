@@ -1,7 +1,8 @@
 /**
  * RPC procedures for projects and read-only repository browsing (architecture §5 Project, §10):
  * `projects.*`, `files.*`, `git.log`, `git.show`, `prs.list`. The writes are `files.write` (the user saving a
- * file they edited, refused when it changed since) and `projects.setGates` (legion.json's `gates` key, gates.ts).
+ * file they edited, refused when it changed since), `projects.setGates` (legion.json's `gates` key, gates.ts) and
+ * `projects.setPrompts` (its `prompts` key, prompts.ts).
  * Files are read from the main checkout or, with `checkout`, from one of the project's worktrees (checkouts.ts).
  */
 import { realpath } from 'node:fs/promises';
@@ -25,6 +26,7 @@ import {
 import { readProjectGates, writeProjectGates } from './gates';
 import { gitLog, gitShow } from './history';
 import { listPrs, projectInfo, projectStatus } from './info';
+import { readProjectPrompts, writeProjectPrompts } from './prompts';
 
 export interface ProjectServices {
   files: FileIndexCache;
@@ -71,6 +73,10 @@ export function registerProjectHandlers(server: EngineRpcServer, ctx: EngineCont
   server.implement('projects.gates', ({ projectId }) => readProjectGates(root(projectId)));
   server.implement('projects.setGates', ({ projectId, revision, gates, verify }) =>
     writeProjectGates(root(projectId), { revision, gates, verify }),
+  );
+  server.implement('projects.prompts', ({ projectId }) => readProjectPrompts(root(projectId)));
+  server.implement('projects.setPrompts', ({ projectId, revision, prompts }) =>
+    writeProjectPrompts(root(projectId), { revision, prompts }),
   );
 
   const at = (projectId: string, checkout: string | null | undefined) => checkoutRoot(root(projectId), checkout);

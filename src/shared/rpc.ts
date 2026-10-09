@@ -24,11 +24,14 @@ import {
   MergeSchema,
   PlanAnnotationSchema,
   PlanSchema,
+  PROMPT_ADDITION_MAX,
   PresentationSchema,
   ProjectGatesSchema,
+  ProjectPromptsSchema,
   ProjectSchema,
   QuestionAnswerSchema,
   ReviewSchema,
+  RoleSchema,
   RunSchema,
   SettingsPatchSchema,
   SettingsSchema,
@@ -587,6 +590,20 @@ export const rpcContract = {
       verify: z.array(z.string().min(1)).optional(),
     }),
     output: ProjectGatesSchema,
+  },
+  /** The project's legion.json `prompts`: per role, instructions added to that role's system prompt here. */
+  'projects.prompts': { input: ByProject, output: ProjectPromptsSchema },
+  /**
+   * Change roles' entries in the project's legion.json `prompts` ('' or null removes one; roles not given keep
+   * theirs), keeping every other key. `conflict` when `revision` no longer matches the file.
+   */
+  'projects.setPrompts': {
+    input: z.object({
+      projectId: IdSchema,
+      revision: z.string().nullable(),
+      prompts: z.partialRecord(RoleSchema, z.string().max(PROMPT_ADDITION_MAX).nullable()),
+    }),
+    output: ProjectPromptsSchema,
   },
 
   // project files: read-only, confined to the checkout's root, ignored files invisible -------------

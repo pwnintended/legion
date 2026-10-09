@@ -16,6 +16,9 @@ import {
   type InboxItem,
   type Project,
   type ProjectGates,
+  type ProjectPrompts,
+  type PromptsConfig,
+  PromptsConfigSchema,
   type QuestionAnswer,
   type Run,
   type SettingsPatch,
@@ -64,10 +67,12 @@ const SCRIPT = withSessionLive(LIVE_SCRIPT);
 
 const SNAPSHOT_SEQ = 1000;
 
+/** A demo project's legion.json: what Settings edits (gates and prompts share its revision). */
 interface DemoGateConfig {
   revision: number;
   gates: GatesConfig | null;
   verify: string[];
+  prompts: PromptsConfig;
 }
 
 /** What detection finds in the demo repos' package.json scripts. */
@@ -343,6 +348,10 @@ export class DemoClient implements EngineClient {
         return this.projectGates(input.projectId as string);
       case 'projects.setGates':
         return this.setProjectGates(input);
+      case 'projects.prompts':
+        return this.projectPrompts(input.projectId as string);
+      case 'projects.setPrompts':
+        return this.setProjectPrompts(input);
       case 'verifications.output': {
         const v = w.verifications.find((r) => r.id === input.verificationId);
         if (!v) throw new RpcError('not_found', 'verification not found');
@@ -554,6 +563,10 @@ export class DemoClient implements EngineClient {
         revision: 1,
         gates: { commands: { 'db:migrate:check': 'pnpm db:migrate:check' }, scope: 'block' },
         verify: ['pnpm e2e --smoke'],
+        prompts: {
+          coder:
+            'Run `pnpm lint --fix` and `pnpm typecheck` before you call mark_task_done.\nNew endpoints need a request test in `tests/http/`.',
+        },
       };
       this.gateConfigs.set(project.id, config);
     }
@@ -590,6 +603,36 @@ export class DemoClient implements EngineClient {
     if (Array.isArray(input.verify)) config.verify = input.verify.map(String);
     config.revision += 1;
     return this.projectGates(projectId);
+  }
+
+  private projectPrompts(projectId: string): ProjectPrompts {
+    const project = this.project(projectId);
+    const config = this.gateConfig(project.id);
+    return {
+      path: `${project.path}/legion.json`,
+      exists: true,
+      revision: `demo-${config.revision}`,
+      error: null,
+      prompts: { ...config.prompts },
+    };
+  }
+
+  private setProjectPrompts(input: Record<string, unknown>): ProjectPrompts {
+    const projectId = input.projectId as string;
+    const config = this.gateConfig(projectId);
+    if (input.revision !== `demo-${config.revision}`) {
+      throw new RpcError('conflict', 'legion.json changed since it was read; reload and try again');
+    }
+    const next: Record<string, string> = { ...config.prompts };
+    for (const [role, text] of Object.entries((input.prompts ?? {}) as Record<string, string | null>)) {
+      if (text?.trim()) next[role] = text.trim();
+      else delete next[role];
+    }
+    const parsed = PromptsConfigSchema.safeParse(next);
+    if (!parsed.success) throw new RpcError('bad_request', parsed.error.issues.map((i) => i.message).join('; '));
+    config.prompts = parsed.data;
+    config.revision += 1;
+    return this.projectPrompts(projectId);
   }
 
   private addProject(path: string): Project {

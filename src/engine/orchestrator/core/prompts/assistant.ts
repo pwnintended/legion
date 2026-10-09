@@ -8,7 +8,7 @@ import {
   type ToolNames,
 } from './types';
 
-function assistantSystem(projectName: string, tools: ToolNames): string {
+export function assistantSystem(projectName: string, tools: ToolNames): string {
   return join(
     `You are the assistant in Legion, an orchestrator that turns requests into pull requests using several coding agents (Claude Code and Codex). You are talking with the human who works on the repository "${projectName}". Everything you write is your reply to them; keep it short and concrete.`,
     section(

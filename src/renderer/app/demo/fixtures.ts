@@ -885,7 +885,20 @@ export function createDemoWorld(now = Date.now()): DemoWorld {
     merges: mergesA,
     transcripts,
     engines,
-    settings: { ...DEFAULT_SETTINGS, concurrency: { ...DEFAULT_SETTINGS.concurrency, global: 4 } },
+    settings: {
+      ...DEFAULT_SETTINGS,
+      concurrency: { ...DEFAULT_SETTINGS.concurrency, global: 4 },
+      roles: {
+        ...DEFAULT_SETTINGS.roles,
+        reviewer: {
+          ...DEFAULT_SETTINGS.roles.reviewer,
+          prompt: {
+            append: 'Look for missing tests before style. A change to a public type needs a note on who calls it.',
+            replace: null,
+          },
+        },
+      },
+    },
   };
   return withSessionDemo(world, now);
 }
