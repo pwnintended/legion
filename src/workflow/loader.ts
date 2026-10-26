@@ -146,7 +146,13 @@ export function ejectWorkflow(repo: string, name: string, as?: string): { path: 
   const target = join(dir, `${as ?? found.name}.ts`);
   if (existsSync(target)) throw new Error(`${target} already exists`);
   mkdirSync(dir, { recursive: true });
-  copyFileSync(workflowSource(found), target);
+  const source = workflowSource(found);
+  copyFileSync(source, target);
+  // Helpers it imports (`./_tasks.ts`) come along unless the project has its own.
+  for (const m of readFileSync(source, 'utf8').matchAll(/from '\.\/(_[\w-]+\.ts)'/g)) {
+    const helper = m[1] as string;
+    if (!existsSync(join(dir, helper))) copyFileSync(join(dirname(source), helper), join(dir, helper));
+  }
   return { path: target, from: found };
 }
 

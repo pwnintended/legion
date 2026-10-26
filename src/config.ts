@@ -97,10 +97,15 @@ export const ConfigSchema = z.object({
     .object({
       /** Levels of leads under the orchestrator. */
       maxDepth: z.number().int().min(1).max(6).default(3),
+      /**
+       * Who answers the gates, questions and tool approvals of the orchestrator's own runs: the user (`ask`), or
+       * the orchestrator (`decide`), which escalates only what it cannot settle.
+       */
+      gates: z.enum(['ask', 'decide']).default('ask'),
       /** Leads alive (with a session) at once, across the team. */
       maxLeads: z.number().int().min(1).max(64).default(12),
     })
-    .default({ maxDepth: 3, maxLeads: 12 }),
+    .default({ maxDepth: 3, maxLeads: 12, gates: 'ask' }),
 });
 
 export type Config = z.infer<typeof ConfigSchema>;
@@ -216,7 +221,7 @@ export function ensureProjectConfig(repo: string, cwd: string, config: Config): 
 }
 
 export function defaultProjectConfig(config: Config): string {
-  const { assistant, workflows } = config;
+  const { assistant, workflows, team } = config;
   const line = (key: string, value: string | number, comment: string, on = true) =>
     `${on ? '' : '# '}${`${key.padEnd(9)} = ${typeof value === 'string' ? JSON.stringify(value) : value}`.padEnd(on ? 30 : 28)} # ${comment}`;
   return [
@@ -232,6 +237,17 @@ export function defaultProjectConfig(config: Config): string {
     '[workflows]',
     line('approvals', workflows.approvals, "agents' tool approvals: ask (you) | auto (the engine decides)"),
     line('maxAgents', workflows.maxAgents, 'agent sessions alive at once per run'),
+    '',
+    '[team]',
+    line('gates', team.gates, "your runs' gates: ask (you) | decide (the assistant, escalating what it can't)"),
+    line('maxDepth', team.maxDepth, 'levels of team leads under the assistant'),
+    line('maxLeads', team.maxLeads, 'lead sessions alive at once (idle ones close, and resume later)'),
+    '',
+    "# MCP servers for workflow agents and leads (they do not load your own CLI's), e.g.:",
+    '#',
+    '# [mcp.servers.blender]',
+    '# command = "uvx"',
+    '# args    = ["blender-mcp"]',
     '',
     '# Engine profiles say which account or binary "claude" and "codex" mean. They are per machine, so they',
     '# usually live in the user config; pick one per session with /claude <profile> or legion --claude <profile>.',

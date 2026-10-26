@@ -230,6 +230,10 @@ export function agent<S extends z.ZodType | undefined = undefined>(
         }
       }
 
+      const notes = run.host.notes?.(full) ?? null;
+      if (notes)
+        prompt = `${prompt}\n\n## Notes for this attempt\nAn earlier attempt did not work out. Take these into account:\n${notes}`;
+
       const meta: Record<string, unknown> = {
         engine: kind,
         profile: engine.profile.name,
@@ -244,8 +248,13 @@ export function agent<S extends z.ZodType | undefined = undefined>(
         const session = resumeId
           ? await engine.resume(resumeId, { ...sessionOpts, prompt })
           : await engine.start({ ...sessionOpts, prompt });
-        const result = await drive(run, full, session, opts.output, meta);
-        return { output: result as AgentResult<S>, meta };
+        run.host.agentSession?.(full, session);
+        try {
+          const result = await drive(run, full, session, opts.output, meta);
+          return { output: result as AgentResult<S>, meta };
+        } finally {
+          run.host.agentSession?.(full, null);
+        }
       } finally {
         release();
       }

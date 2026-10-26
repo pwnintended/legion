@@ -21,6 +21,7 @@ import { CodexEngine } from '../engine/codex/index.ts';
 import type { ApprovalDecision } from '../engine/types.ts';
 import type { Session } from '../session.ts';
 import { ROOT } from '../team/team.ts';
+import type { AskAnswer, GateAnswer } from '../workflow/host.ts';
 import {
   builtinSourceDir,
   ejectWorkflow,
@@ -30,13 +31,14 @@ import {
   PACKAGE_ROOT,
   workflowSource,
 } from '../workflow/loader.ts';
+import type { PendingInteraction } from '../workflow/manager.ts';
 import { formatReport, validateWorkflow } from '../workflow/validate.ts';
 import type { CommandSpec } from './input.tsx';
-import { type Line, type Seg, type UiInteraction, UiStore } from './store.ts';
+import { type Line, type Seg, type TeamRow, type UiInteraction, UiStore } from './store.ts';
 import { tildify } from './theme.ts';
 
 interface Command extends CommandSpec {
-  group: 'Workflows' | 'Runs' | 'Session';
+  group: 'Workflows' | 'Runs' | 'Team' | 'Session';
 }
 
 export const COMMANDS: readonly Command[] = [
@@ -44,7 +46,14 @@ export const COMMANDS: readonly Command[] = [
   { group: 'Workflows', name: 'run', args: '<name> [json]', description: 'start a workflow' },
   { group: 'Workflows', name: 'validate', args: '<name>', description: 'type-check and dry-run a workflow' },
   { group: 'Runs', name: 'runs', args: '', description: 'recent runs' },
-  { group: 'Runs', name: 'team', args: '', description: 'the leads: what each is doing, its plan and last report' },
+  { group: 'Team', name: 'team', args: '', description: 'the leads: what each is doing, its plan and last report' },
+  {
+    group: 'Team',
+    name: 'lead',
+    args: '[name]',
+    description: 'talk to a lead directly (no name: back to the orchestrator)',
+  },
+  { group: 'Team', name: 'stop', args: '<lead>', description: 'stop a lead, its sub-leads and their runs' },
   { group: 'Runs', name: 'steps', args: '[run]', description: "a run's steps" },
   { group: 'Runs', name: 'log', args: '<run> <step>', description: "an agent step's transcript" },
   { group: 'Runs', name: 'resume', args: '[run]', description: 'continue a stopped run' },
@@ -64,7 +73,7 @@ const dim = (text: string): Seg => ({ text, dim: true });
 export function helpLines(): Line[] {
   const lines: Line[] = [[dim('Talk to the assistant: ask it to write, change or run workflows. Or use a command:')]];
   const width = Math.max(...COMMANDS.map((c) => c.name.length + c.args.length + 2));
-  for (const group of ['Workflows', 'Runs', 'Session'] as const) {
+  for (const group of ['Workflows', 'Runs', 'Team', 'Session'] as const) {
     lines.push([], [seg(group, { bold: true })]);
     for (const c of COMMANDS.filter((x) => x.group === group)) {
       const label = `/${c.name}${c.args ? ` ${c.args}` : ''}`;
@@ -154,6 +163,32 @@ const CONFIG_SETTINGS: readonly Omit<SettingRow, 'value'>[] = [
     min: 1,
     max: 32,
     hint: 'agent sessions alive at once per run',
+  },
+  {
+    id: 'team.gates',
+    group: 'Team',
+    label: 'gates',
+    kind: 'choice',
+    choices: ['ask', 'decide'],
+    hint: "your runs' gates and questions · ask: you answer · decide: the assistant does, escalating what it can't",
+  },
+  {
+    id: 'team.maxDepth',
+    group: 'Team',
+    label: 'maxDepth',
+    kind: 'number',
+    min: 1,
+    max: 6,
+    hint: 'levels of team leads under the assistant',
+  },
+  {
+    id: 'team.maxLeads',
+    group: 'Team',
+    label: 'maxLeads',
+    kind: 'number',
+    min: 1,
+    max: 64,
+    hint: 'lead sessions alive at once; the longest-idle ones close and resume later',
   },
 ];
 
@@ -268,19 +303,37 @@ export class Controller {
     this.store = new UiStore({ profiles: session.profileNames() });
     this.store.push({ type: 'banner', banner: this.banner() });
     const { assistant, runs } = session;
-    assistant.on('event', (e) => this.store.assistantEvent(e));
-    assistant.on('busy', (b) => this.store.setBusy(b));
+    // The prompt talks to the orchestrator or to one lead (`/lead`): that one's conversation streams; the
+    // orchestrator's replies still show while the user talks to a lead, other leads' do not.
+    assistant.on('event', (e) => {
+      if (this.target === ROOT) this.store.assistantEvent(e);
+      else if (e.type === 'message' && e.text.trim()) {
+        this.store.push({ type: 'assistant', text: e.text.trim(), speaker: ROOT });
+      }
+    });
+    assistant.on('busy', (b) => {
+      if (this.target === ROOT) this.store.setBusy(b);
+    });
     assistant.on('approval', (a) => this.store.assistantApproval(a));
     assistant.on('resolved', (id) => this.store.resolved(id));
     runs.on('event', (e) => this.store.runEvent(e, (id) => runs.run(id)));
     // A lead answers its own runs' gates and questions; the user answers the orchestrator's. (The team tells the
     // owner when a run finishes.)
     runs.on('interaction', (p) => {
-      if (session.team.ownerOf(p.interaction.runId) === ROOT) this.store.runInteraction(p);
+      if (this.shows(p)) this.store.runInteraction(p);
     });
     runs.on('resolved', (id) => this.store.resolved(id));
     const { team } = session;
-    team.on('activity', (a) => this.store.push({ type: 'team', ...a, report: a.report ?? null }));
+    team.on('activity', (a) => this.store.push({ type: 'team', ...a, report: a.report ?? null, files: a.files ?? [] }));
+    team.on('changed', () => {
+      this.store.update({ team: this.teamRows() }, false);
+      if (this.target !== ROOT) this.store.setBusy(team.busy(this.target));
+    });
+    team.on('lead-event', (lead, e) => {
+      if (lead === this.target) this.store.assistantEvent(e, lead);
+    });
+    // Leads saved by an earlier session.
+    this.store.update({ team: this.teamRows() });
     team.on('lead-approval', (lead, a) => this.store.assistantApproval(a, lead));
     team.on('lead-resolved', (id) => this.store.resolved(id));
   }
@@ -298,16 +351,111 @@ export class Controller {
       await this.command(trimmed);
       return;
     }
-    this.store.push({ type: 'user', text: trimmed });
+    const to = this.target;
+    this.store.push({ type: 'user', text: trimmed, ...(to === ROOT ? {} : { to }) });
     try {
-      await this.session.assistant.send(trimmed);
+      if (to === ROOT) await this.session.assistant.send(trimmed);
+      else await this.session.team.message('user', to, trimmed);
     } catch (err) {
       this.store.error(err instanceof Error ? err.message : String(err));
     }
   }
 
   async interrupt(): Promise<void> {
-    if (this.session.assistant.busy) await this.session.assistant.interrupt();
+    if (this.target !== ROOT) await this.session.team.interrupt(this.target);
+    else if (this.session.assistant.busy) await this.session.assistant.interrupt();
+  }
+
+  // ---- team ----------------------------------------------------------------------------------
+
+  /** Who the prompt talks to. */
+  get target(): string {
+    return this.store.get().target;
+  }
+
+  /**
+   * Switches the prompt to a lead (or back to the orchestrator). While attached, the lead's conversation streams
+   * here and its runs' gates and questions join the queue, so the user can answer them in its place.
+   */
+  talkTo(name: string): void {
+    const { team, runs } = this.session;
+    if (name !== ROOT && !team.get(name)) {
+      const names = team.list().map((l) => l.name);
+      throw new Error(`No lead called ${name}.${names.length ? ` Leads: ${names.join(', ')}` : ''}`);
+    }
+    const prev = this.target;
+    if (prev === name) return;
+    this.store.update({ target: name, streaming: '', activity: null });
+    // Interactions that were shown only because of the old target go; the new target's come in.
+    for (const p of runs.pendingInteractions()) {
+      const owner = team.ownerOf(p.interaction.runId);
+      if (owner === prev && !this.shows(p)) this.store.resolved(p.id);
+      else if (owner === name && name !== ROOT && !this.store.get().interactions.some((i) => i.id === p.id)) {
+        this.store.runInteraction(p);
+      }
+    }
+    this.store.setBusy(name === ROOT ? this.session.assistant.busy : team.busy(name));
+    if (name === ROOT) {
+      this.store.info('Back to the orchestrator.');
+      return;
+    }
+    const lead = team.get(name);
+    if (!lead) return;
+    const lines: Line[] = [
+      [dim('role '), seg(lead.role, { bold: true }), dim(`  parent ${lead.parent}  status ${lead.status}`)],
+      [],
+      ...lead.brief
+        .split('\n')
+        .slice(0, 8)
+        .map((l) => [dim(l)]),
+    ];
+    if (lead.lastReport) lines.push([], [dim(`last report (${lead.lastReport.kind}): `), seg(lead.lastReport.text)]);
+    lines.push([], [dim('Messages now go to '), seg(name, { color: 'accent', bold: true }), dim('. /lead goes back.')]);
+    this.store.panel(`Talking to ${name}`, lines);
+  }
+
+  /**
+   * Whether the UI asks the user for this interaction: when its owner's gate mode says the user answers, and the
+   * runs of the lead the user is talking to (stepping in for it).
+   */
+  private shows(p: PendingInteraction): boolean {
+    const { team } = this.session;
+    const owner = team.ownerOf(p.interaction.runId);
+    return team.gateMode(owner) === 'ask' || (owner !== ROOT && owner === this.target);
+  }
+
+  /** Answers one of a run's interactions; when it belonged to a lead, the lead hears about it. */
+  private answerRun(id: string, answer: GateAnswer | AskAnswer | ApprovalDecision, what: string): void {
+    this.session.team.userAnswered(id, what);
+    this.session.runs.answer(id, answer);
+  }
+
+  /** The live team panel: every lead that is not stopped, in tree order. */
+  teamRows(): TeamRow[] {
+    const { team } = this.session;
+    const rows: TeamRow[] = [];
+    const walk = (parent: string) => {
+      for (const l of team.children(parent)) {
+        if (l.status === 'stopped') continue;
+        const items = l.plan?.items ?? [];
+        const live = items.filter((i) => i.status !== 'dropped');
+        rows.push({
+          name: l.name,
+          role: l.role,
+          depth: l.depth,
+          status: team.busy(l.name) ? 'working' : l.status,
+          doing: items.find((i) => i.status === 'doing')?.title ?? null,
+          progress: live.length ? { done: live.filter((i) => i.status === 'done').length, total: live.length } : null,
+          runs: team.activeRuns(l.name).length,
+          waiting: team.pending(l.name).length,
+          inbox: l.inbox.length,
+          costUsd: l.costUsd,
+        });
+        walk(l.name);
+      }
+    };
+    walk(ROOT);
+    return rows;
   }
 
   // ---- interactions --------------------------------------------------------------------------
@@ -317,17 +465,17 @@ export class Controller {
   }
 
   answerGate(id: string, choice: 'approve' | 'changes' | 'abort', note: string | null = null): void {
-    this.session.runs.answer(id, { choice, note });
+    this.answerRun(id, { choice, note }, `${choice}${note ? ` (${note})` : ''}`);
   }
 
   answerAsk(id: string, answer: string): void {
-    this.session.runs.answer(id, { answer });
+    this.answerRun(id, { answer }, answer);
   }
 
   answerApproval(item: UiInteraction, decision: ApprovalDecision): void {
     if (item.source === 'assistant' && item.lead) this.session.team.answerLeadApproval(item.lead, item.id, decision);
     else if (item.source === 'assistant') void this.session.assistant.answer(item.id, decision);
-    else this.session.runs.answer(item.id, decision);
+    else this.answerRun(item.id, decision, decision.behavior === 'allow' ? 'allowed' : 'denied');
   }
 
   /** The lead tree under the orchestrator, each with its status, plan and last report. */
@@ -450,6 +598,15 @@ export class Controller {
         case 'team':
           this.store.panel('Team', this.teamLines());
           return;
+        case 'lead':
+          this.talkTo(rest[0] || ROOT);
+          return;
+        case 'stop': {
+          if (!rest[0]) throw new Error('Usage: /stop <lead>');
+          await this.session.team.stop('user', rest[0]);
+          if (this.target === rest[0]) this.talkTo(ROOT);
+          return;
+        }
         case 'resume':
           await runs.resume(this.runId(rest[0]));
           return;

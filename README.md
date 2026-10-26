@@ -172,11 +172,31 @@ parent. Each lead hears only from its own children, so the orchestrator's contex
 Leads report with a kind: `progress`, `done`, `blocked`, `question`, `review` (something a human should judge,
 with the files or images to look at) or `coordinate` (it needs something from another team). Reports, messages,
 finished runs and waiting gates go into the parent's inbox and arrive as one bundled `[Legion]` message when it is
-free. The orchestrator brings `review`s and user-only questions to you and passes your answer back. Runs the
-orchestrator starts still ask you directly.
+free. The orchestrator brings `review`s and user-only questions to you and passes your answer back.
 
-`/team` shows the tree with each lead's status, plan and last report. State is kept in `.legion/team/team.json`
-(gitignored); after a restart a lead resumes its session on the next message it gets.
+Who answers a run's gates, questions and tool approvals depends on who started it:
+
+- The orchestrator's runs ask you, unless `[team] gates = "decide"`: then the orchestrator answers and brings
+  you only what it cannot settle.
+- A lead's runs follow its role's `gates`: `decide` (the default) means the lead answers. `tell` means the lead
+  answers and its parent hears every answer. `ask` means you answer, and the lead is told what its run waits on.
+
+In the session:
+
+- **The team panel** under the runs shows every lead that is not stopped, as a tree. Each line has the lead's
+  progress through its plan, the item it is on, its runs and what waits for its answer. Leads' runs show as one
+  line each.
+- `/lead <name>` switches the prompt to a lead. You talk to it directly, its replies stream in, and its runs'
+  gates and questions join your queue, so you can answer them in its place (it is told you did). `/lead` alone
+  goes back to the orchestrator.
+- `/team` prints the tree with plans and last reports. `/stop <lead>` stops a lead, its sub-leads and their runs.
+
+Leads and the orchestrator can also steer runs. `message_agent` sends a running agent a correction mid-turn.
+`retry_run` stops and resumes a run with notes for the next attempt. With `rewind`, it redoes a finished step
+and everything after it, e.g. a critique round with new instructions.
+
+State is kept in `.legion/team/team.json` (gitignored). After a restart, a lead resumes its session on the next
+message it gets.
 
 ### Roles
 
@@ -192,6 +212,7 @@ model: opus               # optional; effort too
 workflows: [asset-critique, concept-sheet]   # which workflows it may run, or "*"
 spawns: []                # which roles it may spawn as sub-leads, or "*"
 approvals: auto           # its own tool approvals: auto, or ask (you answer them)
+gates: decide             # its runs' gates: decide (the lead) | tell (lead, parent hears) | ask (you)
 maxRuns: 4                # runs it may have active at once
 ---
 You make the creatures for …
@@ -212,6 +233,7 @@ url     = "http://127.0.0.1:8188/mcp"
 headers = { Authorization = "Bearer …" }
 
 [team]
+gates    = "ask"         # the orchestrator's own runs: ask (you) | decide (the orchestrator)
 maxDepth = 3             # levels of leads under the orchestrator
 maxLeads = 12            # lead sessions alive at once; the longest-idle ones are closed (and resume later)
 ```
@@ -222,12 +244,13 @@ Resolution order, first match by name wins:
 
 1. `.legion/workflows/<name>.ts` in the project (commit them)
 2. `~/.config/legion/workflows/<name>.ts`
-3. builtin: [`feature`](builtin/workflows/feature.ts), [`implement`](builtin/workflows/implement.ts), and
-   [`review`](builtin/workflows/review.ts)
+3. builtin: [`feature`](builtin/workflows/feature.ts), [`tasks`](builtin/workflows/tasks.ts),
+   [`implement`](builtin/workflows/implement.ts), and [`review`](builtin/workflows/review.ts)
 
 | Builtin | What it does |
 |---|---|
 | `feature` | Clarify, plan (you approve or ask for changes), then implement the plan's tasks in parallel worktrees in dependency order. Each task gets a review from the other engine and fix rounds, then is squash-merged into an integration branch (an agent resolves conflicts). A final review of the whole, then a draft PR (or a local merge). |
+| `tasks` | The second half of `feature`, for a plan you already agreed with the assistant (or a lead): the tasks you give it, each optionally on its own engine, run the same way, through to the PR. `confirm: true` asks before starting. |
 | `implement` | One focused change in a worktree: code, then cross-engine review and fix rounds, then a gate, then a draft PR or merge. |
 | `review` | Both engines review your branch and uncommitted changes independently. Their findings are merged, and an agent can then fix the ones you pick. |
 
@@ -290,7 +313,7 @@ src/
   sdk/                  what workflow files import as `legion`
   git/                  worktrees, squash merges, conflicts, PRs (ported from Legion's desktop app)
   tui/                  Ink UI: store (state), controller (commands), app (components)
-builtin/workflows/      feature, implement, review (+ an end-to-end test on a real repo)
+builtin/workflows/      feature, tasks (sharing _tasks.ts), implement, review (+ an end-to-end test)
 builtin/roles/          team-lead, engineering-lead, art-director, world-designer
 ```
 

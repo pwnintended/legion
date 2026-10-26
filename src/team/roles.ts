@@ -10,6 +10,7 @@
  * model: opus
  * workflows: [asset-critique, concept-sheet]   # or "*"
  * spawns: [fauna-lead, vegetation-lead]        # or "*", or []
+ * gates: decide                                # decide | tell | ask: who answers its runs' gates
  * ---
  * You lead asset production…
  * ```
@@ -35,6 +36,11 @@ const FrontmatterSchema = z.object({
   spawns: Names.default('*'),
   /** Who answers the lead's own tool approvals: the engine's auto mode, or the human. */
   approvals: z.enum(['ask', 'auto']).default('auto'),
+  /**
+   * Who answers the gates, questions and tool approvals of the lead's runs: the lead (`decide`), the lead with
+   * every answer reported to its parent (`tell`), or the user (`ask`).
+   */
+  gates: z.enum(['decide', 'tell', 'ask']).default('decide'),
   /** Workflow runs the lead may have active at once. */
   maxRuns: z.number().int().min(1).max(64).default(4),
 });

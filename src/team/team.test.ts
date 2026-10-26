@@ -191,4 +191,53 @@ describe('team', () => {
     await until(() => callsOf('assets').length === 1);
     expect(callsOf('assets')[0]).toMatchObject({ resumed: true, sessionId });
   });
+
+  it("gate modes: ask sends a lead's gates to the user, tell reports answers to the parent", async () => {
+    writeFileSync(
+      join(repo.path, '.legion', 'roles', 'careful.md'),
+      '---\ngates: ask\nworkflows: [critique]\n---\nAsk the human.\n',
+    );
+    writeFileSync(
+      join(repo.path, '.legion', 'roles', 'teller.md'),
+      '---\ngates: tell\nworkflows: [critique]\n---\nDecide and tell.\n',
+    );
+    await session.assistant.send('hello');
+    await until(() => !session.assistant.busy);
+    const root = await as(ROOT);
+    await root.call('spawn_lead', { role: 'careful', name: 'careful', brief: 'b' });
+    await root.call('spawn_lead', { role: 'teller', name: 'teller', brief: 'b' });
+    expect(session.team.gateMode('careful')).toBe('ask');
+    expect(session.team.gateMode(ROOT)).toBe('ask');
+
+    const careful = await as('careful');
+    await careful.call('run_workflow', { name: 'critique', input: {} });
+    await until(() => callsOf('careful')[0]?.prompts.some((p) => p.includes('waits for the user')) ?? false);
+    expect(callsOf('careful')[0]?.prompts.some((p) => p.includes('answer_interaction({'))).toBe(false);
+
+    const teller = await as('teller');
+    const { runId } = await teller.call('run_workflow', { name: 'critique', input: {} });
+    await until(() => session.team.pending('teller').length === 1);
+    const [pending] = session.team.pending('teller');
+    await teller.call('answer_interaction', { id: pending?.id, choice: 'approve' });
+    await until(() => !session.runs.isActive(runId));
+    const rootCall = claude().calls.find((c) => c.prompts[0] === 'hello');
+    await until(
+      () => rootCall?.prompts.some((p) => p.includes('teller answered gate "Good enough?": approve')) ?? false,
+    );
+  });
+
+  it('lets the orchestrator answer its own runs when [team] gates = "decide"', async () => {
+    writeFileSync(join(repo.path, '.legion', 'config.local.toml'), '[team]\ngates = "decide"\n');
+    await session.reloadConfig();
+    await session.assistant.send('hello');
+    await until(() => !session.assistant.busy);
+    const root = await as(ROOT);
+    const { runId } = await root.call('run_workflow', { name: 'critique', input: {} });
+    const rootCall = claude().calls.find((c) => c.prompts[0] === 'hello');
+    await until(() => rootCall?.prompts.some((p) => p.includes('Gate "Good enough?"')) ?? false);
+    const [pending] = await root.call('pending_interactions');
+    await root.call('answer_interaction', { id: pending.id, choice: 'abort' });
+    await until(() => !session.runs.isActive(runId));
+    expect(session.runs.run(runId)?.status).toBe('cancelled');
+  });
 });

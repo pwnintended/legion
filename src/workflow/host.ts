@@ -3,7 +3,15 @@
  * the TUI's interaction queue, git); `validate.ts` provides a dry one (fake engines, auto-approved gates, simulated
  * git and shell) so a freshly written workflow can be exercised without spending tokens or touching the repo.
  */
-import type { AgentEngine, AgentEvent, ApprovalDecision, Effort, EngineKind, McpServer } from '../engine/types.ts';
+import type {
+  AgentEngine,
+  AgentEvent,
+  AgentSession,
+  ApprovalDecision,
+  Effort,
+  EngineKind,
+  McpServer,
+} from '../engine/types.ts';
 import type { RunStatus, StepKind } from './journal.ts';
 
 export type Interaction =
@@ -119,13 +127,17 @@ export interface RunHost {
   readonly git: GitOps;
   /** Max agent sessions alive at once across the run. */
   readonly maxAgents: number;
+  /** MCP servers every agent gets (`[mcp.servers]`). */
+  mcp?(): Readonly<Record<string, McpServer>>;
   /**
    * The engine, model and effort an agent step runs with, given what the workflow's code asked for (the user's
    * settings for this workflow may override it). Absent: the code's choice as is.
    */
-  /** MCP servers every agent gets (`[mcp.servers]`). */
-  mcp?(): Readonly<Record<string, McpServer>>;
   agentModel?(req: AgentModelRequest): { engine?: EngineKind; model: string | null; effort: Effort | null };
+  /** An agent step's session while it runs (null when it ends), so it can be steered with messages. */
+  agentSession?(step: string, session: AgentSession | null): void;
+  /** Instructions to add to an agent step's prompt on this attempt (a retry with notes); asked once per attempt. */
+  notes?(step: string): string | null;
   /** Default for agents that do not say who answers their tool approvals. */
   readonly approvals: 'ask' | 'auto';
 }

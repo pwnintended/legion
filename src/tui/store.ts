@@ -32,8 +32,10 @@ export interface Banner {
 
 export type Item =
   | { id: number; type: 'banner'; banner: Banner }
-  | { id: number; type: 'user'; text: string }
-  | { id: number; type: 'assistant'; text: string }
+  /** `to`: the lead the user was talking to (absent: the orchestrator). */
+  | { id: number; type: 'user'; text: string; to?: string }
+  /** `speaker`: a lead, or the orchestrator while the user talks to a lead (absent: the agent being talked to). */
+  | { id: number; type: 'assistant'; text: string; speaker?: string }
   | { id: number; type: 'tool'; name: string; summary: string }
   | { id: number; type: 'info'; text: string }
   | { id: number; type: 'panel'; title: string; lines: Line[] }
@@ -58,6 +60,7 @@ export type Item =
       kind: 'spawn' | 'report' | 'stop' | 'message';
       report: string | null;
       text: string;
+      files: string[];
     };
 
 export type NewItem = Item extends infer I ? (I extends Item ? Omit<I, 'id'> : never) : never;
@@ -78,6 +81,8 @@ export interface StepView {
 export interface RunView {
   id: string;
   workflow: string;
+  /** The lead that started it (absent: the orchestrator). */
+  owner?: string;
   steps: StepView[];
   startedAt: number;
 }
@@ -86,6 +91,22 @@ export type UiInteraction =
   | { source: 'run'; id: string; pending: PendingInteraction }
   /** A tool approval of the assistant's own session, or of a lead's (`lead`) whose role has the human answer them. */
   | { source: 'assistant'; id: string; approval: AssistantApproval; lead?: string };
+
+/** One lead in the live team panel, in tree order. */
+export interface TeamRow {
+  name: string;
+  role: string;
+  depth: number;
+  status: 'starting' | 'working' | 'idle' | 'done' | 'stopped';
+  /** The plan item it is on. */
+  doing: string | null;
+  progress: { done: number; total: number } | null;
+  runs: number;
+  /** Gates and questions of its runs that wait for its answer. */
+  waiting: number;
+  inbox: number;
+  costUsd: number;
+}
 
 export interface UiState {
   items: Item[];
@@ -102,6 +123,9 @@ export interface UiState {
   seed: { text: string; n: number } | null;
   profiles: Record<string, string>;
   costUsd: number | null;
+  /** Who the prompt talks to: `orchestrator` or a lead's name (`/lead`). */
+  target: string;
+  team: TeamRow[];
 }
 
 export class UiStore {
@@ -123,6 +147,8 @@ export class UiStore {
       seed: null,
       profiles: {},
       costUsd: null,
+      target: 'orchestrator',
+      team: [],
       ...initial,
     };
   }
@@ -160,14 +186,16 @@ export class UiStore {
 
   // ---- assistant -----------------------------------------------------------------------------
 
-  assistantEvent(event: AgentEvent): void {
+  /** Events of the agent the user is talking to (`speaker`: a lead's name, when it is one). */
+  assistantEvent(event: AgentEvent, speaker?: string): void {
+    const said = speaker ? { speaker } : {};
     switch (event.type) {
       case 'text_delta':
         this.update((s) => ({ streaming: s.streaming + event.text, activity: null }), false);
         break;
       case 'message':
         this.update({ streaming: '' }, false);
-        if (event.text.trim()) this.push({ type: 'assistant', text: event.text.trim() });
+        if (event.text.trim()) this.push({ type: 'assistant', text: event.text.trim(), ...said });
         break;
       case 'tool_call':
         this.update({ streaming: '' }, false);
@@ -183,14 +211,14 @@ export class UiStore {
         );
         break;
       case 'usage':
-        if (event.costUsd !== null) this.update({ costUsd: event.costUsd }, false);
+        if (event.costUsd !== null && !speaker) this.update({ costUsd: event.costUsd }, false);
         break;
       case 'error':
         if (!event.retryable) this.error(event.message);
         break;
       case 'turn_complete':
         if (event.isError && event.reason && event.reason !== 'interrupted') this.error(`Turn failed: ${event.reason}`);
-        if (this.state.streaming.trim()) this.push({ type: 'assistant', text: this.state.streaming.trim() });
+        if (this.state.streaming.trim()) this.push({ type: 'assistant', text: this.state.streaming.trim(), ...said });
         this.update({ streaming: '', activity: null });
         break;
       default:
@@ -223,7 +251,16 @@ export class UiStore {
         if (event.status === 'running') {
           if (!this.state.runs.some((r) => r.id === event.runId)) {
             this.update((s) => ({
-              runs: [...s.runs, { id: event.runId, workflow, steps: [], startedAt: Date.now() }],
+              runs: [
+                ...s.runs,
+                {
+                  id: event.runId,
+                  workflow,
+                  ...(record?.owner ? { owner: record.owner } : {}),
+                  steps: [],
+                  startedAt: Date.now(),
+                },
+              ],
             }));
             this.push({ type: 'run', runId: event.runId, workflow, status: 'started', detail: null, durationMs: null });
           }

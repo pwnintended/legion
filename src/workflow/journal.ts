@@ -116,6 +116,29 @@ export class Journal {
     this.apply(entry);
   }
 
+  /**
+   * Makes a finished step run again on the next resume, with every step that finished after its latest attempt
+   * began (they may depend on it). Files, branches and worktrees stay as they are. Returns the keys reset.
+   */
+  rewind(key: string, reason = 'rewound'): string[] {
+    const target = this.entries.get(key);
+    if (!target) throw new Error(`No step "${key}" in this run`);
+    let start = -1;
+    const last = new Map<string, JournalEntry['status']>();
+    this.log.forEach((e, i) => {
+      if (e.key === key && e.status === 'started' && last.get(key) !== 'started') start = i;
+      last.set(e.key, e.status);
+    });
+    const keys = new Set<string>([key]);
+    for (const e of this.log.slice(start + 1)) if (e.status === 'done') keys.add(e.key);
+    const reset = [...keys].filter((k) => this.entries.get(k)?.status === 'done' || k === key);
+    for (const k of reset) {
+      const entry = this.entries.get(k) as JournalEntry;
+      this.append({ key: k, kind: entry.kind, status: 'failed', ts: Date.now(), error: reason });
+    }
+    return reset;
+  }
+
   /** Records one agent event for a step's transcript. */
   agentEvent(key: string, event: unknown): void {
     appendFileSync(

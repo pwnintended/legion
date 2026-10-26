@@ -17,6 +17,7 @@ import {
   oneLine,
   type RunView,
   type StepView,
+  type TeamRow,
   type UiInteraction,
 } from './store.ts';
 import { BUSY_FRAMES, color, engineColor, formatDuration, glyph, SPINNER, theme } from './theme.ts';
@@ -102,8 +103,11 @@ export function App({ controller }: { controller: Controller }) {
             run={run}
             frame={frame}
             waiting={state.interactions.some((i) => i.source === 'run' && i.pending.interaction.runId === run.id)}
+            // Leads' runs are one line each, except those of the lead the user is talking to.
+            compact={run.owner !== undefined && run.owner !== state.target}
           />
         ))}
+        {state.team.length > 0 ? <TeamPanel rows={state.team} target={state.target} frame={frame} /> : null}
         {state.menu === 'config' ? <ConfigMenu controller={controller} width={width} /> : null}
         {state.menu === 'workflows' ? <WorkflowsMenu controller={controller} width={width} /> : null}
         {head && !state.menu ? (
@@ -115,9 +119,9 @@ export function App({ controller }: { controller: Controller }) {
           marginTop={head || state.runs.length || state.busy ? 0 : 1}
         >
           <PromptInput
-            prompt={typing ? glyph.ask : glyph.user}
+            prompt={typing ? glyph.ask : state.target === 'orchestrator' ? glyph.user : `${state.target} ${glyph.user}`}
             tone={tone}
-            placeholder={placeholder(head, mode, ask !== null)}
+            placeholder={placeholder(head, mode, ask !== null, state.target)}
             commands={typing ? [] : COMMANDS}
             isActive={!state.menu}
             seed={state.seed}
@@ -219,12 +223,14 @@ function StatusBar(props: {
   );
 }
 
-function placeholder(head: UiInteraction | null, mode: Mode, isAsk: boolean): string {
-  if (!head) return 'Ask anything, or describe a workflow to write or run';
-  if (mode === 'chat') return 'Message the assistant (Tab: back to the question)';
+function placeholder(head: UiInteraction | null, mode: Mode, isAsk: boolean, target: string): string {
+  const lead = target === 'orchestrator' ? null : target;
+  if (!head)
+    return lead ? `Message ${lead} directly (/lead goes back)` : 'Ask anything, or describe a workflow to write or run';
+  if (mode === 'chat') return `Message ${lead ?? 'the assistant'} (Tab: back to the question)`;
   if (mode === 'note') return 'What should change? Enter sends, Esc goes back';
   if (isAsk) return 'Type an answer, or pick with ↑↓ and Enter';
-  return 'Press a key above, or Tab to message the assistant';
+  return `Press a key above, or Tab to message ${lead ?? 'the assistant'}`;
 }
 
 function answerKey(controller: Controller, head: UiInteraction, key: string, toNote: () => void): boolean {
@@ -390,13 +396,31 @@ function ToolInput({ input }: { input: unknown }) {
 
 const SHOW_FINISHED = 4;
 
-function RunPanel({ run, frame, waiting }: { run: RunView; frame: number; waiting: boolean }) {
+function RunPanel(props: { run: RunView; frame: number; waiting: boolean; compact: boolean }) {
+  const { run, frame, waiting } = props;
   const steps = run.steps.filter((s) => s.kind !== 'loop');
   const active = steps.filter((s) => s.status === 'started');
   const finished = steps.filter((s) => s.status !== 'started');
   const shown = finished.slice(-SHOW_FINISHED);
   const hidden = finished.length - shown.length;
   const failed = finished.filter((s) => s.status === 'failed').length;
+  if (props.compact) {
+    const now = active.at(-1);
+    return (
+      <Box paddingLeft={2}>
+        <Text wrap="truncate-end">
+          <Text color={theme.accent}>{active.length ? (SPINNER[frame % SPINNER.length] ?? '·') : glyph.brand} </Text>
+          <Text bold>{run.workflow}</Text>
+          <Text dimColor>
+            {' '}
+            {run.owner} · {finished.length} done
+          </Text>
+          {failed ? <Text color={theme.error}> · {failed} failed</Text> : null}
+          {now ? <Text dimColor> · {now.label}</Text> : null}
+        </Text>
+      </Box>
+    );
+  }
   return (
     <Box
       flexDirection="column"
@@ -411,6 +435,7 @@ function RunPanel({ run, frame, waiting }: { run: RunView; frame: number; waitin
             {glyph.brand} {run.workflow}
           </Text>
           <Text dimColor> {run.id}</Text>
+          {run.owner ? <Text dimColor> · {run.owner}'s</Text> : null}
           {waiting ? <Text color={theme.warn}> · waiting for you</Text> : null}
         </Text>
         <Text dimColor>
@@ -500,7 +525,62 @@ function TeamItem({ item }: { item: Extract<Item, { type: 'team' }> }) {
         {item.report ? <Text color={tone}> {item.report}</Text> : null}
         <Text dimColor> {item.text}</Text>
       </Text>
+      {item.files.map((f) => (
+        <Text key={f} color={tone}>
+          {'  '}
+          {glyph.result} {f}
+        </Text>
+      ))}
     </Bullet>
+  );
+}
+
+const TEAM_ROWS = 10;
+
+/** The leads that are not stopped, as a tree: what each is on, its runs and what waits for it. */
+function TeamPanel({ rows, target, frame }: { rows: TeamRow[]; target: string; frame: number }) {
+  const shown = rows.slice(0, TEAM_ROWS);
+  const working = rows.filter((r) => r.status === 'working').length;
+  return (
+    <Box flexDirection="column" marginTop={1} paddingX={1}>
+      <Text dimColor>
+        <Text color={theme.accent} bold>
+          team
+        </Text>{' '}
+        {rows.length} lead{rows.length > 1 ? 's' : ''}
+        {working ? ` · ${working} working` : ''} · /lead to talk to one
+      </Text>
+      {shown.map((r) => {
+        const mark =
+          r.status === 'working' || r.status === 'starting'
+            ? (SPINNER[frame % SPINNER.length] ?? '·')
+            : r.status === 'done'
+              ? glyph.ok
+              : '○';
+        const tone = r.status === 'done' ? theme.ok : r.status === 'idle' ? theme.muted : theme.accent;
+        return (
+          <Text key={r.name} wrap="truncate-end">
+            {'  '.repeat(r.depth)}
+            <Text color={tone}>{mark} </Text>
+            <Text bold color={r.name === target ? theme.accent : undefined}>
+              {r.name}
+            </Text>
+            <Text dimColor> {r.role}</Text>
+            {r.progress ? <Text dimColor> {`${r.progress.done}/${r.progress.total}`}</Text> : null}
+            {r.doing ? <Text> · {r.doing}</Text> : null}
+            {r.runs ? (
+              <Text dimColor>
+                {' '}
+                · {r.runs} run{r.runs > 1 ? 's' : ''}
+              </Text>
+            ) : null}
+            {r.waiting ? <Text color={theme.warn}> · {r.waiting} waiting</Text> : null}
+            {r.inbox ? <Text dimColor> · {r.inbox} unread</Text> : null}
+          </Text>
+        );
+      })}
+      {rows.length > shown.length ? <Text dimColor>{`  … ${rows.length - shown.length} more (/team)`}</Text> : null}
+    </Box>
   );
 }
 
@@ -512,13 +592,19 @@ function ItemView({ item, width }: { item: Item; width: number }) {
       return (
         <Box marginTop={1}>
           <Text color={theme.user} bold>
+            {item.to ? <Text dimColor>{item.to} </Text> : null}
             {glyph.user} {item.text}
           </Text>
         </Box>
       );
     case 'assistant':
       return (
-        <Bullet mark={glyph.assistant} markColor="white" marginTop={1}>
+        <Bullet mark={glyph.assistant} markColor={item.speaker ? theme.accent : 'white'} marginTop={1}>
+          {item.speaker ? (
+            <Text color={theme.accent} bold>
+              {item.speaker}
+            </Text>
+          ) : null}
           <Markdown text={item.text} />
         </Bullet>
       );

@@ -154,6 +154,7 @@ export class Session {
           profiles: bound().profileNames(),
           name: lead.name,
           role,
+          gates: role.gates,
           parent: lead.parent,
           depth: lead.depth,
           maxDepth: bound().config.team.maxDepth,

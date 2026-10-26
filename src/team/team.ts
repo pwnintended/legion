@@ -82,7 +82,15 @@ export interface TeamEvents {
   /** The tree, a status, a plan or an inbox changed. */
   changed: [];
   /** Something worth a line in the scrollback: a spawn, a report, a lead stopping. `text` follows the lead's name. */
-  activity: [{ lead: string; kind: 'spawn' | 'report' | 'stop' | 'message'; text: string; report?: ReportKind }];
+  activity: [
+    {
+      lead: string;
+      kind: 'spawn' | 'report' | 'stop' | 'message';
+      text: string;
+      report?: ReportKind;
+      files?: string[];
+    },
+  ];
   /** A lead's own session events (for the UI when the user is talking to that lead). */
   'lead-event': [string, AgentEvent];
   /** A lead's own tool approval, when its role says the human answers them. */
@@ -243,18 +251,17 @@ export class TeamManager extends EventEmitter<TeamEvents> {
   }
 
   /** A message from a parent (or the user) to a lead: queued, delivered when the lead is free. */
-  message(from: string, to: string, text: string): void {
+  message(from: string, to: string, text: string): Promise<void> | undefined {
     const lead = this.leads.get(to);
     if (!lead) throw new Error(`No lead called ${to}`);
     if (from !== 'user' && lead.record.parent !== from) {
       throw new Error(`${to} is not your lead; message your own leads, or report to your parent`);
     }
-    if (lead.record.status === 'stopped') throw new Error(`${to} was stopped`);
     if (from === 'user') {
-      // The user is talking to the lead directly: no bundling, no waiting.
-      void this.send(to, text);
-      return;
+      // The user is talking to the lead directly: no bundling, no waiting (and it wakes a stopped lead).
+      return this.send(to, `[User] ${text}`);
     }
+    if (lead.record.status === 'stopped') throw new Error(`${to} was stopped`);
     this.enqueue(to, { at: Date.now(), from, kind: 'message', text });
   }
 
@@ -268,6 +275,7 @@ export class TeamManager extends EventEmitter<TeamEvents> {
       lead: caller,
       kind: 'report',
       report: kind,
+      files,
       text: `→ ${lead.record.parent}: ${clip(text.replace(/\s+/g, ' '), 200)}${files.length ? ` [${files.length} file${files.length > 1 ? 's' : ''}]` : ''}`,
     });
   }
@@ -295,6 +303,26 @@ export class TeamManager extends EventEmitter<TeamEvents> {
     this.emit('changed');
   }
 
+  /** Who answers the interactions of `owner`'s runs: the user (`ask`) or the owner (`decide`, `tell`). */
+  gateMode(owner: string): 'ask' | 'decide' | 'tell' {
+    if (owner === ROOT) return this.opts.config().team.gates;
+    return this.leads.get(owner)?.role.gates ?? 'ask';
+  }
+
+  /** Tells a lead the user answered one of its runs' interactions in its place. */
+  userAnswered(id: string, what: string): void {
+    const pending = this.opts.runs.pendingInteractions().find((p) => p.id === id);
+    if (!pending) return;
+    const owner = this.ownerOf(pending.interaction.runId);
+    if (owner === ROOT) return;
+    this.enqueue(owner, {
+      at: Date.now(),
+      from: 'user',
+      kind: 'note',
+      text: `The user answered ${pending.interaction.kind} ${id} of run ${pending.interaction.runId} (step ${pending.interaction.key}) for you: ${what}`,
+    });
+  }
+
   /** A lead (or the user) answers a gate, question or approval of one of its runs. */
   answer(
     caller: string,
@@ -306,22 +334,37 @@ export class TeamManager extends EventEmitter<TeamEvents> {
     const i = pending.interaction;
     if (caller !== 'user' && this.ownerOf(i.runId) !== caller)
       throw new Error(`Interaction ${id} is not from your runs`);
+    let said: string;
     if (i.kind === 'gate') {
       if (!answer.choice) throw new Error('A gate takes choice: approve | changes | abort (and a note for changes)');
       this.opts.runs.answer(id, { choice: answer.choice, note: answer.note ?? null });
-      return `gate "${i.title}": ${answer.choice}`;
-    }
-    if (i.kind === 'ask') {
+      said = `gate "${i.title}": ${answer.choice}${answer.note ? ` (${answer.note})` : ''}`;
+    } else if (i.kind === 'ask') {
       if (answer.answer === undefined) throw new Error('A question takes answer: "<text>"');
       this.opts.runs.answer(id, { answer: answer.answer });
-      return `question "${i.question}": ${answer.answer}`;
+      said = `question "${i.question}": ${answer.answer}`;
+    } else {
+      if (answer.allow === undefined) throw new Error('A tool approval takes allow: true | false');
+      const decision: ApprovalDecision = answer.allow
+        ? { behavior: 'allow', scope: 'once', updatedInput: null }
+        : { behavior: 'deny', message: answer.note ?? 'Denied by the lead.', interrupt: false };
+      this.opts.runs.answer(id, decision);
+      said = `${i.tool}: ${answer.allow ? 'allowed' : 'denied'}`;
     }
-    if (answer.allow === undefined) throw new Error('A tool approval takes allow: true | false');
-    const decision: ApprovalDecision = answer.allow
-      ? { behavior: 'allow', scope: 'once', updatedInput: null }
-      : { behavior: 'deny', message: answer.note ?? 'Denied by the lead.', interrupt: false };
-    this.opts.runs.answer(id, decision);
-    return `${i.tool}: ${answer.allow ? 'allowed' : 'denied'}`;
+    const lead = this.leads.get(caller);
+    if (lead && lead.role.gates === 'tell') {
+      // Decide-and-tell: the parent hears every answer (and can overrule it with a message).
+      this.enqueue(lead.record.parent, {
+        at: Date.now(),
+        from: caller,
+        kind: 'note',
+        text: `${caller} answered ${said} in run ${i.runId}.`,
+      });
+    }
+    if (caller === ROOT || lead) {
+      this.emit('activity', { lead: caller, kind: 'message', text: `answered ${said}` });
+    }
+    return said;
   }
 
   /** May `caller` start this workflow now? Throws why not. */
@@ -427,13 +470,24 @@ export class TeamManager extends EventEmitter<TeamEvents> {
 
   private runInteraction(pending: PendingInteraction): void {
     const owner = this.ownerOf(pending.interaction.runId);
-    // The orchestrator's runs ask the human (the UI shows them); a lead answers its own.
-    if (owner === ROOT) return;
+    const run = this.opts.runs.run(pending.interaction.runId);
+    if (this.gateMode(owner) === 'ask') {
+      // The user answers it in the UI; a lead hears why its run is waiting.
+      if (owner !== ROOT) {
+        this.enqueue(owner, {
+          at: Date.now(),
+          from: 'legion',
+          kind: 'note',
+          text: `Run ${pending.interaction.runId}${run ? ` (${run.workflow})` : ''} waits for the user to answer ${pending.interaction.kind} "${interactionTitle(pending.interaction)}".`,
+        });
+      }
+      return;
+    }
     this.enqueue(owner, {
       at: Date.now(),
       from: 'legion',
       kind: 'interaction',
-      text: describeInteraction(pending.id, pending.interaction, this.opts.runs.run(pending.interaction.runId)),
+      text: describeInteraction(pending.id, pending.interaction, run),
     });
   }
 
@@ -556,6 +610,10 @@ function indent(text: string): string {
     .split('\n')
     .map((l) => `  ${l}`)
     .join('\n');
+}
+
+function interactionTitle(i: Interaction): string {
+  return i.kind === 'gate' ? i.title : i.kind === 'ask' ? i.question : i.tool;
 }
 
 function describeInteraction(id: string, i: Interaction, run: RunRecord | null): string {

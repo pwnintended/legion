@@ -85,7 +85,13 @@ export function runSummary(runs: RunManager, runId: string) {
     .pendingInteractions()
     .filter((p) => p.interaction.runId === runId)
     .map((p) => p.interaction);
-  return { ...record, active: runs.isActive(runId), steps, waitingForUser: pending };
+  return {
+    ...record,
+    active: runs.isActive(runId),
+    steps,
+    runningAgents: runs.liveAgents(runId),
+    waitingForAnswer: pending,
+  };
 }
 
 interface Caller {
@@ -231,6 +237,54 @@ function buildServer(ctx: Caller): McpServer {
     guard(log, async ({ runId }: { runId: string }) => {
       ownRun(runId);
       return { runId: await runs.resume(runId) };
+    }),
+  );
+
+  server.registerTool(
+    'retry_run',
+    {
+      description:
+        'Steer a run by trying again: stops it if it is running, then resumes it with `notes` for the next agent attempt (by default the step that failed, or `step`). With `rewind: true` and a `step`, that finished step and every step after it run again (files and branches stay as they are) — e.g. redo a coder or a critique with new instructions. Finished steps before it replay from the journal.',
+      inputSchema: {
+        runId: z.string(),
+        notes: z.string().optional().describe('What the agent should do differently.'),
+        step: z.string().optional().describe('Full step key, e.g. "T2/code" (see run_status).'),
+        rewind: z.boolean().optional(),
+      },
+    },
+    guard(log, async (args: { runId: string; notes?: string; step?: string; rewind?: boolean }) => {
+      ownRun(args.runId);
+      if (runs.isActive(args.runId)) {
+        const done = runs.wait(args.runId);
+        runs.cancel(args.runId);
+        await done;
+      }
+      let step = args.step ?? null;
+      if (!step && args.notes) {
+        // The agent step that failed last, if there is one; else the notes go to whichever agent runs first.
+        const failed = runs
+          .journal(args.runId)
+          .all()
+          .filter((e) => e.kind === 'agent' && e.status !== 'done')
+          .at(-1);
+        step = failed?.key ?? null;
+      }
+      await runs.resume(args.runId, { notes: args.notes ?? null, step, rewind: args.rewind ?? false });
+      return { runId: args.runId, notesFor: args.notes ? (step ?? 'the next agent step') : null };
+    }),
+  );
+
+  server.registerTool(
+    'message_agent',
+    {
+      description:
+        'Send a message to an agent while it works in one of your runs (run_status lists its runningAgents): a correction, a hint, a constraint. It takes it into its current turn. Use retry_run instead when the step should start over.',
+      inputSchema: { runId: z.string(), step: z.string().describe('Full step key, e.g. "T1/code".'), text: z.string() },
+    },
+    guard(log, async ({ runId, step, text: body }: { runId: string; step: string; text: string }) => {
+      ownRun(runId);
+      await runs.messageAgent(runId, step, body);
+      return { sent: true };
     }),
   );
 
@@ -410,42 +464,38 @@ function registerTeamTools(server: McpServer, ctx: Caller): void {
       return { items: saved.items.length };
     }),
   );
+  server.registerTool(
+    'pending_interactions',
+    {
+      description: 'Gates, questions and tool approvals from your runs that wait for your answer.',
+      inputSchema: {},
+    },
+    guard(log, async () => team.pending(ctx.name).map((p) => ({ id: p.id, ...p.interaction }))),
+  );
 
-  if (!isRoot) {
-    server.registerTool(
-      'pending_interactions',
-      {
-        description: 'Gates, questions and tool approvals from your runs that wait for your answer.',
-        inputSchema: {},
+  server.registerTool(
+    'answer_interaction',
+    {
+      description: `Answer a gate (choice approve | changes | abort, with a note for changes), a question (answer), or a tool approval (allow true | false) from one of your runs.${isRoot ? ' Only when the user asked you to, or [team] gates = "decide" in the config; otherwise the user answers in the UI.' : ''}`,
+      inputSchema: {
+        id: z.string(),
+        choice: z.enum(['approve', 'changes', 'abort']).optional(),
+        note: z.string().optional(),
+        answer: z.string().optional(),
+        allow: z.boolean().optional(),
       },
-      guard(log, async () => team.pending(ctx.name).map((p) => ({ id: p.id, ...p.interaction }))),
-    );
-
-    server.registerTool(
-      'answer_interaction',
-      {
-        description:
-          'Answer a gate (choice approve | changes | abort, with a note for changes), a question (answer), or a tool approval (allow true | false) from one of your runs.',
-        inputSchema: {
-          id: z.string(),
-          choice: z.enum(['approve', 'changes', 'abort']).optional(),
-          note: z.string().optional(),
-          answer: z.string().optional(),
-          allow: z.boolean().optional(),
-        },
-      },
-      guard(
-        log,
-        async (args: {
-          id: string;
-          choice?: 'approve' | 'changes' | 'abort';
-          note?: string;
-          answer?: string;
-          allow?: boolean;
-        }) => ({ answered: team.answer(ctx.name, args.id, args) }),
-      ),
-    );
-  }
+    },
+    guard(
+      log,
+      async (args: {
+        id: string;
+        choice?: 'approve' | 'changes' | 'abort';
+        note?: string;
+        answer?: string;
+        allow?: boolean;
+      }) => ({ answered: team.answer(ctx.name, args.id, args) }),
+    ),
+  );
 }
 
 export async function startMcpServer(opts: {

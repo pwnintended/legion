@@ -7,7 +7,7 @@
 import { EventEmitter } from 'node:events';
 import { join } from 'node:path';
 import { type Config, resolveAgentModel } from '../config.ts';
-import type { AgentEngine, EngineKind, McpServer } from '../engine/types.ts';
+import type { AgentEngine, AgentSession, EngineKind, McpServer } from '../engine/types.ts';
 import type { Logger } from '../util/log.ts';
 import { silentLogger } from '../util/log.ts';
 import type { GitOps, Interaction, InteractionAnswer, RunEvent, RunHost, ShellOptions, ShellResult } from './host.ts';
@@ -55,6 +55,10 @@ export class RunManager extends EventEmitter<RunManagerEvents> {
   private opts: RunManagerOptions;
   private readonly active = new Map<string, ActiveRun>();
   private readonly pending = new Map<string, { item: PendingInteraction; resolve: (answer: unknown) => void }>();
+  /** Live agent sessions per run, by step key (for steering). */
+  private readonly sessions = new Map<string, Map<string, AgentSession>>();
+  /** Notes for a resumed run's next agent attempt (or a given step's). */
+  private readonly notes = new Map<string, { step: string | null; text: string }>();
   private nextInteraction = 1;
   private readonly log: Logger;
 
@@ -103,12 +107,24 @@ export class RunManager extends EventEmitter<RunManagerEvents> {
     return id;
   }
 
-  /** Re-executes a run that stopped (crash, cancel, failure) from its journal. */
-  async resume(runId: string): Promise<string> {
+  /**
+   * Re-executes a run that stopped (crash, cancel, failure) from its journal. `notes` go into the prompt of the
+   * agent step that runs first (or of `step`); `rewind` makes the finished `step` run again, and everything after
+   * it. A rewound run may be one that finished.
+   */
+  async resume(
+    runId: string,
+    opts: { notes?: string | null; step?: string | null; rewind?: boolean } = {},
+  ): Promise<string> {
     if (this.active.has(runId)) throw new Error(`Run ${runId} is still running`);
     const record = readRun(this.dir(runId));
     if (!record) throw new Error(`No run ${runId}`);
-    if (record.status === 'done') throw new Error(`Run ${runId} already finished`);
+    if (opts.rewind) {
+      if (!opts.step) throw new Error('rewind needs the step to go back to');
+      const reset = this.journal(runId).rewind(opts.step);
+      this.emit('event', { type: 'log', runId, message: `Rewound to ${opts.step}: ${reset.length} step(s) run again` });
+    } else if (record.status === 'done') throw new Error(`Run ${runId} already finished (rewind a step to redo it)`);
+    if (opts.notes) this.notes.set(runId, { step: opts.step ?? null, text: opts.notes });
     const def = await loadWorkflow(record.file);
     const now = this.opts.profiles();
     for (const [kind, profile] of Object.entries(record.profiles)) {
@@ -120,8 +136,30 @@ export class RunManager extends EventEmitter<RunManagerEvents> {
         });
       }
     }
-    this.launch({ ...record, status: 'running', endedAt: null, error: null }, def.run);
+    this.launch({ ...record, status: 'running', endedAt: null, error: null, result: null }, def.run);
     return runId;
+  }
+
+  /** Agent steps of a run whose sessions are live, by full key. */
+  liveAgents(runId: string): string[] {
+    return [...(this.sessions.get(runId)?.keys() ?? [])];
+  }
+
+  /** Sends a message into a running agent step's session: it takes it into its current turn or the next one. */
+  async messageAgent(runId: string, step: string, text: string): Promise<void> {
+    const session = this.sessions.get(runId)?.get(step);
+    if (!session) {
+      const live = this.liveAgents(runId);
+      throw new Error(
+        `No running agent ${step} in run ${runId}${live.length ? ` (running: ${live.join(', ')})` : ' (none is running)'}`,
+      );
+    }
+    await session.send(text, 'next');
+    this.emit('event', {
+      type: 'log',
+      runId,
+      message: `Message to ${step}: ${text.length > 120 ? `${text.slice(0, 120)}…` : text}`,
+    });
   }
 
   cancel(runId: string): boolean {
@@ -205,6 +243,8 @@ export class RunManager extends EventEmitter<RunManagerEvents> {
         const ended: RunRecord = { ...final, endedAt: Date.now() };
         writeRun(dir, ended);
         this.active.delete(record.id);
+        this.sessions.delete(record.id);
+        this.notes.delete(record.id);
         // Interactions of a run that ended can no longer be answered.
         for (const [id, p] of this.pending) {
           if (p.item.interaction.runId === record.id) {
@@ -240,6 +280,21 @@ export class RunManager extends EventEmitter<RunManagerEvents> {
       },
       git: opts.git,
       engine: (kind) => opts.engine(kind),
+      agentSession: (step, session) => {
+        let live = manager.sessions.get(record.id);
+        if (!live) {
+          live = new Map();
+          manager.sessions.set(record.id, live);
+        }
+        if (session) live.set(step, session);
+        else live.delete(step);
+      },
+      notes: (step) => {
+        const n = manager.notes.get(record.id);
+        if (!n || (n.step !== null && n.step !== step)) return null;
+        manager.notes.delete(record.id);
+        return n.text;
+      },
       emit: (event) => manager.emit('event', event),
       sh: opts.sh ?? runShell,
       interact<I extends Interaction>(interaction: I): Promise<InteractionAnswer<I>> {
