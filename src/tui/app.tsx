@@ -1,25 +1,41 @@
 /**
  * The terminal UI: finished conversation items go to `<Static>` (printed once, scrollable in the terminal); the
- * live region below shows the streaming reply, active runs, the interaction waiting for the user, the prompt and
- * a status line.
+ * live region below shows the streaming reply, the assistant's progress, active runs, the interaction waiting for
+ * the user, the prompt and a status bar.
  */
-import { Box, Static, Text, useApp } from 'ink';
-import { useEffect, useState, useSyncExternalStore } from 'react';
-import type { Controller } from './controller.ts';
+import { Box, Static, Text, useApp, useWindowSize } from 'ink';
+import { type ReactNode, useEffect, useState, useSyncExternalStore } from 'react';
+import { ConfigMenu } from './config-menu.tsx';
+import { COMMANDS, type Controller } from './controller.ts';
 import { PromptInput } from './input.tsx';
-import { clipLines, type Item, oneLine, type RunView, type StepView, type UiInteraction } from './store.ts';
+import { Inline, Markdown } from './markdown.tsx';
+import {
+  type Banner,
+  clipLines,
+  type Item,
+  type Line,
+  oneLine,
+  type RunView,
+  type StepView,
+  type UiInteraction,
+} from './store.ts';
+import { BUSY_FRAMES, color, engineColor, formatDuration, glyph, SPINNER, theme } from './theme.ts';
+import { WorkflowsMenu } from './workflows-menu.tsx';
 
-const SPINNER = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
+type Mode = 'hotkeys' | 'note' | 'chat';
 
 export function App({ controller }: { controller: Controller }) {
   const { store } = controller;
   const state = useSyncExternalStore(store.subscribe, store.get);
   const app = useApp();
+  const { columns } = useWindowSize();
   const [frame, setFrame] = useState(0);
-  const [mode, setMode] = useState<'hotkeys' | 'note' | 'chat'>('hotkeys');
+  const [mode, setMode] = useState<Mode>('hotkeys');
+  const [option, setOption] = useState(0);
   const [armedExit, setArmedExit] = useState(false);
   const head = state.interactions[0] ?? null;
   const animating = state.busy || state.runs.length > 0;
+  const width = Math.max(40, columns || 80);
 
   useEffect(() => {
     controller.attach({
@@ -30,25 +46,33 @@ export function App({ controller }: { controller: Controller }) {
 
   useEffect(() => {
     if (!animating) return;
-    const timer = setInterval(() => setFrame((f) => f + 1), 120);
+    const timer = setInterval(() => setFrame((f) => f + 1), 100);
     return () => clearInterval(timer);
   }, [animating]);
 
-  // A new head interaction starts in hotkey mode (questions take text right away).
+  useEffect(() => {
+    if (!armedExit) return;
+    const timer = setTimeout(() => setArmedExit(false), 2000);
+    return () => clearTimeout(timer);
+  }, [armedExit]);
+
+  // A new head interaction starts in hotkey mode, on its first option.
   const headId = head?.id ?? null;
   // biome-ignore lint/correctness/useExhaustiveDependencies: the effect is about the head changing, not reading it.
   useEffect(() => {
     setMode('hotkeys');
+    setOption(0);
   }, [headId]);
 
-  const spinner = SPINNER[frame % SPINNER.length] ?? '·';
   const answering = head !== null && mode !== 'chat';
-  const isAsk = head?.source === 'run' && head.pending.interaction.kind === 'ask';
+  const ask = head?.source === 'run' && head.pending.interaction.kind === 'ask' ? head.pending.interaction : null;
+  const typing = answering && (ask !== null || mode === 'note');
 
   const submit = (value: string) => {
     setArmedExit(false);
-    if (head && answering && (isAsk || mode === 'note')) {
-      answerText(controller, head, value, mode);
+    if (head && typing) {
+      if (ask && !value.trim() && ask.options.length > 0) controller.answerAsk(head.id, ask.options[option] ?? '');
+      else if (value.trim() || mode === 'note') answerText(controller, head, value, mode);
       return;
     }
     void controller.submit(value);
@@ -56,31 +80,54 @@ export function App({ controller }: { controller: Controller }) {
   };
 
   const hotkey = (key: string): boolean => {
-    if (!head || !answering || isAsk || mode === 'note') return false;
+    if (!head || !answering || ask || mode === 'note') return false;
     return answerKey(controller, head, key.toLowerCase(), () => setMode('note'));
   };
 
+  const tone = !head || mode === 'chat' ? undefined : ask && mode !== 'note' ? theme.info : theme.warn;
+
   return (
     <>
-      <Static items={state.items}>{(item) => <ItemView key={item.id} item={item} />}</Static>
+      <Static items={state.items}>{(item) => <ItemView key={item.id} item={item} width={width} />}</Static>
       <Box flexDirection="column">
-        {state.streaming ? <Text>{tail(state.streaming, 30)}</Text> : null}
-        {state.busy ? (
-          <Text color="magenta">
-            {spinner} {state.activity ?? 'working'}… <Text dimColor>(Esc to interrupt)</Text>
-          </Text>
+        {state.streaming ? (
+          <Bullet mark={glyph.assistant} markColor="white" marginTop={1}>
+            <Markdown text={tail(state.streaming, 40)} />
+          </Bullet>
         ) : null}
+        {state.busy ? <Busy frame={frame} since={state.busySince} activity={state.activity} /> : null}
         {state.runs.map((run) => (
-          <RunPanel key={run.id} run={run} spinner={spinner} />
+          <RunPanel
+            key={run.id}
+            run={run}
+            frame={frame}
+            waiting={state.interactions.some((i) => i.source === 'run' && i.pending.interaction.runId === run.id)}
+          />
         ))}
-        {head ? <InteractionView item={head} mode={mode} queued={state.interactions.length - 1} /> : null}
-        <Box marginTop={head || state.runs.length ? 0 : 1}>
+        {state.menu === 'config' ? <ConfigMenu controller={controller} width={width} /> : null}
+        {state.menu === 'workflows' ? <WorkflowsMenu controller={controller} width={width} /> : null}
+        {head && !state.menu ? (
+          <InteractionView item={head} mode={mode} option={option} queued={state.interactions.length - 1} />
+        ) : null}
+        <Box
+          display={state.menu ? 'none' : 'flex'}
+          flexDirection="column"
+          marginTop={head || state.runs.length || state.busy ? 0 : 1}
+        >
           <PromptInput
-            prompt={answering && (isAsk || mode === 'note') ? '?' : '›'}
-            placeholder={placeholder(head, mode, isAsk)}
-            isActive
+            prompt={typing ? glyph.ask : glyph.user}
+            tone={tone}
+            placeholder={placeholder(head, mode, ask !== null)}
+            commands={typing ? [] : COMMANDS}
+            isActive={!state.menu}
+            seed={state.seed}
             onSubmit={submit}
             onEmptyKey={hotkey}
+            onNavigate={(dir) => {
+              if (!ask || !answering || ask.options.length === 0) return false;
+              setOption((n) => (n + dir + ask.options.length) % ask.options.length);
+              return true;
+            }}
             onEscape={() => {
               if (mode !== 'hotkeys') setMode('hotkeys');
               else void controller.interrupt();
@@ -92,32 +139,92 @@ export function App({ controller }: { controller: Controller }) {
                 return;
               }
               if (armedExit) app.exit();
-              else {
-                setArmedExit(true);
-                store.info('Press Ctrl+C again to exit.');
-              }
+              else setArmedExit(true);
             }}
           />
         </Box>
-        <Text dimColor>
-          {Object.entries(state.profiles)
-            .map(([k, v]) => (k === v ? k : `${k}: ${v}`))
-            .join(' · ')}
-          {state.costUsd !== null ? ` · assistant $${state.costUsd.toFixed(2)}` : ''} · /help
-        </Text>
+        <StatusBar
+          width={width}
+          hint={
+            state.menu
+              ? state.menu === 'config'
+                ? 'settings'
+                : 'workflows'
+              : armedExit
+                ? 'Press Ctrl+C again to exit'
+                : state.busy
+                  ? 'esc to interrupt'
+                  : head && mode === 'chat'
+                    ? 'tab: back to the question'
+                    : '/ for commands'
+          }
+          urgent={armedExit}
+          profiles={state.profiles}
+          costUsd={state.costUsd}
+          runs={state.runs.length}
+          waiting={state.interactions.length}
+        />
       </Box>
     </>
   );
 }
 
-function placeholder(head: UiInteraction | null, mode: string, isAsk: boolean): string {
-  if (!head || mode === 'chat')
-    return head
-      ? 'message the assistant (Tab: back to the prompt above)'
-      : 'ask, or describe a workflow to write or run';
-  if (mode === 'note') return 'what should change? (Esc: back)';
-  if (isAsk) return 'type an answer or an option number';
-  return '';
+// ---- live region ---------------------------------------------------------------------------------
+
+function Busy({ frame, since, activity }: { frame: number; since: number | null; activity: string | null }) {
+  const mark = BUSY_FRAMES[frame % BUSY_FRAMES.length] ?? '·';
+  const elapsed = since ? formatDuration(Date.now() - since) : '';
+  return (
+    <Box marginTop={1}>
+      <Text color={theme.accent}>
+        {mark} {activity ? capitalize(activity) : 'Working'}…
+      </Text>
+      <Text dimColor> ({elapsed ? `${elapsed} · ` : ''}esc to interrupt)</Text>
+    </Box>
+  );
+}
+
+function StatusBar(props: {
+  width: number;
+  hint: string;
+  urgent: boolean;
+  profiles: Record<string, string>;
+  costUsd: number | null;
+  runs: number;
+  waiting: number;
+}) {
+  const parts: { text: string; color?: string }[] = Object.entries(props.profiles).map(([k, v]) => ({
+    text: k === v ? k : `${k} ${v}`,
+    color: engineColor(k),
+  }));
+  if (props.runs > 0) parts.push({ text: `${props.runs} run${props.runs > 1 ? 's' : ''}`, color: theme.info });
+  if (props.waiting > 0) parts.push({ text: `${props.waiting} waiting`, color: theme.warn });
+  if (props.costUsd !== null) parts.push({ text: `$${props.costUsd.toFixed(2)}` });
+  return (
+    <Box width={props.width} justifyContent="space-between" paddingX={2}>
+      <Text color={props.urgent ? theme.warn : undefined} dimColor={!props.urgent}>
+        {props.hint}
+      </Text>
+      <Text>
+        {parts.map((p, i) => (
+          <Text key={p.text}>
+            {i > 0 ? <Text dimColor> · </Text> : null}
+            <Text color={p.color} dimColor={!p.color}>
+              {p.text}
+            </Text>
+          </Text>
+        ))}
+      </Text>
+    </Box>
+  );
+}
+
+function placeholder(head: UiInteraction | null, mode: Mode, isAsk: boolean): string {
+  if (!head) return 'Ask anything, or describe a workflow to write or run';
+  if (mode === 'chat') return 'Message the assistant (Tab: back to the question)';
+  if (mode === 'note') return 'What should change? Enter sends, Esc goes back';
+  if (isAsk) return 'Type an answer, or pick with ↑↓ and Enter';
+  return 'Press a key above, or Tab to message the assistant';
 }
 
 function answerKey(controller: Controller, head: UiInteraction, key: string, toNote: () => void): boolean {
@@ -139,7 +246,7 @@ function answerKey(controller: Controller, head: UiInteraction, key: string, toN
   return false;
 }
 
-function answerText(controller: Controller, head: UiInteraction, value: string, mode: string): void {
+function answerText(controller: Controller, head: UiInteraction, value: string, mode: Mode): void {
   if (head.source !== 'run') return;
   const i = head.pending.interaction;
   if (i.kind === 'gate' && mode === 'note') {
@@ -153,194 +260,460 @@ function answerText(controller: Controller, head: UiInteraction, value: string, 
   }
 }
 
-function InteractionView({ item, mode, queued }: { item: UiInteraction; mode: string; queued: number }) {
-  const more = queued > 0 ? <Text dimColor> (+{queued} more waiting)</Text> : null;
+function Keys({ keys }: { keys: [string, string][] }) {
+  return (
+    <Text>
+      {keys.map(([k, label], i) => (
+        <Text key={k}>
+          {i > 0 ? '   ' : ''}
+          <Text color={theme.accent} bold>
+            {k}
+          </Text>
+          <Text dimColor> {label}</Text>
+        </Text>
+      ))}
+    </Text>
+  );
+}
+
+function Card(props: { tone: string; icon: string; title: string; source: string; children?: ReactNode }) {
+  return (
+    <Box flexDirection="column" borderStyle="round" borderColor={props.tone} paddingX={1} marginTop={1}>
+      <Box justifyContent="space-between">
+        <Box flexShrink={1}>
+          <Text color={props.tone} bold>
+            {props.icon} {props.title}
+          </Text>
+        </Box>
+        <Text dimColor>{`  ${props.source}`}</Text>
+      </Box>
+      {props.children}
+    </Box>
+  );
+}
+
+function InteractionView(props: { item: UiInteraction; mode: Mode; option: number; queued: number }) {
+  const { item, mode, option, queued } = props;
+  const more = queued > 0 ? <Text dimColor>+{queued} more waiting after this</Text> : null;
   if (item.source === 'assistant' || item.pending.interaction.kind === 'approval') {
     const tool = item.source === 'assistant' ? item.approval.tool : (item.pending.interaction as { tool: string }).tool;
     const input =
       item.source === 'assistant' ? item.approval.input : (item.pending.interaction as { input: unknown }).input;
-    const who =
-      item.source === 'assistant'
-        ? 'assistant'
-        : `run ${item.pending.interaction.runId} · ${item.pending.interaction.key}`;
+    const source =
+      item.source === 'assistant' ? 'assistant' : `${item.pending.interaction.runId} · ${item.pending.interaction.key}`;
     return (
-      <Box flexDirection="column" borderStyle="round" borderColor="yellow" paddingX={1}>
-        <Text>
-          <Text color="yellow" bold>
-            Allow {tool}?
-          </Text>{' '}
-          <Text dimColor>({who})</Text>
-          {more}
-        </Text>
-        <Text>{clipLines(describeInput(input), 12)}</Text>
-        <Text dimColor>[y] allow once · [s] allow for this session · [n] deny · Tab: message the assistant</Text>
-      </Box>
+      <Card tone={theme.warn} icon="⚠" title={`Allow ${tool}?`} source={source}>
+        <Box marginY={1} paddingLeft={1}>
+          <ToolInput input={input} />
+        </Box>
+        <Keys
+          keys={[
+            ['y', 'allow once'],
+            ['s', 'allow for this session'],
+            ['n', 'deny'],
+            ['tab', 'message the assistant'],
+          ]}
+        />
+        {more}
+      </Card>
     );
   }
   const i = item.pending.interaction;
   if (i.kind === 'gate') {
     return (
-      <Box flexDirection="column" borderStyle="round" borderColor="yellow" paddingX={1}>
-        <Text>
-          <Text color="yellow" bold>
-            ⏸ {i.title}
-          </Text>{' '}
-          <Text dimColor>(run {i.runId}; details above)</Text>
-          {more}
-        </Text>
-        <Text dimColor>
-          {mode === 'note'
-            ? 'Describe the changes and press Enter.'
-            : '[y] approve · [c] request changes · [x] abort the run · Tab: message the assistant'}
-        </Text>
-      </Box>
+      <Card tone={theme.warn} icon={glyph.gate} title={i.title} source={`${i.runId} · details above`}>
+        <Box marginTop={1}>
+          {mode === 'note' ? (
+            <Text>
+              <Text color={theme.warn}>Describe the changes</Text>
+              <Text dimColor> below and press Enter · Esc to go back</Text>
+            </Text>
+          ) : (
+            <Keys
+              keys={[
+                ['y', 'approve'],
+                ['c', 'request changes'],
+                ['x', 'abort the run'],
+                ['tab', 'message the assistant'],
+              ]}
+            />
+          )}
+        </Box>
+        {more}
+      </Card>
     );
   }
   if (i.kind === 'ask') {
     return (
-      <Box flexDirection="column" borderStyle="round" borderColor="cyan" paddingX={1}>
-        <Text>
-          <Text color="cyan" bold>
-            ? {i.question}
-          </Text>{' '}
-          <Text dimColor>(run {i.runId})</Text>
-          {more}
-        </Text>
-        {i.options.map((o, n) => (
-          <Text key={o}>
-            {'  '}
-            {n + 1}. {o}
-          </Text>
-        ))}
-      </Box>
+      <Card tone={theme.info} icon={glyph.ask} title={i.question} source={i.runId}>
+        {i.options.length > 0 ? (
+          <Box flexDirection="column" marginTop={1}>
+            {i.options.map((o, n) => (
+              <Text key={o} color={n === option ? theme.info : undefined} bold={n === option}>
+                {n === option ? '❯ ' : '  '}
+                <Text dimColor={n !== option}>{n + 1}.</Text> {o}
+              </Text>
+            ))}
+          </Box>
+        ) : null}
+        {more}
+      </Card>
     );
   }
   return null;
 }
 
-function describeInput(input: unknown): string {
+function ToolInput({ input }: { input: unknown }) {
   if (typeof input === 'object' && input !== null) {
     const o = input as Record<string, unknown>;
-    if (typeof o.command === 'string') return `$ ${o.command}`;
-    if (typeof o.file_path === 'string') return String(o.file_path);
+    if (typeof o.command === 'string')
+      return (
+        <Text>
+          <Text color={theme.accent}>$ </Text>
+          {clipLines(o.command, 12)}
+        </Text>
+      );
+    if (typeof o.file_path === 'string') {
+      const body = typeof o.content === 'string' ? o.content : typeof o.new_string === 'string' ? o.new_string : null;
+      return (
+        <Box flexDirection="column">
+          <Text bold>{o.file_path}</Text>
+          {body ? <Text dimColor>{clipLines(body, 8)}</Text> : null}
+        </Box>
+      );
+    }
   }
-  return JSON.stringify(input, null, 2) ?? '';
+  return <Text dimColor>{clipLines(JSON.stringify(input, null, 2) ?? '', 12)}</Text>;
 }
 
-function RunPanel({ run, spinner }: { run: RunView; spinner: string }) {
-  const active = run.steps.filter((s) => s.status === 'started' && s.kind !== 'loop');
-  const finished = run.steps.filter((s) => s.status !== 'started' && s.kind !== 'loop').slice(-3);
+const SHOW_FINISHED = 4;
+
+function RunPanel({ run, frame, waiting }: { run: RunView; frame: number; waiting: boolean }) {
+  const steps = run.steps.filter((s) => s.kind !== 'loop');
+  const active = steps.filter((s) => s.status === 'started');
+  const finished = steps.filter((s) => s.status !== 'started');
+  const shown = finished.slice(-SHOW_FINISHED);
+  const hidden = finished.length - shown.length;
+  const failed = finished.filter((s) => s.status === 'failed').length;
   return (
-    <Box flexDirection="column" marginTop={1}>
-      <Text>
-        <Text color="blue" bold>
-          ◆ {run.workflow}
-        </Text>{' '}
-        <Text dimColor>{run.id}</Text>
-      </Text>
-      {finished.map((s) => (
-        <StepLine key={s.key} step={s} spinner={spinner} />
+    <Box
+      flexDirection="column"
+      borderStyle="round"
+      borderColor={waiting ? theme.warn : theme.muted}
+      paddingX={1}
+      marginTop={1}
+    >
+      <Box justifyContent="space-between">
+        <Text>
+          <Text color={theme.accent} bold>
+            {glyph.brand} {run.workflow}
+          </Text>
+          <Text dimColor> {run.id}</Text>
+          {waiting ? <Text color={theme.warn}> · waiting for you</Text> : null}
+        </Text>
+        <Text dimColor>
+          {finished.length} done{failed ? <Text color={theme.error}> · {failed} failed</Text> : null}
+          {active.length ? ` · ${active.length} running` : ''} · {formatDuration(Date.now() - run.startedAt)}
+        </Text>
+      </Box>
+      {hidden > 0 ? <Text dimColor>{`  … ${hidden} earlier step${hidden > 1 ? 's' : ''}`}</Text> : null}
+      {shown.map((s) => (
+        <StepLine key={s.key} step={s} frame={frame} />
       ))}
       {active.map((s) => (
-        <StepLine key={s.key} step={s} spinner={spinner} />
+        <StepLine key={s.key} step={s} frame={frame} />
       ))}
+      {steps.length === 0 ? <Text dimColor>starting…</Text> : null}
     </Box>
   );
 }
 
-function StepLine({ step, spinner }: { step: StepView; spinner: string }) {
-  const icon =
-    step.status === 'started' ? spinner : step.status === 'failed' ? '✗' : step.status === 'cached' ? '↺' : '✓';
-  const color = step.status === 'failed' ? 'red' : step.status === 'started' ? 'yellow' : 'green';
-  const elapsed = step.status === 'started' ? ` ${formatDuration(Date.now() - step.startedAt)}` : '';
+function StepLine({ step, frame }: { step: StepView; frame: number }) {
+  const running = step.status === 'started';
+  const icon = running
+    ? (SPINNER[frame % SPINNER.length] ?? '·')
+    : step.status === 'failed'
+      ? glyph.fail
+      : step.status === 'cached'
+        ? glyph.cached
+        : glyph.ok;
+  const tone =
+    step.status === 'failed' ? theme.error : running ? theme.warn : step.status === 'cached' ? theme.muted : theme.ok;
+  const time = running
+    ? formatDuration(Date.now() - step.startedAt)
+    : step.endedAt && step.status !== 'cached'
+      ? formatDuration(step.endedAt - step.startedAt)
+      : '';
+  // Labels default to the step key; show its scope (`T1/review/2/`) quieter than its name.
+  const cut = step.label === step.key ? step.label.lastIndexOf('/') + 1 : 0;
   return (
-    <Text>
-      {'  '}
-      <Text color={color}>{icon}</Text> {oneLine(step.label, 70)}
-      {step.activity ? <Text dimColor> · {oneLine(step.activity, 60)}</Text> : null}
-      <Text dimColor>{elapsed}</Text>
-    </Text>
+    <Box justifyContent="space-between">
+      <Box flexShrink={1}>
+        <Text wrap="truncate-end">
+          <Text color={tone}>{icon}</Text> <Text dimColor>{step.label.slice(0, cut)}</Text>
+          <Text dimColor={!running && step.status !== 'failed'} bold={running}>
+            {step.label.slice(cut)}
+          </Text>
+          {step.engine ? <Text color={engineColor(step.engine)}> {step.engine}</Text> : null}
+          {running && step.activity ? <Text dimColor> · {oneLine(step.activity, 70)}</Text> : null}
+        </Text>
+      </Box>
+      <Text dimColor> {time}</Text>
+    </Box>
   );
 }
 
-function ItemView({ item }: { item: Item }) {
+// ---- scrollback ----------------------------------------------------------------------------------
+
+function Bullet(props: { mark: string; markColor?: string; marginTop?: number; children: ReactNode }) {
+  return (
+    <Box marginTop={props.marginTop ?? 0}>
+      <Box width={2} flexShrink={0}>
+        <Text color={props.markColor}>{props.mark}</Text>
+      </Box>
+      <Box flexDirection="column" flexShrink={1}>
+        {props.children}
+      </Box>
+    </Box>
+  );
+}
+
+function ItemView({ item, width }: { item: Item; width: number }) {
   switch (item.type) {
+    case 'banner':
+      return <BannerView banner={item.banner} width={width} />;
     case 'user':
       return (
         <Box marginTop={1}>
-          <Text color="cyan" bold>
-            › {item.text}
+          <Text color={theme.user} bold>
+            {glyph.user} {item.text}
           </Text>
         </Box>
       );
     case 'assistant':
       return (
-        <Box marginTop={1}>
+        <Bullet mark={glyph.assistant} markColor="white" marginTop={1}>
           <Markdown text={item.text} />
-        </Box>
+        </Bullet>
       );
-    case 'tool':
+    case 'tool': {
+      const legion = item.name.startsWith('legion.');
       return (
-        <Text dimColor>
-          {'  '}⏺ {item.name}
-          {item.summary ? ` ${item.summary}` : ''}
-        </Text>
-      );
-    case 'info':
-      return <Text dimColor>{item.text}</Text>;
-    case 'error':
-      return <Text color="red">{item.text}</Text>;
-    case 'run':
-      return (
-        <Box marginTop={1}>
-          <Text color={item.status === 'failed' ? 'red' : item.status === 'done' ? 'green' : 'blue'}>
-            ◆ {item.text}
+        <Box paddingLeft={2}>
+          <Text wrap="truncate-end">
+            <Text color={legion ? theme.accent : theme.ok}>{glyph.tool} </Text>
+            <Text bold>{legion ? legionToolLabel(item.name) : item.name}</Text>
+            {item.summary ? <Text dimColor> {item.summary}</Text> : null}
           </Text>
         </Box>
       );
+    }
+    case 'info':
+      return (
+        <Box marginTop={1}>
+          <Text dimColor>{item.text}</Text>
+        </Box>
+      );
+    case 'panel':
+      return <PanelView title={item.title} lines={item.lines} />;
+    case 'error':
+      return (
+        <Bullet mark={glyph.fail} markColor={theme.error}>
+          <Text color={theme.error}>{item.text}</Text>
+        </Bullet>
+      );
+    case 'log':
+      return (
+        <Box paddingLeft={2}>
+          <Text>
+            <Text color={theme.accent}>{item.workflow}</Text>
+            <Text dimColor> │ </Text>
+            <Inline text={item.text} />
+          </Text>
+        </Box>
+      );
+    case 'run':
+      return <RunItem item={item} />;
     case 'gate':
       return (
-        <Box flexDirection="column" marginTop={1}>
-          <Text color="yellow" bold>
-            ⏸ {item.title}
-          </Text>
-          {item.body ? <Markdown text={clipLines(item.body, 200)} /> : null}
+        <Box
+          flexDirection="column"
+          marginTop={1}
+          borderStyle="round"
+          borderColor={theme.warn}
+          paddingX={1}
+          width={Math.min(width, 100)}
+        >
+          <Box justifyContent="space-between">
+            <Box flexShrink={1}>
+              <Text color={theme.warn} bold>
+                {glyph.gate} {item.title}
+              </Text>
+            </Box>
+            <Text dimColor>{`  ${item.workflow} · ${item.runId}`}</Text>
+          </Box>
+          {item.body ? (
+            <Box marginTop={1}>
+              <Markdown text={clipLines(item.body, 200)} />
+            </Box>
+          ) : null}
         </Box>
       );
   }
 }
 
-/** Just enough markdown for a terminal: headings bold, fenced code dim, bullets as-is. */
-function Markdown({ text }: { text: string }) {
-  let fenced = false;
+function RunItem({ item }: { item: Extract<Item, { type: 'run' }> }) {
+  if (item.status === 'started')
+    return (
+      <Box marginTop={1}>
+        <Text>
+          <Text color={theme.accent}>{glyph.brand} </Text>
+          <Text bold>{item.workflow}</Text>
+          <Text dimColor> started · run {item.runId}</Text>
+        </Text>
+      </Box>
+    );
+  const took = item.durationMs !== null ? ` in ${formatDuration(item.durationMs)}` : '';
+  const [icon, tone, verb, hint] =
+    item.status === 'done'
+      ? [glyph.ok, theme.ok, 'finished', null]
+      : item.status === 'cancelled'
+        ? ['■', theme.muted, 'cancelled', `/resume ${item.runId} picks it up again`]
+        : [glyph.fail, theme.error, 'failed', `/resume ${item.runId} retries from the failed step`];
   return (
-    <Box flexDirection="column">
-      {text.split('\n').map((line, i) => {
-        const key = `${i}`;
-        if (line.startsWith('```')) {
-          fenced = !fenced;
-          return null;
-        }
-        if (fenced) return <Text key={key} dimColor>{`  ${line}`}</Text>;
-        const heading = /^(#{1,6})\s+(.*)$/.exec(line);
-        if (heading)
-          return (
-            <Text key={key} bold>
-              {heading[2]}
-            </Text>
-          );
-        return <Text key={key}>{line.replace(/\*\*(.+?)\*\*/g, '$1').replace(/`([^`]+)`/g, '$1')}</Text>;
-      })}
+    <Box flexDirection="column" marginTop={1}>
+      <Text>
+        <Text color={tone}>{icon} </Text>
+        <Text bold>{item.workflow}</Text>
+        <Text color={tone}> {verb}</Text>
+        <Text dimColor>
+          {took} · run {item.runId}
+        </Text>
+      </Text>
+      {item.detail ? (
+        <Box paddingLeft={2}>
+          <Box width={2} flexShrink={0}>
+            <Text dimColor>{glyph.result}</Text>
+          </Box>
+          <Text color={item.status === 'failed' ? theme.error : undefined}>{item.detail}</Text>
+        </Box>
+      ) : null}
+      {hint ? <Text dimColor>{`  ${hint}`}</Text> : null}
     </Box>
   );
+}
+
+function PanelView({ title, lines }: { title: string; lines: Line[] }) {
+  return (
+    <Box flexDirection="column" marginTop={1}>
+      <Text>
+        <Text color={theme.accent}>{glyph.brand} </Text>
+        <Text bold>{title}</Text>
+      </Text>
+      <Box flexDirection="column" paddingLeft={2}>
+        {lines.map((line, n) => (
+          // biome-ignore lint/suspicious/noArrayIndexKey: panel lines are positional.
+          <Text key={n}>
+            {line.length === 0
+              ? ' '
+              : line.map((s, k) => (
+                  // biome-ignore lint/suspicious/noArrayIndexKey: segments are positional.
+                  <Text key={k} color={color(s.color)} dimColor={s.dim} bold={s.bold}>
+                    {s.text}
+                  </Text>
+                ))}
+          </Text>
+        ))}
+      </Box>
+    </Box>
+  );
+}
+
+function BannerView({ banner, width }: { banner: Banner; width: number }) {
+  const profiles = Object.entries(banner.profiles);
+  return (
+    <Box flexDirection="column">
+      <Box
+        flexDirection="column"
+        borderStyle="round"
+        borderColor={theme.accent}
+        paddingX={2}
+        width={Math.min(width, 72)}
+      >
+        <Text>
+          <Text color={theme.accent} bold>
+            {glyph.brand} legion
+          </Text>
+          <Text dimColor>
+            {banner.version ? ` v${banner.version}` : ''} · multi-agent workflows on claude and codex
+          </Text>
+        </Text>
+        <Text> </Text>
+        <Text wrap="truncate-middle">
+          <Text dimColor>{'dir       '}</Text>
+          {banner.cwd}
+          {banner.branch ? <Text color={theme.ok}> ⎇ {banner.branch}</Text> : null}
+          {banner.isGitRepo ? null : <Text color={theme.warn}> · not a git repository</Text>}
+        </Text>
+        <Text>
+          <Text dimColor>{'profiles  '}</Text>
+          {profiles.map(([kind, name], i) => (
+            <Text key={kind}>
+              {i > 0 ? <Text dimColor> · </Text> : null}
+              <Text color={engineColor(kind)}>{kind}</Text>
+              {name !== kind ? <Text> {name}</Text> : null}
+            </Text>
+          ))}
+        </Text>
+        <Text>
+          <Text dimColor>{'assistant '}</Text>
+          {banner.assistant}
+          <Text dimColor>
+            {' · '}
+            {banner.workflows} workflow{banner.workflows === 1 ? '' : 's'}
+          </Text>
+        </Text>
+      </Box>
+      {banner.createdConfig ? (
+        <Text>
+          <Text color={theme.ok}>{`  ${glyph.ok} `}</Text>
+          <Text dimColor>Created </Text>
+          {banner.createdConfig}
+          <Text dimColor> with the settings in effect · /config to see or edit them</Text>
+        </Text>
+      ) : null}
+      <Text dimColor>
+        {'  Ask it to write, change or run a workflow · '}
+        <Text color={theme.accent}>/</Text>
+        {' for commands · '}
+        <Text color={theme.accent}>/help</Text>
+      </Text>
+    </Box>
+  );
+}
+
+const LEGION_TOOLS: Record<string, string> = {
+  list_workflows: 'List workflows',
+  read_workflow: 'Read workflow',
+  eject_workflow: 'Eject workflow',
+  validate_workflow: 'Validate',
+  run_workflow: 'Run workflow',
+  list_runs: 'List runs',
+  run_status: 'Run status',
+  resume_run: 'Resume run',
+  cancel_run: 'Cancel run',
+};
+
+function legionToolLabel(name: string): string {
+  const tool = name.slice('legion.'.length);
+  return LEGION_TOOLS[tool] ?? tool;
+}
+
+function capitalize(s: string): string {
+  return s.charAt(0).toUpperCase() + s.slice(1);
 }
 
 function tail(text: string, lines: number): string {
   const all = text.split('\n');
   return all.length > lines ? all.slice(-lines).join('\n') : text;
-}
-
-function formatDuration(ms: number): string {
-  const s = Math.floor(ms / 1000);
-  return s < 60 ? `${s}s` : `${Math.floor(s / 60)}m${String(s % 60).padStart(2, '0')}s`;
 }

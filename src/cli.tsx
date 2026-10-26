@@ -2,8 +2,7 @@
  * `legion` — a single-session terminal agent for writing and running multi-agent workflows in the current
  * directory, over the Claude Code and Codex CLIs you already have.
  */
-import { copyFileSync, existsSync, mkdirSync } from 'node:fs';
-import { join } from 'node:path';
+import { existsSync } from 'node:fs';
 import { createInterface } from 'node:readline/promises';
 import { parseArgs } from 'node:util';
 import { render } from 'ink';
@@ -13,7 +12,7 @@ import { Session } from './session.ts';
 import { App } from './tui/app.tsx';
 import { Controller } from './tui/controller.ts';
 import type { Interaction, RunEvent } from './workflow/host.ts';
-import { builtinSourceDir, findWorkflow, installSdkResolution, projectWorkflowDir } from './workflow/loader.ts';
+import { ejectWorkflow, findWorkflow, installSdkResolution } from './workflow/loader.ts';
 import type { PendingInteraction } from './workflow/manager.ts';
 import { formatReport, validateWorkflow } from './workflow/validate.ts';
 
@@ -97,15 +96,12 @@ async function main(): Promise<number> {
     case 'eject': {
       const name = args[0];
       if (!name) throw new UsageError('legion eject <workflow> [--as <name>]');
-      const found = findWorkflow(process.cwd(), name);
-      if (!found) throw new UsageError(`No workflow named "${name}"`);
-      const source = found.source === 'builtin' ? join(builtinSourceDir(), `${found.name}.ts`) : found.file;
-      const dir = projectWorkflowDir(process.cwd());
-      const target = join(dir, `${values.as ?? found.name}.ts`);
-      if (existsSync(target)) throw new UsageError(`${target} already exists`);
-      mkdirSync(dir, { recursive: true });
-      copyFileSync(source, target);
-      console.log(`Copied to ${target}; it now overrides the ${found.source} one.`);
+      try {
+        const { path, from } = ejectWorkflow(process.cwd(), name, values.as);
+        console.log(`Copied to ${path}; it now overrides the ${from.source} one.`);
+      } catch (err) {
+        throw new UsageError(err instanceof Error ? err.message : String(err));
+      }
       return 0;
     }
     case 'doctor':
@@ -145,9 +141,6 @@ function setup(session: Session): void {
 
 async function interactive(session: Session, initial: string): Promise<number> {
   const controller = new Controller(session);
-  controller.store.info(
-    `Legion in ${session.repo}${session.isGitRepo ? '' : ' (not a git repository: git steps will fail)'} · /help for commands`,
-  );
   const instance = render(<App controller={controller} />, { exitOnCtrlC: false, maxFps: 30 });
   if (initial.trim()) void controller.submit(initial);
   await instance.waitUntilExit();

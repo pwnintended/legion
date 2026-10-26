@@ -3,8 +3,10 @@
  * approvals to whoever answers (the TUI, the headless prompt), and re-broadcasts their progress. Runs execute
  * in-process; their journals make a run that dies with the process resumable (`resume`).
  */
+
 import { EventEmitter } from 'node:events';
 import { join } from 'node:path';
+import { type Config, resolveAgentModel } from '../config.ts';
 import type { AgentEngine, EngineKind } from '../engine/types.ts';
 import type { Logger } from '../util/log.ts';
 import { silentLogger } from '../util/log.ts';
@@ -28,6 +30,8 @@ export interface RunManagerOptions {
   git: GitOps;
   maxAgents?: number;
   approvals?: 'ask' | 'auto';
+  /** The user's model settings per workflow (`[workflow.<name>]`), read at every agent start. */
+  agentModels?: () => Config['workflow'];
   log?: Logger;
   sh?: (command: string, opts: ShellOptions) => Promise<ShellResult>;
 }
@@ -46,7 +50,7 @@ export interface RunManagerEvents {
 }
 
 export class RunManager extends EventEmitter<RunManagerEvents> {
-  private readonly opts: RunManagerOptions;
+  private opts: RunManagerOptions;
   private readonly active = new Map<string, ActiveRun>();
   private readonly pending = new Map<string, { item: PendingInteraction; resolve: (answer: unknown) => void }>();
   private nextInteraction = 1;
@@ -56,6 +60,11 @@ export class RunManager extends EventEmitter<RunManagerEvents> {
     super();
     this.opts = opts;
     this.log = opts.log ?? silentLogger;
+  }
+
+  /** New defaults for runs started from now on. */
+  configure(patch: Pick<RunManagerOptions, 'maxAgents' | 'approvals'>): void {
+    this.opts = { ...this.opts, ...patch };
   }
 
   get repo(): string {
@@ -221,6 +230,10 @@ export class RunManager extends EventEmitter<RunManagerEvents> {
       dryRun: false,
       maxAgents: opts.maxAgents ?? 4,
       approvals: opts.approvals ?? 'ask',
+      agentModel: (req) => {
+        const r = resolveAgentModel(opts.agentModels?.() ?? {}, { ...req, workflow: record.workflow });
+        return { engine: r.engine as EngineKind, model: r.model, effort: r.effort };
+      },
       git: opts.git,
       engine: (kind) => opts.engine(kind),
       emit: (event) => manager.emit('event', event),

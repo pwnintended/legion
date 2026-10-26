@@ -4,7 +4,7 @@
  * with the assistant's own file tools; `validate_workflow` is the feedback loop after every write.
  */
 import { randomBytes, timingSafeEqual } from 'node:crypto';
-import { copyFileSync, existsSync, mkdirSync, readFileSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { join } from 'node:path';
@@ -12,13 +12,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { z } from 'zod';
 import type { Logger } from '../util/log.ts';
-import {
-  builtinSourceDir,
-  findWorkflow,
-  listWorkflowFiles,
-  loadWorkflow,
-  projectWorkflowDir,
-} from '../workflow/loader.ts';
+import { builtinSourceDir, ejectWorkflow, findWorkflow, listWorkflowFiles, loadWorkflow } from '../workflow/loader.ts';
 import type { RunManager } from '../workflow/manager.ts';
 import { formatReport, validateWorkflow } from '../workflow/validate.ts';
 
@@ -127,14 +121,7 @@ function buildServer(repo: string, runs: RunManager, log: Logger): McpServer {
       inputSchema: { name: z.string(), as: z.string().optional().describe('New name (default: the same name).') },
     },
     guard(log, async ({ name, as }: { name: string; as?: string }) => {
-      const found = findWorkflow(repo, name);
-      if (!found) throw new Error(`No workflow named "${name}"`);
-      const source = found.source === 'builtin' ? join(builtinSourceDir(), `${found.name}.ts`) : found.file;
-      const dir = projectWorkflowDir(repo);
-      const target = join(dir, `${as ?? found.name}.ts`);
-      if (existsSync(target)) throw new Error(`${target} already exists`);
-      mkdirSync(dir, { recursive: true });
-      copyFileSync(source, target);
+      const { path: target, from: found } = ejectWorkflow(repo, name, as);
       return {
         path: target,
         note: as && as !== found.name ? `Rename the workflow's \`name\` to "${as}" as well.` : undefined,

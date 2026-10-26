@@ -10,21 +10,46 @@ import type { RunEvent } from '../workflow/host.ts';
 import type { RunRecord, StepKind } from '../workflow/journal.ts';
 import type { PendingInteraction } from '../workflow/manager.ts';
 
+/** A styled piece of a line in a panel. Colors are theme names (see theme.ts) or Ink colors. */
+export interface Seg {
+  text: string;
+  color?: string;
+  dim?: boolean;
+  bold?: boolean;
+}
+export type Line = Seg[];
+
+export interface Banner {
+  version: string;
+  cwd: string;
+  branch: string | null;
+  isGitRepo: boolean;
+  profiles: Record<string, string>;
+  assistant: string;
+  workflows: number;
+  createdConfig: string | null;
+}
+
 export type Item =
+  | { id: number; type: 'banner'; banner: Banner }
   | { id: number; type: 'user'; text: string }
   | { id: number; type: 'assistant'; text: string }
   | { id: number; type: 'tool'; name: string; summary: string }
   | { id: number; type: 'info'; text: string }
+  | { id: number; type: 'panel'; title: string; lines: Line[] }
   | { id: number; type: 'error'; text: string }
   | {
       id: number;
       type: 'run';
       runId: string;
       workflow: string;
-      text: string;
       status: 'started' | 'done' | 'failed' | 'cancelled';
+      /** done: the result; failed/cancelled: the error. */
+      detail: string | null;
+      durationMs: number | null;
     }
-  | { id: number; type: 'gate'; runId: string; title: string; body: string | null };
+  | { id: number; type: 'log'; workflow: string; text: string }
+  | { id: number; type: 'gate'; runId: string; workflow: string; title: string; body: string | null };
 
 export type NewItem = Item extends infer I ? (I extends Item ? Omit<I, 'id'> : never) : never;
 
@@ -36,13 +61,16 @@ export interface StepView {
   detail: string | null;
   /** What a running agent step is doing right now. */
   activity: string | null;
+  engine: string | null;
   startedAt: number;
+  endedAt: number | null;
 }
 
 export interface RunView {
   id: string;
   workflow: string;
   steps: StepView[];
+  startedAt: number;
 }
 
 export type UiInteraction =
@@ -53,9 +81,15 @@ export interface UiState {
   items: Item[];
   streaming: string;
   busy: boolean;
+  /** When the assistant's current turn started. */
+  busySince: number | null;
   activity: string | null;
   runs: RunView[];
   interactions: UiInteraction[];
+  /** A menu that has the keyboard (`/config`). */
+  menu: 'config' | 'workflows' | null;
+  /** Text to put in the prompt (a command for the user to finish); `n` changes each time. */
+  seed: { text: string; n: number } | null;
   profiles: Record<string, string>;
   costUsd: number | null;
 }
@@ -71,9 +105,12 @@ export class UiStore {
       items: [],
       streaming: '',
       busy: false,
+      busySince: null,
       activity: null,
       runs: [],
       interactions: [],
+      menu: null,
+      seed: null,
       profiles: {},
       costUsd: null,
       ...initial,
@@ -107,6 +144,10 @@ export class UiStore {
     this.push({ type: 'error', text });
   }
 
+  panel(title: string, lines: Line[]): void {
+    this.push({ type: 'panel', title, lines });
+  }
+
   // ---- assistant -----------------------------------------------------------------------------
 
   assistantEvent(event: AgentEvent): void {
@@ -123,7 +164,7 @@ export class UiStore {
         this.push({ type: 'tool', name: toolName(event.name), summary: summarizeInput(event.name, event.input) });
         break;
       case 'tool_result':
-        if (!event.ok && event.output) this.push({ type: 'error', text: clipLines(event.output, 6) });
+        if (!event.ok && event.output) this.push({ type: 'error', text: clipLines(event.output.trim(), 6) });
         break;
       case 'activity':
         this.update(
@@ -148,7 +189,8 @@ export class UiStore {
   }
 
   setBusy(busy: boolean): void {
-    this.update({ busy, ...(busy ? {} : { activity: null }) });
+    if (busy === this.state.busy) return;
+    this.update({ busy, busySince: busy ? Date.now() : null, ...(busy ? {} : { activity: null }) });
   }
 
   assistantApproval(approval: AssistantApproval): void {
@@ -168,31 +210,30 @@ export class UiStore {
         const workflow = record?.workflow ?? '?';
         if (event.status === 'running') {
           if (!this.state.runs.some((r) => r.id === event.runId)) {
-            this.update((s) => ({ runs: [...s.runs, { id: event.runId, workflow, steps: [] }] }));
-            this.push({
-              type: 'run',
-              runId: event.runId,
-              workflow,
-              status: 'started',
-              text: `${workflow} started (run ${event.runId})`,
-            });
+            this.update((s) => ({
+              runs: [...s.runs, { id: event.runId, workflow, steps: [], startedAt: Date.now() }],
+            }));
+            this.push({ type: 'run', runId: event.runId, workflow, status: 'started', detail: null, durationMs: null });
           }
           return;
         }
         if (event.status === 'waiting' || event.status === 'interrupted') return;
+        const view = this.state.runs.find((r) => r.id === event.runId);
         this.update((s) => ({ runs: s.runs.filter((r) => r.id !== event.runId) }));
-        const text =
-          event.status === 'done'
-            ? `${workflow} finished${event.result ? `: ${clipLines(formatResult(event.result), 12)}` : ''}`
-            : event.status === 'cancelled'
-              ? `${workflow} cancelled${event.error ? `: ${event.error}` : ''} — /resume ${event.runId} picks it up again`
-              : `${workflow} failed: ${event.error ?? 'unknown error'} — /resume ${event.runId} retries from the failed step`;
+        const status = event.status === 'done' ? 'done' : event.status === 'cancelled' ? 'cancelled' : 'failed';
+        const detail =
+          status === 'done'
+            ? event.result === null || event.result === undefined
+              ? null
+              : clipLines(formatValue(event.result), 16)
+            : (event.error ?? (status === 'failed' ? 'unknown error' : null));
         this.push({
           type: 'run',
           runId: event.runId,
           workflow,
-          status: event.status === 'done' ? 'done' : event.status === 'cancelled' ? 'cancelled' : 'failed',
-          text,
+          status,
+          detail,
+          durationMs: view ? Date.now() - view.startedAt : null,
         });
         return;
       }
@@ -207,7 +248,9 @@ export class UiStore {
             status: event.status,
             detail: event.detail ?? null,
             activity: event.status === 'started' ? (prev?.activity ?? null) : null,
+            engine: event.engine ?? prev?.engine ?? null,
             startedAt: prev?.startedAt ?? Date.now(),
+            endedAt: event.status === 'started' ? null : Date.now(),
           });
           return { ...run, steps };
         });
@@ -227,15 +270,22 @@ export class UiStore {
         return;
       }
       case 'log':
-        this.info(`[${event.runId}] ${event.message}`);
+        this.push({ type: 'log', workflow: this.workflowOf(event.runId, lookup), text: event.message });
         return;
     }
   }
 
   runInteraction(pending: PendingInteraction): void {
     const i = pending.interaction;
-    if (i.kind === 'gate') this.push({ type: 'gate', runId: i.runId, title: i.title, body: i.body });
+    if (i.kind === 'gate') {
+      const workflow = this.state.runs.find((r) => r.id === i.runId)?.workflow ?? '?';
+      this.push({ type: 'gate', runId: i.runId, workflow, title: i.title, body: i.body });
+    }
     this.update((s) => ({ interactions: [...s.interactions, { source: 'run', id: pending.id, pending }] }));
+  }
+
+  private workflowOf(runId: string, lookup: (runId: string) => RunRecord | null): string {
+    return this.state.runs.find((r) => r.id === runId)?.workflow ?? lookup(runId)?.workflow ?? runId;
   }
 
   private updateRun(runId: string, fn: (run: RunView) => RunView, urgent = true): void {
@@ -298,9 +348,24 @@ function agentActivity(event: AgentEvent): string | null | undefined {
   }
 }
 
-function formatResult(result: unknown): string {
-  if (typeof result === 'string') return result;
-  return JSON.stringify(result, null, 2);
+/** A value as readable lines: `key: value`, nested objects indented, lists as `- item`. */
+export function formatValue(value: unknown, indent = ''): string {
+  if (value === null || value === undefined) return `${indent}—`;
+  if (typeof value !== 'object') return `${indent}${String(value)}`;
+  const scalar = (v: unknown) => v === null || typeof v !== 'object';
+  const show = (v: unknown) => (v === null || v === undefined ? '—' : String(v));
+  const entries: [string | null, unknown][] = Array.isArray(value)
+    ? value.map((v) => [null, v])
+    : Object.entries(value as Record<string, unknown>);
+  if (entries.length === 0) return `${indent}${Array.isArray(value) ? '(none)' : '{}'}`;
+  return entries
+    .map(([k, v]) => {
+      const head = k === null ? `${indent}- ` : `${indent}${k}: `;
+      if (scalar(v) && !String(v).includes('\n')) return `${head}${show(v)}`;
+      if (scalar(v)) return `${head}\n${String(v).replace(/^/gm, `${indent}  `)}`;
+      return `${head.trimEnd()}\n${formatValue(v, `${indent}  `)}`;
+    })
+    .join('\n');
 }
 
 export function oneLine(text: string, max: number): string {

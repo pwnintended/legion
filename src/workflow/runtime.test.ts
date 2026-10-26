@@ -97,6 +97,36 @@ describe('runtime', () => {
     );
   });
 
+  it("lets the host override the code's model and effort, and records what ran", async () => {
+    const host = testHost({});
+    const seen: unknown[] = [];
+    host.agentModel = (req) => {
+      seen.push(req);
+      return req.key === 'b' ? { model: 'opus', effort: 'max' } : { model: req.model, effort: req.effort };
+    };
+    await exec(host, async () => {
+      await agent('a', { prompt: 'x', model: 'haiku' });
+      await group('g', () => agent('b', { engine: 'codex', prompt: 'y' }));
+    });
+    const calls = host.engines.get('claude')?.calls ?? [];
+    expect(calls[0]?.opts).toMatchObject({ model: 'haiku', effort: null });
+    expect(host.engines.get('codex')?.calls[0]?.opts).toMatchObject({ model: 'opus', effort: 'max' });
+    expect(seen).toEqual([
+      { key: 'a', step: 'a', engine: 'claude', model: 'haiku', effort: null },
+      { key: 'b', step: 'g/b', engine: 'codex', model: null, effort: null },
+    ]);
+    expect(new Journal(dir).get('g/b')?.meta).toMatchObject({ model: 'opus', effort: 'max' });
+  });
+
+  it('runs a step on the engine the host picks', async () => {
+    const host = testHost({});
+    host.agentModel = (req) => ({ engine: 'codex', model: null, effort: req.effort });
+    await exec(host, () => agent('a', { prompt: 'x', engine: 'claude', model: 'haiku' }));
+    expect(host.engines.get('claude')?.calls ?? []).toHaveLength(0);
+    expect(host.engines.get('codex')?.calls).toHaveLength(1);
+    expect(new Journal(dir).get('a')?.meta).toMatchObject({ engine: 'codex' });
+  });
+
   it('replays finished steps from the journal on resume', async () => {
     let failSecond = true;
     const workflow = async () => {

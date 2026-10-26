@@ -53,8 +53,24 @@ In the session:
 - **Gates, questions and tool approvals** appear above the prompt. Gates: `y` approve, `c` request changes
   (then type a note), `x` abort the run. Approvals: `y` once, `s` for the session, `n` deny. Questions: type an
   answer or an option number. **Tab** switches between answering and messaging the assistant.
-- `/workflows`, `/run <name> [json]`, `/runs`, `/steps <run>`, `/log <run> <step>`, `/resume <run>`,
+- Type `/` for the command menu: ↑↓ picks, Tab completes, Enter runs. `/help` lists everything.
+- `/workflows` opens the workflow browser. Enter opens a workflow: its description, its input fields, and its
+  agent steps, which a dry run finds along with their engines. There you set the **engine, model and effort** for
+  all of an engine's agents, or for a single step. ←→ moves between columns, Enter opens a picker, ⌫ resets the
+  cell and Esc saves. The model picker lists what each engine offers: Codex's own list (from `codex app-server`)
+  and Claude's aliases and current model IDs, plus anything in `[claude] models = [...]` or
+  `[codex] models = [...]`. *other…* lets you type any other name. Moving a step to the other engine drops a model
+  that engine doesn't have. `r` runs the workflow (the prompt is pre-filled when the workflow needs input), `v` validates it, `e`
+  ejects a builtin so you can edit it, and `o` opens a project workflow in `$EDITOR`. *All workflows* at the top
+  sets defaults for every workflow.
+- `/run <name> [json]`, `/runs`, `/steps <run>`, `/log <run> <step>`, `/resume <run>`,
   `/cancel <run>`, `/validate <name>`.
+- `/config` opens the settings menu. ↑↓ picks a setting, ←→ changes it, Enter types a value (model, maxAgents),
+  Esc saves and closes, `d` discards. The first row picks the file to save to: `project`, `local` (this
+  machine only) or `user` (every project). Each setting shows the file it comes from, and warns when a later
+  file overrides the one you are saving to. Changes are written into the TOML in place, keeping your comments,
+  and apply right away. *This session* switches the Claude and Codex profiles. *Open the file in $EDITOR* is
+  there for anything else. `/config show`, `/config edit [user|project|local]` and `/config reload` also work.
 - `/claude [profile]` and `/codex [profile]` show or switch the account used for new agents.
 - `/takeover <run> <step>` opens that agent's session in its own CLI (`claude --resume …` / `codex resume …`)
   so you can steer it by hand. Legion's UI comes back when you exit.
@@ -64,8 +80,16 @@ continues them later.
 
 ## Configuration
 
-`~/.config/legion/config.toml`, overlaid by the project's `.legion/config.toml` and `.legion/config.local.toml`.
-Every key is optional.
+Layers, later ones win:
+
+1. `~/.config/legion/config.toml`, the user config. Profiles usually go here.
+2. Every `.legion/config.toml` from the outermost parent directory down to where you start `legion`. A parent
+   folder can hold settings for all the repositories under it.
+3. The project's `.legion/config.local.toml`, which is gitignored and holds machine-specific overrides.
+
+If there is no `.legion/config.toml` in the directory, the repository root or any parent, the first session
+writes a commented one at the project root. Its values are the settings already in effect, so creating it changes
+nothing. Every key is optional.
 
 ```toml
 [claude]
@@ -93,6 +117,38 @@ effort = "high"                          # optional
 approvals = "ask"                        # agents' tool approvals: ask (you) | auto (the engine's auto mode)
 maxAgents = 4                            # agent sessions alive at once per run
 ```
+
+### Models for workflow agents
+
+The `/workflows` menu writes these for you:
+
+```toml
+[workflow.feature.claude]        # every Claude agent of `feature` whose code picks no model
+model = "sonnet"
+
+[workflow.feature.agent.plan]    # the `plan` step: over what the workflow's code picks
+model  = "opus"
+effort = "high"
+
+[workflow.feature.agent.review]  # run the `review` steps on Codex, whatever the code says
+engine = "codex"
+
+[workflow."*".codex]             # every workflow
+effort = "high"
+```
+
+A step's `engine` setting, when there is one, decides the engine; otherwise the code does. A model the code picks
+for its own engine is ignored once the step runs on the other one. Model and effort are each decided in this
+order, first match wins:
+
+1. the step setting;
+2. the workflow code's `agent(key, { model, effort })`;
+3. the workflow's engine setting;
+4. `"*"`;
+5. the CLI's own default.
+
+Without any of these, the user's own CLI settings do not apply: Claude agents load only project settings, and Codex
+runs in its own `CODEX_HOME`. The model each step ran with is recorded in the run's journal.
 
 A profile spawns `command` directly with `env` applied, with no shell per agent. That is why
 `CLAUDE_CONFIG_DIR` goes in `env` rather than in a shell alias. Workflows only ever say `engine: 'claude'` or

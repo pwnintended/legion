@@ -95,6 +95,7 @@ async function memo<T>(
   key: string,
   label: string | undefined,
   fn: (full: string, previous: JournalEntry | undefined) => Promise<{ output: T; meta?: Record<string, unknown> }>,
+  tags: { engine?: EngineKind } = {},
 ): Promise<T> {
   const scope = current();
   const { run } = scope;
@@ -103,11 +104,11 @@ async function memo<T>(
   const shown = label ?? full;
   const previous = run.journal.get(full);
   if (previous?.status === 'done') {
-    run.host.emit({ type: 'step', runId: run.runId, key: full, kind, status: 'cached', label: shown });
+    run.host.emit({ type: 'step', runId: run.runId, key: full, kind, status: 'cached', label: shown, ...tags });
     return previous.output as T;
   }
-  run.journal.append({ key: full, kind, status: 'started', ts: Date.now(), label: shown });
-  run.host.emit({ type: 'step', runId: run.runId, key: full, kind, status: 'started', label: shown });
+  run.journal.append({ key: full, kind, status: 'started', ts: Date.now(), label: shown, ...tags });
+  run.host.emit({ type: 'step', runId: run.runId, key: full, kind, status: 'started', label: shown, ...tags });
   try {
     const { output, meta } = await fn(full, previous);
     run.journal.append({
@@ -119,14 +120,23 @@ async function memo<T>(
       output,
       ...(meta ? { meta } : {}),
     });
-    run.host.emit({ type: 'step', runId: run.runId, key: full, kind, status: 'done', label: shown });
+    run.host.emit({ type: 'step', runId: run.runId, key: full, kind, status: 'done', label: shown, ...tags });
     return output;
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     if (!(err instanceof WorkflowCancelled)) {
       run.journal.append({ key: full, kind, status: 'failed', ts: Date.now(), label: shown, error: message });
     }
-    run.host.emit({ type: 'step', runId: run.runId, key: full, kind, status: 'failed', label: shown, detail: message });
+    run.host.emit({
+      type: 'step',
+      runId: run.runId,
+      key: full,
+      kind,
+      status: 'failed',
+      label: shown,
+      detail: message,
+      ...tags,
+    });
     throw err;
   }
 }
@@ -175,58 +185,72 @@ export function agent<S extends z.ZodType | undefined = undefined>(
 ): Promise<AgentResult<S>> {
   const scope = current();
   const { run } = scope;
-  return memo('agent', key, opts.label, async (full, previous) => {
-    const kind: EngineKind = opts.engine ?? 'claude';
-    const engine = run.host.engine(kind);
-    const sessionOpts: SessionOptions = {
-      cwd: opts.cwd ?? run.host.repo,
-      prompt: opts.prompt,
-      systemPrompt: opts.system ?? null,
-      model: opts.model ?? null,
-      effort: opts.effort ?? null,
-      permission: permissionProfile(opts.mode === 'read' ? 'read_only' : 'workspace_write', {
-        allowedCommands: opts.allow ?? [],
-        web: opts.web ?? false,
-        approvals: opts.approvals ?? run.host.approvals,
-      }),
-      outputSchema: opts.output ? toStrictJsonSchema(opts.output) : null,
-      signal: run.signal,
-      untrustedWorkdir: opts.untrusted ?? false,
-    };
+  return memo(
+    'agent',
+    key,
+    opts.label,
+    async (full, previous) => {
+      const code = { engine: opts.engine ?? 'claude', model: opts.model ?? null, effort: opts.effort ?? null };
+      const chosen = run.host.agentModel?.({ key, step: full, ...code }) ?? code;
+      const kind: EngineKind = chosen.engine ?? code.engine;
+      const engine = run.host.engine(kind);
+      const sessionOpts: SessionOptions = {
+        cwd: opts.cwd ?? run.host.repo,
+        prompt: opts.prompt,
+        systemPrompt: opts.system ?? null,
+        model: chosen.model,
+        effort: chosen.effort,
+        permission: permissionProfile(opts.mode === 'read' ? 'read_only' : 'workspace_write', {
+          allowedCommands: opts.allow ?? [],
+          web: opts.web ?? false,
+          approvals: opts.approvals ?? run.host.approvals,
+        }),
+        outputSchema: opts.output ? toStrictJsonSchema(opts.output) : null,
+        signal: run.signal,
+        untrustedWorkdir: opts.untrusted ?? false,
+      };
 
-    // Pick an earlier session up: this step's own (interrupted mid-turn) or the one `resume` names. Sessions live
-    // in the profile's config dir, so only the same profile can resume them.
-    let resumeId: string | null = null;
-    let prompt = opts.prompt;
-    const interrupted = previous?.status === 'started' ? previous.meta : undefined;
-    if (interrupted?.sessionId && interrupted.profile === engine.profile.name) {
-      resumeId = String(interrupted.sessionId);
-      prompt = `You were interrupted. Continue where you left off and finish the task.\n\nThe task was:\n${opts.prompt}`;
-    } else if (opts.resume) {
-      const from = lookup(run.journal, scope.prefix, opts.resume);
-      if (!from) throw new Error(`resume: no agent step "${opts.resume}" ran before this one`);
-      if (from.meta?.sessionId && from.meta.profile === engine.profile.name && from.meta.engine === kind) {
-        resumeId = String(from.meta.sessionId);
-      } else {
-        // Different account or engine: start over with what the earlier step produced.
-        prompt = `${opts.prompt}\n\nContext — the result of the earlier step "${opts.resume}":\n${stringify(from.output)}`;
+      // Pick an earlier session up: this step's own (interrupted mid-turn) or the one `resume` names. Sessions live
+      // in the profile's config dir, so only the same profile can resume them.
+      let resumeId: string | null = null;
+      let prompt = opts.prompt;
+      const interrupted = previous?.status === 'started' ? previous.meta : undefined;
+      if (interrupted?.sessionId && interrupted.profile === engine.profile.name && interrupted.engine === kind) {
+        resumeId = String(interrupted.sessionId);
+        prompt = `You were interrupted. Continue where you left off and finish the task.\n\nThe task was:\n${opts.prompt}`;
+      } else if (opts.resume) {
+        const from = lookup(run.journal, scope.prefix, opts.resume);
+        if (!from) throw new Error(`resume: no agent step "${opts.resume}" ran before this one`);
+        if (from.meta?.sessionId && from.meta.profile === engine.profile.name && from.meta.engine === kind) {
+          resumeId = String(from.meta.sessionId);
+        } else {
+          // Different account or engine: start over with what the earlier step produced.
+          prompt = `${opts.prompt}\n\nContext — the result of the earlier step "${opts.resume}":\n${stringify(from.output)}`;
+        }
       }
-    }
 
-    const meta: Record<string, unknown> = { engine: kind, profile: engine.profile.name, cwd: sessionOpts.cwd };
-    const release = await run.agents.acquire();
-    try {
-      checkCancelled(run);
-      await ensureCwd(run, sessionOpts.cwd);
-      const session = resumeId
-        ? await engine.resume(resumeId, { ...sessionOpts, prompt })
-        : await engine.start({ ...sessionOpts, prompt });
-      const result = await drive(run, full, session, opts.output, meta);
-      return { output: result as AgentResult<S>, meta };
-    } finally {
-      release();
-    }
-  });
+      const meta: Record<string, unknown> = {
+        engine: kind,
+        profile: engine.profile.name,
+        cwd: sessionOpts.cwd,
+        ...(chosen.model ? { model: chosen.model } : {}),
+        ...(chosen.effort ? { effort: chosen.effort } : {}),
+      };
+      const release = await run.agents.acquire();
+      try {
+        checkCancelled(run);
+        await ensureCwd(run, sessionOpts.cwd);
+        const session = resumeId
+          ? await engine.resume(resumeId, { ...sessionOpts, prompt })
+          : await engine.start({ ...sessionOpts, prompt });
+        const result = await drive(run, full, session, opts.output, meta);
+        return { output: result as AgentResult<S>, meta };
+      } finally {
+        release();
+      }
+    },
+    { engine: opts.engine ?? 'claude' },
+  );
 }
 
 /** Resolves a step key named from inside `prefix`: the same scope first, then outwards (`review/2/code`,

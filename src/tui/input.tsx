@@ -1,28 +1,74 @@
-/** A one-line (soft-wrapping) prompt input with history, word editing and bracketed paste. */
+/**
+ * The prompt: a bordered, soft-wrapping input with history, word editing, bracketed paste, and a slash-command
+ * menu (type `/`, arrows to pick, Tab to complete, Enter to run).
+ */
 import { Box, Text, useInput, usePaste } from 'ink';
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
+import { theme } from './theme.ts';
+
+export interface CommandSpec {
+  name: string;
+  args: string;
+  description: string;
+}
 
 export interface PromptInputProps {
   prompt: string;
   placeholder?: string;
+  /** Border color: tells the user what Enter will do (talk, answer, write a note). */
+  tone?: string;
   isActive: boolean;
+  /** Replaces the text when `n` changes (a command put there for the user to finish). */
+  seed?: { text: string; n: number } | null;
+  commands?: readonly CommandSpec[];
   onSubmit(value: string): void;
   /** A key pressed while the input is empty; return true to consume it (interaction hotkeys). */
   onEmptyKey?(input: string): boolean;
+  /** Up/down while the input is empty; return true to consume it (picking a question's option). */
+  onNavigate?(direction: -1 | 1): boolean;
   onEscape?(): void;
   onCtrlC?(): void;
   onTab?(): void;
 }
 
+const MENU_SIZE = 7;
+
+export function matchCommands(commands: readonly CommandSpec[], value: string): CommandSpec[] {
+  if (!value.startsWith('/') || /\s/.test(value)) return [];
+  const typed = value.slice(1).toLowerCase();
+  const starts = commands.filter((c) => c.name.startsWith(typed));
+  const contains = commands.filter((c) => !c.name.startsWith(typed) && c.name.includes(typed));
+  return [...starts, ...contains];
+}
+
 export function PromptInput(props: PromptInputProps) {
   const [value, setValue] = useState('');
   const [cursor, setCursor] = useState(0);
+  const [selected, setSelected] = useState(0);
   const history = useRef<string[]>([]);
   const historyIndex = useRef<number | null>(null);
+  const seedN = props.seed?.n;
+  // biome-ignore lint/correctness/useExhaustiveDependencies: only a new seed replaces the text.
+  useEffect(() => {
+    if (props.seed) {
+      setValue(props.seed.text);
+      setCursor(props.seed.text.length);
+    }
+  }, [seedN]);
+  const menu = matchCommands(props.commands ?? [], value);
+  const choice = menu[Math.min(selected, menu.length - 1)];
 
   const set = (next: string, at = next.length) => {
     setValue(next);
     setCursor(Math.max(0, Math.min(at, next.length)));
+    setSelected(0);
+  };
+
+  const submit = (text: string) => {
+    if (text.trim()) history.current.push(text);
+    historyIndex.current = null;
+    set('');
+    props.onSubmit(text);
   };
 
   usePaste(
@@ -41,33 +87,41 @@ export function PromptInput(props: PromptInputProps) {
         return;
       }
       if (key.escape) {
-        props.onEscape?.();
+        if (value.startsWith('/') && menu.length > 0) set('');
+        else props.onEscape?.();
         return;
       }
       if (key.tab) {
-        props.onTab?.();
+        if (choice) set(`/${choice.name}${choice.args ? ' ' : ''}`);
+        else props.onTab?.();
         return;
       }
       if (key.return) {
-        // A trailing backslash continues on a new line.
-        if (value.endsWith('\\')) {
-          set(`${value.slice(0, -1)}\n`);
-          return;
+        // A trailing backslash (or Shift/Alt+Enter where the terminal reports it) continues on a new line.
+        if (value.endsWith('\\')) return set(`${value.slice(0, -1)}\n`);
+        if (key.shift || key.meta) return set(`${value.slice(0, cursor)}\n${value.slice(cursor)}`, cursor + 1);
+        // Enter on a partly typed command runs the highlighted one, or completes it if it takes arguments.
+        if (choice && value !== `/${choice.name}`) {
+          if (choice.args && !choice.args.startsWith('[')) return set(`/${choice.name} `);
+          return submit(`/${choice.name}`);
         }
-        if (value.trim()) history.current.push(value);
-        historyIndex.current = null;
-        const submitted = value;
-        set('');
-        props.onSubmit(submitted);
-        return;
+        return submit(value);
       }
       if (key.upArrow || key.downArrow) {
+        const dir = key.upArrow ? -1 : 1;
+        if (menu.length > 0) {
+          setSelected((n) => (Math.min(n, menu.length - 1) + dir + menu.length) % menu.length);
+          return;
+        }
+        if (!value && props.onNavigate?.(dir)) return;
         const h = history.current;
         if (h.length === 0) return;
         let i = historyIndex.current ?? h.length;
-        i = key.upArrow ? Math.max(0, i - 1) : Math.min(h.length, i + 1);
+        i = dir < 0 ? Math.max(0, i - 1) : Math.min(h.length, i + 1);
         historyIndex.current = i;
-        set(h[i] ?? '');
+        const next = h[i] ?? '';
+        setValue(next);
+        setCursor(next.length);
         return;
       }
       if (key.leftArrow) return setCursor((c) => Math.max(0, c - 1));
@@ -94,22 +148,48 @@ export function PromptInput(props: PromptInputProps) {
   const before = value.slice(0, cursor);
   const at = value[cursor] ?? ' ';
   const after = value.slice(cursor + 1);
+  const first = Math.max(0, Math.min(selected - MENU_SIZE + 1, menu.length - MENU_SIZE));
+  const width = Math.max(...menu.map((c) => c.name.length + (c.args ? c.args.length + 1 : 0)), 0) + 2;
   return (
-    <Box>
-      <Text color="cyan">{props.prompt} </Text>
-      {value ? (
-        <Text>
-          {before}
-          <Text inverse>{at === '\n' ? ' ' : at}</Text>
-          {at === '\n' ? '\n' : ''}
-          {after}
+    <Box flexDirection="column">
+      <Box borderStyle="round" borderColor={props.tone ?? theme.muted} paddingX={1}>
+        <Text color={props.tone ?? theme.accent} bold>
+          {props.prompt}{' '}
         </Text>
-      ) : (
-        <Text>
-          <Text inverse> </Text>
-          <Text dimColor>{props.placeholder ?? ''}</Text>
-        </Text>
-      )}
+        <Box flexShrink={1}>
+          {value ? (
+            <Text>
+              {before}
+              <Text inverse>{at === '\n' ? ' ' : at}</Text>
+              {at === '\n' ? '\n' : ''}
+              {after}
+            </Text>
+          ) : (
+            <Text>
+              <Text inverse> </Text>
+              <Text dimColor>{props.placeholder ?? ''}</Text>
+            </Text>
+          )}
+        </Box>
+      </Box>
+      {menu.length > 0 ? (
+        <Box flexDirection="column" paddingX={2}>
+          {menu.slice(first, first + MENU_SIZE).map((c) => {
+            const on = c === choice;
+            const label = `/${c.name}${c.args ? ` ${c.args}` : ''}`;
+            return (
+              <Text key={c.name}>
+                <Text color={on ? theme.accent : undefined} bold={on}>
+                  {on ? '❯ ' : '  '}
+                  {label.padEnd(width)}
+                </Text>
+                <Text dimColor={!on}>{c.description}</Text>
+              </Text>
+            );
+          })}
+          {menu.length > MENU_SIZE ? <Text dimColor>{`  ${menu.length} commands · ↑↓ to see more`}</Text> : null}
+        </Box>
+      ) : null}
     </Box>
   );
 }

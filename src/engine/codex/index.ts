@@ -10,6 +10,7 @@ import type { AgentEngine, AgentSession, EngineInfo, EngineProfile, SessionOptio
 import { appServerArgs, childEnv, mergeEnv, prepareCodexHome, resolveBinary } from './config.ts';
 import { JsonRpcPeer, LineSplitter } from './json-rpc.ts';
 import type { ClientMethod, ClientMethods } from './methods.ts';
+import type { ModelListResponse } from './protocol/v2/index.ts';
 import { CodexSession, type OpenMode } from './session.ts';
 
 export { type CodexProcessSpec, CodexSession, type OpenMode } from './session.ts';
@@ -95,27 +96,64 @@ export class CodexEngine implements AgentEngine {
     const info: EngineInfo = { ...base, installed: true, path };
     try {
       const home = await prepareCodexHome(this.home, env);
-      const result = await probeAppServer(
+      const result = await withAppServer(
         path,
         appServerArgs(this.profile.args),
         childEnv(env, null, home.path),
         this.clientVersion,
         this.log,
+        async (call, init) => {
+          const version = /^[^/\s]+\/(\S+)/.exec(init.userAgent)?.[1] ?? null;
+          const account = await call('account/read', { refreshToken: false });
+          const loggedIn = account.account !== null || !account.requiresOpenaiAuth;
+          return { version, loggedIn, error: loggedIn ? null : 'not logged in: run `codex login`' };
+        },
       );
       return { ...info, ...result };
     } catch (error) {
       return { ...info, error: (error as Error).message };
     }
   }
+
+  /** The models this Codex offers in its picker (`model/list`), from a short-lived app-server. */
+  async listModels(): Promise<{ id: string; name: string; description: string; isDefault: boolean }[]> {
+    const env = mergeEnv(process.env, this.profile.env);
+    const path = resolveBinary(this.profile.command, env);
+    if (!path) throw new Error(`${this.profile.command} not found on PATH`);
+    const home = await prepareCodexHome(this.home, env);
+    return withAppServer(
+      path,
+      appServerArgs(this.profile.args),
+      childEnv(env, null, home.path),
+      this.clientVersion,
+      this.log,
+      async (call) => {
+        const models: { id: string; name: string; description: string; isDefault: boolean }[] = [];
+        let cursor: string | null = null;
+        do {
+          const page: ModelListResponse = await call('model/list', { cursor, includeHidden: false });
+          for (const m of page.data) {
+            models.push({ id: m.model, name: m.displayName, description: m.description, isDefault: m.isDefault });
+          }
+          cursor = page.nextCursor;
+        } while (cursor && models.length < 200);
+        return models;
+      },
+    );
+  }
 }
 
-async function probeAppServer(
+type Call = <M extends ClientMethod>(method: M, params: ClientMethods[M][0]) => Promise<ClientMethods[M][1]>;
+
+/** Runs `fn` against a short-lived, initialized app-server that never starts a turn. */
+async function withAppServer<T>(
   command: string,
   args: readonly string[],
   env: Record<string, string>,
   clientVersion: string,
   log: Logger,
-): Promise<Pick<EngineInfo, 'version' | 'loggedIn' | 'error'>> {
+  fn: (call: Call, init: ClientMethods['initialize'][1]) => Promise<T>,
+): Promise<T> {
   const child = spawn(command, [...args], { env, stdio: ['pipe', 'pipe', 'pipe'] });
   const gone = new Promise<void>((resolve) => {
     child.once('exit', () => resolve());
@@ -125,8 +163,7 @@ async function probeAppServer(
     write: (line) => child.stdin.write(`${line}\n`),
     requestTimeoutMs: PROBE_TIMEOUT_MS,
   });
-  const call = <M extends ClientMethod>(method: M, params: ClientMethods[M][0]) =>
-    rpc.request<ClientMethods[M][1]>(method, params);
+  const call: Call = (method, params) => rpc.request(method, params);
   const lines = new LineSplitter();
   child.stdin.on('error', () => undefined);
   child.stdout.setEncoding('utf8');
@@ -143,10 +180,7 @@ async function probeAppServer(
       capabilities: { experimentalApi: true, requestAttestation: false },
     });
     rpc.notify('initialized');
-    const version = /^[^/\s]+\/(\S+)/.exec(init.userAgent)?.[1] ?? null;
-    const account = await call('account/read', { refreshToken: false });
-    const loggedIn = account.account !== null || !account.requiresOpenaiAuth;
-    return { version, loggedIn, error: loggedIn ? null : 'not logged in: run `codex login`' };
+    return await fn(call, init);
   } finally {
     rpc.close();
     child.stdin.end();

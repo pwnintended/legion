@@ -10,6 +10,9 @@ import { type McpHandle, startMcpServer } from './assistant/mcp.ts';
 import { assistantSystemPrompt } from './assistant/prompt.ts';
 import {
   type Config,
+  type ConfigLayer,
+  configLayers,
+  ensureProjectConfig,
   loadConfig,
   profileNames,
   type RealKind,
@@ -42,8 +45,12 @@ interface SavedState {
 
 export class Session {
   readonly repo: string;
+  /** Where the session was started (inside `repo`, or `repo` itself). */
+  readonly cwd: string;
   readonly isGitRepo: boolean;
-  readonly config: Config;
+  /** The project config file this session created because there was none, if it did. */
+  readonly createdConfig: string | null;
+  private _config: Config;
   readonly log: Logger;
   readonly runs: RunManager;
   readonly assistant: Assistant;
@@ -54,7 +61,9 @@ export class Session {
 
   private constructor(init: {
     repo: string;
+    cwd: string;
     isGitRepo: boolean;
+    createdConfig: string | null;
     config: Config;
     log: Logger;
     profiles: Record<RealKind, ResolvedProfile>;
@@ -64,8 +73,10 @@ export class Session {
     fake: boolean;
   }) {
     this.repo = init.repo;
+    this.cwd = init.cwd;
     this.isGitRepo = init.isGitRepo;
-    this.config = init.config;
+    this.createdConfig = init.createdConfig;
+    this._config = init.config;
     this.log = init.log;
     this.profiles = init.profiles;
     this.fake = init.fake;
@@ -76,8 +87,8 @@ export class Session {
       engine: () => this.engine(this.config.assistant.engine),
       systemPrompt: () => assistantSystemPrompt({ repo: this.repo, profiles: this.profileNames() }),
       mcp: { legion: { type: 'http', url: init.mcp.url, headers: { Authorization: `Bearer ${init.mcp.token}` } } },
-      model: this.config.assistant.model ?? null,
-      effort: this.config.assistant.effort ?? null,
+      model: () => this.config.assistant.model ?? null,
+      effort: () => this.config.assistant.effort ?? null,
       sessionId: init.resumeAssistant,
       log: this.log,
     });
@@ -93,7 +104,8 @@ export class Session {
   static async open(opts: SessionOptions): Promise<Session> {
     const isGitRepo = await isRepo(opts.cwd);
     const repo = isGitRepo ? await toplevel(opts.cwd) : opts.cwd;
-    const config = loadConfig(repo);
+    const config = loadConfig(repo, opts.cwd);
+    const createdConfig = ensureProjectConfig(repo, opts.cwd, config);
     const log = fileLogger(join(repo, '.legion', 'session', 'legion.log'));
     const profiles = {
       claude: resolveProfile(config, 'claude', opts.profiles?.claude),
@@ -120,12 +132,15 @@ export class Session {
       git,
       maxAgents: config.workflows.maxAgents,
       approvals: config.workflows.approvals,
+      agentModels: () => bound().config.workflow,
       log,
     });
     const mcp = await startMcpServer({ repo, runs, log });
     self.session = new Session({
       repo,
+      cwd: opts.cwd,
       isGitRepo,
+      createdConfig,
       config,
       log,
       profiles,
@@ -135,6 +150,45 @@ export class Session {
       fake: opts.fake ?? false,
     });
     return self.session;
+  }
+
+  get config(): Config {
+    return this._config;
+  }
+
+  /** The config files in the order they apply, including absent ones. */
+  configLayers(): ConfigLayer[] {
+    return configLayers(this.repo, this.cwd);
+  }
+
+  /**
+   * Re-reads the configuration (after `/config edit`). Profiles keep their name when it still exists; runs started
+   * from now on get the new workflow settings; the assistant starts over only if its engine, model or profile
+   * changed. Returns what changed, for the user.
+   */
+  async reloadConfig(): Promise<string[]> {
+    const next = loadConfig(this.repo, this.cwd);
+    const prev = this._config;
+    const notes: string[] = [];
+    const prevAssistant = { ...prev.assistant, profile: this.profiles[prev.assistant.engine].name };
+    for (const kind of ['claude', 'codex'] as const) {
+      const keep = this.profiles[kind].name;
+      const names = profileNames(next, kind);
+      const profile = resolveProfile(next, kind, names.includes(keep) ? keep : undefined);
+      if (profile.name !== keep) notes.push(`${kind} now uses profile "${profile.name}" ("${keep}" is gone)`);
+      if (JSON.stringify(profile) !== JSON.stringify(this.profiles[kind])) {
+        for (const key of [...this.engines.keys()]) if (key.startsWith(`${kind}:`)) this.engines.delete(key);
+      }
+      this.profiles[kind] = profile;
+    }
+    this._config = next;
+    this.runs.configure({ maxAgents: next.workflows.maxAgents, approvals: next.workflows.approvals });
+    const nextAssistant = { ...next.assistant, profile: this.profiles[next.assistant.engine].name };
+    if (JSON.stringify(prevAssistant) !== JSON.stringify(nextAssistant)) {
+      await this.assistant.restart();
+      notes.push('the assistant starts a new conversation with the new settings');
+    }
+    return notes;
   }
 
   profile(kind: RealKind): ResolvedProfile {

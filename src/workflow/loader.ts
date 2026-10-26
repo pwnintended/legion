@@ -8,7 +8,7 @@
  * specifiers to Legion's own copies, so a workflow shares the SDK instance (and its AsyncLocalStorage) with the
  * runtime executing it. Files are plain TypeScript run through Node's type stripping (erasable syntax only).
  */
-import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { registerHooks } from 'node:module';
 import { homedir } from 'node:os';
 import { basename, dirname, extname, join, resolve } from 'node:path';
@@ -131,6 +131,23 @@ export function findWorkflow(repo: string, nameOrPath: string): WorkflowFile | n
     return existsSync(file) ? { name: workflowName(file), source: 'project', file, shadows: [] } : null;
   }
   return listWorkflowFiles(repo).find((w) => w.name === nameOrPath) ?? null;
+}
+
+/** The TypeScript source of a workflow (builtins run compiled, but their sources ship too). */
+export function workflowSource(w: WorkflowFile): string {
+  return w.source === 'builtin' ? join(builtinSourceDir(), `${w.name}.ts`) : w.file;
+}
+
+/** Copies a workflow into the project's `.legion/workflows` so it can be edited there; the copy then wins. */
+export function ejectWorkflow(repo: string, name: string, as?: string): { path: string; from: WorkflowFile } {
+  const found = findWorkflow(repo, name);
+  if (!found) throw new Error(`No workflow named "${name}"`);
+  const dir = projectWorkflowDir(repo);
+  const target = join(dir, `${as ?? found.name}.ts`);
+  if (existsSync(target)) throw new Error(`${target} already exists`);
+  mkdirSync(dir, { recursive: true });
+  copyFileSync(workflowSource(found), target);
+  return { path: target, from: found };
 }
 
 /** Imports a workflow file fresh (edits since the last load are picked up). */

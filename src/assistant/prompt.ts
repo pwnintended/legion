@@ -79,6 +79,26 @@ The session's engine accounts: ${Object.entries(opts.profiles)
 - Design for the journal: unique step keys, deterministic code between steps, loops with a sensible max, a gate wherever a human should decide, reviewers in read mode with untrusted: true, and agents told not to commit.
 - Do not run a workflow you just wrote unless the user asks.
 
+## Models
+Which model and effort a workflow's agents use is the user's setting, not something to bake into the code. It lives
+in the config (\`.legion/config.toml\`, and the user can set it from the /workflows menu):
+\`\`\`toml
+[workflow.feature.claude]      # every Claude agent of \`feature\` whose code picks no model
+model = "sonnet"
+[workflow.feature.agent.plan]  # the \`plan\` agent step (by its agent() key), over what the code picks
+model = "opus"
+effort = "high"
+[workflow.feature.agent.review]  # run \`review\` on Codex, whatever the code says
+engine = "codex"
+[workflow."*".codex]           # every workflow
+effort = "high"
+\`\`\`
+A step's \`engine\` setting overrides the code's engine (a code model for the other engine is then ignored).
+Model/effort precedence: a step setting, then the code's \`model\`/\`effort\`, then the workflow's engine setting, then \`"*"\`,
+then the CLI's default. When the user asks for different models, edit these settings (the project config file;
+keep its comments) rather than the workflow. Put \`model\` in code only when a step needs a particular kind of model
+by design (a cheap one for a trivial step), and give agent steps distinct keys so they can be set one by one.
+
 ## Running workflows
 - Choose the workflow and build its input from its schema (read_workflow if unsure), then run_workflow. Ask the user only for what you cannot infer.
 - The run happens in the background. The user watches progress and answers gates, questions and tool approvals in Legion's UI, not through you, so do not poll run_status in a loop. You get a message when it finishes; then report the outcome briefly (PR link, what was merged, what failed and why).

@@ -11,7 +11,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { z } from 'zod';
 import { defaultScript, FakeEngine, sampleFromSchema } from '../engine/fake/index.ts';
-import type { EngineKind } from '../engine/types.ts';
+import type { Effort, EngineKind } from '../engine/types.ts';
 import type { GitOps, Interaction, InteractionAnswer, RunEvent, RunHost, Worktree } from './host.ts';
 import { Journal } from './journal.ts';
 import { builtinSourceDir, loadWorkflow, PACKAGE_ROOT, SDK_TYPES, workflowName } from './loader.ts';
@@ -22,19 +22,28 @@ export interface ValidationReport {
   file: string;
   typeErrors: string[];
   loadError: string | null;
-  dryRun: { ok: boolean; error: string | null; input: unknown; steps: string[] } | null;
+  dryRun: { ok: boolean; error: string | null; input: unknown; steps: string[]; agents: AgentSeen[] } | null;
+}
+
+/** An agent step the dry run reached, with the model and effort the workflow's code asks for. */
+export interface AgentSeen {
+  key: string;
+  step: string;
+  engine: EngineKind;
+  model: string | null;
+  effort: Effort | null;
 }
 
 const require = createRequire(import.meta.url);
 
 export async function validateWorkflow(
   file: string,
-  opts: { repo: string; dryRun?: boolean } = { repo: process.cwd() },
+  opts: { repo: string; dryRun?: boolean; typecheck?: boolean } = { repo: process.cwd() },
 ): Promise<ValidationReport> {
   const report: ValidationReport = { ok: false, file, typeErrors: [], loadError: null, dryRun: null };
   // Compiled builtins are checked through their TypeScript sources.
   const source = file.endsWith('.js') ? join(builtinSourceDir(), `${workflowName(file)}.ts`) : file;
-  report.typeErrors = existsSync(source) ? await typecheck(source) : [];
+  report.typeErrors = opts.typecheck !== false && existsSync(source) ? await typecheck(source) : [];
   let def: Awaited<ReturnType<typeof loadWorkflow>>;
   try {
     def = await loadWorkflow(file);
@@ -167,9 +176,16 @@ async function dryRun(
     }
   }
   const steps: string[] = [];
+  const agents: AgentSeen[] = [];
   const parsed = def.input.safeParse(input);
   if (!parsed.success) {
-    return { ok: false, error: `example input does not match the input schema: ${parsed.error.message}`, input, steps };
+    return {
+      ok: false,
+      error: `example input does not match the input schema: ${parsed.error.message}`,
+      input,
+      steps,
+      agents,
+    };
   }
   const dir = mkdtempSync(join(tmpdir(), 'legion-dry-'));
   const controller = new AbortController();
@@ -181,6 +197,10 @@ async function dryRun(
       dryRun: true,
       maxAgents: 8,
       approvals: 'auto',
+      agentModel(req) {
+        agents.push(req);
+        return { model: req.model, effort: req.effort };
+      },
       git: simulatedGit(repo),
       engine(kind) {
         let engine = engines.get(kind);
@@ -215,14 +235,14 @@ async function dryRun(
     await executeInRun({ runId: 'dry-run', host, journal: new Journal(dir), signal: controller.signal }, () =>
       def.run(parsed.data),
     );
-    return { ok: true, error: null, input, steps };
+    return { ok: true, error: null, input, steps, agents };
   } catch (err) {
     const error = controller.signal.aborted
       ? 'timed out after 30s (an endless loop?)'
       : err instanceof Error
         ? err.message
         : String(err);
-    return { ok: false, error, input, steps };
+    return { ok: false, error, input, steps, agents };
   } finally {
     clearTimeout(timer);
     rmSync(dir, { recursive: true, force: true });

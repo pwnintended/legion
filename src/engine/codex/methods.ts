@@ -6,6 +6,8 @@ import type { InitializeParams, InitializeResponse, ServerNotification, ServerRe
 import type {
   GetAccountParams,
   GetAccountResponse,
+  ModelListParams,
+  ModelListResponse,
   ThreadResumeParams,
   ThreadResumeResponse,
   ThreadStartParams,
@@ -26,6 +28,7 @@ export interface ClientMethods {
   'turn/steer': [TurnSteerParams, TurnSteerResponse];
   'turn/interrupt': [TurnInterruptParams, TurnInterruptResponse];
   'account/read': [GetAccountParams, GetAccountResponse];
+  'model/list': [ModelListParams, ModelListResponse];
 }
 export type ClientMethod = keyof ClientMethods;
 

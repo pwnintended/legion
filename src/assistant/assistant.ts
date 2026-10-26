@@ -22,8 +22,9 @@ export interface AssistantOptions {
   engine: () => AgentEngine;
   systemPrompt: () => string;
   mcp: Readonly<Record<string, McpServer>>;
-  model?: string | null;
-  effort?: Effort | null;
+  /** Read at every session start, so a config reload applies to the next conversation. */
+  model?: () => string | null;
+  effort?: () => Effort | null;
   approvals?: 'ask' | 'auto';
   /** Resume this session (`legion --continue`). */
   sessionId?: string | null;
@@ -131,8 +132,8 @@ export class Assistant extends EventEmitter<AssistantEvents> {
       cwd: this.opts.cwd,
       prompt,
       systemPrompt: this.opts.systemPrompt(),
-      model: this.opts.model ?? null,
-      effort: this.opts.effort ?? null,
+      model: this.opts.model?.() ?? null,
+      effort: this.opts.effort?.() ?? null,
       permission: permissionProfile('workspace_write', { approvals: this.opts.approvals ?? 'ask', web: true }),
       mcp: this.opts.mcp,
       userSettings: true,
