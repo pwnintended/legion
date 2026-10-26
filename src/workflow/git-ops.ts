@@ -41,12 +41,20 @@ export interface GitOpsOptions {
   prHost?: PrHost;
 }
 
+/**
+ * Where Legion keeps a repository's worktrees: `~/.legion/worktrees/<repo>-<hash>` (`repo`: its top level).
+ * `LEGION_WORKTREES` moves the parent directory (the tests use a temporary one).
+ */
+export function worktreeRoot(
+  repo: string,
+  base = process.env.LEGION_WORKTREES || join(homedir(), '.legion', 'worktrees'),
+): string {
+  return join(base, `${basename(repo)}-${repoHash(repo)}`);
+}
+
 export async function createGitOps(opts: GitOpsOptions): Promise<GitOps> {
   const repo = await toplevel(opts.repo);
-  const root = join(
-    opts.worktreeRoot ?? join(homedir(), '.legion', 'worktrees'),
-    `${basename(repo)}-${repoHash(repo)}`,
-  );
+  const root = worktreeRoot(repo, opts.worktreeRoot);
   const prHost = opts.prHost ?? ghPrHost;
 
   const branchOrNull = async (rev: string): Promise<string | null> => ((await branchExists(repo, rev)) ? rev : null);

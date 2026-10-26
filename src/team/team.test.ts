@@ -1,4 +1,5 @@
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
@@ -127,6 +128,68 @@ describe('team', () => {
     await expect(root.call('spawn_lead', { role: 'assets-lead', name: 'assets', brief: 'b' })).rejects.toThrow(
       /already/,
     );
+  });
+
+  it('gives each lead its own worktree and branch, and merges it up with merge_lead', async () => {
+    const gitOut = (cwd: string, ...args: string[]) => execFileSync('git', args, { cwd, encoding: 'utf8' }).trim();
+    const userBranch = gitOut(repo.path, 'branch', '--show-current');
+    const root = await as(ROOT);
+    await root.call('spawn_lead', { role: 'assets-lead', name: 'assets', brief: 'b' });
+    await until(() => callsOf('assets').length === 1);
+    const ws = session.team.get('assets')?.workspace;
+    expect(ws?.branch).toBe('legion/lead/assets');
+    expect(ws?.base).toBe(userBranch);
+    expect(callsOf('assets')[0]?.opts.cwd).toBe(ws?.path);
+    expect(gitOut(ws?.path ?? '', 'branch', '--show-current')).toBe('legion/lead/assets');
+    expect(callsOf('assets')[0]?.opts.systemPrompt).toContain('Never create git worktrees or branches yourself');
+
+    // A sub-lead branches off its parent's branch.
+    const assets = await as('assets');
+    await assets.call('spawn_lead', { role: 'fauna-lead', name: 'world', brief: 'b' });
+    await until(() => callsOf('world').length === 1);
+    expect(session.team.get('world')?.workspace?.base).toBe('legion/lead/assets');
+
+    // Its runs start from its branch and work in its worktree; uncommitted files are flagged.
+    writeFileSync(join(ws?.path ?? '', 'spec.md'), 'the spec\n');
+    const started = await assets.call('run_workflow', { name: 'critique', input: {} });
+    expect(started).toMatchObject({ startsFrom: 'legion/lead/assets', worksIn: ws?.path });
+    expect(started.warning).toContain('spec.md');
+    expect(session.runs.run(started.runId)).toMatchObject({ base: 'legion/lead/assets', cwd: ws?.path });
+    session.runs.cancel(started.runId);
+
+    // Only its parent merges it: into the user's branch, uncommitted work included.
+    await expect(assets.call('merge_lead', { name: 'assets' })).rejects.toThrow(/not your lead/);
+    const merged = await root.call('merge_lead', { name: 'assets' });
+    expect(merged).toMatchObject({ into: userBranch, files: ['spec.md'] });
+    expect(existsSync(join(repo.path, 'spec.md'))).toBe(true);
+  });
+
+  it('lets the orchestrator present files and pages to the user', async () => {
+    writeFileSync(join(repo.path, 'shot.png'), 'x');
+    const shown: unknown[] = [];
+    session.team.on('present', (p) => shown.push(p));
+    const root = await as(ROOT);
+    await root.call('present', {
+      title: 'Look',
+      items: [
+        { target: 'shot.png', caption: 'front' },
+        { target: 'https://example.com/page' },
+        { target: 'README.md' },
+      ],
+    });
+    expect(shown).toEqual([
+      {
+        title: 'Look',
+        items: [
+          { kind: 'image', target: join(repo.path, 'shot.png'), caption: 'front' },
+          { kind: 'url', target: 'https://example.com/page', caption: null },
+          { kind: 'file', target: join(repo.path, 'README.md'), caption: null },
+        ],
+      },
+    ]);
+    await expect(root.call('present', { title: 'x', items: [{ target: 'nope.png' }] })).rejects.toThrow(/No such file/);
+    await root.call('spawn_lead', { role: 'assets-lead', name: 'assets', brief: 'b' });
+    expect(await (await as('assets')).tools()).not.toContain('present');
   });
 
   it('delivers reports to the parent as one bundled message', async () => {

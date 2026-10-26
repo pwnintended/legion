@@ -3,15 +3,22 @@
  * live region below shows the streaming reply, the assistant's progress, active runs, the interaction waiting for
  * the user, the prompt and a status bar.
  */
-import { Box, Static, Text, useApp, useWindowSize } from 'ink';
-import { type ReactNode, useEffect, useState, useSyncExternalStore } from 'react';
+import { homedir } from 'node:os';
+import { Box, Static, Text, useApp, useStdout, useWindowSize } from 'ink';
+import { type ReactNode, useEffect, useRef, useState, useSyncExternalStore } from 'react';
+import type { QuestionAnswers, UserQuestion } from '../engine/types.ts';
 import { ConfigMenu } from './config-menu.tsx';
 import { COMMANDS, type Controller } from './controller.ts';
+import { imageProtocol, renderPresentation } from './images.ts';
 import { PromptInput } from './input.tsx';
-import { Inline, Markdown } from './markdown.tsx';
+import { Markdown } from './markdown.tsx';
 import {
   type Banner,
   clipLines,
+  clock,
+  type FeedEntry,
+  feedMark,
+  feedTone,
   type Item,
   type Line,
   oneLine,
@@ -20,7 +27,7 @@ import {
   type TeamRow,
   type UiInteraction,
 } from './store.ts';
-import { BUSY_FRAMES, color, engineColor, formatDuration, glyph, SPINNER, theme } from './theme.ts';
+import { BUSY_FRAMES, color, engineColor, formatDuration, glyph, SPINNER, theme, tildify } from './theme.ts';
 import { WorkflowsMenu } from './workflows-menu.tsx';
 
 type Mode = 'hotkeys' | 'note' | 'chat';
@@ -33,10 +40,42 @@ export function App({ controller }: { controller: Controller }) {
   const [frame, setFrame] = useState(0);
   const [mode, setMode] = useState<Mode>('hotkeys');
   const [option, setOption] = useState(0);
+  // Questions an agent asks: which one is shown, the answers so far, the options toggled on (multi-select).
+  const [qIndex, setQIndex] = useState(0);
+  const [collected, setCollected] = useState<QuestionAnswers>({});
+  const [picked, setPicked] = useState<number[]>([]);
   const [armedExit, setArmedExit] = useState(false);
   const head = state.interactions[0] ?? null;
   const animating = state.busy || state.runs.length > 0;
   const width = Math.max(40, columns || 80);
+
+  // Presentations (`present`) go straight into the scrollback: inline images are raw escape sequences Ink cannot
+  // lay out. One at a time, in order.
+  const { write } = useStdout();
+  const presenting = useRef(false);
+  const nextPresentation = state.presentations[0];
+  useEffect(() => {
+    if (!nextPresentation || presenting.current) return;
+    presenting.current = true;
+    void (async () => {
+      // Let what was said before it reach the scrollback first (Ink writes its output a frame later).
+      await new Promise((r) => setTimeout(r, 80));
+      try {
+        write(
+          await renderPresentation(nextPresentation.presentation, {
+            protocol: imageProtocol(),
+            columns: width,
+            show: (path) => tildify(path, homedir()),
+          }),
+        );
+      } catch (err) {
+        write(`\nCould not show ${nextPresentation.presentation.title}: ${err instanceof Error ? err.message : err}\n`);
+      } finally {
+        presenting.current = false;
+        store.presented(nextPresentation.id);
+      }
+    })();
+  }, [nextPresentation, write, width, store]);
 
   useEffect(() => {
     controller.attach({
@@ -63,14 +102,47 @@ export function App({ controller }: { controller: Controller }) {
   useEffect(() => {
     setMode('hotkeys');
     setOption(0);
+    setQIndex(0);
+    setCollected({});
+    setPicked([]);
   }, [headId]);
 
   const answering = head !== null && mode !== 'chat';
   const ask = head?.source === 'run' && head.pending.interaction.kind === 'ask' ? head.pending.interaction : null;
-  const typing = answering && (ask !== null || mode === 'note');
+  const questions = head ? questionsOf(head) : null;
+  const question = questions?.[qIndex] ?? null;
+  const typing = answering && (ask !== null || question !== null || mode === 'note');
+  const choices = question ? question.options.map((o) => o.label) : (ask?.options ?? []);
+
+  /** One question answered (typed text, option numbers, or the highlighted/toggled options); the last sends all. */
+  const answerQuestion = (value: string) => {
+    if (!head || !questions || !question) return;
+    const v = value.trim();
+    let answer: string[];
+    if (!v) {
+      if (choices.length === 0) return;
+      answer =
+        question.multiSelect && picked.length > 0 ? picked.map((n) => choices[n] ?? '') : [choices[option] ?? ''];
+    } else if (choices.length > 0 && /^\d+(\s*,\s*\d+)*$/.test(v)) {
+      const labels = v.split(',').map((n) => choices[Number(n.trim()) - 1]);
+      if (labels.some((l) => l === undefined)) return;
+      answer = question.multiSelect ? (labels as string[]) : [labels[0] as string];
+    } else answer = [v];
+    const next = { ...collected, [question.id]: answer };
+    if (qIndex + 1 < questions.length) {
+      setCollected(next);
+      setQIndex(qIndex + 1);
+      setOption(0);
+      setPicked([]);
+    } else controller.answerQuestions(head, next);
+  };
 
   const submit = (value: string) => {
     setArmedExit(false);
+    if (head && typing && question) {
+      answerQuestion(value);
+      return;
+    }
     if (head && typing) {
       if (ask && !value.trim() && ask.options.length > 0) controller.answerAsk(head.id, ask.options[option] ?? '');
       else if (value.trim() || mode === 'note') answerText(controller, head, value, mode);
@@ -81,7 +153,14 @@ export function App({ controller }: { controller: Controller }) {
   };
 
   const hotkey = (key: string): boolean => {
-    if (!head || !answering || ask || mode === 'note') return false;
+    if (!head || !answering) return false;
+    if (question) {
+      // Space toggles the highlighted option of a multi-select question.
+      if (!question.multiSelect || key !== ' ') return false;
+      setPicked((p) => (p.includes(option) ? p.filter((n) => n !== option) : [...p, option]));
+      return true;
+    }
+    if (ask || mode === 'note') return false;
     return answerKey(controller, head, key.toLowerCase(), () => setMode('note'));
   };
 
@@ -97,43 +176,45 @@ export function App({ controller }: { controller: Controller }) {
           </Bullet>
         ) : null}
         {state.busy ? <Busy frame={frame} since={state.busySince} activity={state.activity} /> : null}
-        {state.runs.map((run) => (
-          <RunPanel
-            key={run.id}
-            run={run}
-            frame={frame}
-            waiting={state.interactions.some((i) => i.source === 'run' && i.pending.interaction.runId === run.id)}
-            // Leads' runs are one line each, except those of the lead the user is talking to.
-            compact={run.owner !== undefined && run.owner !== state.target}
-          />
-        ))}
-        {state.team.length > 0 ? <TeamPanel rows={state.team} target={state.target} frame={frame} /> : null}
         {state.menu === 'config' ? <ConfigMenu controller={controller} width={width} /> : null}
         {state.menu === 'workflows' ? <WorkflowsMenu controller={controller} width={width} /> : null}
         {head && !state.menu ? (
-          <InteractionView item={head} mode={mode} option={option} queued={state.interactions.length - 1} />
+          <InteractionView
+            item={head}
+            mode={mode}
+            option={option}
+            queued={state.interactions.length - 1}
+            question={questions && question ? { list: questions, index: qIndex, picked } : null}
+          />
         ) : null}
-        <Box
-          display={state.menu ? 'none' : 'flex'}
-          flexDirection="column"
-          marginTop={head || state.runs.length || state.busy ? 0 : 1}
-        >
+        <Box display={state.menu ? 'none' : 'flex'} flexDirection="column" marginTop={head || state.busy ? 0 : 1}>
           <PromptInput
             prompt={typing ? glyph.ask : state.target === 'orchestrator' ? glyph.user : `${state.target} ${glyph.user}`}
+            mask={typing && question?.secret === true}
             tone={tone}
-            placeholder={placeholder(head, mode, ask !== null, state.target)}
+            placeholder={
+              typing && question
+                ? question.multiSelect
+                  ? 'Space toggles, Enter confirms · or type numbers or your own answer'
+                  : choices.length > 0
+                    ? 'Pick with ↑↓ and Enter · or type a number or your own answer'
+                    : 'Type your answer'
+                : placeholder(head, mode, ask !== null, state.target)
+            }
             commands={typing ? [] : COMMANDS}
             isActive={!state.menu}
             seed={state.seed}
             onSubmit={submit}
             onEmptyKey={hotkey}
             onNavigate={(dir) => {
-              if (!ask || !answering || ask.options.length === 0) return false;
-              setOption((n) => (n + dir + ask.options.length) % ask.options.length);
+              if ((!ask && !question) || !answering || choices.length === 0) return false;
+              setOption((n) => (n + dir + choices.length) % choices.length);
               return true;
             }}
             onEscape={() => {
-              if (mode !== 'hotkeys') setMode('hotkeys');
+              // Esc declines an agent's questions (it is told the user would not answer).
+              if (head && question && mode !== 'chat') controller.answerQuestions(head, null);
+              else if (mode !== 'hotkeys') setMode('hotkeys');
               else void controller.interrupt();
             }}
             onTab={() => head && setMode((m) => (m === 'chat' ? 'hotkeys' : 'chat'))}
@@ -168,6 +249,23 @@ export function App({ controller }: { controller: Controller }) {
           runs={state.runs.length}
           waiting={state.interactions.length}
         />
+        {/* Under the prompt: what changes now and then (runs, the team, activity), so the chat stays a conversation. */}
+        {state.menu ? null : (
+          <>
+            {state.runs.map((run) => (
+              <RunPanel
+                key={run.id}
+                run={run}
+                frame={frame}
+                waiting={state.interactions.some((i) => i.source === 'run' && i.pending.interaction.runId === run.id)}
+                // Leads' runs are one line each, except those of the lead the user is talking to.
+                compact={run.owner !== undefined && run.owner !== state.target}
+              />
+            ))}
+            {state.team.length > 0 ? <TeamPanel rows={state.team} target={state.target} frame={frame} /> : null}
+            <Feed entries={state.feed} />
+          </>
+        )}
       </Box>
     </>
   );
@@ -181,7 +279,7 @@ function Busy({ frame, since, activity }: { frame: number; since: number | null;
   return (
     <Box marginTop={1}>
       <Text color={theme.accent}>
-        {mark} {activity ? capitalize(activity) : 'Working'}…
+        {mark} {activity ? oneLine(capitalize(activity), 90) : 'Working'}…
       </Text>
       <Text dimColor> ({elapsed ? `${elapsed} · ` : ''}esc to interrupt)</Text>
     </Box>
@@ -233,7 +331,15 @@ function placeholder(head: UiInteraction | null, mode: Mode, isAsk: boolean, tar
   return `Press a key above, or Tab to message ${lead ?? 'the assistant'}`;
 }
 
+/** The questions an agent asks in this interaction (its own `AskUserQuestion` / `request_user_input`), if any. */
+function questionsOf(item: UiInteraction): UserQuestion[] | null {
+  if (item.source === 'question') return item.questions;
+  if (item.source === 'run' && item.pending.interaction.kind === 'questions') return item.pending.interaction.questions;
+  return null;
+}
+
 function answerKey(controller: Controller, head: UiInteraction, key: string, toNote: () => void): boolean {
+  if (head.source === 'question') return false;
   if (head.source === 'assistant' || head.pending.interaction.kind === 'approval') {
     if (key === 'y') controller.answerApproval(head, { behavior: 'allow', scope: 'once', updatedInput: null });
     else if (key === 's') controller.answerApproval(head, { behavior: 'allow', scope: 'session', updatedInput: null });
@@ -298,9 +404,66 @@ function Card(props: { tone: string; icon: string; title: string; source: string
   );
 }
 
-function InteractionView(props: { item: UiInteraction; mode: Mode; option: number; queued: number }) {
+function InteractionView(props: {
+  item: UiInteraction;
+  mode: Mode;
+  option: number;
+  queued: number;
+  question: { list: UserQuestion[]; index: number; picked: number[] } | null;
+}) {
   const { item, mode, option, queued } = props;
   const more = queued > 0 ? <Text dimColor>+{queued} more waiting after this</Text> : null;
+  if (props.question) {
+    const { list, index, picked } = props.question;
+    const q = list[index] as UserQuestion;
+    const from =
+      item.source === 'question'
+        ? (item.lead ?? 'assistant')
+        : item.source === 'run'
+          ? `${item.pending.interaction.runId} · ${item.pending.interaction.key}`
+          : '';
+    return (
+      <Card
+        tone={theme.info}
+        icon={glyph.ask}
+        title={q.question}
+        source={`${from}${list.length > 1 ? ` · ${index + 1}/${list.length}` : ''}`}
+      >
+        {q.header ? <Text color={theme.info}>{`[${q.header}]`}</Text> : null}
+        {q.options.length > 0 ? (
+          <Box flexDirection="column" marginTop={1}>
+            {q.options.map((o, n) => {
+              const on = n === option;
+              const mark = q.multiSelect ? (picked.includes(n) ? '◉ ' : '○ ') : '';
+              return (
+                <Box key={o.label} flexDirection="column">
+                  <Text color={on ? theme.info : undefined} bold={on}>
+                    {on ? '❯ ' : '  '}
+                    {mark}
+                    <Text dimColor={!on}>{n + 1}.</Text> {o.label}
+                  </Text>
+                  {o.description ? <Text dimColor>{`      ${o.description}`}</Text> : null}
+                </Box>
+              );
+            })}
+          </Box>
+        ) : null}
+        <Box marginTop={1}>
+          <Keys
+            keys={[
+              ...(q.options.length > 0 ? ([['↑↓', 'move']] as [string, string][]) : []),
+              ...(q.multiSelect ? ([['space', 'toggle']] as [string, string][]) : []),
+              ['enter', q.multiSelect ? 'confirm' : q.options.length > 0 ? 'choose' : 'send'],
+              ...(q.allowOther && q.options.length > 0 ? ([['type', 'your own answer']] as [string, string][]) : []),
+              ['esc', 'decline'],
+            ]}
+          />
+        </Box>
+        {more}
+      </Card>
+    );
+  }
+  if (item.source === 'question') return null;
   if (item.source === 'assistant' || item.pending.interaction.kind === 'approval') {
     const tool = item.source === 'assistant' ? item.approval.tool : (item.pending.interaction as { tool: string }).tool;
     const input =
@@ -505,33 +668,37 @@ function Bullet(props: { mark: string; markColor?: string; marginTop?: number; c
   );
 }
 
-const REPORT_COLOR: Record<string, string> = {
-  done: theme.ok,
-  blocked: theme.error,
-  question: theme.warn,
-  review: theme.warn,
-  coordinate: theme.info,
-};
+const FEED_SHOWN = 5;
 
-function TeamItem({ item }: { item: Extract<Item, { type: 'team' }> }) {
-  const tone = item.kind === 'report' ? (REPORT_COLOR[item.report ?? ''] ?? theme.accent) : theme.accent;
-  const mark = item.kind === 'spawn' ? '◆' : item.kind === 'stop' ? '■' : '↑';
+/**
+ * The latest lead reports and messages, runs starting and finishing, workflow logs: one line each. Tool calls are
+ * kept for `/activity` but not shown here (the busy line shows the current one).
+ */
+function Feed({ entries }: { entries: FeedEntry[] }) {
+  const shown = entries.filter((e) => e.kind !== 'tool').slice(-FEED_SHOWN);
+  if (shown.length === 0) return null;
   return (
-    <Bullet mark={mark} markColor={tone} marginTop={item.kind === 'spawn' ? 1 : 0}>
-      <Text>
-        <Text color={tone} bold>
-          {item.lead}
-        </Text>
-        {item.report ? <Text color={tone}> {item.report}</Text> : null}
-        <Text dimColor> {item.text}</Text>
+    <Box flexDirection="column" marginTop={1} paddingX={1}>
+      <Text dimColor>
+        <Text color={theme.accent} bold>
+          activity
+        </Text>{' '}
+        /activity for more
       </Text>
-      {item.files.map((f) => (
-        <Text key={f} color={tone}>
-          {'  '}
-          {glyph.result} {f}
-        </Text>
-      ))}
-    </Bullet>
+      {shown.map((e) => {
+        const tone = theme[feedTone(e)];
+        return (
+          <Text key={e.id} wrap="truncate-end">
+            <Text dimColor>{`  ${clock(e.at)} `}</Text>
+            <Text color={tone}>{feedMark(e)} </Text>
+            <Text bold>{e.who}</Text>
+            {e.tag ? <Text color={tone}> {e.tag}</Text> : null}
+            <Text dimColor> {oneLine(e.text, 400)}</Text>
+            {e.files.length ? <Text color={tone}> {e.files.join(', ')}</Text> : null}
+          </Text>
+        );
+      })}
+    </Box>
   );
 }
 
@@ -608,18 +775,6 @@ function ItemView({ item, width }: { item: Item; width: number }) {
           <Markdown text={item.text} />
         </Bullet>
       );
-    case 'tool': {
-      const legion = item.name.startsWith('legion.');
-      return (
-        <Box paddingLeft={2}>
-          <Text wrap="truncate-end">
-            <Text color={legion ? theme.accent : theme.ok}>{glyph.tool} </Text>
-            <Text bold>{legion ? legionToolLabel(item.name) : item.name}</Text>
-            {item.summary ? <Text dimColor> {item.summary}</Text> : null}
-          </Text>
-        </Box>
-      );
-    }
     case 'info':
       return (
         <Box marginTop={1}>
@@ -634,20 +789,8 @@ function ItemView({ item, width }: { item: Item; width: number }) {
           <Text color={theme.error}>{item.text}</Text>
         </Bullet>
       );
-    case 'log':
-      return (
-        <Box paddingLeft={2}>
-          <Text>
-            <Text color={theme.accent}>{item.workflow}</Text>
-            <Text dimColor> │ </Text>
-            <Inline text={item.text} />
-          </Text>
-        </Box>
-      );
     case 'run':
       return <RunItem item={item} />;
-    case 'team':
-      return <TeamItem item={item} />;
     case 'gate':
       return (
         <Box
@@ -677,16 +820,6 @@ function ItemView({ item, width }: { item: Item; width: number }) {
 }
 
 function RunItem({ item }: { item: Extract<Item, { type: 'run' }> }) {
-  if (item.status === 'started')
-    return (
-      <Box marginTop={1}>
-        <Text>
-          <Text color={theme.accent}>{glyph.brand} </Text>
-          <Text bold>{item.workflow}</Text>
-          <Text dimColor> started · run {item.runId}</Text>
-        </Text>
-      </Box>
-    );
   const took = item.durationMs !== null ? ` in ${formatDuration(item.durationMs)}` : '';
   const [icon, tone, verb, hint] =
     item.status === 'done'
@@ -804,23 +937,6 @@ function BannerView({ banner, width }: { banner: Banner; width: number }) {
       </Text>
     </Box>
   );
-}
-
-const LEGION_TOOLS: Record<string, string> = {
-  list_workflows: 'List workflows',
-  read_workflow: 'Read workflow',
-  eject_workflow: 'Eject workflow',
-  validate_workflow: 'Validate',
-  run_workflow: 'Run workflow',
-  list_runs: 'List runs',
-  run_status: 'Run status',
-  resume_run: 'Resume run',
-  cancel_run: 'Cancel run',
-};
-
-function legionToolLabel(name: string): string {
-  const tool = name.slice('legion.'.length);
-  return LEGION_TOOLS[tool] ?? tool;
 }
 
 function capitalize(s: string): string {

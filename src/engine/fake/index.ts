@@ -14,7 +14,9 @@ import type {
   EngineKind,
   EngineProfile,
   JsonSchema,
+  QuestionAnswers,
   SessionOptions,
+  UserQuestion,
 } from '../types.ts';
 
 export interface FakeTurn {
@@ -24,6 +26,8 @@ export interface FakeTurn {
   output?: unknown;
   /** Ask for a tool approval before answering. */
   approval?: { tool: string; input: unknown };
+  /** Ask the user questions before answering; the answers land in `call.answers` (and the default text). */
+  questions?: UserQuestion[];
   /** End the turn with an error. */
   error?: string;
 }
@@ -35,6 +39,8 @@ export interface FakeCall {
   opts: SessionOptions;
   /** Messages sent into the session: the prompt, then follow-ups. */
   prompts: string[];
+  /** Answers to the session's questions, in order (null: declined). */
+  answers: (QuestionAnswers | null)[];
 }
 
 /** Decides each turn. `turn` counts from 0 within the session. */
@@ -47,7 +53,8 @@ export class FakeEngine implements AgentEngine {
   readonly kind: EngineKind;
   readonly profile: EngineProfile;
   readonly calls: FakeCall[] = [];
-  private readonly script: FakeScript;
+  /** Decides the turns of sessions started from now on (tests swap it). */
+  script: FakeScript;
 
   constructor(kind: EngineKind = 'fake', script: FakeScript = defaultScript, profileName = 'fake') {
     this.kind = kind;
@@ -76,7 +83,7 @@ export class FakeEngine implements AgentEngine {
   }
 
   private open(sessionId: string, resumed: boolean, opts: SessionOptions): AgentSession {
-    const call: FakeCall = { kind: this.kind, sessionId, resumed, opts, prompts: [opts.prompt] };
+    const call: FakeCall = { kind: this.kind, sessionId, resumed, opts, prompts: [opts.prompt], answers: [] };
     this.calls.push(call);
     return new FakeSession(this.kind, call, this.script);
   }
@@ -91,6 +98,7 @@ class FakeSession implements AgentSession {
   private turn = 0;
   private closed = false;
   private pendingApproval: ((d: ApprovalDecision) => void) | null = null;
+  private pendingQuestion: ((a: QuestionAnswers | null) => void) | null = null;
 
   constructor(engine: EngineKind, call: FakeCall, script: FakeScript) {
     this.engine = engine;
@@ -124,11 +132,27 @@ class FakeSession implements AgentSession {
       if (this.closed) return;
       this.queue.push({ type: 'tool_result', id: requestId, ok: decision.behavior === 'allow', output: null });
     }
+    let answered: QuestionAnswers | null | undefined;
+    if (turn.questions) {
+      const requestId = randomUUID();
+      answered = await new Promise<QuestionAnswers | null>((resolve) => {
+        this.pendingQuestion = resolve;
+        this.queue.push({ type: 'question', requestId, questions: turn.questions ?? [] });
+      });
+      if (this.closed) return;
+      this.call.answers.push(answered);
+    }
     if (turn.error) {
       this.queue.push({ type: 'turn_complete', structuredOutput: null, isError: true, reason: turn.error });
       return;
     }
-    const text = turn.text ?? (turn.output !== undefined ? JSON.stringify(turn.output) : '');
+    const text =
+      turn.text ??
+      (turn.output !== undefined
+        ? JSON.stringify(turn.output)
+        : answered !== undefined
+          ? `(answered ${JSON.stringify(answered)})`
+          : '');
     if (text) this.queue.push({ type: 'message', text });
     this.queue.push({ type: 'usage', inputTokens: 10, outputTokens: 10, costUsd: 0 });
     this.queue.push({ type: 'turn_complete', structuredOutput: turn.output ?? null, isError: false, reason: null });
@@ -146,6 +170,12 @@ class FakeSession implements AgentSession {
     this.closed = true;
     this.queue.push({ type: 'exited', code: 0 });
     this.queue.end();
+  }
+
+  async answer(_requestId: string, answers: QuestionAnswers | null): Promise<void> {
+    const resolve = this.pendingQuestion;
+    this.pendingQuestion = null;
+    resolve?.(answers);
   }
 
   async respond(_requestId: string, decision: ApprovalDecision): Promise<void> {

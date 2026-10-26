@@ -7,7 +7,7 @@
 import { type ChildProcess, spawn } from 'node:child_process';
 import { AsyncQueue, deferred } from '../../util/async-queue.ts';
 import { type Logger, silentLogger } from '../../util/log.ts';
-import type { AgentEvent, AgentSession, ApprovalDecision, SessionOptions } from '../types.ts';
+import type { AgentEvent, AgentSession, ApprovalDecision, QuestionAnswers, SessionOptions } from '../types.ts';
 import { isPreapproved, threadResumeParams, threadStartParams, turnStartParams, userInput } from './config.ts';
 import { JSON_RPC_ERROR, JsonRpcError, JsonRpcPeer, LineSplitter, type RequestOptions } from './json-rpc.ts';
 import type { ClientMethod, ClientMethods, ServerNotification, ServerRequest } from './methods.ts';
@@ -212,6 +212,15 @@ export class CodexSession implements AgentSession {
       pending.request.method === 'applyPatchApproval' ||
       pending.request.method === 'mcpServer/elicitation/request';
     if (decision.behavior === 'deny' && decision.interrupt && !cancelsItself) await this.interrupt();
+  }
+
+  async answer(requestId: string, answers: QuestionAnswers | null): Promise<void> {
+    const pending = this.approvals.get(requestId);
+    if (!pending) throw new Error(`no pending question ${requestId}`);
+    this.approvals.delete(requestId);
+    const out: Record<string, { answers: string[] }> = {};
+    for (const [id, values] of Object.entries(answers ?? {})) out[id] = { answers: values };
+    pending.resolve({ answers: out });
   }
 
   // -------------------------------------------------------------------------------------------

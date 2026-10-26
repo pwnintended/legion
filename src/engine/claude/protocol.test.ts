@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { type PendingPermission, permissionResponse, sessionPermissions } from './protocol.ts';
+import {
+  askUserAnswerInput,
+  askUserQuestions,
+  type PendingPermission,
+  permissionResponse,
+  sessionPermissions,
+} from './protocol.ts';
 
 const pending = (toolName: string, input: unknown, suggestions: PendingPermission['suggestions'] = []) => ({
   requestId: 'r1',
@@ -65,6 +71,47 @@ describe('allow for session (review finding: whole-tool rules)', () => {
         request_id: 'r1',
         response: { behavior: 'allow', updatedInput: { command: 'pnpm test && id' } },
       },
+    });
+  });
+});
+
+describe('AskUserQuestion', () => {
+  const input = {
+    questions: [
+      {
+        question: 'Which pieces?',
+        header: 'Pieces',
+        multiSelect: true,
+        options: [
+          { label: 'helmet', description: 'Rigid' },
+          { label: 'jacket', description: 'Close-fitting' },
+        ],
+      },
+    ],
+  };
+
+  it('maps the tool input to questions keyed by their text', () => {
+    expect(askUserQuestions(input)).toEqual([
+      {
+        id: 'Which pieces?',
+        header: 'Pieces',
+        question: 'Which pieces?',
+        options: [
+          { label: 'helmet', description: 'Rigid' },
+          { label: 'jacket', description: 'Close-fitting' },
+        ],
+        multiSelect: true,
+        allowOther: true,
+        secret: false,
+      },
+    ]);
+    expect(askUserQuestions(null)).toEqual([]);
+  });
+
+  it('answers with the questions plus comma-joined labels', () => {
+    expect(askUserAnswerInput(input, { 'Which pieces?': ['helmet', 'jacket'] })).toEqual({
+      ...input,
+      answers: { 'Which pieces?': 'helmet, jacket' },
     });
   });
 });

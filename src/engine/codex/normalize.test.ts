@@ -316,6 +316,42 @@ describe('approvals', () => {
     expect(approvalResponse(legacy, cancel)).toEqual({ decision: 'abort' });
   });
 
+  it('request_user_input is a question, not an approval', () => {
+    const normalizer = new CodexNormalizer({ cwd: '/w', structuredOutput: false });
+    const event = normalizer.approvalRequest(
+      req('item/tool/requestUserInput', {
+        threadId: 't',
+        turnId: 'u',
+        itemId: 'i',
+        questions: [
+          {
+            id: 'scope',
+            header: 'Scope',
+            question: 'How far?',
+            isOther: false,
+            isSecret: false,
+            options: [{ label: 'Small', description: 'One file' }],
+          },
+          { id: 'token', header: '', question: 'API token?', isOther: false, isSecret: true, options: null },
+        ],
+      }),
+    );
+    expect(event).toMatchObject({
+      type: 'question',
+      questions: [
+        {
+          id: 'scope',
+          header: 'Scope',
+          options: [{ label: 'Small', description: 'One file' }],
+          multiSelect: false,
+          allowOther: false,
+          secret: false,
+        },
+        { id: 'token', header: null, options: [], allowOther: true, secret: true },
+      ],
+    });
+  });
+
   it('file change approval shows the started item’s changes', () => {
     const normalizer = new CodexNormalizer({ cwd: '/w', structuredOutput: false });
     const item = {

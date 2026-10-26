@@ -18,10 +18,10 @@ import {
 } from '../config.ts';
 import { getPath, setTomlValue, type TomlScalar } from '../config-file.ts';
 import { CodexEngine } from '../engine/codex/index.ts';
-import type { ApprovalDecision } from '../engine/types.ts';
+import type { ApprovalDecision, QuestionAnswers } from '../engine/types.ts';
 import type { Session } from '../session.ts';
 import { ROOT } from '../team/team.ts';
-import type { AskAnswer, GateAnswer } from '../workflow/host.ts';
+import type { AskAnswer, GateAnswer, QuestionsAnswer } from '../workflow/host.ts';
 import {
   builtinSourceDir,
   ejectWorkflow,
@@ -34,8 +34,8 @@ import {
 import type { PendingInteraction } from '../workflow/manager.ts';
 import { formatReport, validateWorkflow } from '../workflow/validate.ts';
 import type { CommandSpec } from './input.tsx';
-import { type Line, type Seg, type TeamRow, type UiInteraction, UiStore } from './store.ts';
-import { tildify } from './theme.ts';
+import { clock, feedMark, feedTone, type Line, type Seg, type TeamRow, type UiInteraction, UiStore } from './store.ts';
+import { glyph, tildify } from './theme.ts';
 
 interface Command extends CommandSpec {
   group: 'Workflows' | 'Runs' | 'Team' | 'Session';
@@ -54,6 +54,12 @@ export const COMMANDS: readonly Command[] = [
     description: 'talk to a lead directly (no name: back to the orchestrator)',
   },
   { group: 'Team', name: 'stop', args: '<lead>', description: 'stop a lead, its sub-leads and their runs' },
+  {
+    group: 'Team',
+    name: 'activity',
+    args: '[n]',
+    description: 'the last n (default 30) lines of the feed under the prompt, in full, with tool calls',
+  },
   { group: 'Runs', name: 'steps', args: '[run]', description: "a run's steps" },
   { group: 'Runs', name: 'log', args: '<run> <step>', description: "an agent step's transcript" },
   { group: 'Runs', name: 'resume', args: '[run]', description: 'continue a stopped run' },
@@ -92,8 +98,8 @@ export function helpLines(): Line[] {
     [
       seg('  ↑↓', { color: 'accent' }),
       dim(' history   '),
-      seg('\\ Enter', { color: 'accent' }),
-      dim(' new line   '),
+      seg('Shift+Enter', { color: 'accent' }),
+      dim(' (or \\ Enter) new line   '),
       seg('Tab', { color: 'accent' }),
       dim(' complete a command, or switch between answering and chatting'),
     ],
@@ -148,12 +154,20 @@ const CONFIG_SETTINGS: readonly Omit<SettingRow, 'value'>[] = [
     hint: 'reasoning effort',
   },
   {
+    id: 'assistant.approvals',
+    group: 'Assistant',
+    label: 'approvals',
+    kind: 'choice',
+    choices: ['auto', 'ask'],
+    hint: "the assistant's own tool approvals · auto: allowed · ask: you answer them",
+  },
+  {
     id: 'workflows.approvals',
     group: 'Workflows',
     label: 'approvals',
     kind: 'choice',
-    choices: ['ask', 'auto'],
-    hint: "ask: you answer agents' tool approvals · auto: the engine decides",
+    choices: ['auto', 'ask'],
+    hint: "auto: allowed (Claude's auto mode, Codex without sandbox) · ask: you answer agents' tool approvals",
   },
   {
     id: 'workflows.maxAgents',
@@ -315,6 +329,7 @@ export class Controller {
       if (this.target === ROOT) this.store.setBusy(b);
     });
     assistant.on('approval', (a) => this.store.assistantApproval(a));
+    assistant.on('question', (q) => this.store.assistantQuestion(q));
     assistant.on('resolved', (id) => this.store.resolved(id));
     runs.on('event', (e) => this.store.runEvent(e, (id) => runs.run(id)));
     // A lead answers its own runs' gates and questions; the user answers the orchestrator's. (The team tells the
@@ -324,7 +339,9 @@ export class Controller {
     });
     runs.on('resolved', (id) => this.store.resolved(id));
     const { team } = session;
-    team.on('activity', (a) => this.store.push({ type: 'team', ...a, report: a.report ?? null, files: a.files ?? [] }));
+    team.on('activity', (a) =>
+      this.store.note({ who: a.lead, kind: a.kind, tag: a.report ?? null, text: a.text, files: a.files ?? [] }),
+    );
     team.on('changed', () => {
       this.store.update({ team: this.teamRows() }, false);
       if (this.target !== ROOT) this.store.setBusy(team.busy(this.target));
@@ -335,7 +352,9 @@ export class Controller {
     // Leads saved by an earlier session.
     this.store.update({ team: this.teamRows() });
     team.on('lead-approval', (lead, a) => this.store.assistantApproval(a, lead));
+    team.on('lead-question', (lead, q) => this.store.assistantQuestion(q, lead));
     team.on('lead-resolved', (id) => this.store.resolved(id));
+    team.on('present', (p) => this.store.present(p));
   }
 
   attach(hooks: ControllerHooks): void {
@@ -425,7 +444,11 @@ export class Controller {
   }
 
   /** Answers one of a run's interactions; when it belonged to a lead, the lead hears about it. */
-  private answerRun(id: string, answer: GateAnswer | AskAnswer | ApprovalDecision, what: string): void {
+  private answerRun(
+    id: string,
+    answer: GateAnswer | AskAnswer | QuestionsAnswer | ApprovalDecision,
+    what: string,
+  ): void {
     this.session.team.userAnswered(id, what);
     this.session.runs.answer(id, answer);
   }
@@ -478,6 +501,47 @@ export class Controller {
     else this.answerRun(item.id, decision, decision.behavior === 'allow' ? 'allowed' : 'denied');
   }
 
+  /** Answers questions an agent asked (the assistant's, a lead's, or a run agent's); null declines them. */
+  answerQuestions(item: UiInteraction, answers: QuestionAnswers | null): void {
+    const questions =
+      item.source === 'question'
+        ? item.questions
+        : item.source === 'run' && item.pending.interaction.kind === 'questions'
+          ? item.pending.interaction.questions
+          : [];
+    const said = answers
+      ? questions
+          .map((q) => `${q.header ?? q.question} → ${q.secret ? '(hidden)' : (answers[q.id] ?? []).join(', ')}`)
+          .join(' · ')
+      : 'declined';
+    this.store.info(`${glyph.ask} ${said}`);
+    if (item.source === 'question') {
+      if (item.lead) this.session.team.answerLeadQuestions(item.lead, item.id, answers);
+      else void this.session.assistant.answerQuestions(item.id, answers);
+    } else if (item.source === 'run') this.answerRun(item.id, { answers }, said);
+  }
+
+  /** The last `n` feed entries in full (tool calls included), oldest first. */
+  activityLines(n: number): Line[] {
+    const entries = this.store.get().feed.slice(-n);
+    if (entries.length === 0) return [[dim('Nothing yet.')]];
+    return entries.flatMap((e): Line[] => {
+      const tone = feedTone(e);
+      const head: Line = [
+        dim(`${clock(e.at)} `),
+        seg(`${feedMark(e)} `, { color: tone }),
+        seg(e.who, { bold: true }),
+        ...(e.tag ? [seg(` ${e.tag}`, { color: tone })] : []),
+      ];
+      const [first = '', ...more] = e.text.split('\n');
+      return [
+        [...head, seg(` ${first}`)],
+        ...more.map((l) => [dim('        '), seg(l)]),
+        ...e.files.map((f) => [dim('        '), seg(`${glyph.result} ${f}`, { color: tone })]),
+      ];
+    });
+  }
+
   /** The lead tree under the orchestrator, each with its status, plan and last report. */
   teamLines(): Line[] {
     const { team } = this.session;
@@ -513,6 +577,7 @@ export class Controller {
           ...(waiting ? [seg(`  ${waiting} waiting for it`, { color: 'warn' })] : []),
           ...(l.costUsd > 0 ? [dim(`  $${l.costUsd.toFixed(2)}`)] : []),
         ]);
+        if (l.workspace) lines.push([dim(`${pad}  ⎇ ${l.workspace.branch}  ${tildify(l.workspace.path, homedir())}`)]);
         lines.push(...planLines(l.name, `${pad}  `));
         if (l.lastReport) {
           lines.push([dim(`${pad}  ↳ ${l.lastReport.kind}: `), seg(l.lastReport.text.split('\n')[0] ?? '')]);
@@ -597,6 +662,9 @@ export class Controller {
         }
         case 'team':
           this.store.panel('Team', this.teamLines());
+          return;
+        case 'activity':
+          this.store.panel('Activity', this.activityLines(Number(rest[0]) || 30));
           return;
         case 'lead':
           this.talkTo(rest[0] || ROOT);
@@ -1176,12 +1244,15 @@ export class Controller {
       kv('engine', config.assistant.engine),
       kv('model', config.assistant.model ?? 'default', config.assistant.model ? '' : "the CLI's own"),
       kv('effort', config.assistant.effort ?? 'default'),
+      kv('approvals', config.assistant.approvals, config.assistant.approvals === 'ask' ? 'you answer them' : 'allowed'),
       [],
       [seg('Workflows', { bold: true })],
       kv(
         'approvals',
         config.workflows.approvals,
-        config.workflows.approvals === 'ask' ? "you answer agents' tool approvals" : "the engine's auto mode decides",
+        config.workflows.approvals === 'ask'
+          ? "you answer agents' tool approvals"
+          : "allowed: Claude's auto mode, Codex without sandbox or approvals",
       ),
       kv('maxAgents', String(config.workflows.maxAgents), 'agent sessions at once per run'),
     );

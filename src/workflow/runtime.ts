@@ -314,6 +314,16 @@ async function drive(
           await session.respond(event.requestId, decision);
           break;
         }
+        case 'question': {
+          const { answers } = await run.host.interact({
+            kind: 'questions',
+            runId: run.runId,
+            key,
+            questions: event.questions,
+          });
+          await session.answer(event.requestId, answers);
+          break;
+        }
         case 'turn_complete': {
           if (event.isError) {
             outcome = { ok: false, error: event.reason ?? 'the agent turn failed' };

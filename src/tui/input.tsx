@@ -21,6 +21,8 @@ export interface PromptInputProps {
   /** Replaces the text when `n` changes (a command put there for the user to finish). */
   seed?: { text: string; n: number } | null;
   commands?: readonly CommandSpec[];
+  /** Hide what is typed (a secret answer); it is not kept in the history either. */
+  mask?: boolean;
   onSubmit(value: string): void;
   /** A key pressed while the input is empty; return true to consume it (interaction hotkeys). */
   onEmptyKey?(input: string): boolean;
@@ -65,7 +67,7 @@ export function PromptInput(props: PromptInputProps) {
   };
 
   const submit = (text: string) => {
-    if (text.trim()) history.current.push(text);
+    if (text.trim() && !props.mask) history.current.push(text);
     historyIndex.current = null;
     set('');
     props.onSubmit(text);
@@ -97,7 +99,7 @@ export function PromptInput(props: PromptInputProps) {
         return;
       }
       if (key.return) {
-        // A trailing backslash (or Shift/Alt+Enter where the terminal reports it) continues on a new line.
+        // Shift+Enter (reported by kitty-protocol terminals), Alt+Enter, or a trailing backslash: a new line.
         if (value.endsWith('\\')) return set(`${value.slice(0, -1)}\n`);
         if (key.shift || key.meta) return set(`${value.slice(0, cursor)}\n${value.slice(cursor)}`, cursor + 1);
         // Enter on a partly typed command runs the highlighted one, or completes it if it takes arguments.
@@ -145,9 +147,10 @@ export function PromptInput(props: PromptInputProps) {
     { isActive: props.isActive },
   );
 
-  const before = value.slice(0, cursor);
-  const at = value[cursor] ?? ' ';
-  const after = value.slice(cursor + 1);
+  const shown = props.mask ? '•'.repeat(value.length) : value;
+  const before = shown.slice(0, cursor);
+  const at = shown[cursor] ?? ' ';
+  const after = shown.slice(cursor + 1);
   const first = Math.max(0, Math.min(selected - MENU_SIZE + 1, menu.length - MENU_SIZE));
   const width = Math.max(...menu.map((c) => c.name.length + (c.args ? c.args.length + 1 : 0)), 0) + 2;
   return (

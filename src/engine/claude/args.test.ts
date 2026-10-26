@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { permissionProfile, type SessionOptions } from '../types.ts';
-import { bashRules, buildClaudeArgs, childEnv, mcpConfig, permissionArgs } from './args.ts';
+import { bashRules, buildClaudeArgs, childEnv, mcpConfig, permissionArgs, tempDirs } from './args.ts';
 import { READ_ONLY_GUIDE } from './read-only-policy.ts';
 
 const base = (overrides: Partial<SessionOptions> = {}): SessionOptions => ({
@@ -94,6 +94,15 @@ describe('buildClaudeArgs', () => {
     expect(flag(args, '--mcp-config')).toBe('/tmp/x/mcp.json');
     expect(args).toContain('--strict-mcp-config');
     expect(args.slice(-4)).toEqual(['--add-dir', '/a', '--add-dir', '/b']);
+  });
+
+  it('gives writing sessions the temp directories as working directories, read-only ones not', () => {
+    expect(tempDirs()).toContain('/tmp');
+    const added = (args: string[]) => args.flatMap((a, i) => (args[i - 1] === '--add-dir' ? [a] : []));
+    const write = buildClaudeArgs({ opts: base({ permission: permissionProfile('workspace_write') }) });
+    expect(added(write)).toEqual(expect.arrayContaining(tempDirs()));
+    const read = buildClaudeArgs({ opts: base({ permission: permissionProfile('read_only') }) });
+    expect(added(read)).toEqual([]);
   });
 
   it('starts workspace_write in acceptEdits even with auto approvals (the session switches over the protocol)', () => {

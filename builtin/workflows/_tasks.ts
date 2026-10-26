@@ -64,13 +64,16 @@ export interface ExecuteOptions {
   title: string;
   /** Per task id: the engine that codes it (reviewed by the other one). */
   engines?: Readonly<Record<string, 'claude' | 'codex' | null | undefined>>;
+  /** Branch to start from and merge into (default: the run's base: a lead's branch, or the checkout's HEAD). */
+  base?: string | null;
 }
 
 export async function executePlan(plan: Plan, opts: ExecuteOptions) {
   const otherEngine = (e: 'claude' | 'codex') => (e === 'claude' ? 'codex' : 'claude');
   const reviewer = otherEngine(opts.coder);
   // ---- implement ----------------------------------------------------------------------------
-  const integration = await git.integration();
+  // Merging and the PR aim at the integration branch's base.
+  const integration = await git.integration(opts.base ? { base: opts.base } : {});
   const results = new Map<string, Promise<TaskResult>>();
   const byId = new Map(plan.tasks.map((t) => [t.id, t]));
   const run = (task: Task): Promise<TaskResult> => {

@@ -7,9 +7,18 @@
 import type { Readable, Writable } from 'node:stream';
 import { AsyncQueue, deferred } from '../../util/async-queue.ts';
 import type { Logger } from '../../util/log.ts';
-import type { AgentEvent, AgentSession, ApprovalDecision, Approvals, SessionOptions } from '../types.ts';
+import type {
+  AgentEvent,
+  AgentSession,
+  ApprovalDecision,
+  Approvals,
+  QuestionAnswers,
+  SessionOptions,
+} from '../types.ts';
 import { ClaudeStreamParser, LineBuffer, type ParserOutput } from './parser.ts';
 import {
+  askUserAnswerInput,
+  askUserQuestions,
   controlError,
   controlSuccess,
   interruptRequest,
@@ -220,6 +229,20 @@ export class ClaudeSession implements AgentSession {
     this.write(permissionResponse(pending, decision));
   }
 
+  async answer(requestId: string, answers: QuestionAnswers | null): Promise<void> {
+    const pending = this.approvals.get(requestId);
+    if (!pending) throw new Error(`no pending question ${requestId}`);
+    this.approvals.delete(requestId);
+    this.write(
+      permissionResponse(
+        pending,
+        answers
+          ? { behavior: 'allow', scope: 'once', updatedInput: askUserAnswerInput(pending.input, answers) }
+          : { behavior: 'deny', message: 'The user declined to answer the question.', interrupt: false },
+      ),
+    );
+  }
+
   private async terminate(): Promise<void> {
     if (this.exited) return;
     this.child.kill('SIGTERM');
@@ -257,6 +280,17 @@ export class ClaudeSession implements AgentSession {
         this.handleEvent(output.event);
         return;
       case 'permission':
+        if (output.request.toolName === 'AskUserQuestion') {
+          // Not a permission: the agent asks the user (also when read-only), and the answers go back as the
+          // tool's input.
+          this.approvals.set(output.request.requestId, output.request);
+          this.emit({
+            type: 'question',
+            requestId: output.request.requestId,
+            questions: askUserQuestions(output.request.input),
+          });
+          return;
+        }
         if (this.readOnly) {
           // No human in the loop: the policy answers (see `read-only-policy.ts`).
           const { toolName, input } = output.request;

@@ -47,8 +47,9 @@ export interface EngineInfo {
  *   ask is answered by a host-side policy (read-only probes and reads pass, the rest is denied), never a human;
  *   Codex `sandbox: read-only`, `approvalPolicy: never`.
  * - workspace_write (coders, the assistant): Claude `acceptEdits` + curated allowed tools; everything else is asked
- *   in-band (`approval_request`), or answered by the engine's auto mode when `approvals` is `auto`; Codex
- *   `sandbox: workspace-write`, `approvalPolicy: on-request`.
+ *   in-band (`approval_request`); Codex `sandbox: workspace-write`, `approvalPolicy: on-request`. With
+ *   `approvals: auto` things are allowed by default: Claude's auto mode (its classifier answers), Codex with no
+ *   sandbox and no approvals (`--dangerously-bypass-approvals-and-sandbox`).
  */
 export interface PermissionProfile {
   mode: 'read_only' | 'workspace_write';
@@ -56,7 +57,7 @@ export interface PermissionProfile {
   allowedCommands: readonly string[];
   /** Web search and fetch tools are allowed. */
   web: boolean;
-  /** Who answers what `workspace_write` would ask: the human (`ask`) or the engine's own automatic review (`auto`). */
+  /** What `workspace_write` would ask: the human answers (`ask`), or it is allowed (`auto`: Claude auto mode, Codex bypass). */
   approvals: Approvals;
 }
 
@@ -140,6 +141,8 @@ export type AgentEvent =
   | { type: 'file_change'; path: string; added: number; removed: number }
   | { type: 'todo'; items: TodoItem[] }
   | { type: 'approval_request'; requestId: string; tool: string; input: unknown; reason: string | null }
+  /** The agent asks the user (Claude `AskUserQuestion`, Codex `request_user_input`); answer with `answer()`. */
+  | { type: 'question'; requestId: string; questions: UserQuestion[] }
   /** Cumulative for the session when the engine reports it: take the latest, never sum. */
   | { type: 'usage'; inputTokens: number; outputTokens: number; costUsd: number | null }
   | { type: 'rate_limit'; engine: EngineKind; window: string; usedPct: number; resetsAt: number | null }
@@ -165,7 +168,28 @@ export interface AgentSession {
   close(): Promise<void>;
   /** Answer an `approval_request` by its requestId. */
   respond(requestId: string, decision: ApprovalDecision): Promise<void>;
+  /** Answer a `question` by its requestId; null when the user declines to answer. */
+  answer(requestId: string, answers: QuestionAnswers | null): Promise<void>;
 }
+
+/** One question an agent asks the user, the same shape for both engines. */
+export interface UserQuestion {
+  /** What the answer is keyed by. */
+  id: string;
+  /** A short label (a chip), when the agent gave one. */
+  header: string | null;
+  question: string;
+  options: { label: string; description: string | null }[];
+  /** More than one option may be picked. */
+  multiSelect: boolean;
+  /** A typed answer is allowed besides the options (always, when there are none). */
+  allowOther: boolean;
+  /** The answer should not be shown (a password, a token). */
+  secret: boolean;
+}
+
+/** Answers by question id: the picked option labels, or the typed text, as a list. */
+export type QuestionAnswers = Record<string, string[]>;
 
 export interface AgentEngine {
   readonly kind: EngineKind;

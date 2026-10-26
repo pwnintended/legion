@@ -18,9 +18,10 @@
  * [assistant]
  * engine = "claude"             # the engine you talk to
  * model  = "opus"
+ * approvals = "auto"            # its tool approvals: auto (allowed) | ask (you)
  *
  * [workflows]
- * approvals = "ask"             # who answers agents' tool approvals: ask (you) | auto (the engine's auto mode)
+ * approvals = "auto"            # agents' tool approvals: auto (Claude auto mode, Codex bypass) | ask (you)
  * maxAgents = 4                 # agent sessions alive at once per run
  * ```
  *
@@ -82,14 +83,17 @@ export const ConfigSchema = z.object({
       engine: z.enum(['claude', 'codex']).default('claude'),
       model: z.string().optional(),
       effort: EffortSchema.optional(),
+      /** Its own tool approvals: allowed (Claude's auto mode, Codex without sandbox or approvals), or asked. */
+      approvals: z.enum(['ask', 'auto']).default('auto'),
     })
-    .default({ engine: 'claude' }),
+    .default({ engine: 'claude', approvals: 'auto' }),
   workflows: z
     .object({
-      approvals: z.enum(['ask', 'auto']).default('ask'),
+      /** Agents' tool approvals: allowed (Claude's auto mode, Codex without sandbox or approvals), or asked. */
+      approvals: z.enum(['ask', 'auto']).default('auto'),
       maxAgents: z.number().int().min(1).max(32).default(4),
     })
-    .default({ approvals: 'ask', maxAgents: 4 }),
+    .default({ approvals: 'auto', maxAgents: 4 }),
   workflow: z.record(z.string(), WorkflowModelsSchema).default({}),
   /** `[mcp.servers.<name>]`: given to every lead and every workflow agent, on both engines. */
   mcp: z.object({ servers: z.record(z.string(), McpServerSchema).default({}) }).default({ servers: {} }),
@@ -233,9 +237,10 @@ export function defaultProjectConfig(config: Config): string {
     line('engine', assistant.engine, 'the engine you talk to: claude | codex'),
     line('model', assistant.model ?? 'opus', "the assistant's model (default: the CLI's)", !!assistant.model),
     line('effort', assistant.effort ?? 'high', 'low | medium | high | xhigh | max', !!assistant.effort),
+    line('approvals', assistant.approvals, 'its tool approvals: auto (allowed) | ask (you)'),
     '',
     '[workflows]',
-    line('approvals', workflows.approvals, "agents' tool approvals: ask (you) | auto (the engine decides)"),
+    line('approvals', workflows.approvals, "agents' tool approvals: auto (allowed) | ask (you)"),
     line('maxAgents', workflows.maxAgents, 'agent sessions alive at once per run'),
     '',
     '[team]',

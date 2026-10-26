@@ -58,6 +58,8 @@ function testHost(
       host.interactions.push(interaction);
       if (interaction.kind === 'gate') return (opts.gate?.(interaction) ?? { choice: 'approve', note: null }) as never;
       if (interaction.kind === 'ask') return { answer: 'yes' } as never;
+      if (interaction.kind === 'questions')
+        return { answers: Object.fromEntries(interaction.questions.map((q) => [q.id, ['picked']])) } as never;
       return { behavior: 'allow', scope: 'once', updatedInput: null } as never;
     },
     git: undefined as never,
@@ -262,6 +264,23 @@ describe('runtime', () => {
     });
     await exec(host, () => agent('a', { prompt: 'clean' }));
     expect(host.interactions[0]).toMatchObject({ kind: 'approval', tool: 'Bash', key: 'a' });
+  });
+
+  it("routes an agent's own questions to the host and returns the answers", async () => {
+    const question = {
+      id: 'q',
+      header: null,
+      question: 'Which?',
+      options: [],
+      multiSelect: false,
+      allowOther: true,
+      secret: false,
+    };
+    const host = testHost({ script: () => ({ questions: [question] }) });
+    const text = await exec(host, () => agent('a', { prompt: 'ask me' }));
+    expect(host.interactions[0]).toMatchObject({ kind: 'questions', key: 'a', questions: [question] });
+    expect(host.engines.get('claude')?.calls[0]?.answers).toEqual([{ q: ['picked'] }]);
+    expect(text).toContain('picked');
   });
 
   it('cancellation stops before the next step', async () => {

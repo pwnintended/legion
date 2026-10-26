@@ -53,13 +53,15 @@ describe('permissions', () => {
       approvalPolicy: 'on-request',
       approvalsReviewer: 'user',
     });
+    // auto: everything allowed, like --dangerously-bypass-approvals-and-sandbox.
     expect(policyFor(permissionProfile('workspace_write', { approvals: 'auto' }))).toEqual({
-      sandbox: 'workspace-write',
-      approvalPolicy: 'on-request',
-      approvalsReviewer: 'auto_review',
+      sandbox: 'danger-full-access',
+      approvalPolicy: 'never',
+      approvalsReviewer: 'user',
     });
-    // read_only never asks, so the reviewer setting does not apply.
+    // read_only stays read-only whatever approvals say.
     expect(policyFor({ ...permissionProfile('read_only'), approvals: 'auto' })).toMatchObject({
+      sandbox: 'read-only',
       approvalsReviewer: 'user',
     });
   });

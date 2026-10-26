@@ -2,7 +2,7 @@ import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { render } from 'ink-testing-library';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import type { FakeEngine } from '../engine/fake/index.ts';
+import { defaultScript, type FakeEngine } from '../engine/fake/index.ts';
 import { type FixtureRepo, makeRepo } from '../git/test-helpers.ts';
 import { Session } from '../session.ts';
 import { ROOT } from '../team/team.ts';
@@ -97,8 +97,9 @@ describe('App', () => {
     await tick();
     ui.stdin.write('\r');
     await until(() => ui.lastFrame()?.includes('◆ Settings') ?? false);
-    // Save to, engine, model, effort, approvals, maxAgents: five rows down, then two steps right.
-    for (let i = 0; i < 5; i++) {
+    // Save to, engine, model, effort, approvals (assistant), approvals (workflows), maxAgents: six rows down,
+    // then two steps right.
+    for (let i = 0; i < 6; i++) {
       ui.stdin.write('\u001B[B');
       await tick(30);
     }
@@ -203,6 +204,13 @@ describe('App', () => {
     session.team.spawn(ROOT, { role: 'team-lead', name: 'assets', brief: 'Make the assets.' });
     await until(() => /team\s+1 lead/.test(ui.lastFrame() ?? ''));
     expect(ui.lastFrame()).toMatch(/assets team-lead/);
+    // Team and activity live under the prompt, not in the chat.
+    const frame = ui.lastFrame() ?? '';
+    const prompt = frame.indexOf('Ask anything');
+    expect(prompt).toBeGreaterThan(-1);
+    expect(frame.indexOf('team ')).toBeGreaterThan(prompt);
+    expect(frame.indexOf('activity')).toBeGreaterThan(prompt);
+    expect(frame).toMatch(/◆ assets spawn|◆ assets/);
 
     // A lead's run asks its lead, not the user.
     const id = await session.runs.start('hello', {}, { owner: 'assets' });
@@ -238,6 +246,161 @@ describe('App', () => {
     await tick();
     ui.stdin.write('\r');
     await until(() => ui.lastFrame()?.includes('Back to the orchestrator.') ?? false);
+    ui.unmount();
+  });
+
+  it("answers the assistant's own questions (AskUserQuestion) instead of approving a tool", async () => {
+    const engine = session.engine('claude') as FakeEngine;
+    engine.script = (call, turn) =>
+      turn === 0
+        ? {
+            questions: [
+              {
+                id: 'Which body?',
+                header: 'Body',
+                question: 'Which body?',
+                options: [
+                  { label: 'A', description: 'The current one' },
+                  { label: 'B', description: null },
+                ],
+                multiSelect: false,
+                allowOther: true,
+                secret: false,
+              },
+              {
+                id: 'Which pieces?',
+                header: null,
+                question: 'Which pieces?',
+                options: [
+                  { label: 'helmet', description: null },
+                  { label: 'boots', description: null },
+                  { label: 'jacket', description: null },
+                ],
+                multiSelect: true,
+                allowOther: true,
+                secret: false,
+              },
+            ],
+          }
+        : defaultScript(call, turn);
+    const ui = render(<App controller={new Controller(session)} />);
+    await tick();
+    ui.stdin.write('plan the armour');
+    await tick();
+    ui.stdin.write('\r');
+    await until(() => ui.lastFrame()?.includes('Which body?') ?? false);
+    expect(ui.lastFrame()).not.toContain('Allow');
+    expect(ui.lastFrame()).toContain('The current one');
+    expect(ui.lastFrame()).toContain('1/2');
+
+    // Down to B, Enter: on to the second question.
+    ui.stdin.write('\u001B[B');
+    await tick();
+    ui.stdin.write('\r');
+    await until(() => ui.lastFrame()?.includes('Which pieces?') ?? false);
+    // Toggle helmet and jacket with Space, Enter confirms.
+    ui.stdin.write(' ');
+    await tick();
+    ui.stdin.write('\u001B[B');
+    await tick();
+    ui.stdin.write('\u001B[B');
+    await tick();
+    ui.stdin.write(' ');
+    await tick();
+    expect(ui.lastFrame()).toContain('◉');
+    ui.stdin.write('\r');
+    await until(() => engine.calls[0]?.answers.length === 1);
+    expect(engine.calls[0]?.answers[0]).toEqual({ 'Which body?': ['B'], 'Which pieces?': ['helmet', 'jacket'] });
+    ui.unmount();
+  });
+
+  it('declines questions on Esc and takes typed answers', async () => {
+    const engine = session.engine('claude') as FakeEngine;
+    const q = (id: string) => ({
+      id,
+      header: null,
+      question: id,
+      options: [{ label: 'yes', description: null }],
+      multiSelect: false,
+      allowOther: true,
+      secret: false,
+    });
+    engine.script = (call, turn) =>
+      turn === 0 ? { questions: [q('Go?')] } : turn === 1 ? { questions: [q('Really?')] } : defaultScript(call, turn);
+    const ui = render(<App controller={new Controller(session)} />);
+    await tick();
+    ui.stdin.write('start');
+    await tick();
+    ui.stdin.write('\r');
+    await until(() => ui.lastFrame()?.includes('Go?') ?? false);
+    ui.stdin.write('\u001B');
+    await until(() => engine.calls[0]?.answers.length === 1);
+    expect(engine.calls[0]?.answers[0]).toBeNull();
+
+    ui.stdin.write('again');
+    await tick();
+    ui.stdin.write('\r');
+    await until(() => ui.lastFrame()?.includes('Really?') ?? false);
+    ui.stdin.write('only on Fridays');
+    await tick();
+    ui.stdin.write('\r');
+    await until(() => engine.calls[0]?.answers.length === 2);
+    expect(engine.calls[0]?.answers[1]).toEqual({ 'Really?': ['only on Fridays'] });
+    ui.unmount();
+  });
+
+  it('keeps tool calls out of the chat and shows them in /activity', async () => {
+    const engine = session.engine('claude') as FakeEngine;
+    const controller = new Controller(session);
+    const ui = render(<App controller={controller} />);
+    await tick();
+    controller.store.assistantEvent({
+      type: 'tool_call',
+      id: 't1',
+      name: 'Bash',
+      input: { command: 'ls docs' },
+      kind: 'command',
+    });
+    controller.store.assistantEvent({ type: 'message', text: 'Here they are.' });
+    await until(() => ui.lastFrame()?.includes('Here they are.') ?? false);
+    expect(ui.lastFrame()).not.toContain('ls docs');
+    ui.stdin.write('/activity');
+    await tick();
+    ui.stdin.write('\r');
+    await until(() => ui.lastFrame()?.includes('Bash ls docs') ?? false);
+    expect(engine.calls).toHaveLength(0);
+    ui.unmount();
+  });
+
+  it('writes what the orchestrator presents into the scrollback, with links', async () => {
+    const ui = render(<App controller={new Controller(session)} />);
+    await tick();
+    session.team.present({
+      title: 'Creator mockup',
+      items: [{ kind: 'url', target: 'http://localhost:5173/', caption: 'The live page' }],
+    });
+    await until(() => ui.frames.join('').includes('Creator mockup'));
+    const out = ui.frames.join('');
+    expect(out).toContain('The live page');
+    expect(out).toContain('\u001B]8;;http://localhost:5173/');
+    ui.unmount();
+  });
+
+  it('inserts a newline on Shift+Enter (kitty keyboard protocol) and sends on Enter', async () => {
+    const ui = render(<App controller={new Controller(session)} />);
+    await tick();
+    ui.stdin.write('first line');
+    await tick();
+    // CSI 13;2u: Enter with Shift, as kitty-protocol terminals report it.
+    ui.stdin.write('\u001B[13;2u');
+    await tick();
+    ui.stdin.write('second line');
+    await tick();
+    expect(ui.lastFrame()).toMatch(/› first line +│\n│ +second line/);
+    ui.stdin.write('\r');
+    await until(() => ui.lastFrame()?.includes('(fake claude reply)') ?? false);
+    const sent = (session.engine('claude') as FakeEngine).calls[0]?.prompts[0];
+    expect(sent).toBe('first line\nsecond line');
     ui.unmount();
   });
 });

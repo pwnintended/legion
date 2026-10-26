@@ -4,7 +4,7 @@
  * `control_response` with `PermissionResult`), which drives the same CLI.
  */
 import { hasShellMeta } from '../../util/shell.ts';
-import type { ApprovalDecision } from '../types.ts';
+import type { ApprovalDecision, QuestionAnswers, UserQuestion } from '../types.ts';
 
 export type StdinMessage = Record<string, unknown> & { type: string };
 
@@ -118,4 +118,36 @@ function exactBashCommand(pending: PendingPermission): string | null {
   if (typeof command !== 'string') return null;
   const trimmed = command.trim();
   return trimmed.length > 0 && trimmed.length <= 500 && !hasShellMeta(trimmed) ? trimmed : null;
+}
+
+/**
+ * `AskUserQuestion`'s input as Legion questions. The tool takes `questions: [{ question, header, options: [{ label,
+ * description }], multiSelect }]`; its answers are keyed by the question text, so that is the id.
+ */
+export function askUserQuestions(input: unknown): UserQuestion[] {
+  const list = isRecord(input) && Array.isArray(input.questions) ? input.questions : [];
+  return list.filter(isRecord).map((q) => ({
+    id: String(q.question ?? ''),
+    header: typeof q.header === 'string' ? q.header : null,
+    question: String(q.question ?? ''),
+    options: (Array.isArray(q.options) ? q.options : []).filter(isRecord).map((o) => ({
+      label: String(o.label ?? ''),
+      description: typeof o.description === 'string' ? o.description : null,
+    })),
+    multiSelect: q.multiSelect === true,
+    // The CLI always offers "Other" with a typed answer.
+    allowOther: true,
+    secret: false,
+  }));
+}
+
+/** The tool input that carries the user's answers: the original questions plus `answers` (labels, comma-joined). */
+export function askUserAnswerInput(input: unknown, answers: QuestionAnswers): Record<string, unknown> {
+  const joined: Record<string, string> = {};
+  for (const [question, values] of Object.entries(answers)) joined[question] = values.join(', ');
+  return { ...(isRecord(input) ? input : {}), answers: joined };
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }

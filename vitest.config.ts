@@ -1,3 +1,5 @@
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { defineConfig } from 'vitest/config';
 
@@ -9,5 +11,7 @@ export default defineConfig({
     include: ['src/**/*.test.ts', 'src/**/*.test.tsx', 'builtin/**/*.test.ts'],
     exclude: ['src/**/*.live.test.ts', 'node_modules/**', 'dist/**'],
     testTimeout: 15_000,
+    // Worktrees the tests make (runs, leads) stay out of ~/.legion.
+    env: { LEGION_WORKTREES: join(tmpdir(), 'legion-test-worktrees') },
   },
 });

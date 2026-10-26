@@ -26,6 +26,7 @@ import { FakeEngine } from './engine/fake/index.ts';
 import type { AgentEngine, EngineKind } from './engine/types.ts';
 import { isRepo, toplevel } from './git/index.ts';
 import { TeamManager } from './team/team.ts';
+import { createWorkspaces } from './team/workspace.ts';
 import { fileLogger, type Logger } from './util/log.ts';
 import { createGitOps } from './workflow/git-ops.ts';
 import type { GitOps } from './workflow/host.ts';
@@ -95,6 +96,7 @@ export class Session {
       mcp: { legion: { type: 'http', url: init.mcp.url, headers: { Authorization: `Bearer ${init.mcp.token}` } } },
       model: () => this.config.assistant.model ?? null,
       effort: () => this.config.assistant.effort ?? null,
+      approvals: () => this.config.assistant.approvals,
       sessionId: init.resumeAssistant,
       log: this.log,
     });
@@ -158,7 +160,9 @@ export class Session {
           parent: lead.parent,
           depth: lead.depth,
           maxDepth: bound().config.team.maxDepth,
+          workspace: lead.workspace ?? null,
         }),
+      workspaces: isGitRepo ? createWorkspaces(repo) : null,
       log,
     });
     const mcp = await startMcpServer({ repo, runs, team, log });

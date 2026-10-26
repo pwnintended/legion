@@ -141,7 +141,13 @@ function setup(session: Session): void {
 
 async function interactive(session: Session, initial: string): Promise<number> {
   const controller = new Controller(session);
-  const instance = render(<App controller={controller} />, { exitOnCtrlC: false, maxFps: 30 });
+  const instance = render(<App controller={controller} />, {
+    exitOnCtrlC: false,
+    maxFps: 30,
+    // Terminals that speak the kitty keyboard protocol (Ghostty, kitty, WezTerm, iTerm2, …) report Shift+Enter
+    // apart from Enter, so it can insert a newline. Ink asks the terminal first; others are left as they are.
+    kittyKeyboard: { mode: 'auto', flags: ['disambiguateEscapeCodes'] },
+  });
   if (initial.trim()) void controller.submit(initial);
   await instance.waitUntilExit();
   const active = session.runs.activeRuns();
@@ -229,6 +235,20 @@ async function answer(
     const a = (await rl.question(`? ${i.question} `)).trim();
     const n = /^\d+$/.test(a) ? i.options[Number(a) - 1] : undefined;
     session.runs.answer(item.id, { answer: n ?? a });
+  } else if (i.kind === 'questions') {
+    const answers: Record<string, string[]> = {};
+    for (const q of i.questions) {
+      for (const [n, o] of q.options.entries())
+        console.log(`  ${n + 1}. ${o.label}${o.description ? ` — ${o.description}` : ''}`);
+      const hint = q.multiSelect ? ' (numbers separated by commas, or text)' : '';
+      const a = (await rl.question(`? ${q.question}${hint} `)).trim();
+      const picked = a
+        .split(',')
+        .map((x) => x.trim())
+        .map((x) => (/^\d+$/.test(x) ? q.options[Number(x) - 1]?.label : undefined));
+      answers[q.id] = picked.every(Boolean) && a ? (picked as string[]) : [a];
+    }
+    session.runs.answer(item.id, { answers });
   } else {
     const input = JSON.stringify(i.input);
     const a = (await rl.question(`Allow ${i.tool} ${input.slice(0, 200)} (${i.key})? [y]es / [s]ession / [n]o: `))

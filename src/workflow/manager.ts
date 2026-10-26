@@ -10,7 +10,16 @@ import { type Config, resolveAgentModel } from '../config.ts';
 import type { AgentEngine, AgentSession, EngineKind, McpServer } from '../engine/types.ts';
 import type { Logger } from '../util/log.ts';
 import { silentLogger } from '../util/log.ts';
-import type { GitOps, Interaction, InteractionAnswer, RunEvent, RunHost, ShellOptions, ShellResult } from './host.ts';
+import {
+  type GitOps,
+  type Interaction,
+  type InteractionAnswer,
+  type RunEvent,
+  type RunHost,
+  type ShellOptions,
+  type ShellResult,
+  withDefaultBase,
+} from './host.ts';
 import { Journal, listRuns, newRunId, type RunRecord, readRun, runsDir, writeRun } from './journal.ts';
 import { findWorkflow, loadWorkflow } from './loader.ts';
 import { executeInRun, WorkflowCancelled } from './runtime.ts';
@@ -78,7 +87,11 @@ export class RunManager extends EventEmitter<RunManagerEvents> {
   }
 
   /** Validates `input` and starts the workflow. Resolves with the run id once it is running. */
-  async start(nameOrPath: string, input: unknown, opts: { owner?: string } = {}): Promise<string> {
+  async start(
+    nameOrPath: string,
+    input: unknown,
+    opts: { owner?: string; base?: string; cwd?: string } = {},
+  ): Promise<string> {
     const found = findWorkflow(this.opts.repo, nameOrPath);
     if (!found) throw new Error(`No workflow named "${nameOrPath}"`);
     const def = await loadWorkflow(found.file);
@@ -95,6 +108,8 @@ export class RunManager extends EventEmitter<RunManagerEvents> {
       file: found.file,
       input: parsed.data,
       ...(opts.owner ? { owner: opts.owner } : {}),
+      ...(opts.base ? { base: opts.base } : {}),
+      ...(opts.cwd ? { cwd: opts.cwd } : {}),
       status: 'running',
       profiles: this.opts.profiles(),
       repo: this.opts.repo,
@@ -269,16 +284,16 @@ export class RunManager extends EventEmitter<RunManagerEvents> {
     const manager = this;
     const opts = this.opts;
     return {
-      repo: opts.repo,
+      repo: record.cwd ?? opts.repo,
       dryRun: false,
       maxAgents: opts.maxAgents ?? 4,
-      approvals: opts.approvals ?? 'ask',
+      approvals: opts.approvals ?? 'auto',
       mcp: () => opts.mcp?.() ?? {},
       agentModel: (req) => {
         const r = resolveAgentModel(opts.agentModels?.() ?? {}, { ...req, workflow: record.workflow });
         return { engine: r.engine as EngineKind, model: r.model, effort: r.effort };
       },
-      git: opts.git,
+      git: record.base ? withDefaultBase(opts.git, record.base) : opts.git,
       engine: (kind) => opts.engine(kind),
       agentSession: (step, session) => {
         let live = manager.sessions.get(record.id);

@@ -5,15 +5,15 @@
  * the agent's own file tools; `validate_workflow` is the feedback loop after every write.
  */
 import { timingSafeEqual } from 'node:crypto';
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import type { AddressInfo } from 'node:net';
-import { join } from 'node:path';
+import { extname, isAbsolute, join, resolve } from 'node:path';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { z } from 'zod';
 import { listRoles } from '../team/roles.ts';
-import { PLAN_STATUSES, REPORT_KINDS, ROOT, type TeamManager } from '../team/team.ts';
+import { PLAN_STATUSES, type PresentedItem, REPORT_KINDS, ROOT, type TeamManager } from '../team/team.ts';
 import type { Logger } from '../util/log.ts';
 import { builtinSourceDir, ejectWorkflow, findWorkflow, listWorkflowFiles, loadWorkflow } from '../workflow/loader.ts';
 import type { RunManager } from '../workflow/manager.ts';
@@ -181,12 +181,20 @@ function buildServer(ctx: Caller): McpServer {
     },
     guard(log, async ({ name, input }: { name: string; input: Record<string, unknown> }) => {
       team.checkRun(ctx.name, name);
-      const runId = await runs.start(name, input, isRoot ? {} : { owner: ctx.name });
+      const runId = await runs.start(name, input, isRoot ? {} : { owner: ctx.name, ...team.runPlace(ctx.name) });
+      const place = team.runPlace(ctx.name);
+      const uncommitted = await team.uncommitted(ctx.name);
       return {
         runId,
+        ...(place.base ? { startsFrom: place.base, worksIn: place.cwd } : {}),
         note: isRoot
           ? 'Running. Progress and gates are shown to the user directly.'
           : 'Running. Its gates and questions will come to you.',
+        ...(uncommitted.length
+          ? {
+              warning: `${uncommitted.length} uncommitted file(s) in ${team.checkoutOf(ctx.name)} are not in this run's worktrees, which start from the last commit: ${uncommitted.slice(0, 20).join(', ')}${uncommitted.length > 20 ? ', …' : ''}. If its agents need them, cancel the run, commit them, and start it again.`,
+            }
+          : {}),
       };
     }),
   );
@@ -301,6 +309,8 @@ function buildServer(ctx: Caller): McpServer {
   return server;
 }
 
+const IMAGE_FILE = /^\.(png|jpe?g|gif|webp|bmp|tiff?|heic)$/i;
+
 function registerTeamTools(server: McpServer, ctx: Caller): void {
   const { repo, team, log } = ctx;
   const isRoot = ctx.name === ROOT;
@@ -322,6 +332,7 @@ function registerTeamTools(server: McpServer, ctx: Caller): void {
         : null,
       activeRuns: team.activeRuns(name).map((r) => ({ id: r.id, workflow: r.workflow, status: r.status })),
       waitingForItsAnswer: team.pending(name).length,
+      ...(l.workspace ? { worktree: l.workspace.path, branch: l.workspace.branch, base: l.workspace.base } : {}),
       leads: team.children(name).map((c) => c.name),
       costUsd: Math.round(l.costUsd * 100) / 100,
     };
@@ -411,6 +422,58 @@ function registerTeamTools(server: McpServer, ctx: Caller): void {
     }),
   );
 
+  if (isRoot) {
+    server.registerTool(
+      'present',
+      {
+        description:
+          "Show the user something to look at: screenshots, renders, concept art, a web page, a document. Images appear inline in their terminal when it can draw them; every item also gets a link they can click to open it. Use it when you bring the user a lead's review, or whenever seeing beats describing. Then say in your reply what to look at and what you want to know.",
+        inputSchema: {
+          title: z.string().describe('One line: what this is, e.g. "Body B blockout: front, side, back".'),
+          items: z
+            .array(
+              z.object({
+                target: z.string().describe('A file path (absolute, or relative to the repository) or an http(s) URL.'),
+                caption: z.string().optional().describe('What this one shows.'),
+              }),
+            )
+            .min(1)
+            .max(12),
+        },
+      },
+      guard(log, async ({ title, items }: { title: string; items: { target: string; caption?: string }[] }) => {
+        const presented = items.map((i): PresentedItem => {
+          const caption = i.caption ?? null;
+          if (/^https?:\/\//i.test(i.target)) return { kind: 'url', target: i.target, caption };
+          const path = isAbsolute(i.target) ? i.target : resolve(repo, i.target);
+          if (!existsSync(path)) throw new Error(`No such file: ${path}`);
+          return { kind: IMAGE_FILE.test(extname(path)) ? 'image' : 'file', target: path, caption };
+        });
+        team.present({ title, items: presented });
+        return {
+          shown: presented.map((p) => `${p.kind}: ${p.target}`),
+          note: 'Shown to the user (inline where their terminal draws images, as links otherwise).',
+        };
+      }),
+    );
+  }
+
+  server.registerTool(
+    'merge_lead',
+    {
+      description: isRoot
+        ? "Merge one of your leads' branch (its committed work, plus anything it left uncommitted) into the branch checked out in the user's checkout, so the user sees it there. Do it when the lead reports done, or when the user wants its work. Fails on a conflict; then ask the lead to merge that branch into its own and resolve it."
+        : "Merge one of your leads' branch (its committed work, plus anything it left uncommitted) into your branch. Do it when the lead reports done. Fails on a conflict; then ask the lead to merge your branch into its own and resolve it.",
+      inputSchema: {
+        name: z.string(),
+        message: z.string().optional().describe('The merge commit message.'),
+      },
+    },
+    guard(log, async ({ name, message }: { name: string; message?: string }) =>
+      team.mergeLead(ctx.name, name, message),
+    ),
+  );
+
   server.registerTool(
     'stop_lead',
     {
@@ -476,13 +539,14 @@ function registerTeamTools(server: McpServer, ctx: Caller): void {
   server.registerTool(
     'answer_interaction',
     {
-      description: `Answer a gate (choice approve | changes | abort, with a note for changes), a question (answer), or a tool approval (allow true | false) from one of your runs.${isRoot ? ' Only when the user asked you to, or [team] gates = "decide" in the config; otherwise the user answers in the UI.' : ''}`,
+      description: `Answer a gate (choice approve | changes | abort, with a note for changes), a question (answer), an agent's own questions (answers: option labels or text by question id; null declines), or a tool approval (allow true | false) from one of your runs.${isRoot ? ' Only when the user asked you to, or [team] gates = "decide" in the config; otherwise the user answers in the UI.' : ''}`,
       inputSchema: {
         id: z.string(),
         choice: z.enum(['approve', 'changes', 'abort']).optional(),
         note: z.string().optional(),
         answer: z.string().optional(),
         allow: z.boolean().optional(),
+        answers: z.record(z.string(), z.array(z.string())).nullable().optional(),
       },
     },
     guard(
@@ -493,6 +557,7 @@ function registerTeamTools(server: McpServer, ctx: Caller): void {
         note?: string;
         answer?: string;
         allow?: boolean;
+        answers?: Record<string, string[]> | null;
       }) => ({ answered: team.answer(ctx.name, args.id, args) }),
     ),
   );

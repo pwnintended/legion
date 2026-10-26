@@ -29,6 +29,11 @@ const Input = z.object({
   verify: z.array(z.string()).default([]).describe('Repository-wide checks run on every task and on the result.'),
   maxFixRounds: z.number().int().min(0).max(5).default(2),
   confirm: z.boolean().default(false).describe('Ask for approval of the plan before starting.'),
+  base: z
+    .string()
+    .nullable()
+    .default(null)
+    .describe("Branch to start from and merge into (default: a lead's own branch, or the checked-out branch)."),
 });
 
 export default workflow(
@@ -58,6 +63,7 @@ export default workflow(
       verify: [],
       maxFixRounds: 1,
       confirm: false,
+      base: null,
     },
   },
   async (input) => {

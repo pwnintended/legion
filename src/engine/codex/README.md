@@ -30,7 +30,7 @@ env = `process.env`, then `profile.env`, then `opts.env`, then `CODEX_HOME` and 
   requestAttestation:false}}` → `{userAgent:'legion/0.160.0 (...)', codexHome, ...}`, then notification
   `initialized`. No `jsonrpc` member on the wire. Server-request ids are numbers starting at **0**.
 - `thread/start {cwd, model, sandbox, approvalPolicy, approvalsReviewer, config, developerInstructions}`;
-  `approvalsReviewer` is `auto_review` when `permission.approvals` is `auto` (= `--approve-for-me`), else `user`
+  `permission.approvals: auto` is `sandbox: danger-full-access, approvalPolicy: never` (= `--dangerously-bypass-approvals-and-sandbox`), `ask` is `workspace-write` + `on-request`
   → `{thread:{id}, model, ...}`. `thread/started` arrives _after_ the response and `thread/resume` sends
   none, so `session_started` is emitted from the response. `thread/resume {threadId, ..., excludeTurns:true}`
   (without `excludeTurns` codex emits a deprecation notice). Unknown id → error `-32600 no rollout found`.

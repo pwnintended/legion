@@ -11,6 +11,7 @@
  * workflows: [asset-critique, concept-sheet]   # or "*"
  * spawns: [fauna-lead, vegetation-lead]        # or "*", or []
  * gates: decide                                # decide | tell | ask: who answers its runs' gates
+ * workspace: branch                            # branch (its own worktree and branch) | shared (the user's checkout)
  * ---
  * You lead asset production…
  * ```
@@ -43,6 +44,11 @@ const FrontmatterSchema = z.object({
   gates: z.enum(['decide', 'tell', 'ask']).default('decide'),
   /** Workflow runs the lead may have active at once. */
   maxRuns: z.number().int().min(1).max(64).default(4),
+  /**
+   * Where the lead works: `branch` = its own worktree on its own branch (its runs start from and merge into it; its
+   * parent merges it up), `shared` = the user's checkout (for leads that only coordinate or read).
+   */
+  workspace: z.enum(['branch', 'shared']).default('branch'),
 });
 
 export interface Role extends z.infer<typeof FrontmatterSchema> {

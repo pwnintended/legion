@@ -39,6 +39,13 @@ export interface RunRecord {
   error: string | null;
   /** The lead that started the run (`orchestrator` when absent): its milestones and interactions go there. */
   owner?: string;
+  /**
+   * The branch the run's worktrees start from and merge into when the workflow names none (a lead's own branch).
+   * Absent: the repository's checked-out HEAD.
+   */
+  base?: string;
+  /** Where agents and shell commands without a `cwd` work (a lead's worktree). Absent: `repo`. */
+  cwd?: string;
 }
 
 export type StepKind = 'agent' | 'gate' | 'ask' | 'sh' | 'step' | 'git' | 'loop' | 'parallel';

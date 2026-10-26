@@ -53,6 +53,16 @@ In the session:
 - **Gates, questions and tool approvals** appear above the prompt. Gates: `y` approve, `c` request changes
   (then type a note), `x` abort the run. Approvals: `y` once, `s` for the session, `n` deny. Questions: type an
   answer or an option number. **Tab** switches between answering and messaging the assistant.
+- **An agent's own questions** (Claude's `AskUserQuestion`, Codex's `request_user_input`), from the assistant, a
+  lead or a workflow agent, show as a question card, not as a tool approval. ↑↓ and Enter pick an option, Space
+  toggles options of a multi-select question, typing gives your own answer (or option numbers, `1,3`), and Esc
+  declines. Several questions are asked one after another and sent together.
+- **The chat holds the conversation only.** What you said, the replies, gates, your answers, errors and your runs'
+  results. Under the prompt you see the active runs, the team and an **activity feed**: lead reports and messages,
+  runs starting, workflow logs, leads' runs finishing. The busy line shows the tool the assistant is running.
+  `/activity [n]` prints the last n feed lines in full, tool calls included.
+- **Shift+Enter** inserts a newline in terminals that speak the kitty keyboard protocol (Ghostty, kitty, WezTerm,
+  iTerm2 with CSI u reporting). Elsewhere, end the line with `\` and press Enter, or use Alt+Enter.
 - Type `/` for the command menu: ↑↓ picks, Tab completes, Enter runs. `/help` lists everything.
 - `/workflows` opens the workflow browser. Enter opens a workflow: its description, its input fields, and its
   agent steps, which a dry run finds along with their engines. There you set the **engine, model and effort** for
@@ -112,11 +122,18 @@ command = "codex"                        # env = { CODEX_HOME = "…" } for anot
 engine = "claude"                        # which engine you talk to
 model  = "opus"                          # optional
 effort = "high"                          # optional
+approvals = "auto"                       # its own tool approvals: auto (allowed) | ask (you)
 
 [workflows]
-approvals = "ask"                        # agents' tool approvals: ask (you) | auto (the engine's auto mode)
+approvals = "auto"                       # agents' tool approvals: auto (allowed) | ask (you)
 maxAgents = 4                            # agent sessions alive at once per run
 ```
+
+Things are allowed by default (`approvals = "auto"`): Claude sessions run in Claude's auto mode, whose
+classifier answers what would be asked, and Codex sessions run without sandbox or approvals, like
+`--dangerously-bypass-approvals-and-sandbox`. With `ask`, Claude edits files freely and asks about the rest,
+and Codex runs in its `workspace-write` sandbox and asks for anything outside it; you answer in the UI.
+Read-only agents (planners, reviewers) stay read-only either way.
 
 ### Models for workflow agents
 
@@ -181,14 +198,37 @@ Who answers a run's gates, questions and tool approvals depends on who started i
 - A lead's runs follow its role's `gates`: `decide` (the default) means the lead answers. `tell` means the lead
   answers and its parent hears every answer. `ask` means you answer, and the lead is told what its run waits on.
 
+### Branches and worktrees
+
+Every lead works in **its own git worktree on its own branch**, `legion/lead/<name>`, under
+`~/.legion/worktrees/<repo>-<hash>/leads/<name>`. It never writes in your checkout or another lead's. A lead
+under the orchestrator branches off the branch you have checked out, and a sub-lead branches off its parent's.
+
+- A lead commits its work on its branch. Workflow runs it starts begin from that branch's last commit, work in its
+  worktree, and merge back into it (`tasks` and `feature` take `base` to aim elsewhere).
+- When a lead reports done, its parent merges the branch up with `merge_lead`. For the orchestrator's leads that
+  means into the branch you have checked out, so the work shows up in your checkout. Uncommitted leftovers are
+  committed first. A conflict is handed back to the lead to resolve on its own branch.
+- `run_workflow` warns the caller when its checkout has uncommitted files, because the run's worktrees won't have
+  them.
+- Agents are told never to make worktrees or branches themselves. A role with `workspace: shared` works in your
+  checkout instead (for leads that only coordinate). Leads created before this change keep working in your
+  checkout.
+- `/team` shows each lead's branch and worktree.
+
 In the session:
 
-- **The team panel** under the runs shows every lead that is not stopped, as a tree. Each line has the lead's
+- **The team panel** under the prompt shows every lead that is not stopped, as a tree. Each line has the lead's
   progress through its plan, the item it is on, its runs and what waits for its answer. Leads' runs show as one
   line each.
 - `/lead <name>` switches the prompt to a lead. You talk to it directly, its replies stream in, and its runs'
   gates and questions join your queue, so you can answer them in its place (it is told you did). `/lead` alone
   goes back to the orchestrator.
+- When the orchestrator wants you to look at something (a lead's review, a screenshot, a page), it uses `present`:
+  images appear inline in terminals that can draw them (kitty graphics in Ghostty and kitty, the iTerm2 protocol
+  in iTerm2 and WezTerm), and every item gets a clickable link (file or URL). In tmux, or a terminal without
+  image support, you get the links. Non-PNG images and huge PNGs are converted with `sips` on macOS.
+  `LEGION_IMAGES=kitty|iterm|off` overrides the detection.
 - `/team` prints the tree with plans and last reports. `/stop <lead>` stops a lead, its sub-leads and their runs.
 
 Leads and the orchestrator can also steer runs. `message_agent` sends a running agent a correction mid-turn.
@@ -214,6 +254,7 @@ spawns: []                # which roles it may spawn as sub-leads, or "*"
 approvals: auto           # its own tool approvals: auto, or ask (you answer them)
 gates: decide             # its runs' gates: decide (the lead) | tell (lead, parent hears) | ask (you)
 maxRuns: 4                # runs it may have active at once
+workspace: branch         # branch (its own worktree and branch) | shared (your checkout)
 ---
 You make the creatures for …
 ```

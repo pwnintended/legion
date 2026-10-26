@@ -9,17 +9,18 @@
  */
 import { randomBytes } from 'node:crypto';
 import { EventEmitter } from 'node:events';
-import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { Assistant, type AssistantApproval } from '../assistant/assistant.ts';
+import { Assistant, type AssistantApproval, type AssistantQuestion } from '../assistant/assistant.ts';
 import type { Config, RealKind } from '../config.ts';
-import type { AgentEngine, AgentEvent, ApprovalDecision, McpServer } from '../engine/types.ts';
+import type { AgentEngine, AgentEvent, ApprovalDecision, McpServer, QuestionAnswers } from '../engine/types.ts';
 import type { Logger } from '../util/log.ts';
 import { silentLogger } from '../util/log.ts';
 import type { GateAnswer, Interaction } from '../workflow/host.ts';
 import type { RunRecord } from '../workflow/journal.ts';
 import type { PendingInteraction, RunManager } from '../workflow/manager.ts';
 import { allows, findRole, type Role } from './roles.ts';
+import type { LeadWorkspace, Workspaces } from './workspace.ts';
 
 export const ROOT = 'orchestrator';
 
@@ -51,6 +52,20 @@ export interface Plan {
   updatedAt: number;
 }
 
+/** One thing the orchestrator shows the user: an image, another file, or a web page. */
+export interface PresentedItem {
+  kind: 'image' | 'file' | 'url';
+  /** An absolute path, or a URL. */
+  target: string;
+  caption: string | null;
+}
+
+/** What `present` shows: images inline when the terminal can draw them, a link to each item either way. */
+export interface Presentation {
+  title: string;
+  items: PresentedItem[];
+}
+
 export type LeadStatus = 'starting' | 'working' | 'idle' | 'done' | 'stopped';
 
 export interface LeadRecord {
@@ -68,6 +83,8 @@ export interface LeadRecord {
   inbox: InboxItem[];
   lastReport: { kind: ReportKind; text: string; at: number } | null;
   costUsd: number;
+  /** Its own worktree and branch (absent: it works in the user's checkout; leads from before workspaces, too). */
+  workspace?: LeadWorkspace | null;
 }
 
 interface LiveLead {
@@ -81,7 +98,7 @@ interface LiveLead {
 export interface TeamEvents {
   /** The tree, a status, a plan or an inbox changed. */
   changed: [];
-  /** Something worth a line in the scrollback: a spawn, a report, a lead stopping. `text` follows the lead's name. */
+  /** A line for the activity feed: a spawn, a report (in full), a lead stopping. `text` follows the lead's name. */
   activity: [
     {
       lead: string;
@@ -95,7 +112,11 @@ export interface TeamEvents {
   'lead-event': [string, AgentEvent];
   /** A lead's own tool approval, when its role says the human answers them. */
   'lead-approval': [string, AssistantApproval];
+  /** A lead asks the user questions itself (`AskUserQuestion`); the user answers them in the UI. */
+  'lead-question': [string, AssistantQuestion];
   'lead-resolved': [string];
+  /** The orchestrator shows the user something (`present`). */
+  present: [Presentation];
 }
 
 export interface TeamOptions {
@@ -107,6 +128,8 @@ export interface TeamOptions {
   mcp: () => Readonly<Record<string, McpServer>>;
   /** A lead's system prompt. */
   prompt: (lead: LeadRecord, role: Role) => string;
+  /** Lead worktrees (null outside a git repository: every lead shares the checkout). */
+  workspaces?: Workspaces | null;
   log?: Logger;
 }
 
@@ -124,6 +147,7 @@ export class TeamManager extends EventEmitter<TeamEvents> {
   private root: Assistant | null = null;
   private mcpUrl: string | null = null;
   private closed = false;
+  private readonly ensuring = new Map<string, Promise<void>>();
 
   constructor(opts: TeamOptions) {
     super();
@@ -237,6 +261,11 @@ export class TeamManager extends EventEmitter<TeamEvents> {
       inbox: [],
       lastReport: null,
       costUsd: 0,
+      workspace:
+        role.workspace === 'branch' && this.opts.workspaces
+          ? // A sub-lead branches off its parent's branch; the orchestrator's leads off the user's (when created).
+            this.opts.workspaces.plan(opts.name, parent?.record.workspace?.branch ?? null)
+          : null,
     };
     this.attach(record, role);
     this.save();
@@ -276,7 +305,7 @@ export class TeamManager extends EventEmitter<TeamEvents> {
       kind: 'report',
       report: kind,
       files,
-      text: `→ ${lead.record.parent}: ${clip(text.replace(/\s+/g, ' '), 200)}${files.length ? ` [${files.length} file${files.length > 1 ? 's' : ''}]` : ''}`,
+      text: `→ ${lead.record.parent}: ${text}`,
     });
   }
 
@@ -327,7 +356,13 @@ export class TeamManager extends EventEmitter<TeamEvents> {
   answer(
     caller: string,
     id: string,
-    answer: { choice?: GateAnswer['choice']; note?: string | null; answer?: string; allow?: boolean },
+    answer: {
+      choice?: GateAnswer['choice'];
+      note?: string | null;
+      answer?: string;
+      allow?: boolean;
+      answers?: Record<string, string[]> | null;
+    },
   ): string {
     const pending = this.opts.runs.pendingInteractions().find((p) => p.id === id);
     if (!pending) throw new Error(`Nothing is waiting with id ${id} (answered already, or its run ended)`);
@@ -343,6 +378,14 @@ export class TeamManager extends EventEmitter<TeamEvents> {
       if (answer.answer === undefined) throw new Error('A question takes answer: "<text>"');
       this.opts.runs.answer(id, { answer: answer.answer });
       said = `question "${i.question}": ${answer.answer}`;
+    } else if (i.kind === 'questions') {
+      if (answer.answers === undefined) {
+        throw new Error('Questions take answers: { "<question id>": ["<option label or text>"] } (or null to decline)');
+      }
+      this.opts.runs.answer(id, { answers: answer.answers });
+      said = answer.answers
+        ? `${i.questions.map((q) => `"${q.question}": ${(answer.answers?.[q.id] ?? []).join(', ') || '(none)'}`).join('; ')}`
+        : 'questions: declined';
     } else {
       if (answer.allow === undefined) throw new Error('A tool approval takes allow: true | false');
       const decision: ApprovalDecision = answer.allow
@@ -361,7 +404,8 @@ export class TeamManager extends EventEmitter<TeamEvents> {
         text: `${caller} answered ${said} in run ${i.runId}.`,
       });
     }
-    if (caller === ROOT || lead) {
+    // Decisions show in the feed; routine tool approvals do not.
+    if ((caller === ROOT || lead) && i.kind !== 'approval') {
       this.emit('activity', { lead: caller, kind: 'message', text: `answered ${said}` });
     }
     return said;
@@ -384,6 +428,10 @@ export class TeamManager extends EventEmitter<TeamEvents> {
 
   answerLeadApproval(name: string, id: string, decision: ApprovalDecision): void {
     void this.leads.get(name)?.assistant.answer(id, decision);
+  }
+
+  answerLeadQuestions(name: string, id: string, answers: QuestionAnswers | null): void {
+    void this.leads.get(name)?.assistant.answerQuestions(id, answers);
   }
 
   interrupt(name: string): Promise<void> {
@@ -437,7 +485,100 @@ export class TeamManager extends EventEmitter<TeamEvents> {
       lead.record.status = 'working';
     }
     await this.makeRoom(name);
+    try {
+      await this.ensureWorkspace(lead);
+    } catch {
+      return; // Reported in the feed; the next message tries again.
+    }
     await lead.assistant.send(text);
+  }
+
+  /** Creates a lead's worktree before its session starts in it (and again if its directory went away). */
+  private ensureWorkspace(lead: LiveLead): Promise<void> {
+    const name = lead.record.name;
+    // Messages arriving together share one creation.
+    let pending = this.ensuring.get(name);
+    if (!pending) {
+      pending = this.createWorkspace(lead).finally(() => this.ensuring.delete(name));
+      this.ensuring.set(name, pending);
+    }
+    return pending;
+  }
+
+  private async createWorkspace(lead: LiveLead): Promise<void> {
+    const ws = lead.record.workspace;
+    if (!ws || !this.opts.workspaces) return;
+    // A sub-lead branches off its parent's branch, which exists once the parent's worktree does.
+    const parent = this.leads.get(lead.record.parent);
+    if (parent) await this.ensureWorkspace(parent);
+    try {
+      const hadBase = ws.base !== null;
+      await this.opts.workspaces.ensure(ws);
+      if (!hadBase) this.save();
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      this.log.warn(`lead ${lead.record.name}: could not create its worktree`, err);
+      lead.record.status = 'idle';
+      this.emit('activity', {
+        lead: lead.record.name,
+        kind: 'message',
+        text: `could not create its worktree ${ws.path} (${ws.branch}): ${message}`,
+      });
+      this.emit('changed');
+      throw err;
+    }
+  }
+
+  /** Shows the user images, files or pages (the orchestrator's `present`). */
+  present(presentation: Presentation): void {
+    this.emit('present', presentation);
+  }
+
+  /** Where a lead's runs start from and work (its branch and worktree), for `run_workflow`. */
+  runPlace(caller: string): { base?: string; cwd?: string } {
+    const ws = caller === ROOT ? null : this.leads.get(caller)?.record.workspace;
+    return ws && existsSync(ws.path) ? { base: ws.branch, cwd: ws.path } : {};
+  }
+
+  /** Uncommitted files where a caller's runs start from (what their worktrees will not have). */
+  async uncommitted(caller: string): Promise<string[]> {
+    if (!this.opts.workspaces) return [];
+    try {
+      return await this.opts.workspaces.uncommitted(this.checkoutOf(caller));
+    } catch {
+      return [];
+    }
+  }
+
+  /** The checkout a caller works in: its worktree, or the user's checkout. */
+  checkoutOf(caller: string): string {
+    return (caller === ROOT ? null : this.leads.get(caller)?.record.workspace?.path) ?? this.opts.repo;
+  }
+
+  /**
+   * Merges a lead's branch into the caller's: its parent's branch, or (for the orchestrator, or a parent without
+   * a worktree) the branch checked out in the user's checkout. What the lead left uncommitted is committed first.
+   */
+  async mergeLead(
+    caller: string,
+    name: string,
+    message?: string,
+  ): Promise<{ into: string; sha: string; files: string[] }> {
+    const lead = this.requireLead(name);
+    if (lead.record.parent !== caller) throw new Error(`${name} is not your lead`);
+    const ws = lead.record.workspace;
+    const workspaces = this.opts.workspaces;
+    if (!ws || !workspaces) throw new Error(`${name} works in the shared checkout; there is no branch to merge`);
+    const mine = caller === ROOT ? null : this.leads.get(caller)?.record.workspace;
+    const into = mine?.branch ?? (await workspaces.main()).branch;
+    if (!into) throw new Error("The user's checkout is on a detached HEAD; there is no branch to merge into");
+    const result = await workspaces.merge(ws, into, message ?? `Merge ${name} (${lead.record.role})`);
+    this.emit('activity', {
+      lead: name,
+      kind: 'message',
+      text: `merged into ${into} by ${caller}: ${result.files.length} file${result.files.length === 1 ? '' : 's'}`,
+    });
+    return { into, ...result };
   }
 
   /** Keeps at most `team.maxLeads` lead processes alive by closing the longest-idle ones (they resume later). */
@@ -497,7 +638,7 @@ export class TeamManager extends EventEmitter<TeamEvents> {
     const token = randomBytes(24).toString('base64url');
     this.tokenOwners.set(token, record.name);
     const assistant = new Assistant({
-      cwd: this.opts.repo,
+      cwd: record.workspace?.path ?? this.opts.repo,
       engine: () => this.opts.engine(role.engine),
       systemPrompt: () => this.opts.prompt(record, role),
       mcp: {
@@ -530,6 +671,7 @@ export class TeamManager extends EventEmitter<TeamEvents> {
       this.emit('lead-event', record.name, event);
     });
     assistant.on('approval', (a) => this.emit('lead-approval', record.name, a));
+    assistant.on('question', (q) => this.emit('lead-question', record.name, q));
     assistant.on('resolved', (id) => this.emit('lead-resolved', id));
     return live;
   }
@@ -613,7 +755,10 @@ function indent(text: string): string {
 }
 
 function interactionTitle(i: Interaction): string {
-  return i.kind === 'gate' ? i.title : i.kind === 'ask' ? i.question : i.tool;
+  if (i.kind === 'gate') return i.title;
+  if (i.kind === 'ask') return i.question;
+  if (i.kind === 'questions') return i.questions.map((q) => q.question).join(' / ');
+  return i.tool;
 }
 
 function describeInteraction(id: string, i: Interaction, run: RunRecord | null): string {
@@ -623,6 +768,15 @@ function describeInteraction(id: string, i: Interaction, run: RunRecord | null):
   }
   if (i.kind === 'ask') {
     return `Question in ${where}: ${i.question}${i.options.length ? `\nOptions: ${i.options.join(' | ')}` : ''}\nid: ${id}. Answer with answer_interaction({ id: "${id}", answer }).`;
+  }
+  if (i.kind === 'questions') {
+    const list = i.questions
+      .map(
+        (q) =>
+          `- id "${q.id}": ${q.question}${q.options.length ? `\n  Options: ${q.options.map((o) => o.label).join(' | ')}` : ''}${q.multiSelect ? ' (several may be picked)' : ''}`,
+      )
+      .join('\n');
+    return `Questions from the agent in ${where}. id: ${id}\n${list}\nAnswer with answer_interaction({ id: "${id}", answers: { "<question id>": ["<label or text>"] } }), or answers: null to decline.`;
   }
   return `Tool approval in ${where}: ${i.tool} ${clip(JSON.stringify(i.input), 1500)}${i.reason ? `\nReason: ${i.reason}` : ''}\nid: ${id}. Answer with answer_interaction({ id: "${id}", allow: true | false, note }).`;
 }

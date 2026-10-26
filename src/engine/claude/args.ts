@@ -4,6 +4,8 @@
  * Every flag is re-passed on resume: the CLI does not restore model, permissions, MCP config, add-dirs or
  * settings from the transcript.
  */
+import { existsSync, realpathSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { hasShellMeta } from '../../util/shell.ts';
 import type { McpServer, PermissionProfile, SessionOptions } from '../types.ts';
 import { READ_ONLY_GUIDE } from './read-only-policy.ts';
@@ -168,8 +170,24 @@ export function buildClaudeArgs({ opts, sessionId, resume, mcpConfigPath }: Buil
   }
   if (mcp) args.push('--mcp-config', mcpConfigPath ?? JSON.stringify(mcpConfig(mcp)));
 
+  // Scratch space: tools write previews and intermediates to /tmp; outside the working directories each
+  // read or write there would be an approval.
+  if (opts.permission.mode !== 'read_only') for (const dir of tempDirs()) args.push('--add-dir', dir);
   for (const dir of opts.addDirs ?? []) args.push('--add-dir', dir);
   return args;
+}
+
+/** The system's temporary directories, as given and resolved (`/tmp` is `/private/tmp` on macOS). */
+export function tempDirs(): string[] {
+  const dirs = new Set<string>();
+  for (const dir of ['/tmp', tmpdir()]) {
+    if (!existsSync(dir)) continue;
+    dirs.add(dir);
+    try {
+      dirs.add(realpathSync(dir));
+    } catch {}
+  }
+  return [...dirs];
 }
 
 /**

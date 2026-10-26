@@ -8,7 +8,7 @@ engine    = "claude"           # the engine you talk to: claude | codex
 # effort    = "high"           # low | medium | high | xhigh | max
 
 [workflows]
-approvals = "ask"              # agents' tool approvals: ask (you) | auto (the engine decides)
+approvals = "auto"             # agents' tool approvals: auto (allowed) | ask (you)
 maxAgents = 4                  # agent sessions alive at once per run
 
 # Engine profiles say which account or binary "claude" and "codex" mean. They are per machine, so they

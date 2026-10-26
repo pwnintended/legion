@@ -228,7 +228,13 @@ async function dryRun(
             ? { choice: 'approve', note: null }
             : interaction.kind === 'ask'
               ? { answer: interaction.options[0] ?? 'example answer' }
-              : { behavior: 'allow', scope: 'once', updatedInput: null };
+              : interaction.kind === 'questions'
+                ? {
+                    answers: Object.fromEntries(
+                      interaction.questions.map((q) => [q.id, [q.options[0]?.label ?? 'example answer']]),
+                    ),
+                  }
+                : { behavior: 'allow', scope: 'once', updatedInput: null };
         return answer as InteractionAnswer<I>;
       },
     };

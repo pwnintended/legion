@@ -88,6 +88,26 @@ export interface LeadPromptContext extends PromptContext {
   parent: string;
   depth: number;
   maxDepth: number;
+  /** Its own worktree and branch; null: it works in the user's checkout. */
+  workspace: { path: string; branch: string; base: string | null } | null;
+}
+
+/** Where a lead works, and the git rules that keep leads from stepping on each other. */
+function workspaceSection(opts: LeadPromptContext): string {
+  const ws = opts.workspace;
+  const rules = `- Never create git worktrees or branches yourself (no \`git worktree add\`, \`git checkout -b\`, \`git switch -c\`, no copies of the repository) and never write in another lead's worktree. Workflows make their own worktrees; sub-leads get their own.`;
+  if (!ws) {
+    return `# Where you work
+You work in the user's checkout, ${opts.repo}, shared with the user and other leads: change only files in your area, and do not commit, switch branches or stash.
+${rules}`;
+  }
+  return `# Where you work
+Your own git worktree: ${ws.path}, on your own branch \`${ws.branch}\` (started from \`${ws.base ?? "the user's branch"}\`). Work and write files only there; the user's checkout is ${opts.repo} (read it if you need to, never write in it).
+- Commit your work on your branch as you go (\`git add -A && git commit -m …\`), at least before you start a run or report. Workflow runs you start begin from your branch's last commit: what is not committed, their agents do not see.
+- Your runs merge into your branch: when a workflow has a \`finish\` input, use \`merge\` (or \`branch\`), not \`pr\`.
+- When you report done, your parent merges your branch up (merge_lead). If it reports a conflict, merge \`${ws.base ?? 'your base branch'}\` into your branch yourself (\`git merge\`), resolve, commit, and report again.
+${rules}
+- Your sub-leads branch off your branch; merge them into it with merge_lead when they report done.`;
 }
 
 export function leadSystemPrompt(opts: LeadPromptContext): string {
@@ -110,6 +130,8 @@ export function leadSystemPrompt(opts: LeadPromptContext): string {
   - done when your brief is complete, with a summary of what exists now and where.
 - Do not invent answers to questions that belong to your parent or the user. Do not poll: you are told when things happen.
 
+${workspaceSection(opts)}
+
 # Your role
 ${opts.role.instructions || '(no further instructions)'}
 
@@ -122,8 +144,10 @@ const TEAM_ORCHESTRATOR = `# Your team
 For a large piece of work, spawn team leads (spawn_lead; list_roles shows the kinds) instead of doing it all in this conversation. A lead is a long-lived agent with its own context: it plans its area, runs workflows, answers its runs' gates, may spawn sub-leads, and reports to you. You only see its reports, so your context stays about the whole project. Use leads for areas that are big, long-running or need many workflow runs (e.g. "the assets for a new planet", "the networking layer"); use a workflow run directly for one well-defined task.
 - Brief a lead completely (goal, scope, constraints, what done looks like, where things live); it knows nothing else.
 - Keep your own plan current (update_plan): which lead or run owns what.
-- Leads' reports arrive as "[Legion]" messages. Decide what you can (message_lead). Route coordinate reports to the team that can help. Bring review reports, and questions only the user can answer, to the user: say what to look at (paths, images) and what is being asked. Then pass the user's answer back with message_lead.
+- Leads' reports arrive as "[Legion]" messages. Decide what you can (message_lead). Route coordinate reports to the team that can help. Bring review reports, and questions only the user can answer, to the user: show the images, pages or files with present (screenshots and renders appear inline in their terminal, everything else as a link) and say what is being asked. Then pass the user's answer back with message_lead.
 - list_leads and lead_status show how they are doing; stop_lead ends one that is done or no longer wanted.
+- Most leads work in their own git worktree on their own branch (\`legion/lead/<name>\`), never in the user's checkout. When one reports done (or the user wants to see its work in their checkout), merge it with merge_lead: its branch goes into the branch checked out in the user's checkout. What a lead made is in its worktree until then (lead_status shows where).
+- Never create git worktrees or branches yourself, and do not tell leads to; workflows and leads get their own.
 - For engineering work you can plan in the conversation with the user and then hand the agreed plan to the \`tasks\` workflow (it runs the tasks in parallel worktrees with cross-engine review; \`feature\` does the planning itself).`;
 
 function workflowSections(opts: PromptContext, audience: 'root' | 'lead'): string {

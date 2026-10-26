@@ -196,17 +196,18 @@ export function threadConfig(opts: SessionOptions): Record<string, JsonValue> {
 
 type PolicyParams = Pick<ThreadStartParams, 'sandbox' | 'approvalPolicy' | 'approvalsReviewer'>;
 
-/** read_only → read-only + never; workspace_write → workspace-write + on-request (`PermissionProfile`). */
+/**
+ * read_only → read-only + never. workspace_write → workspace-write + on-request when the human answers (`ask`);
+ * with `auto`, everything is allowed: no sandbox, no approvals (`--dangerously-bypass-approvals-and-sandbox`).
+ */
 export function policyFor(permission: PermissionProfile): PolicyParams {
   if (permission.mode === 'read_only') {
     return { sandbox: 'read-only', approvalPolicy: 'never', approvalsReviewer: 'user' };
   }
-  return {
-    sandbox: 'workspace-write',
-    approvalPolicy: 'on-request',
-    // `auto`: Codex's own reviewer answers the approval requests (what `--approve-for-me` does).
-    approvalsReviewer: permission.approvals === 'auto' ? 'auto_review' : 'user',
-  };
+  if (permission.approvals === 'auto') {
+    return { sandbox: 'danger-full-access', approvalPolicy: 'never', approvalsReviewer: 'user' };
+  }
+  return { sandbox: 'workspace-write', approvalPolicy: 'on-request', approvalsReviewer: 'user' };
 }
 
 export function threadStartParams(opts: SessionOptions): ThreadStartParams {

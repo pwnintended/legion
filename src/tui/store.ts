@@ -1,14 +1,18 @@
 /**
  * The UI's state, fed by the session's events and independent of React: `items` is the append-only scrollback
- * (printed once, then owned by the terminal), everything else is the live region under it — streaming assistant
- * text, active runs with their steps, and the queue of things waiting for the user (gates, questions, tool
- * approvals from the assistant or from workflow agents).
+ * (printed once, then owned by the terminal) and holds the conversation only — what the user said, the replies,
+ * gates, answers, errors and the user's own runs finishing. Everything else is the live region: streaming
+ * assistant text, the queue of things waiting for the user (gates, questions, tool approvals from the assistant or
+ * from workflow agents), and under the prompt the active runs, the team and the activity `feed` (tool calls, lead
+ * reports and messages, runs starting, workflow logs).
  */
-import type { AssistantApproval } from '../assistant/assistant.ts';
-import type { AgentEvent } from '../engine/types.ts';
+import type { AssistantApproval, AssistantQuestion } from '../assistant/assistant.ts';
+import type { AgentEvent, UserQuestion } from '../engine/types.ts';
+import type { Presentation } from '../team/team.ts';
 import type { RunEvent } from '../workflow/host.ts';
 import type { RunRecord, StepKind } from '../workflow/journal.ts';
 import type { PendingInteraction } from '../workflow/manager.ts';
+import { glyph, type ThemeColor } from './theme.ts';
 
 /** A styled piece of a line in a panel. Colors are theme names (see theme.ts) or Ink colors. */
 export interface Seg {
@@ -36,7 +40,6 @@ export type Item =
   | { id: number; type: 'user'; text: string; to?: string }
   /** `speaker`: a lead, or the orchestrator while the user talks to a lead (absent: the agent being talked to). */
   | { id: number; type: 'assistant'; text: string; speaker?: string }
-  | { id: number; type: 'tool'; name: string; summary: string }
   | { id: number; type: 'info'; text: string }
   | { id: number; type: 'panel'; title: string; lines: Line[] }
   | { id: number; type: 'error'; text: string }
@@ -45,23 +48,69 @@ export type Item =
       type: 'run';
       runId: string;
       workflow: string;
-      status: 'started' | 'done' | 'failed' | 'cancelled';
+      status: 'done' | 'failed' | 'cancelled';
       /** done: the result; failed/cancelled: the error. */
       detail: string | null;
       durationMs: number | null;
     }
-  | { id: number; type: 'log'; workflow: string; text: string }
-  | { id: number; type: 'gate'; runId: string; workflow: string; title: string; body: string | null }
-  /** A lead started, reported or stopped. */
-  | {
-      id: number;
-      type: 'team';
-      lead: string;
-      kind: 'spawn' | 'report' | 'stop' | 'message';
-      report: string | null;
-      text: string;
-      files: string[];
-    };
+  | { id: number; type: 'gate'; runId: string; workflow: string; title: string; body: string | null };
+
+/** One line of the activity feed under the prompt; `/activity` prints the recent ones in full. */
+export interface FeedEntry {
+  id: number;
+  at: number;
+  /** Who it is about: the orchestrator, a lead, or a workflow. */
+  who: string;
+  kind: 'tool' | 'spawn' | 'report' | 'stop' | 'message' | 'run' | 'log' | 'error';
+  /** A report's kind (done, question, …) or a run's status. */
+  tag: string | null;
+  text: string;
+  files: string[];
+}
+
+/** How many feed entries are kept (for `/activity`). */
+export const FEED_KEPT = 200;
+
+const REPORT_TONE: Record<string, ThemeColor> = {
+  done: 'ok',
+  blocked: 'error',
+  question: 'warn',
+  review: 'warn',
+  coordinate: 'info',
+};
+
+export function feedTone(e: FeedEntry): ThemeColor {
+  if (e.kind === 'error' || e.tag === 'failed') return 'error';
+  if (e.kind === 'report') return REPORT_TONE[e.tag ?? ''] ?? 'accent';
+  if (e.tag === 'done') return 'ok';
+  if (e.kind === 'log' || e.kind === 'tool') return 'muted';
+  return 'accent';
+}
+
+export function feedMark(e: FeedEntry): string {
+  switch (e.kind) {
+    case 'spawn':
+      return '◆';
+    case 'stop':
+      return '■';
+    case 'run':
+      return e.tag === 'done' ? glyph.ok : e.tag === 'failed' ? glyph.fail : glyph.brand;
+    case 'error':
+      return glyph.fail;
+    case 'tool':
+      return glyph.tool;
+    case 'log':
+      return '│';
+    default:
+      return '↑';
+  }
+}
+
+/** `14:03`. */
+export function clock(at: number): string {
+  const d = new Date(at);
+  return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+}
 
 export type NewItem = Item extends infer I ? (I extends Item ? Omit<I, 'id'> : never) : never;
 
@@ -90,7 +139,9 @@ export interface RunView {
 export type UiInteraction =
   | { source: 'run'; id: string; pending: PendingInteraction }
   /** A tool approval of the assistant's own session, or of a lead's (`lead`) whose role has the human answer them. */
-  | { source: 'assistant'; id: string; approval: AssistantApproval; lead?: string };
+  | { source: 'assistant'; id: string; approval: AssistantApproval; lead?: string }
+  /** Questions the assistant (or a lead, `lead`) asks the user itself. */
+  | { source: 'question'; id: string; questions: UserQuestion[]; lead?: string };
 
 /** One lead in the live team panel, in tree order. */
 export interface TeamRow {
@@ -126,6 +177,9 @@ export interface UiState {
   /** Who the prompt talks to: `orchestrator` or a lead's name (`/lead`). */
   target: string;
   team: TeamRow[];
+  feed: FeedEntry[];
+  /** Things to show the user (`present`), waiting to be written into the scrollback (images need raw output). */
+  presentations: { id: number; presentation: Presentation }[];
 }
 
 export class UiStore {
@@ -149,6 +203,8 @@ export class UiStore {
       costUsd: null,
       target: 'orchestrator',
       team: [],
+      feed: [],
+      presentations: [],
       ...initial,
     };
   }
@@ -184,11 +240,27 @@ export class UiStore {
     this.push({ type: 'panel', title, lines });
   }
 
+  present(presentation: Presentation): void {
+    const id = this.nextId++;
+    this.update((s) => ({ presentations: [...s.presentations, { id, presentation }] }));
+  }
+
+  presented(id: number): void {
+    this.update((s) => ({ presentations: s.presentations.filter((p) => p.id !== id) }), false);
+  }
+
+  /** A line in the activity feed (not the scrollback). */
+  note(entry: Omit<FeedEntry, 'id' | 'at' | 'tag' | 'files'> & { tag?: string | null; files?: string[] }): void {
+    const full: FeedEntry = { tag: null, files: [], ...entry, id: this.nextId++, at: Date.now() };
+    this.update((s) => ({ feed: [...s.feed.slice(-(FEED_KEPT - 1)), full] }), false);
+  }
+
   // ---- assistant -----------------------------------------------------------------------------
 
   /** Events of the agent the user is talking to (`speaker`: a lead's name, when it is one). */
   assistantEvent(event: AgentEvent, speaker?: string): void {
     const said = speaker ? { speaker } : {};
+    const who = speaker ?? 'orchestrator';
     switch (event.type) {
       case 'text_delta':
         this.update((s) => ({ streaming: s.streaming + event.text, activity: null }), false);
@@ -197,12 +269,16 @@ export class UiStore {
         this.update({ streaming: '' }, false);
         if (event.text.trim()) this.push({ type: 'assistant', text: event.text.trim(), ...said });
         break;
-      case 'tool_call':
-        this.update({ streaming: '' }, false);
-        this.push({ type: 'tool', name: toolName(event.name), summary: summarizeInput(event.name, event.input) });
+      case 'tool_call': {
+        // Text streamed before a tool call is a reply in its own right.
+        if (this.state.streaming.trim()) this.push({ type: 'assistant', text: this.state.streaming.trim(), ...said });
+        const line = toolLine(event.name, event.input);
+        this.update({ streaming: '', activity: line }, false);
+        this.note({ who, kind: 'tool', text: line });
         break;
+      }
       case 'tool_result':
-        if (!event.ok && event.output) this.push({ type: 'error', text: clipLines(event.output.trim(), 6) });
+        if (!event.ok && event.output) this.note({ who, kind: 'error', text: event.output.trim() });
         break;
       case 'activity':
         this.update(
@@ -237,6 +313,15 @@ export class UiStore {
     }));
   }
 
+  assistantQuestion(question: AssistantQuestion, lead?: string): void {
+    this.update((s) => ({
+      interactions: [
+        ...s.interactions,
+        { source: 'question', id: question.id, questions: question.questions, ...(lead ? { lead } : {}) },
+      ],
+    }));
+  }
+
   resolved(id: string): void {
     this.update((s) => ({ interactions: s.interactions.filter((i) => i.id !== id) }));
   }
@@ -262,7 +347,12 @@ export class UiStore {
                 },
               ],
             }));
-            this.push({ type: 'run', runId: event.runId, workflow, status: 'started', detail: null, durationMs: null });
+            this.note({
+              who: workflow,
+              kind: 'run',
+              tag: 'started',
+              text: `run ${event.runId}${record?.owner ? ` · ${record.owner}'s` : ''}`,
+            });
           }
           return;
         }
@@ -276,6 +366,17 @@ export class UiStore {
               ? null
               : clipLines(formatValue(event.result), 16)
             : (event.error ?? (status === 'failed' ? 'unknown error' : null));
+        const owner = view?.owner ?? record?.owner;
+        if (owner) {
+          // A lead's run: the lead hears about it and reports; the user sees it in the feed.
+          this.note({
+            who: workflow,
+            kind: 'run',
+            tag: status,
+            text: `${owner}'s run ${event.runId}${detail ? `: ${detail}` : ''}`,
+          });
+          return;
+        }
         this.push({
           type: 'run',
           runId: event.runId,
@@ -319,7 +420,7 @@ export class UiStore {
         return;
       }
       case 'log':
-        this.push({ type: 'log', workflow: this.workflowOf(event.runId, lookup), text: event.message });
+        this.note({ who: this.workflowOf(event.runId, lookup), kind: 'log', text: event.message });
         return;
     }
   }
@@ -365,6 +466,26 @@ export function toolName(name: string): string {
   const m = /^mcp__([^_]+(?:_[^_]+)*)__(.+)$/.exec(name);
   return m ? `${m[1]}.${m[2]}` : name;
 }
+
+/** `Bash cd src`, `Run workflow feature`: a tool call in one line. */
+export function toolLine(name: string, input: unknown): string {
+  const summary = summarizeInput(name, input);
+  const short = toolName(name);
+  const label = short.startsWith('legion.') ? (LEGION_TOOLS[short.slice('legion.'.length)] ?? short) : short;
+  return `${label}${summary ? ` ${summary}` : ''}`;
+}
+
+const LEGION_TOOLS: Record<string, string> = {
+  list_workflows: 'List workflows',
+  read_workflow: 'Read workflow',
+  eject_workflow: 'Eject workflow',
+  validate_workflow: 'Validate',
+  run_workflow: 'Run workflow',
+  list_runs: 'List runs',
+  run_status: 'Run status',
+  resume_run: 'Resume run',
+  cancel_run: 'Cancel run',
+};
 
 export function summarizeInput(name: string, input: unknown): string {
   if (typeof input !== 'object' || input === null) return '';

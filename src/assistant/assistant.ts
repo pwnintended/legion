@@ -4,7 +4,16 @@
  * conversation; if it exits, the next message resumes the same session.
  */
 import { EventEmitter } from 'node:events';
-import type { AgentEngine, AgentEvent, AgentSession, ApprovalDecision, Effort, McpServer } from '../engine/types.ts';
+import type {
+  AgentEngine,
+  AgentEvent,
+  AgentSession,
+  ApprovalDecision,
+  Effort,
+  McpServer,
+  QuestionAnswers,
+  UserQuestion,
+} from '../engine/types.ts';
 import { permissionProfile } from '../engine/types.ts';
 import type { Logger } from '../util/log.ts';
 import { silentLogger } from '../util/log.ts';
@@ -16,6 +25,12 @@ export interface AssistantApproval {
   reason: string | null;
 }
 
+/** Questions the agent asks the user (`AskUserQuestion` / `request_user_input`). */
+export interface AssistantQuestion {
+  id: string;
+  questions: UserQuestion[];
+}
+
 export interface AssistantOptions {
   cwd: string;
   /** The engine to talk to right now (a profile switch changes it). */
@@ -25,7 +40,8 @@ export interface AssistantOptions {
   /** Read at every session start, so a config reload applies to the next conversation. */
   model?: () => string | null;
   effort?: () => Effort | null;
-  approvals?: 'ask' | 'auto';
+  /** Who answers its tool approvals (read at every session start). Default: allowed (`auto`). */
+  approvals?: 'ask' | 'auto' | (() => 'ask' | 'auto');
   /** Resume this session (`legion --continue`). */
   sessionId?: string | null;
   log?: Logger;
@@ -34,6 +50,7 @@ export interface AssistantOptions {
 export interface AssistantEvents {
   event: [AgentEvent];
   approval: [AssistantApproval];
+  question: [AssistantQuestion];
   resolved: [string];
   busy: [boolean];
   session: [{ id: string; profile: string }];
@@ -48,6 +65,7 @@ export class Assistant extends EventEmitter<AssistantEvents> {
   /** Profile the session id belongs to: a different profile cannot resume it. */
   private sessionProfile: string | null = null;
   private readonly pending = new Map<string, AssistantApproval>();
+  private readonly questions = new Map<string, AssistantQuestion>();
   private busyState = false;
 
   constructor(opts: AssistantOptions) {
@@ -102,6 +120,17 @@ export class Assistant extends EventEmitter<AssistantEvents> {
     await this.session?.respond(id, decision).catch((err: unknown) => this.log.warn('approval answer failed', err));
   }
 
+  /** Answers the agent's questions; null declines them. */
+  async answerQuestions(id: string, answers: QuestionAnswers | null): Promise<void> {
+    if (!this.questions.delete(id)) return;
+    this.emit('resolved', id);
+    await this.session?.answer(id, answers).catch((err: unknown) => this.log.warn('question answer failed', err));
+  }
+
+  pendingQuestions(): AssistantQuestion[] {
+    return [...this.questions.values()];
+  }
+
   /** Ends the process (the session stays resumable). A different engine profile starts a fresh conversation. */
   async restart(): Promise<void> {
     const session = this.session;
@@ -119,6 +148,11 @@ export class Assistant extends EventEmitter<AssistantEvents> {
     await session?.close();
   }
 
+  private approvals(): 'ask' | 'auto' {
+    const a = this.opts.approvals;
+    return (typeof a === 'function' ? a() : a) ?? 'auto';
+  }
+
   private open(prompt: string): Promise<AgentSession> {
     if (this.opening) {
       return this.opening.then(async (s) => {
@@ -134,7 +168,7 @@ export class Assistant extends EventEmitter<AssistantEvents> {
       systemPrompt: this.opts.systemPrompt(),
       model: this.opts.model?.() ?? null,
       effort: this.opts.effort?.() ?? null,
-      permission: permissionProfile('workspace_write', { approvals: this.opts.approvals ?? 'ask', web: true }),
+      permission: permissionProfile('workspace_write', { approvals: this.approvals(), web: true }),
       mcp: this.opts.mcp,
       userSettings: true,
     };
@@ -165,6 +199,12 @@ export class Assistant extends EventEmitter<AssistantEvents> {
             this.emit('approval', approval);
             break;
           }
+          case 'question': {
+            const question = { id: event.requestId, questions: event.questions };
+            this.questions.set(question.id, question);
+            this.emit('question', question);
+            break;
+          }
           case 'turn_complete':
             this.dropApprovals();
             this.setBusy(false);
@@ -190,8 +230,9 @@ export class Assistant extends EventEmitter<AssistantEvents> {
 
   /** Approvals do not outlive their turn (the CLI withdraws them). */
   private dropApprovals(): void {
-    for (const id of this.pending.keys()) this.emit('resolved', id);
+    for (const id of [...this.pending.keys(), ...this.questions.keys()]) this.emit('resolved', id);
     this.pending.clear();
+    this.questions.clear();
   }
 
   private setBusy(busy: boolean): void {

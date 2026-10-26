@@ -143,12 +143,19 @@ export class CodexNormalizer {
         };
       }
       case 'item/tool/requestUserInput':
+        // Not a permission: the agent asks the user (`request_user_input`); `answer()` replies.
         return {
-          type: 'approval_request',
+          type: 'question',
           requestId,
-          tool: 'request_user_input',
-          input: { questions: request.params.questions },
-          reason: null,
+          questions: request.params.questions.map((q) => ({
+            id: q.id,
+            header: q.header || null,
+            question: q.question,
+            options: (q.options ?? []).map((o) => ({ label: o.label, description: o.description || null })),
+            multiSelect: false,
+            allowOther: q.isOther || !q.options || q.options.length === 0,
+            secret: q.isSecret,
+          })),
         };
       case 'mcpServer/elicitation/request': {
         const { threadId: _t, turnId: _u, serverName, ...rest } = request.params;

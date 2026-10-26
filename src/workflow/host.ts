@@ -11,6 +11,8 @@ import type {
   Effort,
   EngineKind,
   McpServer,
+  QuestionAnswers,
+  UserQuestion,
 } from '../engine/types.ts';
 import type { RunStatus, StepKind } from './journal.ts';
 
@@ -24,16 +26,22 @@ export type Interaction =
       body: string | null;
     }
   | { kind: 'ask'; runId: string; key: string; question: string; options: readonly string[] }
-  | { kind: 'approval'; runId: string; key: string; tool: string; input: unknown; reason: string | null };
+  | { kind: 'approval'; runId: string; key: string; tool: string; input: unknown; reason: string | null }
+  /** An agent step asks the user questions itself (Claude `AskUserQuestion`, Codex `request_user_input`). */
+  | { kind: 'questions'; runId: string; key: string; questions: UserQuestion[] };
 
 export type GateAnswer = { choice: 'approve' | 'changes' | 'abort'; note: string | null };
 export type AskAnswer = { answer: string };
+/** null: declined (the agent is told the user would not answer). */
+export type QuestionsAnswer = { answers: QuestionAnswers | null };
 
 export type InteractionAnswer<I extends Interaction> = I extends { kind: 'gate' }
   ? GateAnswer
   : I extends { kind: 'ask' }
     ? AskAnswer
-    : ApprovalDecision;
+    : I extends { kind: 'questions' }
+      ? QuestionsAnswer
+      : ApprovalDecision;
 
 /** Progress the UI renders. Not durable: the journal is the source of truth. */
 export type RunEvent =
@@ -103,6 +111,15 @@ export interface GitOps {
   remove(wt: Worktree): Promise<void>;
   /** Re-creates a worktree whose directory is gone (a resumed run after a reboot or cleanup), from its branch. */
   restore(wt: Worktree): Promise<void>;
+}
+
+/** `ops` with `base` as the default start of new branches (and so of where `mergeToBase` and `draftPr` aim). */
+export function withDefaultBase(ops: GitOps, base: string): GitOps {
+  return {
+    ...ops,
+    integration: (runId, opts) => ops.integration(runId, { base: opts.base ?? base }),
+    worktree: (runId, name, opts) => ops.worktree(runId, name, { from: opts.from ?? base }),
+  };
 }
 
 export interface AgentModelRequest {

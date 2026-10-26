@@ -532,6 +532,32 @@ describe('ClaudeSession (lifecycle)', () => {
     expect(events.some((e) => e.type === 'approval_request')).toBe(false);
   });
 
+  it('turns AskUserQuestion into a question and answers through the tool input', async () => {
+    const { child, session: s } = session();
+    s.begin('work');
+    const input = {
+      questions: [
+        { question: 'Which?', header: 'Pick', multiSelect: false, options: [{ label: 'A', description: 'a' }] },
+      ],
+    };
+    child.send({
+      type: 'control_request',
+      request_id: 'q1',
+      request: { subtype: 'can_use_tool', tool_name: 'AskUserQuestion', input, tool_use_id: 'tu-q' },
+    });
+    const events = await until(s, (e) => e.type === 'question');
+    expect(events.some((e) => e.type === 'approval_request')).toBe(false);
+    expect(events.at(-1)).toMatchObject({ type: 'question', requestId: 'q1', questions: [{ id: 'Which?' }] });
+    await s.answer('q1', { 'Which?': ['A'] });
+    const { msg } = await child.waitFor((m) => m.type === 'control_response');
+    expect(msg).toMatchObject({
+      response: {
+        request_id: 'q1',
+        response: { behavior: 'allow', updatedInput: { ...input, answers: { 'Which?': 'A' } }, toolUseID: 'tu-q' },
+      },
+    });
+  });
+
   it('drops approvals the CLI withdraws', async () => {
     const { child, session: s } = session();
     s.begin('work');
