@@ -3,7 +3,7 @@
  * the TUI's interaction queue, git); `validate.ts` provides a dry one (fake engines, auto-approved gates, simulated
  * git and shell) so a freshly written workflow can be exercised without spending tokens or touching the repo.
  */
-import type { AgentEngine, AgentEvent, ApprovalDecision, Effort, EngineKind } from '../engine/types.ts';
+import type { AgentEngine, AgentEvent, ApprovalDecision, Effort, EngineKind, McpServer } from '../engine/types.ts';
 import type { RunStatus, StepKind } from './journal.ts';
 
 export type Interaction =
@@ -123,6 +123,8 @@ export interface RunHost {
    * The engine, model and effort an agent step runs with, given what the workflow's code asked for (the user's
    * settings for this workflow may override it). Absent: the code's choice as is.
    */
+  /** MCP servers every agent gets (`[mcp.servers]`). */
+  mcp?(): Readonly<Record<string, McpServer>>;
   agentModel?(req: AgentModelRequest): { engine?: EngineKind; model: string | null; effort: Effort | null };
   /** Default for agents that do not say who answers their tool approvals. */
   readonly approvals: 'ask' | 'auto';

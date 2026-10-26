@@ -49,7 +49,16 @@ export type Item =
       durationMs: number | null;
     }
   | { id: number; type: 'log'; workflow: string; text: string }
-  | { id: number; type: 'gate'; runId: string; workflow: string; title: string; body: string | null };
+  | { id: number; type: 'gate'; runId: string; workflow: string; title: string; body: string | null }
+  /** A lead started, reported or stopped. */
+  | {
+      id: number;
+      type: 'team';
+      lead: string;
+      kind: 'spawn' | 'report' | 'stop' | 'message';
+      report: string | null;
+      text: string;
+    };
 
 export type NewItem = Item extends infer I ? (I extends Item ? Omit<I, 'id'> : never) : never;
 
@@ -75,7 +84,8 @@ export interface RunView {
 
 export type UiInteraction =
   | { source: 'run'; id: string; pending: PendingInteraction }
-  | { source: 'assistant'; id: string; approval: AssistantApproval };
+  /** A tool approval of the assistant's own session, or of a lead's (`lead`) whose role has the human answer them. */
+  | { source: 'assistant'; id: string; approval: AssistantApproval; lead?: string };
 
 export interface UiState {
   items: Item[];
@@ -193,8 +203,10 @@ export class UiStore {
     this.update({ busy, busySince: busy ? Date.now() : null, ...(busy ? {} : { activity: null }) });
   }
 
-  assistantApproval(approval: AssistantApproval): void {
-    this.update((s) => ({ interactions: [...s.interactions, { source: 'assistant', id: approval.id, approval }] }));
+  assistantApproval(approval: AssistantApproval, lead?: string): void {
+    this.update((s) => ({
+      interactions: [...s.interactions, { source: 'assistant', id: approval.id, approval, ...(lead ? { lead } : {}) }],
+    }));
   }
 
   resolved(id: string): void {

@@ -200,6 +200,7 @@ export function agent<S extends z.ZodType | undefined = undefined>(
         systemPrompt: opts.system ?? null,
         model: chosen.model,
         effort: chosen.effort,
+        mcp: run.host.mcp?.() ?? null,
         permission: permissionProfile(opts.mode === 'read' ? 'read_only' : 'workspace_write', {
           allowedCommands: opts.allow ?? [],
           web: opts.web ?? false,

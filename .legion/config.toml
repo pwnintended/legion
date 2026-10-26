@@ -1,0 +1,26 @@
+# Legion project configuration. It overlays ~/.config/legion/config.toml
+# and is overlaid by .legion/config.local.toml (gitignored: put machine-specific settings there).
+# Every key is optional. In a session, /config shows what is in effect and /config edit opens this file.
+
+[assistant]
+engine    = "claude"           # the engine you talk to: claude | codex
+# model     = "opus"           # the assistant's model (default: the CLI's)
+# effort    = "high"           # low | medium | high | xhigh | max
+
+[workflows]
+approvals = "ask"              # agents' tool approvals: ask (you) | auto (the engine decides)
+maxAgents = 4                  # agent sessions alive at once per run
+
+# Engine profiles say which account or binary "claude" and "codex" mean. They are per machine, so they
+# usually live in the user config; pick one per session with /claude <profile> or legion --claude <profile>.
+#
+# [claude]
+# default = "claude-1"
+#
+# [claude.profiles.claude-1]
+# setup   = "claude-share check"     # runs once per session, through your shell
+# command = "claude"
+# env     = { CLAUDE_CONFIG_DIR = "~/.claude-1" }
+#
+# [codex.profiles.default]
+# command = "codex"                  # env = { CODEX_HOME = "..." } for another account

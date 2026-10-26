@@ -37,6 +37,8 @@ export interface RunRecord {
   endedAt: number | null;
   result: unknown;
   error: string | null;
+  /** The lead that started the run (`orchestrator` when absent): its milestones and interactions go there. */
+  owner?: string;
 }
 
 export type StepKind = 'agent' | 'gate' | 'ask' | 'sh' | 'step' | 'git' | 'loop' | 'parallel';

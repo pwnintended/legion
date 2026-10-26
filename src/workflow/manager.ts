@@ -7,7 +7,7 @@
 import { EventEmitter } from 'node:events';
 import { join } from 'node:path';
 import { type Config, resolveAgentModel } from '../config.ts';
-import type { AgentEngine, EngineKind } from '../engine/types.ts';
+import type { AgentEngine, EngineKind, McpServer } from '../engine/types.ts';
 import type { Logger } from '../util/log.ts';
 import { silentLogger } from '../util/log.ts';
 import type { GitOps, Interaction, InteractionAnswer, RunEvent, RunHost, ShellOptions, ShellResult } from './host.ts';
@@ -32,6 +32,8 @@ export interface RunManagerOptions {
   approvals?: 'ask' | 'auto';
   /** The user's model settings per workflow (`[workflow.<name>]`), read at every agent start. */
   agentModels?: () => Config['workflow'];
+  /** MCP servers for every agent of every run. */
+  mcp?: () => Readonly<Record<string, McpServer>>;
   log?: Logger;
   sh?: (command: string, opts: ShellOptions) => Promise<ShellResult>;
 }
@@ -72,7 +74,7 @@ export class RunManager extends EventEmitter<RunManagerEvents> {
   }
 
   /** Validates `input` and starts the workflow. Resolves with the run id once it is running. */
-  async start(nameOrPath: string, input: unknown): Promise<string> {
+  async start(nameOrPath: string, input: unknown, opts: { owner?: string } = {}): Promise<string> {
     const found = findWorkflow(this.opts.repo, nameOrPath);
     if (!found) throw new Error(`No workflow named "${nameOrPath}"`);
     const def = await loadWorkflow(found.file);
@@ -88,6 +90,7 @@ export class RunManager extends EventEmitter<RunManagerEvents> {
       workflow: found.name,
       file: found.file,
       input: parsed.data,
+      ...(opts.owner ? { owner: opts.owner } : {}),
       status: 'running',
       profiles: this.opts.profiles(),
       repo: this.opts.repo,
@@ -230,6 +233,7 @@ export class RunManager extends EventEmitter<RunManagerEvents> {
       dryRun: false,
       maxAgents: opts.maxAgents ?? 4,
       approvals: opts.approvals ?? 'ask',
+      mcp: () => opts.mcp?.() ?? {},
       agentModel: (req) => {
         const r = resolveAgentModel(opts.agentModels?.() ?? {}, { ...req, workflow: record.workflow });
         return { engine: r.engine as EngineKind, model: r.model, effort: r.effort };

@@ -162,6 +162,60 @@ are still replayed from the journal.
 Codex runs with a Legion-owned `CODEX_HOME` (`~/.legion/codex-home/<profile>`). It links only your `auth.json`,
 so your Codex config, hooks and `AGENTS.md` do not leak into runs.
 
+## Team leads
+
+The assistant you talk to is the orchestrator. For a big area of work it can spawn a **team lead**: a long-lived
+agent with its own context, role and plan. A lead runs workflows, answers its own runs' gates and questions, may
+spawn sub-leads (an assets lead with fauna, vegetation and building-kit leads under it), and reports to its
+parent. Each lead hears only from its own children, so the orchestrator's context stays about the whole project.
+
+Leads report with a kind: `progress`, `done`, `blocked`, `question`, `review` (something a human should judge,
+with the files or images to look at) or `coordinate` (it needs something from another team). Reports, messages,
+finished runs and waiting gates go into the parent's inbox and arrive as one bundled `[Legion]` message when it is
+free. The orchestrator brings `review`s and user-only questions to you and passes your answer back. Runs the
+orchestrator starts still ask you directly.
+
+`/team` shows the tree with each lead's status, plan and last report. State is kept in `.legion/team/team.json`
+(gitignored); after a restart a lead resumes its session on the next message it gets.
+
+### Roles
+
+A role is a Markdown file: YAML frontmatter for how the lead runs, the body for its standing instructions.
+Resolution, first match by name wins: `.legion/roles/<name>.md`, `~/.config/legion/roles/<name>.md`, builtin
+(`team-lead`, `engineering-lead`, `art-director`, `world-designer`).
+
+```markdown
+---
+description: "Fauna for one planet: concept, model, critique, export"
+engine: claude            # claude | codex
+model: opus               # optional; effort too
+workflows: [asset-critique, concept-sheet]   # which workflows it may run, or "*"
+spawns: []                # which roles it may spawn as sub-leads, or "*"
+approvals: auto           # its own tool approvals: auto, or ask (you answer them)
+maxRuns: 4                # runs it may have active at once
+---
+You make the creatures for …
+```
+
+### MCP servers and limits
+
+Workflow agents and leads do not load your own CLI's MCP servers. List the ones they should have (Blender, an
+image generator, …); every agent and lead gets all of them:
+
+```toml
+[mcp.servers.blender]
+command = "uvx"
+args    = ["blender-mcp"]
+
+[mcp.servers.images]
+url     = "http://127.0.0.1:8188/mcp"
+headers = { Authorization = "Bearer …" }
+
+[team]
+maxDepth = 3             # levels of leads under the orchestrator
+maxLeads = 12            # lead sessions alive at once; the longest-idle ones are closed (and resume later)
+```
+
 ## Workflows
 
 Resolution order, first match by name wins:
@@ -228,7 +282,8 @@ src/
   cli.tsx               entry: interactive session, headless run/resume, subcommands
   session.ts            config + profiles + engines + run manager + assistant for one directory
   config.ts             TOML config, profiles, per-session setup
-  assistant/            the conversational agent, its MCP tools (workflows/runs), its system prompt
+  assistant/            the conversational agent, its MCP tools (workflows, runs, team), the system prompts
+  team/                 roles, and the team manager: leads, inboxes, plans, persistence
   engine/               AgentEngine adapters: claude (stream-json), codex (app-server), fake
   workflow/             runtime (step memoization), journal, loader (+ `legion` import hook), validator,
                         run manager, git operations
@@ -236,10 +291,12 @@ src/
   git/                  worktrees, squash merges, conflicts, PRs (ported from Legion's desktop app)
   tui/                  Ink UI: store (state), controller (commands), app (components)
 builtin/workflows/      feature, implement, review (+ an end-to-end test on a real repo)
+builtin/roles/          team-lead, engineering-lead, art-director, world-designer
 ```
 
 Per project, Legion writes only under `.legion/`. It creates a `.legion/.gitignore` that ignores `runs/`,
-`session/` and `*.local.*`, so the only thing to commit is `workflows/` (and `config.toml` if you want one).
+`session/`, `team/` and `*.local.*`, so the only things to commit are `workflows/` and `roles/` (and `config.toml`
+if you want one).
 Worktrees live outside the repository in `~/.legion/worktrees/`. Branches are named `legion/<run-id>/<name>`.
 
 ## Develop

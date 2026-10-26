@@ -7,13 +7,14 @@ import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { Assistant } from './assistant/assistant.ts';
 import { type McpHandle, startMcpServer } from './assistant/mcp.ts';
-import { assistantSystemPrompt } from './assistant/prompt.ts';
+import { assistantSystemPrompt, leadSystemPrompt } from './assistant/prompt.ts';
 import {
   type Config,
   type ConfigLayer,
   configLayers,
   ensureProjectConfig,
   loadConfig,
+  mcpServers,
   profileNames,
   type RealKind,
   type ResolvedProfile,
@@ -24,6 +25,7 @@ import { CodexEngine } from './engine/codex/index.ts';
 import { FakeEngine } from './engine/fake/index.ts';
 import type { AgentEngine, EngineKind } from './engine/types.ts';
 import { isRepo, toplevel } from './git/index.ts';
+import { TeamManager } from './team/team.ts';
 import { fileLogger, type Logger } from './util/log.ts';
 import { createGitOps } from './workflow/git-ops.ts';
 import type { GitOps } from './workflow/host.ts';
@@ -54,6 +56,8 @@ export class Session {
   readonly log: Logger;
   readonly runs: RunManager;
   readonly assistant: Assistant;
+  /** The leads under the assistant (the orchestrator). */
+  readonly team: TeamManager;
   private readonly profiles: Record<RealKind, ResolvedProfile>;
   private readonly engines = new Map<string, AgentEngine>();
   private readonly fake: boolean;
@@ -68,6 +72,7 @@ export class Session {
     log: Logger;
     profiles: Record<RealKind, ResolvedProfile>;
     runs: RunManager;
+    team: TeamManager;
     mcp: McpHandle;
     resumeAssistant: string | null;
     fake: boolean;
@@ -82,6 +87,7 @@ export class Session {
     this.fake = init.fake;
     this.mcp = init.mcp;
     this.runs = init.runs;
+    this.team = init.team;
     this.assistant = new Assistant({
       cwd: this.repo,
       engine: () => this.engine(this.config.assistant.engine),
@@ -133,9 +139,28 @@ export class Session {
       maxAgents: config.workflows.maxAgents,
       approvals: config.workflows.approvals,
       agentModels: () => bound().config.workflow,
+      mcp: () => mcpServers(bound().config),
       log,
     });
-    const mcp = await startMcpServer({ repo, runs, log });
+    const team = new TeamManager({
+      repo,
+      runs,
+      config: () => bound().config,
+      engine: (kind) => bound().engine(kind),
+      mcp: () => mcpServers(bound().config),
+      prompt: (lead, role) =>
+        leadSystemPrompt({
+          repo,
+          profiles: bound().profileNames(),
+          name: lead.name,
+          role,
+          parent: lead.parent,
+          depth: lead.depth,
+          maxDepth: bound().config.team.maxDepth,
+        }),
+      log,
+    });
+    const mcp = await startMcpServer({ repo, runs, team, log });
     self.session = new Session({
       repo,
       cwd: opts.cwd,
@@ -145,15 +170,22 @@ export class Session {
       log,
       profiles,
       runs,
+      team,
       mcp,
       resumeAssistant,
       fake: opts.fake ?? false,
     });
+    team.bind(self.session.assistant, mcp.url);
     return self.session;
   }
 
   get config(): Config {
     return this._config;
+  }
+
+  /** The Legion MCP endpoint (each caller authenticates with its own token: `team.tokens()`). */
+  get mcpUrl(): string | null {
+    return this.mcp?.url ?? null;
   }
 
   /** The config files in the order they apply, including absent ones. */
@@ -244,6 +276,7 @@ export class Session {
 
   async close(): Promise<void> {
     await this.assistant.close();
+    await this.team.close();
     await this.runs.shutdown();
     await this.mcp?.close();
     this.mcp = null;
@@ -268,15 +301,19 @@ function readState(repo: string): SavedState {
   }
 }
 
-/** Keeps run journals, session state and local config out of git without asking the user to set anything up. */
+/** Keeps run journals, session and team state and local config out of git without asking the user to set anything up. */
 function ensureGitignore(repo: string): void {
   const file = join(repo, '.legion', '.gitignore');
+  let text: string;
   try {
-    readFileSync(file);
+    text = readFileSync(file, 'utf8');
   } catch {
     mkdirSync(join(repo, '.legion'), { recursive: true });
-    writeFileSync(file, 'runs/\nsession/\n*.local.*\n');
+    writeFileSync(file, 'runs/\nsession/\nteam/\n*.local.*\n');
+    return;
   }
+  // Projects from before teams.
+  if (!/^team\/$/m.test(text)) writeFileSync(file, `${text.replace(/\n?$/, '\n')}team/\n`);
 }
 
 function notAGitRepo(dir: string): GitOps {

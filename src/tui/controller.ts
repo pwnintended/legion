@@ -20,6 +20,7 @@ import { getPath, setTomlValue, type TomlScalar } from '../config-file.ts';
 import { CodexEngine } from '../engine/codex/index.ts';
 import type { ApprovalDecision } from '../engine/types.ts';
 import type { Session } from '../session.ts';
+import { ROOT } from '../team/team.ts';
 import {
   builtinSourceDir,
   ejectWorkflow,
@@ -43,6 +44,7 @@ export const COMMANDS: readonly Command[] = [
   { group: 'Workflows', name: 'run', args: '<name> [json]', description: 'start a workflow' },
   { group: 'Workflows', name: 'validate', args: '<name>', description: 'type-check and dry-run a workflow' },
   { group: 'Runs', name: 'runs', args: '', description: 'recent runs' },
+  { group: 'Runs', name: 'team', args: '', description: 'the leads: what each is doing, its plan and last report' },
   { group: 'Runs', name: 'steps', args: '[run]', description: "a run's steps" },
   { group: 'Runs', name: 'log', args: '<run> <step>', description: "an agent step's transcript" },
   { group: 'Runs', name: 'resume', args: '[run]', description: 'continue a stopped run' },
@@ -271,15 +273,16 @@ export class Controller {
     assistant.on('approval', (a) => this.store.assistantApproval(a));
     assistant.on('resolved', (id) => this.store.resolved(id));
     runs.on('event', (e) => this.store.runEvent(e, (id) => runs.run(id)));
-    runs.on('interaction', (p) => this.store.runInteraction(p));
-    runs.on('resolved', (id) => this.store.resolved(id));
-    runs.on('finished', (record) => {
-      const note =
-        `[Legion] Run ${record.id} (${record.workflow}) ended: ${record.status}.` +
-        (record.error ? ` Error: ${record.error}` : '') +
-        (record.result ? ` Result: ${JSON.stringify(record.result)}` : '');
-      void assistant.notify(note).catch((err: unknown) => session.log.warn('notify failed', err));
+    // A lead answers its own runs' gates and questions; the user answers the orchestrator's. (The team tells the
+    // owner when a run finishes.)
+    runs.on('interaction', (p) => {
+      if (session.team.ownerOf(p.interaction.runId) === ROOT) this.store.runInteraction(p);
     });
+    runs.on('resolved', (id) => this.store.resolved(id));
+    const { team } = session;
+    team.on('activity', (a) => this.store.push({ type: 'team', ...a, report: a.report ?? null }));
+    team.on('lead-approval', (lead, a) => this.store.assistantApproval(a, lead));
+    team.on('lead-resolved', (id) => this.store.resolved(id));
   }
 
   attach(hooks: ControllerHooks): void {
@@ -322,8 +325,61 @@ export class Controller {
   }
 
   answerApproval(item: UiInteraction, decision: ApprovalDecision): void {
-    if (item.source === 'assistant') void this.session.assistant.answer(item.id, decision);
+    if (item.source === 'assistant' && item.lead) this.session.team.answerLeadApproval(item.lead, item.id, decision);
+    else if (item.source === 'assistant') void this.session.assistant.answer(item.id, decision);
     else this.session.runs.answer(item.id, decision);
+  }
+
+  /** The lead tree under the orchestrator, each with its status, plan and last report. */
+  teamLines(): Line[] {
+    const { team } = this.session;
+    const planLines = (name: string, pad: string): Line[] => {
+      const plan = team.plan(name);
+      if (!plan) return [];
+      const mark = { todo: '○', doing: '◐', done: '●', blocked: '✗', dropped: '–' } as const;
+      const color = { todo: 'muted', doing: 'accent', done: 'ok', blocked: 'error', dropped: 'muted' } as const;
+      return [
+        ...(plan.summary ? [[dim(`${pad}${plan.summary}`)]] : []),
+        ...plan.items.map((i) => [
+          seg(`${pad}${mark[i.status]} `, { color: color[i.status] }),
+          seg(i.title, { dim: i.status === 'done' || i.status === 'dropped' }),
+          ...(i.owner ? [dim(` · ${i.owner}`)] : []),
+        ]),
+      ];
+    };
+    const lines: Line[] = [[seg('orchestrator', { bold: true, color: 'accent' }), dim(' (you are talking to it)')]];
+    lines.push(...planLines(ROOT, '  '));
+    const walk = (parent: string, pad: string) => {
+      for (const l of team.children(parent)) {
+        const status = team.busy(l.name) ? 'working' : l.status;
+        const runs = team.activeRuns(l.name);
+        const waiting = team.pending(l.name).length;
+        lines.push([
+          seg(`${pad}${l.name}`, { bold: true }),
+          dim(` ${l.role}  `),
+          seg(status, {
+            color:
+              status === 'working' ? 'accent' : status === 'done' ? 'ok' : status === 'stopped' ? 'muted' : undefined,
+          }),
+          ...(runs.length ? [dim(`  ${runs.length} run${runs.length > 1 ? 's' : ''}`)] : []),
+          ...(waiting ? [seg(`  ${waiting} waiting for it`, { color: 'warn' })] : []),
+          ...(l.costUsd > 0 ? [dim(`  $${l.costUsd.toFixed(2)}`)] : []),
+        ]);
+        lines.push(...planLines(l.name, `${pad}  `));
+        if (l.lastReport) {
+          lines.push([dim(`${pad}  ↳ ${l.lastReport.kind}: `), seg(l.lastReport.text.split('\n')[0] ?? '')]);
+        }
+        walk(l.name, `${pad}  `);
+      }
+    };
+    walk(ROOT, '  ');
+    if (lines.length === 1 + (team.plan(ROOT) ? 1 : 0) && team.list().length === 0) {
+      lines.push(
+        [],
+        [dim('No leads yet. Ask the assistant to spawn one for a big area of work (list_roles shows the kinds).')],
+      );
+    }
+    return lines;
   }
 
   // ---- commands ------------------------------------------------------------------------------
@@ -384,12 +440,16 @@ export class Controller {
                 statusSeg(status),
                 seg(` ${r.id}  `, { dim: true }),
                 seg(r.workflow.padEnd(14), { bold: true }),
+                ...(r.owner ? [dim(` ${r.owner}`)] : []),
                 ...(r.error ? [seg(` ${r.error.split('\n')[0]}`, { color: 'error' })] : []),
               ];
             }),
           );
           return;
         }
+        case 'team':
+          this.store.panel('Team', this.teamLines());
+          return;
         case 'resume':
           await runs.resume(this.runId(rest[0]));
           return;

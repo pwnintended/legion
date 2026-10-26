@@ -32,7 +32,7 @@ import { homedir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { parse } from 'smol-toml';
 import { z } from 'zod';
-import type { EngineProfile } from './engine/types.ts';
+import type { EngineProfile, McpServer } from './engine/types.ts';
 import { configHome } from './workflow/loader.ts';
 
 const ProfileSchema = z.object({
@@ -64,6 +64,16 @@ const WorkflowModelsSchema = z.object({
 });
 export type WorkflowModels = z.infer<typeof WorkflowModelsSchema>;
 
+/** An MCP server every lead and workflow agent gets: a command (stdio) or a URL (http). */
+const McpServerSchema = z.union([
+  z.object({
+    command: z.string().min(1),
+    args: z.array(z.string()).default([]),
+    env: z.record(z.string(), z.string()).default({}),
+  }),
+  z.object({ url: z.string().url(), headers: z.record(z.string(), z.string()).default({}) }),
+]);
+
 export const ConfigSchema = z.object({
   claude: KindSchema.default({ profiles: {}, models: [] }),
   codex: KindSchema.default({ profiles: {}, models: [] }),
@@ -81,6 +91,16 @@ export const ConfigSchema = z.object({
     })
     .default({ approvals: 'ask', maxAgents: 4 }),
   workflow: z.record(z.string(), WorkflowModelsSchema).default({}),
+  /** `[mcp.servers.<name>]`: given to every lead and every workflow agent, on both engines. */
+  mcp: z.object({ servers: z.record(z.string(), McpServerSchema).default({}) }).default({ servers: {} }),
+  team: z
+    .object({
+      /** Levels of leads under the orchestrator. */
+      maxDepth: z.number().int().min(1).max(6).default(3),
+      /** Leads alive (with a session) at once, across the team. */
+      maxLeads: z.number().int().min(1).max(64).default(12),
+    })
+    .default({ maxDepth: 3, maxLeads: 12 }),
 });
 
 export type Config = z.infer<typeof ConfigSchema>;
@@ -276,6 +296,24 @@ export function resolveAgentModel(
     effort: effort ?? null,
     origin: { engine: step.engine !== undefined ? 'agent' : 'code', model: modelOrigin, effort: effortOrigin },
   };
+}
+
+/** The configured MCP servers in the engines' shape, `~` expanded. Names starting with `legion` are reserved. */
+export function mcpServers(config: Config): Record<string, McpServer> {
+  const out: Record<string, McpServer> = {};
+  for (const [name, s] of Object.entries(config.mcp.servers)) {
+    if (name.startsWith('legion')) continue;
+    out[name] =
+      'url' in s
+        ? { type: 'http', url: s.url, headers: s.headers }
+        : {
+            type: 'stdio',
+            command: expandHome(s.command),
+            args: s.args.map(expandHome),
+            env: Object.fromEntries(Object.entries(s.env).map(([k, v]) => [k, expandHome(v)])),
+          };
+  }
+  return out;
 }
 
 function expandHome(value: string): string {

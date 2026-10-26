@@ -300,7 +300,9 @@ function InteractionView(props: { item: UiInteraction; mode: Mode; option: numbe
     const input =
       item.source === 'assistant' ? item.approval.input : (item.pending.interaction as { input: unknown }).input;
     const source =
-      item.source === 'assistant' ? 'assistant' : `${item.pending.interaction.runId} · ${item.pending.interaction.key}`;
+      item.source === 'assistant'
+        ? (item.lead ?? 'assistant')
+        : `${item.pending.interaction.runId} · ${item.pending.interaction.key}`;
     return (
       <Card tone={theme.warn} icon="⚠" title={`Allow ${tool}?`} source={source}>
         <Box marginY={1} paddingLeft={1}>
@@ -478,6 +480,30 @@ function Bullet(props: { mark: string; markColor?: string; marginTop?: number; c
   );
 }
 
+const REPORT_COLOR: Record<string, string> = {
+  done: theme.ok,
+  blocked: theme.error,
+  question: theme.warn,
+  review: theme.warn,
+  coordinate: theme.info,
+};
+
+function TeamItem({ item }: { item: Extract<Item, { type: 'team' }> }) {
+  const tone = item.kind === 'report' ? (REPORT_COLOR[item.report ?? ''] ?? theme.accent) : theme.accent;
+  const mark = item.kind === 'spawn' ? '◆' : item.kind === 'stop' ? '■' : '↑';
+  return (
+    <Bullet mark={mark} markColor={tone} marginTop={item.kind === 'spawn' ? 1 : 0}>
+      <Text>
+        <Text color={tone} bold>
+          {item.lead}
+        </Text>
+        {item.report ? <Text color={tone}> {item.report}</Text> : null}
+        <Text dimColor> {item.text}</Text>
+      </Text>
+    </Bullet>
+  );
+}
+
 function ItemView({ item, width }: { item: Item; width: number }) {
   switch (item.type) {
     case 'banner':
@@ -534,6 +560,8 @@ function ItemView({ item, width }: { item: Item; width: number }) {
       );
     case 'run':
       return <RunItem item={item} />;
+    case 'team':
+      return <TeamItem item={item} />;
     case 'gate':
       return (
         <Box
