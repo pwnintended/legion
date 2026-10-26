@@ -1,0 +1,597 @@
+import { existsSync, readFileSync, statSync } from 'node:fs';
+import { join } from 'node:path';
+import { describe, expect, it, vi } from 'vitest';
+import { silentLogger } from '../../util/log.ts';
+import {
+  type AgentEvent,
+  type AgentEventOf,
+  type AgentSession,
+  type PermissionProfile,
+  permissionProfile,
+  type SessionOptions,
+} from '../types.ts';
+import { ClaudeEngine } from './engine.ts';
+import { ClaudeSession, HELD_RESULT_MS, type SessionTiming } from './session.ts';
+import {
+  CLARIFY_JSON_SCHEMA,
+  ClarifyOutputSchema,
+  claudeProfile,
+  FakeChild,
+  type FixtureLine,
+  fixtureSessionId,
+  loadFixture,
+  replayFixture,
+} from './testing.ts';
+
+const FIXTURES = join(import.meta.dirname, 'fixtures');
+const CWD = '/tmp/legion-fixture';
+const FAST: Partial<SessionTiming> = { coalesceMs: 0, interruptTimeoutMs: 50, closeGraceMs: 50, killTimeoutMs: 50 };
+
+const READ_ONLY = permissionProfile('read_only');
+const WRITE = permissionProfile('workspace_write');
+
+function options(permission: PermissionProfile, overrides: Partial<SessionOptions> = {}): SessionOptions {
+  return { cwd: CWD, prompt: 'hi', model: 'haiku', permission, ...overrides };
+}
+
+/** Engine whose spawn hands out FakeChilds (recorded in `spawned`). */
+function fakeEngine(timing: Partial<SessionTiming> = FAST, baseEnv: Record<string, string> = { PATH: '/bin' }) {
+  const spawned: { child: FakeChild; args: readonly string[]; env: Record<string, string> }[] = [];
+  // Any executable; never run.
+  const engine = new ClaudeEngine(claudeProfile({ command: process.execPath }), {
+    baseEnv,
+    log: silentLogger,
+    timing,
+    spawn: (_command, args, { env }) => {
+      const child = new FakeChild();
+      spawned.push({ child, args, env });
+      return child;
+    },
+  });
+  return { engine, spawned };
+}
+
+const iterators = new WeakMap<AgentSession, AsyncIterator<AgentEvent>>();
+async function until(session: AgentSession, done: (event: AgentEvent) => boolean): Promise<AgentEvent[]> {
+  const events: AgentEvent[] = [];
+  let iterator = iterators.get(session);
+  if (!iterator) {
+    iterator = session.events[Symbol.asyncIterator]();
+    iterators.set(session, iterator);
+  }
+  for (;;) {
+    const next = await iterator.next();
+    if (next.done) return events;
+    events.push(next.value);
+    if (done(next.value)) return events;
+  }
+}
+const all = (session: AgentSession) => until(session, () => false);
+const isTurnComplete = (e: AgentEvent) => e.type === 'turn_complete';
+const of = <T extends AgentEvent['type']>(events: AgentEvent[], type: T) =>
+  events.filter((e): e is AgentEventOf<T> => e.type === type);
+const fixture = (name: string): FixtureLine[] => loadFixture(join(FIXTURES, name));
+
+describe('ClaudeSession (fixture replay)', () => {
+  it('plays a Read turn end to end and exits on close', async () => {
+    const { engine, spawned } = fakeEngine();
+    const lines = fixture('read.jsonl');
+    const session = await engine.start(options(READ_ONLY, { prompt: 'read it' }));
+    const [{ child, args }] = spawned as [(typeof spawned)[number]];
+    const preassigned = session.id;
+    expect(args).toContain('--session-id');
+    expect(args[args.indexOf('--session-id') + 1]).toBe(preassigned);
+    expect(child.written[0]).toMatchObject({ type: 'user', message: { role: 'user', content: 'read it' } });
+
+    const replay = replayFixture(child, lines);
+    const turn = await until(session, isTurnComplete);
+    expect(turn[0]).toMatchObject({ type: 'session_started', model: 'claude-haiku-4-5-20251001' });
+    expect(session.id).toBe(fixtureSessionId(lines));
+    expect(of(turn, 'tool_call')[0]).toMatchObject({ name: 'Read', kind: 'read' });
+    expect(turn.at(-1)).toMatchObject({ type: 'turn_complete', isError: false });
+
+    await session.close();
+    await replay;
+    expect(await all(session)).toEqual([{ type: 'exited', code: 0 }]);
+    expect(child.stdinEnded).toBe(true);
+    expect(child.signals).toEqual([]);
+  });
+
+  it('round-trips a denied approval over the control protocol', async () => {
+    const { engine, spawned } = fakeEngine();
+    const session = await engine.start(options(WRITE));
+    const { child } = spawned[0] as (typeof spawned)[number];
+    const replay = replayFixture(child, fixture('approval-denied.jsonl'));
+
+    const before = await until(session, (e) => e.type === 'approval_request');
+    expect(of(before, 'file_change')).toEqual([{ type: 'file_change', path: 'notes.txt', added: 1, removed: 0 }]);
+    const request = before.at(-1);
+    if (request?.type !== 'approval_request') throw new Error('expected approval_request');
+    expect(request.tool).toBe('Bash');
+    await session.respond(request.requestId, { behavior: 'deny', message: 'Not allowed by Legion.', interrupt: false });
+    const written = child.written.at(-1);
+    expect(written).toEqual({
+      type: 'control_response',
+      response: {
+        subtype: 'success',
+        request_id: request.requestId,
+        response: { behavior: 'deny', message: 'Not allowed by Legion.', toolUseID: expect.any(String) },
+      },
+    });
+    await expect(
+      session.respond(request.requestId, { behavior: 'deny', message: 'x', interrupt: false }),
+    ).rejects.toThrow(/no pending approval/);
+
+    const after = await until(session, isTurnComplete);
+    expect(of(after, 'message').at(-1)?.text).toBe('DENIED');
+    await session.close();
+    await replay;
+  });
+
+  it('interrupts via the control protocol and accepts the next message', async () => {
+    const { engine, spawned } = fakeEngine();
+    const session = await engine.start(options(READ_ONLY));
+    const { child } = spawned[0] as (typeof spawned)[number];
+    const replay = replayFixture(child, fixture('interrupt.jsonl'));
+
+    await until(session, (e) => e.type === 'session_started');
+    const interrupted = session.interrupt();
+    const turn = await until(session, isTurnComplete);
+    await interrupted;
+    expect(child.written.at(1)).toEqual({
+      type: 'control_request',
+      request_id: 'legion-interrupt-1',
+      request: { subtype: 'interrupt' },
+    });
+    expect(turn.at(-1)).toEqual({
+      type: 'turn_complete',
+      structuredOutput: null,
+      isError: true,
+      reason: 'interrupted',
+    });
+    expect(child.signals).toEqual([]);
+
+    await session.send('Reply with exactly: still here');
+    const next = await until(session, isTurnComplete);
+    expect(of(next, 'session_started')).toEqual([]);
+    expect(of(next, 'message').at(-1)?.text).toBe('still here');
+    expect(next.at(-1)).toMatchObject({ isError: false });
+    await session.close();
+    await replay;
+  });
+
+  it('reports structured output on turn_complete', async () => {
+    const { engine, spawned } = fakeEngine();
+    const session = await engine.start(options(READ_ONLY, { outputSchema: CLARIFY_JSON_SCHEMA }));
+    const { child, args } = spawned[0] as (typeof spawned)[number];
+    expect(JSON.parse(args[args.indexOf('--json-schema') + 1] as string)).toEqual(CLARIFY_JSON_SCHEMA);
+    const replay = replayFixture(child, fixture('structured.jsonl'));
+    const turn = await until(session, isTurnComplete);
+    const done = turn.at(-1);
+    expect(done?.type === 'turn_complete' && ClarifyOutputSchema.parse(done.structuredOutput).questions).toHaveLength(
+      1,
+    );
+    await session.close();
+    await replay;
+  });
+
+  it('resumes with --resume and keeps the id', async () => {
+    const { engine, spawned } = fakeEngine();
+    const lines = fixture('resume.jsonl');
+    const id = fixtureSessionId(lines);
+    const session = await engine.resume(id, options(READ_ONLY, { prompt: 'What was the codeword?' }));
+    const { child, args } = spawned[0] as (typeof spawned)[number];
+    expect(args.slice(args.indexOf('--resume'), args.indexOf('--resume') + 2)).toEqual(['--resume', id]);
+    expect(args).not.toContain('--session-id');
+    expect(session.id).toBe(id);
+    const replay = replayFixture(child, lines);
+    const turn = await until(session, isTurnComplete);
+    expect(turn[0]).toMatchObject({ type: 'session_started', sessionId: id });
+    expect(of(turn, 'message').at(-1)?.text).toBe('ZEBRA-17');
+    await session.close();
+    await replay;
+  });
+
+  it('reports a steer the turn could not take in together with the turn it starts (one turn)', async () => {
+    // Recorded behaviour (claude 2.1.292): a message sent while the model thinks/writes its structured output
+    // is echoed only after that turn's result, at the start of a turn of its own.
+    const { engine, spawned } = fakeEngine();
+    const session = await engine.start(options(READ_ONLY, { outputSchema: { type: 'object' } }));
+    const { child, args } = spawned[0] as (typeof spawned)[number];
+    expect(args).toContain('--replay-user-messages');
+    const replay = (text: string) =>
+      child.send({ type: 'user', isReplay: true, message: { role: 'user', content: [{ type: 'text', text }] } });
+    const result = (story: string) =>
+      child.send({ type: 'result', subtype: 'success', is_error: false, structured_output: { story } });
+    await child.waitFor((m) => m.type === 'user');
+    replay('Write a story.');
+    await session.send('Make the keeper a fox.', 'next');
+    result('a keeper');
+    replay('Make the keeper a fox.');
+    result('a fox');
+    const turns = (await until(session, (e) => isTurnComplete(e) && e.structuredOutput !== null)).filter(
+      isTurnComplete,
+    );
+    expect(turns).toEqual([
+      { type: 'turn_complete', structuredOutput: { story: 'a fox' }, isError: false, reason: null },
+    ]);
+
+    // Taken in during the turn (echoed before the result): the result is final.
+    await session.send('Shorter, please.', 'next');
+    replay('Shorter, please.');
+    result('short');
+    expect((await until(session, isTurnComplete)).filter(isTurnComplete)).toEqual([
+      { type: 'turn_complete', structuredOutput: { story: 'short' }, isError: false, reason: null },
+    ]);
+    await session.close();
+  });
+
+  it('releases a held result when the queued message never starts a turn', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    try {
+      const { engine, spawned } = fakeEngine();
+      const session = await engine.start(options(READ_ONLY, { outputSchema: { type: 'object' } }));
+      const { child } = spawned[0] as (typeof spawned)[number];
+      child.send({ type: 'user', isReplay: true, message: { role: 'user', content: 'go' } });
+      await session.send('More.', 'next');
+      child.send({ type: 'result', subtype: 'success', is_error: false, structured_output: { ok: 1 } });
+      const pending = until(session, isTurnComplete);
+      await vi.advanceTimersByTimeAsync(HELD_RESULT_MS + 10);
+      expect((await pending).filter(isTurnComplete)).toEqual([
+        { type: 'turn_complete', structuredOutput: { ok: 1 }, isError: false, reason: null },
+      ]);
+      child.exit(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('asks for auto mode before the first prompt and reports whether the CLI accepted it', async () => {
+    const { engine, spawned } = fakeEngine();
+    const session = await engine.start(
+      options(WRITE, { permission: permissionProfile('workspace_write', { approvals: 'auto' }) }),
+    );
+    const { child, args } = spawned[0] as (typeof spawned)[number];
+    expect(args.slice(args.indexOf('--permission-mode'), args.indexOf('--permission-mode') + 2)).toEqual([
+      '--permission-mode',
+      'acceptEdits',
+    ]);
+    const { msg: first, index } = await child.waitFor(() => true);
+    expect(first).toMatchObject({ type: 'control_request', request: { subtype: 'set_permission_mode', mode: 'auto' } });
+    expect(child.written[index + 1]?.type ?? (await child.waitFor((m) => m.type === 'user')).msg.type).toBe('user');
+
+    // A refused switch (no auto mode for the model) resolves false; an accepted one true.
+    const back = (session as ClaudeSession).setApprovals('ask');
+    const { msg: request } = await child.waitFor(
+      (m) => m.type === 'control_request' && (m.request as { mode?: string }).mode === 'acceptEdits',
+    );
+    child.send({ type: 'control_response', response: { subtype: 'success', request_id: request.request_id } });
+    expect(await back).toBe(true);
+    const again = (session as ClaudeSession).setApprovals('auto');
+    const { msg: second } = await child.waitFor(
+      (m) =>
+        m.type === 'control_request' &&
+        m.request_id !== first.request_id &&
+        (m.request as { mode?: string }).mode === 'auto',
+    );
+    child.send({
+      type: 'control_response',
+      response: { subtype: 'error', request_id: second.request_id, error: 'auto mode unavailable for this model' },
+    });
+    expect(await again).toBe(false);
+    await session.close();
+  });
+
+  it('writes the MCP config to a private temp file and removes it on exit', async () => {
+    const { engine, spawned } = fakeEngine();
+    const session = await engine.start(
+      options(READ_ONLY, {
+        mcp: { legion: { type: 'http', url: 'http://127.0.0.1:1/mcp', headers: { Authorization: 'Bearer secret' } } },
+      }),
+    );
+    const { child, args } = spawned[0] as (typeof spawned)[number];
+    const path = args[args.indexOf('--mcp-config') + 1] as string;
+    expect(args.join(' ')).not.toContain('secret');
+    expect(statSync(path).mode & 0o777).toBe(0o600);
+    expect(JSON.parse(readFileSync(path, 'utf8'))).toEqual({
+      mcpServers: {
+        legion: { type: 'http', url: 'http://127.0.0.1:1/mcp', headers: { Authorization: 'Bearer secret' } },
+      },
+    });
+    const replay = replayFixture(child, fixture('mcp.jsonl'));
+    const turn = await until(session, isTurnComplete);
+    expect(of(turn, 'tool_call').find((e) => e.kind === 'mcp')?.name).toBe('mcp__legion__echo');
+    await session.close();
+    await replay;
+    await all(session);
+    expect(existsSync(path)).toBe(false);
+  });
+
+  it('strips parent Claude Code session variables from the child env', async () => {
+    const { engine, spawned } = fakeEngine(FAST, { PATH: '/bin', CLAUDECODE: '1', CLAUDE_CODE_SESSION_ID: 'x' });
+    await engine.start(options(READ_ONLY, { env: { HOME: '/h', CLAUDE_CODE_ENTRYPOINT: 'cli' } }));
+    expect(spawned[0]?.env).toEqual({ PATH: '/bin', HOME: '/h' });
+  });
+
+  it('lays the profile env over the process env and puts the profile args first', async () => {
+    const spawned: { command: string; args: readonly string[]; env: Record<string, string> }[] = [];
+    const engine = new ClaudeEngine(
+      claudeProfile({
+        command: process.execPath,
+        args: ['--debug-file', '/tmp/x'],
+        env: { CLAUDE_CONFIG_DIR: '/h/.claude-1', HOME: '/p' },
+      }),
+      {
+        baseEnv: { PATH: '/bin', HOME: '/h' },
+        timing: FAST,
+        spawn: (command, args, { env }) => {
+          spawned.push({ command, args, env });
+          return new FakeChild();
+        },
+      },
+    );
+    await engine.start(options(WRITE, { env: { HOME: '/s' } }));
+    expect(spawned[0]?.command).toBe(process.execPath);
+    expect(spawned[0]?.args.slice(0, 3)).toEqual(['--debug-file', '/tmp/x', '-p']);
+    expect(spawned[0]?.env).toEqual({ PATH: '/bin', HOME: '/s', CLAUDE_CONFIG_DIR: '/h/.claude-1' });
+  });
+});
+
+describe('ClaudeSession (lifecycle)', () => {
+  function session(timing: Partial<SessionTiming> = FAST, overrides: Partial<SessionOptions> = {}) {
+    const child = new FakeChild();
+    const s = new ClaudeSession({
+      child,
+      sessionId: 'sid',
+      opts: options(WRITE, overrides),
+      log: silentLogger,
+      timing,
+    });
+    return { child, session: s };
+  }
+  const init = { type: 'system', subtype: 'init', session_id: 'sid', model: 'm', claude_code_version: '2.1.289' };
+  const success = { type: 'result', subtype: 'success', is_error: false, total_cost_usd: 0, modelUsage: {} };
+
+  it('escalates close: stdin end, SIGTERM, SIGKILL', async () => {
+    const { child, session: s } = session();
+    child.onKill = (signal) => {
+      if (signal === 'SIGKILL') child.exit(null, signal);
+    };
+    await s.close();
+    expect(child.stdinEnded).toBe(true);
+    expect(child.signals).toEqual(['SIGTERM', 'SIGKILL']);
+    expect(await all(s)).toEqual([{ type: 'exited', code: null }]);
+    await s.close(); // idempotent
+  });
+
+  it('closing mid-turn terminates at once and ends the turn as interrupted', async () => {
+    const { child, session: s } = session({ ...FAST, closeGraceMs: 10_000 });
+    s.begin('work');
+    child.send(init);
+    await until(s, (e) => e.type === 'session_started');
+    await s.close();
+    expect(child.signals).toEqual(['SIGTERM']);
+    expect(await all(s)).toEqual([
+      { type: 'turn_complete', structuredOutput: null, isError: true, reason: 'interrupted' },
+      { type: 'exited', code: null },
+    ]);
+    await expect(s.send('more')).rejects.toThrow(/closed/);
+  });
+
+  it('reports a crash mid-turn with the stderr tail', async () => {
+    const { child, session: s } = session();
+    s.begin('work');
+    child.stderr.write('Error: invalid flag --bogus\n');
+    child.exit(1);
+    expect(await all(s)).toEqual([
+      { type: 'error', message: 'Error: invalid flag --bogus', retryable: false },
+      { type: 'turn_complete', structuredOutput: null, isError: true, reason: 'process_exited' },
+      { type: 'exited', code: 1 },
+    ]);
+  });
+
+  it('falls back to SIGINT when the interrupt request goes unanswered', async () => {
+    const { child, session: s } = session();
+    s.begin('work');
+    child.send(init);
+    child.onKill = (signal) => {
+      if (signal === 'SIGINT') {
+        child.send({ ...success, subtype: 'error_during_execution', is_error: true, terminal_reason: 'aborted_tools' });
+      }
+    };
+    await until(s, (e) => e.type === 'session_started');
+    await s.interrupt();
+    expect(child.signals).toEqual(['SIGINT']);
+    const events = await until(s, isTurnComplete);
+    expect(events.at(-1)).toMatchObject({ isError: true, reason: 'interrupted' });
+  });
+
+  it('kills the process when neither interrupt nor SIGINT ends the turn', async () => {
+    const { child, session: s } = session();
+    s.begin('work');
+    child.onKill = (signal) => {
+      if (signal === 'SIGTERM') child.exit(null, signal);
+    };
+    await s.interrupt();
+    expect(child.signals).toEqual(['SIGINT', 'SIGTERM']);
+    expect(await all(s)).toEqual([
+      { type: 'turn_complete', structuredOutput: null, isError: true, reason: 'interrupted' },
+      { type: 'exited', code: null },
+    ]);
+  });
+
+  it('does nothing on interrupt when idle', async () => {
+    const { child, session: s } = session();
+    await s.interrupt();
+    expect(child.written).toEqual([]);
+  });
+
+  it('sends follow-ups as user messages, priority now included', async () => {
+    const { child, session: s } = session();
+    await s.send('steer', 'now');
+    await s.send('later');
+    await child.waitFor((m) => m.type === 'user', 1);
+    expect(child.written).toEqual([
+      {
+        type: 'user',
+        message: { role: 'user', content: 'steer' },
+        parent_tool_use_id: null,
+        session_id: '',
+        priority: 'now',
+      },
+      { type: 'user', message: { role: 'user', content: 'later' }, parent_tool_use_id: null, session_id: '' },
+    ]);
+  });
+
+  it('answers allow-for-session with session-scoped permission updates', async () => {
+    const { child, session: s } = session();
+    s.begin('work');
+    child.send({
+      type: 'control_request',
+      request_id: 'perm-1',
+      request: {
+        subtype: 'can_use_tool',
+        tool_name: 'Bash',
+        input: { command: 'make' },
+        tool_use_id: 'tu1',
+        title: 'Run make?',
+        permission_suggestions: [
+          {
+            type: 'addRules',
+            rules: [{ toolName: 'Bash', ruleContent: 'make' }],
+            behavior: 'allow',
+            destination: 'localSettings',
+          },
+          { type: 'setMode', mode: 'acceptEdits', destination: 'session' },
+        ],
+      },
+    });
+    const [request] = await until(s, (e) => e.type === 'approval_request');
+    expect(request).toEqual({
+      type: 'approval_request',
+      requestId: 'perm-1',
+      tool: 'Bash',
+      input: { command: 'make' },
+      reason: 'Run make?',
+    });
+    await s.respond('perm-1', { behavior: 'allow', scope: 'session', updatedInput: null });
+    const { msg } = await child.waitFor((m) => m.type === 'control_response');
+    expect(msg).toEqual({
+      type: 'control_response',
+      response: {
+        subtype: 'success',
+        request_id: 'perm-1',
+        response: {
+          behavior: 'allow',
+          updatedInput: { command: 'make' },
+          updatedPermissions: [
+            {
+              type: 'addRules',
+              rules: [{ toolName: 'Bash', ruleContent: 'make' }],
+              behavior: 'allow',
+              destination: 'session',
+            },
+          ],
+          toolUseID: 'tu1',
+        },
+      },
+    });
+  });
+
+  it('answers a read-only session itself: probes chained with reads pass, anything else is denied, no inbox item', async () => {
+    const child = new FakeChild();
+    const s = new ClaudeSession({
+      child,
+      sessionId: 'sid',
+      opts: options(READ_ONLY),
+      log: silentLogger,
+      timing: FAST,
+    });
+    s.begin('plan');
+    const ask = (id: string, command: string) =>
+      child.send({
+        type: 'control_request',
+        request_id: id,
+        request: { subtype: 'can_use_tool', tool_name: 'Bash', input: { command }, tool_use_id: `tu-${id}` },
+      });
+    ask('ok', 'git ls-files | head -5; node -v; npm -v');
+    const allowed = await child.waitFor((m) => m.type === 'control_response');
+    expect(allowed.msg).toMatchObject({
+      response: { request_id: 'ok', response: { behavior: 'allow', toolUseID: 'tu-ok' } },
+    });
+    ask('no', 'npm install');
+    const denied = await child.waitFor(
+      (m) =>
+        m.type === 'control_response' && (m as { response?: { request_id?: string } }).response?.request_id === 'no',
+    );
+    expect(denied.msg).toMatchObject({
+      response: { request_id: 'no', response: { behavior: 'deny', message: expect.stringContaining('npm install') } },
+    });
+    child.send(success);
+    const events = await until(s, isTurnComplete);
+    expect(events.some((e) => e.type === 'approval_request')).toBe(false);
+  });
+
+  it('drops approvals the CLI withdraws', async () => {
+    const { child, session: s } = session();
+    s.begin('work');
+    child.send({
+      type: 'control_request',
+      request_id: 'p',
+      request: { subtype: 'can_use_tool', tool_name: 'Bash', input: {} },
+    });
+    await until(s, (e) => e.type === 'approval_request');
+    child.send({ type: 'control_cancel_request', request_id: 'p' });
+    child.send(success);
+    await until(s, isTurnComplete);
+    await expect(s.respond('p', { behavior: 'allow', scope: 'once', updatedInput: null })).rejects.toThrow();
+  });
+
+  it('declines control requests it does not support', async () => {
+    const { child, session: s } = session();
+    child.send({ type: 'control_request', request_id: 'h1', request: { subtype: 'hook_callback' } });
+    child.send({ type: 'control_request', request_id: 'e1', request: { subtype: 'elicitation' } });
+    const first = await child.waitFor((m) => m.type === 'control_response');
+    const second = await child.waitFor((m) => m.type === 'control_response', first.index + 1);
+    expect(first.msg).toEqual({
+      type: 'control_response',
+      response: { subtype: 'error', request_id: 'h1', error: 'Legion does not handle hook_callback' },
+    });
+    expect(second.msg).toEqual({
+      type: 'control_response',
+      response: { subtype: 'success', request_id: 'e1', response: { action: 'decline' } },
+    });
+    await s.close();
+  });
+
+  it('coalesces text deltas', async () => {
+    const { child, session: s } = session({ ...FAST, coalesceMs: 20 });
+    s.begin('x');
+    const delta = (text: string) => ({
+      type: 'stream_event',
+      parent_tool_use_id: null,
+      event: { type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text } },
+    });
+    child.send(delta('a'));
+    child.send(delta('b'));
+    child.send(delta('c'));
+    child.send({ type: 'assistant', message: { content: [{ type: 'text', text: 'abc' }] } });
+    child.send(delta('d'));
+    const events = await until(s, (e) => e.type === 'text_delta' && e.text === 'd');
+    expect(events).toEqual([
+      { type: 'text_delta', text: 'abc' },
+      { type: 'message', text: 'abc' },
+      { type: 'text_delta', text: 'd' },
+    ]);
+    await s.close();
+  });
+
+  it('closes when the abort signal fires', async () => {
+    const controller = new AbortController();
+    const { child, session: s } = session(FAST, { signal: controller.signal });
+    child.onKill = (signal) => child.exit(null, signal);
+    controller.abort();
+    expect(await all(s)).toEqual([{ type: 'exited', code: null }]);
+    expect(child.stdinEnded).toBe(true);
+  });
+});

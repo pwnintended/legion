@@ -1,0 +1,53 @@
+{
+  "name": "legion",
+  "version": "0.1.0",
+  "private": true,
+  "description": "A single-session terminal agent that writes and runs multi-agent workflows over Claude Code and Codex.",
+  "type": "module",
+  "bin": {
+    "legion": "./bin/legion.js"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/src/sdk/index.d.ts",
+      "default": "./dist/src/sdk/index.js"
+    }
+  },
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "dev": "tsx src/cli.tsx",
+    "typecheck": "tsc -p tsconfig.json",
+    "lint": "biome check .",
+    "format": "biome check --write .",
+    "test": "vitest run",
+    "prepare": "tsc -p tsconfig.build.json",
+    "check": "tsc -p tsconfig.json && biome check . && vitest run",
+    "test:live": "LEGION_LIVE=1 vitest run --config vitest.live.config.ts"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.32.2",
+    "ink": "^8.0.0",
+    "react": "^19.3.1",
+    "smol-toml": "^1.9.1",
+    "typescript": "^7.0.2",
+    "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^2.6.3",
+    "@types/node": "^26.6.5",
+    "@types/react": "^19.3.0",
+    "ink-testing-library": "^4.0.0",
+    "tsx": "^4.23.15",
+    "vitest": "^5.0.5"
+  },
+  "files": [
+    "bin",
+    "dist",
+    "builtin",
+    "src",
+    "README.md"
+  ]
+}
