@@ -5,9 +5,10 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { FakeEngine, type FakeScript } from '../engine/fake/index.ts';
 import type { EngineKind } from '../engine/types.ts';
 import { agent, gate, group, loop, parallel, sh, step, z } from '../sdk/index.ts';
+import { Semaphore } from '../util/semaphore.ts';
 import type { GateAnswer, Interaction, RunEvent, RunHost } from './host.ts';
 import { Journal } from './journal.ts';
-import { executeInRun, WorkflowCancelled } from './runtime.ts';
+import { executeInRun, isModelRejected, WorkflowCancelled } from './runtime.ts';
 
 let dir: string;
 
@@ -281,6 +282,63 @@ describe('runtime', () => {
     expect(host.interactions[0]).toMatchObject({ kind: 'questions', key: 'a', questions: [question] });
     expect(host.engines.get('claude')?.calls[0]?.answers).toEqual([{ q: ['picked'] }]);
     expect(text).toContain('picked');
+  });
+
+  it('asks again in the same session when a turn ends without its structured output', async () => {
+    const host = testHost({
+      script: (_call, turn) => (turn === 0 ? { error: 'missing_structured_output' } : { output: { n: 3 } }),
+    });
+    const out = await exec(host, () => agent('a', { prompt: 'count', output: z.object({ n: z.number() }) }));
+    expect(out).toEqual({ n: 3 });
+    const call = host.engines.get('claude')?.calls[0];
+    expect(call?.prompts[1]).toContain('without the structured result');
+  });
+
+  it('retries on the default model when the configured one is rejected', async () => {
+    const host = testHost({
+      script: (call) =>
+        call.opts.model
+          ? { error: "The 'sol-6.1' model is not supported when using Codex with a ChatGPT account." }
+          : { text: 'done' },
+    });
+    const out = await exec(host, () => agent('a', { prompt: 'x', model: 'sol-6.1' }));
+    expect(out).toBe('done');
+    const calls = host.engines.get('claude')?.calls ?? [];
+    expect(calls.map((c) => c.opts.model)).toEqual(['sol-6.1', null]);
+    expect(host.events.some((e) => e.type === 'log' && e.message.includes('rejected model sol-6.1'))).toBe(true);
+    expect(isModelRejected(new Error('rate limited'))).toBe(false);
+    expect(isModelRejected(new Error('model_not_found'))).toBe(true);
+  });
+
+  it('tells writing agents how to run commands, not readers', async () => {
+    const host = testHost();
+    await exec(host, async () => {
+      await agent('w', { prompt: 'x', system: 'Be brief.' });
+      await agent('r', { prompt: 'y', mode: 'read' });
+    });
+    const [w, r] = host.engines.get('claude')?.calls ?? [];
+    expect(w?.opts.systemPrompt).toContain('Never start them in the background');
+    expect(w?.opts.systemPrompt).toContain('Be brief.');
+    expect(r?.opts.systemPrompt ?? '').not.toContain('Running commands');
+  });
+
+  it('takes a slot from the session-wide agent limit for every agent', async () => {
+    let active = 0;
+    let peak = 0;
+    const host = testHost();
+    const slots = new Semaphore(2);
+    host.acquireAgent = async () => {
+      const release = await slots.acquire();
+      active++;
+      peak = Math.max(peak, active);
+      return () => {
+        active--;
+        release();
+      };
+    };
+    await exec(host, () => parallel([1, 2, 3, 4].map((n) => () => agent(`a${n}`, { prompt: 'x' }))));
+    expect(peak).toBeLessThanOrEqual(2);
+    expect(host.engines.get('claude')?.calls).toHaveLength(4);
   });
 
   it('cancellation stops before the next step', async () => {

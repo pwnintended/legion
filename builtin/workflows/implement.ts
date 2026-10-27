@@ -9,7 +9,7 @@ const Input = z.object({
   coder: z.enum(['claude', 'codex']).default('claude').describe('Engine that writes code; the other one reviews.'),
   finish: z.enum(['pr', 'merge', 'branch']).default('pr'),
   verify: z.array(z.string()).default([]).describe('Checks that must pass, e.g. "pnpm test".'),
-  maxFixRounds: z.number().int().min(0).max(5).default(2),
+  maxFixRounds: z.number().int().min(0).max(5).default(1),
 });
 
 const Report = z.object({
@@ -46,7 +46,7 @@ export default workflow(
       coder: 'claude',
       finish: 'pr',
       verify: [],
-      maxFixRounds: 2,
+      maxFixRounds: 1,
     },
   },
   async (input) => {

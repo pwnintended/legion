@@ -127,6 +127,13 @@ approvals = "auto"                       # its own tool approvals: auto (allowed
 [workflows]
 approvals = "auto"                       # agents' tool approvals: auto (allowed) | ask (you)
 maxAgents = 4                            # agent sessions alive at once per run
+maxAgentsTotal = 6                       # …and across all runs of this session
+resumeOnStart = true                     # resume runs a crash or exit left unfinished
+
+[worktrees]
+clone = ["target", "game/.godot"]        # build caches copied into new worktrees (default: found automatically)
+setup = []                               # commands run in each new worktree, e.g. "pnpm install --offline"
+minFreeGb = 10                           # no new worktrees below this much free disk
 ```
 
 Things are allowed by default (`approvals = "auto"`): Claude sessions run in Claude's auto mode, whose
@@ -134,6 +141,23 @@ classifier answers what would be asked, and Codex sessions run without sandbox o
 `--dangerously-bypass-approvals-and-sandbox`. With `ask`, Claude edits files freely and asks about the rest,
 and Codex runs in its `workspace-write` sandbox and asks for anything outside it; you answer in the UI.
 Read-only agents (planners, reviewers) stay read-only either way.
+
+Tool approvals always come to you, never through a lead: a lead answering them costs an LLM turn each while the
+agent waits.
+
+**Warm worktrees.** A fresh worktree has none of your checkout's build caches, so every agent would start with a
+cold build. Legion copies the ignored cache directories (`target`, `node_modules`, `.venv`, `.godot`, two levels
+deep, or the `[worktrees] clone` list) into each new worktree as copy-on-write clones (APFS, or `--reflink` on
+Linux): instant, and no extra disk until a build changes them. Then it runs `setup`. A run's worktrees are removed
+when it ends (its branches stay), and no worktree is created when less than `minFreeGb` is free.
+
+**Interrupted runs.** Runs still going when Legion exits or crashes are resumed on the next start
+(`resumeOnStart`), from their journal: finished steps are not redone. Runs another live Legion session owns are
+left alone.
+
+**Agents that go wrong.** An agent that ends its turn without the structured result its step needs is asked once
+more for it. A model the engine rejects (unknown, or not available on your account) is logged and the step retries
+on the engine's default model.
 
 ### Models for workflow agents
 
@@ -292,6 +316,12 @@ Resolution order, first match by name wins:
 |---|---|
 | `feature` | Clarify, plan (you approve or ask for changes), then implement the plan's tasks in parallel worktrees in dependency order. Each task gets a review from the other engine and fix rounds, then is squash-merged into an integration branch (an agent resolves conflicts). A final review of the whole, then a draft PR (or a local merge). |
 | `tasks` | The second half of `feature`, for a plan you already agreed with the assistant (or a lead): the tasks you give it, each optionally on its own engine, run the same way, through to the PR. `confirm: true` asks before starting. |
+
+`feature`, `tasks` and `implement` keep runs short: one fix round by default (`maxFixRounds`), each task runs its
+own scoped `verify` commands, and the repository-wide checks run once on the merged result. A run of one task skips
+the final review. When the base branch moved on and conflicts by the time the run merges, an agent merges it into
+the integration branch first instead of failing. Leads and the assistant are told to make small changes
+themselves instead of starting a workflow.
 | `implement` | One focused change in a worktree: code, then cross-engine review and fix rounds, then a gate, then a draft PR or merge. |
 | `review` | Both engines review your branch and uncommitted changes independently. Their findings are merged, and an agent can then fix the ones you pick. |
 

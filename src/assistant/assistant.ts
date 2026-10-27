@@ -168,7 +168,8 @@ export class Assistant extends EventEmitter<AssistantEvents> {
       systemPrompt: this.opts.systemPrompt(),
       model: this.opts.model?.() ?? null,
       effort: this.opts.effort?.() ?? null,
-      permission: permissionProfile('workspace_write', { approvals: this.approvals(), web: true }),
+      // The orchestrator and leads commit (leads on their own branch); workflow agents do not.
+      permission: permissionProfile('workspace_write', { approvals: this.approvals(), web: true, git: true }),
       mcp: this.opts.mcp,
       userSettings: true,
     };

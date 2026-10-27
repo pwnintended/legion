@@ -355,6 +355,17 @@ export class Controller {
     team.on('lead-question', (lead, q) => this.store.assistantQuestion(q, lead));
     team.on('lead-resolved', (id) => this.store.resolved(id));
     team.on('present', (p) => this.store.present(p));
+    // Runs the last session left unfinished continue (their progress shows like any other run's).
+    void session.resumeInterruptedRuns().then(
+      (ids) => {
+        if (ids.length)
+          this.store.info(
+            `Resumed ${ids.length} run${ids.length > 1 ? 's' : ''} the last session left unfinished: ${ids.join(', ')}`,
+          );
+      },
+      (err: unknown) =>
+        this.store.error(`Could not resume unfinished runs: ${err instanceof Error ? err.message : err}`),
+    );
   }
 
   attach(hooks: ControllerHooks): void {
@@ -440,7 +451,7 @@ export class Controller {
   private shows(p: PendingInteraction): boolean {
     const { team } = this.session;
     const owner = team.ownerOf(p.interaction.runId);
-    return team.gateMode(owner) === 'ask' || (owner !== ROOT && owner === this.target);
+    return team.userAnswers(p) || (owner !== ROOT && owner === this.target);
   }
 
   /** Answers one of a run's interactions; when it belonged to a lead, the lead hears about it. */

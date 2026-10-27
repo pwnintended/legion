@@ -35,9 +35,10 @@ export const EDIT_TOOLS: readonly string[] = ['Edit', 'Write', 'MultiEdit', 'Not
  * Never allowed, whatever the profile: Legion owns commits, remotes and worktrees, and an agent must not
  * leave anything running or scheduled behind (these tools ship with the CLI and some need no permission).
  */
+/** Denied unless the profile allows `git` (see {@link PermissionProfile.git}). */
+export const GIT_DENIED: readonly string[] = ['Bash(git commit *)', 'Bash(git push *)'];
+
 export const ALWAYS_DENIED: readonly string[] = [
-  'Bash(git commit *)',
-  'Bash(git push *)',
   'EnterWorktree',
   'ExitWorktree',
   'CronCreate',
@@ -93,13 +94,13 @@ export function permissionArgs(profile: PermissionProfile, mcpServers: readonly 
     return {
       mode: 'default',
       allowedTools: [...mcpRules, ...webRules],
-      disallowedTools: [...ALWAYS_DENIED, ...READ_ONLY_DENIED],
+      disallowedTools: [...GIT_DENIED, ...ALWAYS_DENIED, ...READ_ONLY_DENIED],
     };
   }
   return {
     mode: 'acceptEdits',
     allowedTools: [...new Set([...profile.allowedCommands.flatMap(bashRules), ...mcpRules, ...webRules])],
-    disallowedTools: [...ALWAYS_DENIED],
+    disallowedTools: [...(profile.git ? [] : GIT_DENIED), ...ALWAYS_DENIED],
   };
 }
 

@@ -111,6 +111,8 @@ export interface GitOps {
   remove(wt: Worktree): Promise<void>;
   /** Re-creates a worktree whose directory is gone (a resumed run after a reboot or cleanup), from its branch. */
   restore(wt: Worktree): Promise<void>;
+  /** Removes every worktree directory of a run that ended; its branches stay. */
+  release?(runId: string): Promise<void>;
 }
 
 /** `ops` with `base` as the default start of new branches (and so of where `mergeToBase` and `draftPr` aim). */
@@ -144,6 +146,8 @@ export interface RunHost {
   readonly git: GitOps;
   /** Max agent sessions alive at once across the run. */
   readonly maxAgents: number;
+  /** A slot from the session-wide agent limit (across runs); the returned function frees it. */
+  acquireAgent?(): Promise<() => void>;
   /** MCP servers every agent gets (`[mcp.servers]`). */
   mcp?(): Readonly<Record<string, McpServer>>;
   /**

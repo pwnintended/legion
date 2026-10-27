@@ -1,4 +1,4 @@
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { FakeEngine, type FakeScript } from '../engine/fake/index.ts';
@@ -37,13 +37,14 @@ export default workflow({ name: 'two', description: 'Draft, then polish', input:
 
 afterEach(() => dir.cleanup());
 
-function manager() {
+function manager(extra: Partial<ConstructorParameters<typeof RunManager>[0]> = {}) {
   return new RunManager({
     repo: dir.path,
     engine: () => engine,
     profiles: () => ({ claude: 'claude-1' }),
     git: {} as GitOps,
     approvals: 'auto',
+    ...extra,
   });
 }
 
@@ -105,3 +106,66 @@ describe('steering runs', () => {
     expect(promptOf('draft it').at(0)).toContain('Bolder.');
   });
 });
+
+describe('run lifecycle', () => {
+  it('marks runs stopped by the exit as interrupted, and the next session resumes them', async () => {
+    let block = true;
+    // A resumed step is told it was interrupted, then given the task again.
+    const drafting = (prompt = '') => prompt.includes('draft it');
+    script = async (call) => {
+      while (block && drafting(call.prompts[0])) await tick();
+      return { text: drafting(call.prompts[0]) ? 'a draft' : 'polished' };
+    };
+    const released: string[] = [];
+    const git = { release: async (id: string) => void released.push(id) } as unknown as GitOps;
+    const first = manager({ git });
+    const id = await first.start('two', {});
+    await until(() => first.liveAgents(id).includes('draft'));
+    await first.shutdown();
+    expect(first.run(id)?.status ?? readStatus(id)).toBe('interrupted');
+    // An interrupted run keeps its worktrees for the next session.
+    expect(released).toEqual([]);
+
+    block = false;
+    const second = manager({ git });
+    expect(await second.resumeInterrupted()).toEqual([id]);
+    const record = await second.wait(id);
+    expect(record?.status).toBe('done');
+    expect(record?.result).toEqual({ draft: 'a draft', polish: 'polished' });
+    // A run that ended gives its worktrees back.
+    expect(released).toEqual([id]);
+    expect(await manager({ git }).resumeInterrupted()).toEqual([]);
+  });
+
+  it('does not take over a run another live session is running', async () => {
+    script = () => ({ text: 'x' });
+    const runs = manager();
+    const id = await runs.start('two', {});
+    await runs.wait(id);
+    const file = join(dir.path, '.legion', 'runs', id, 'run.json');
+    const record = JSON.parse(readFileSync(file, 'utf8'));
+    // Our own parent process stands in for another live Legion session.
+    writeFileSync(file, JSON.stringify({ ...record, status: 'running', pid: process.ppid }));
+    expect(await manager().resumeInterrupted()).toEqual([]);
+  });
+
+  it('limits agents across runs', async () => {
+    let active = 0;
+    let peak = 0;
+    script = async () => {
+      active++;
+      peak = Math.max(peak, active);
+      await tick(30);
+      active--;
+      return { text: 'x' };
+    };
+    const runs = manager({ maxAgentsTotal: 1 });
+    const ids = await Promise.all([runs.start('two', {}), runs.start('two', {})]);
+    await Promise.all(ids.map((id) => runs.wait(id)));
+    expect(peak).toBe(1);
+  });
+});
+
+function readStatus(id: string): string {
+  return JSON.parse(readFileSync(join(dir.path, '.legion', 'runs', id, 'run.json'), 'utf8')).status;
+}

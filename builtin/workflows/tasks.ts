@@ -26,8 +26,11 @@ const Input = z.object({
   tasks: z.array(TaskInput).min(1),
   coder: Engine.default('claude').describe('Engine that writes code; the other one reviews.'),
   finish: z.enum(['pr', 'merge', 'branch']).default('pr'),
-  verify: z.array(z.string()).default([]).describe('Repository-wide checks run on every task and on the result.'),
-  maxFixRounds: z.number().int().min(0).max(5).default(2),
+  verify: z
+    .array(z.string())
+    .default([])
+    .describe('Repository-wide checks, run once on the result (and on tasks without checks of their own).'),
+  maxFixRounds: z.number().int().min(0).max(5).default(1),
   confirm: z.boolean().default(false).describe('Ask for approval of the plan before starting.'),
   base: z
     .string()

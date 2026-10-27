@@ -18,8 +18,8 @@ const Input = z.object({
   verify: z
     .array(z.string())
     .default([])
-    .describe('Repository-wide checks run on every task and on the result (e.g. "pnpm test").'),
-  maxFixRounds: z.number().int().min(0).max(5).default(2),
+    .describe('Repository-wide checks, run once on the result (e.g. "pnpm test").'),
+  maxFixRounds: z.number().int().min(0).max(5).default(1),
   clarify: z.boolean().default(true).describe('Let the planner ask questions first.'),
 });
 
@@ -40,7 +40,7 @@ export default workflow(
       coder: 'claude',
       finish: 'pr',
       verify: [],
-      maxFixRounds: 2,
+      maxFixRounds: 1,
       clarify: true,
     },
   },
@@ -108,7 +108,7 @@ Find every place the change touches (entry points, modules, callers, tests), the
 - Wide and shallow: one contracts task, many independent tasks, one integration task at the end when there are three or more. Add a dependency only when a task needs another's code merged first.
 - Right-sized: one focused agent session each (≤ ~400 changed lines, usually 1–5 files), independently verifiable, tests in the same task as the code.
 - One writer per file: if two tasks must write the same file, make one depend on the other.
-- 2–5 testable acceptance criteria per task; at least one real, fast verify command per task. ${verify.length ? `These repository-wide checks also run on every task, do not repeat them: ${verify.map((v) => `\`${v}\``).join(', ')}.` : ''}
+- 2–5 testable acceptance criteria per task; at least one real, fast, scoped verify command per task (one test file, one package or crate: seconds, not the whole suite). ${verify.length ? `These repository-wide checks run once on the merged result, do not repeat them: ${verify.map((v) => `\`${v}\``).join(', ')}.` : ''}
 - A small change may be a single task. Use at most 10 tasks, ids T1, T2, … in dependency order.
 
 ## Plan document

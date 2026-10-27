@@ -7,4 +7,5 @@ export * from './pr-host.ts';
 export * from './provision.ts';
 export * from './remote.ts';
 export * from './repo.ts';
+export * from './warm.ts';
 export * from './worktrees.ts';

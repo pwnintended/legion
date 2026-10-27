@@ -23,6 +23,10 @@
  * [workflows]
  * approvals = "auto"            # agents' tool approvals: auto (Claude auto mode, Codex bypass) | ask (you)
  * maxAgents = 4                 # agent sessions alive at once per run
+ * maxAgentsTotal = 6            # across all runs
+ *
+ * [worktrees]
+ * clone = ["target", "game/.godot"]   # build caches cloned into new worktrees (default: found automatically)
  * ```
  *
  * Without any profile for a kind, there is one called `default` that runs the plain binary (`claude`, `codex`).
@@ -92,8 +96,26 @@ export const ConfigSchema = z.object({
       /** Agents' tool approvals: allowed (Claude's auto mode, Codex without sandbox or approvals), or asked. */
       approvals: z.enum(['ask', 'auto']).default('auto'),
       maxAgents: z.number().int().min(1).max(32).default(4),
+      /** Agent sessions alive at once across all runs (leads' included); more wait for a free slot. */
+      maxAgentsTotal: z.number().int().min(1).max(128).default(6),
+      /** Runs that Legion's exit (or a crash) interrupted continue when the next session starts. */
+      resumeOnStart: z.boolean().default(true),
     })
-    .default({ approvals: 'auto', maxAgents: 4 }),
+    .default({ approvals: 'auto', maxAgents: 4, maxAgentsTotal: 6, resumeOnStart: true }),
+  worktrees: z
+    .object({
+      /**
+       * Untracked build caches copied into every new worktree from the user's checkout, as copy-on-write clones
+       * (instant, no extra disk until changed): e.g. `["target", "game/.godot", "node_modules"]`. Unset: found
+       * automatically (`target`, `node_modules`, `.venv` and `.godot` directories git ignores, two levels deep).
+       */
+      clone: z.array(z.string().min(1)).nullable().default(null),
+      /** Shell commands run in every new worktree after cloning (through bash, in the worktree). */
+      setup: z.array(z.string().min(1)).default([]),
+      /** Below this much free disk (GB), no new worktree is created: the step fails with a clear message. */
+      minFreeGb: z.number().min(0).default(10),
+    })
+    .default({ clone: null, setup: [], minFreeGb: 10 }),
   workflow: z.record(z.string(), WorkflowModelsSchema).default({}),
   /** `[mcp.servers.<name>]`: given to every lead and every workflow agent, on both engines. */
   mcp: z.object({ servers: z.record(z.string(), McpServerSchema).default({}) }).default({ servers: {} }),
@@ -242,6 +264,15 @@ export function defaultProjectConfig(config: Config): string {
     '[workflows]',
     line('approvals', workflows.approvals, "agents' tool approvals: auto (allowed) | ask (you)"),
     line('maxAgents', workflows.maxAgents, 'agent sessions alive at once per run'),
+    line('maxAgentsTotal', workflows.maxAgentsTotal, 'agent sessions alive at once across all runs'),
+    '',
+    '# New worktrees get copy-on-write clones of build caches from your checkout (found automatically:',
+    '# target, node_modules, .venv, .godot). List them to choose, and add setup commands if needed:',
+    '#',
+    '# [worktrees]',
+    '# clone     = ["target", "game/.godot"]',
+    '# setup     = ["just ext"]',
+    '# minFreeGb = 10',
     '',
     '[team]',
     line('gates', team.gates, "your runs' gates: ask (you) | decide (the assistant, escalating what it can't)"),

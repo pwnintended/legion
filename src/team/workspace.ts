@@ -6,9 +6,10 @@
  * user's branch behind their back, and never improvise worktrees of their own.
  */
 import { existsSync } from 'node:fs';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import {
   branchExists,
+  checkDiskSpace,
   commitAll,
   createWorktree,
   currentBranch,
@@ -17,8 +18,11 @@ import {
   lockWorktree,
   mergeIntoBase,
   resolveSha,
+  type WarmSettings,
+  warmWorktree,
   withRepoLock,
 } from '../git/index.ts';
+import { type Logger, silentLogger } from '../util/log.ts';
 import { worktreeRoot } from '../workflow/git-ops.ts';
 
 export interface LeadWorkspace {
@@ -41,13 +45,19 @@ export interface Workspaces {
   main(): Promise<{ path: string; branch: string | null }>;
 }
 
-export function createWorkspaces(repo: string, root = join(worktreeRoot(repo), 'leads')): Workspaces {
+export function createWorkspaces(
+  repo: string,
+  opts: { root?: string; warm?: () => WarmSettings; log?: Logger } = {},
+): Workspaces {
+  const root = opts.root ?? join(worktreeRoot(repo), 'leads');
+  const log = opts.log ?? silentLogger;
   return {
     plan: (lead, base) => ({ path: join(root, lead), branch: `legion/lead/${lead}`, base }),
 
     async ensure(ws) {
       if (ws.base === null) ws.base = (await currentBranch(repo)) ?? (await resolveSha(repo, 'HEAD'));
       if (existsSync(ws.path)) return;
+      if (opts.warm) await checkDiskSpace(dirname(ws.path), opts.warm().minFreeGb);
       if (await branchExists(repo, ws.branch)) {
         await withRepoLock(repo, async () => {
           // A registered worktree whose directory vanished blocks `worktree add` for its branch.
@@ -55,9 +65,14 @@ export function createWorkspaces(repo: string, root = join(worktreeRoot(repo), '
           await git(repo, ['worktree', 'add', ws.path, ws.branch]);
         });
         await lockWorktree(repo, ws.path);
-        return;
+      } else {
+        await createWorktree({ repo, path: ws.path, branch: ws.branch, startSha: await resolveSha(repo, ws.base) });
       }
-      await createWorktree({ repo, path: ws.path, branch: ws.branch, startSha: await resolveSha(repo, ws.base) });
+      if (opts.warm) {
+        const { cloned, warnings } = await warmWorktree(repo, ws.path, opts.warm());
+        if (cloned.length) log.info(`lead worktree ${ws.path}: cloned ${cloned.join(', ')}`);
+        for (const w of warnings) log.warn(`lead worktree ${ws.path}: ${w}`);
+      }
     },
 
     async merge(ws, into, message) {

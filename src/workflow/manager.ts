@@ -10,6 +10,7 @@ import { type Config, resolveAgentModel } from '../config.ts';
 import type { AgentEngine, AgentSession, EngineKind, McpServer } from '../engine/types.ts';
 import type { Logger } from '../util/log.ts';
 import { silentLogger } from '../util/log.ts';
+import { Semaphore } from '../util/semaphore.ts';
 import {
   type GitOps,
   type Interaction,
@@ -38,6 +39,8 @@ export interface RunManagerOptions {
   profiles: () => Record<string, string>;
   git: GitOps;
   maxAgents?: number;
+  /** Agent sessions alive at once across all runs. Default: no limit beyond each run's own. */
+  maxAgentsTotal?: number;
   approvals?: 'ask' | 'auto';
   /** The user's model settings per workflow (`[workflow.<name>]`), read at every agent start. */
   agentModels?: () => Config['workflow'];
@@ -70,6 +73,10 @@ export class RunManager extends EventEmitter<RunManagerEvents> {
   private readonly notes = new Map<string, { step: string | null; text: string }>();
   private nextInteraction = 1;
   private readonly log: Logger;
+  /** The session-wide agent limit; reads the setting at every acquire, so a change applies as slots free up. */
+  private readonly agentSlots = new Semaphore(() => this.opts.maxAgentsTotal ?? Number.MAX_SAFE_INTEGER);
+  /** Set while the session shuts down: runs stopped by it are `interrupted` (resumed next time), not cancelled. */
+  private shuttingDown = false;
 
   constructor(opts: RunManagerOptions) {
     super();
@@ -78,7 +85,7 @@ export class RunManager extends EventEmitter<RunManagerEvents> {
   }
 
   /** New defaults for runs started from now on. */
-  configure(patch: Pick<RunManagerOptions, 'maxAgents' | 'approvals'>): void {
+  configure(patch: Pick<RunManagerOptions, 'maxAgents' | 'approvals' | 'maxAgentsTotal'>): void {
     this.opts = { ...this.opts, ...patch };
   }
 
@@ -120,6 +127,26 @@ export class RunManager extends EventEmitter<RunManagerEvents> {
     };
     this.launch(record, def.run);
     return id;
+  }
+
+  /**
+   * Picks up runs an earlier session left unfinished: interrupted by its exit, or still marked running after a
+   * crash. Returns the ids resumed.
+   */
+  async resumeInterrupted(): Promise<string[]> {
+    const resumed: string[] = [];
+    for (const r of listRuns(this.opts.repo)) {
+      if ((r.status !== 'interrupted' && r.status !== 'running') || this.active.has(r.id)) continue;
+      // "running" in another live Legion session is not ours to take over.
+      if (r.status === 'running' && r.pid && r.pid !== process.pid && processAlive(r.pid)) continue;
+      try {
+        await this.resume(r.id);
+        resumed.push(r.id);
+      } catch (err) {
+        this.log.warn(`could not resume run ${r.id}`, err);
+      }
+    }
+    return resumed;
   }
 
   /**
@@ -226,6 +253,7 @@ export class RunManager extends EventEmitter<RunManagerEvents> {
 
   /** Cancels every active run and waits for them to settle (session shutdown). */
   async shutdown(): Promise<void> {
+    this.shuttingDown = true;
     const waits = [...this.active.values()].map((r) => {
       r.controller.abort();
       return r.done.catch(() => {});
@@ -237,7 +265,8 @@ export class RunManager extends EventEmitter<RunManagerEvents> {
     return join(runsDir(this.opts.repo), runId);
   }
 
-  private launch(record: RunRecord, run: (input: unknown) => Promise<unknown>): void {
+  private launch(started: RunRecord, run: (input: unknown) => Promise<unknown>): void {
+    const record: RunRecord = { ...started, pid: process.pid };
     const dir = this.dir(record.id);
     writeRun(dir, record);
     const journal = new Journal(dir);
@@ -251,12 +280,20 @@ export class RunManager extends EventEmitter<RunManagerEvents> {
           const cancelled = err instanceof WorkflowCancelled || controller.signal.aborted;
           const message = err instanceof Error ? err.message : String(err);
           if (!cancelled) this.log.error(`run ${record.id} failed`, err);
-          return { ...record, status: cancelled ? ('cancelled' as const) : ('failed' as const), error: message };
+          const status = cancelled ? (this.shuttingDown ? 'interrupted' : 'cancelled') : 'failed';
+          return { ...record, status: status as RunRecord['status'], error: message };
         },
       )
-      .then((final) => {
+      .then(async (final) => {
         const ended: RunRecord = { ...final, endedAt: Date.now() };
         writeRun(dir, ended);
+        // Worktrees are gigabytes each: drop the directories of a run that ended (its branches stay; a resume
+        // re-creates them). An interrupted run keeps them for the next session.
+        if (ended.status !== 'interrupted' && this.opts.git.release) {
+          await this.opts.git
+            .release(record.id)
+            .catch((err) => this.log.warn(`run ${record.id}: worktree cleanup`, err));
+        }
         this.active.delete(record.id);
         this.sessions.delete(record.id);
         this.notes.delete(record.id);
@@ -287,6 +324,7 @@ export class RunManager extends EventEmitter<RunManagerEvents> {
       repo: record.cwd ?? opts.repo,
       dryRun: false,
       maxAgents: opts.maxAgents ?? 4,
+      acquireAgent: () => manager.agentSlots.acquire(),
       approvals: opts.approvals ?? 'auto',
       mcp: () => opts.mcp?.() ?? {},
       agentModel: (req) => {
@@ -342,5 +380,14 @@ export class RunManager extends EventEmitter<RunManagerEvents> {
   private updateStatus(record: RunRecord): void {
     const waiting = [...this.pending.values()].some((p) => p.item.interaction.runId === record.id);
     record.status = waiting ? 'waiting' : 'running';
+  }
+}
+
+function processAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (err) {
+    return (err as NodeJS.ErrnoException).code === 'EPERM';
   }
 }

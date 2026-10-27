@@ -173,7 +173,7 @@ function buildServer(ctx: Caller): McpServer {
     {
       description: isRoot
         ? 'Start a workflow run. It runs in the background; the user sees its progress live and answers its gates and questions in the Legion UI, not through you. You are told when it finishes. Returns the run id.'
-        : 'Start a workflow run. It runs in the background; its gates, questions and tool approvals come to you as messages (answer them with answer_interaction), and you are told when it finishes. Returns the run id.',
+        : 'Start a workflow run. It runs in the background; its gates and questions come to you as messages (answer them with answer_interaction), and you are told when it finishes. Returns the run id.',
       inputSchema: {
         name: z.string(),
         input: z.record(z.string(), z.unknown()).describe("The workflow's input object (see its input schema)."),
@@ -530,7 +530,7 @@ function registerTeamTools(server: McpServer, ctx: Caller): void {
   server.registerTool(
     'pending_interactions',
     {
-      description: 'Gates, questions and tool approvals from your runs that wait for your answer.',
+      description: 'Gates and questions from your runs that wait for your answer.',
       inputSchema: {},
     },
     guard(log, async () => team.pending(ctx.name).map((p) => ({ id: p.id, ...p.interaction }))),

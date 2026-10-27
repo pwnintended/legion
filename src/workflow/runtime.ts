@@ -10,12 +10,14 @@
  *
  * The current run is found through AsyncLocalStorage, so workflows call `agent(...)` without threading a context.
  */
+
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { existsSync } from 'node:fs';
 import type { z } from 'zod';
 import type { AgentSession, ApprovalDecision, Effort, EngineKind, SessionOptions } from '../engine/types.ts';
 import { permissionProfile } from '../engine/types.ts';
 import { toStrictJsonSchema } from '../util/json-schema.ts';
+import { Semaphore } from '../util/semaphore.ts';
 import type { RunHost, ShellResult, Worktree } from './host.ts';
 import type { Journal, JournalEntry, StepKind } from './journal.ts';
 
@@ -179,6 +181,20 @@ export type AgentResult<S> = S extends z.ZodType ? z.infer<S> : string;
 
 const MAX_OUTPUT_RETRIES = 1;
 
+/** How a workflow agent that changes things should run commands: the slow part of most steps. */
+const WORKING_GUIDE = `# Running commands
+- Run builds and tests in the foreground and wait for them, with a timeout. Never start them in the background and poll with sleep loops.
+- While iterating, run the narrowest check that covers your change (one test file, one crate, one scene); run the full suite once at the end if the task asks for it.
+- Leave committing to the workflow.`;
+
+/** The engine refused the configured model (unknown, or not available to this account). */
+export function isModelRejected(err: unknown): boolean {
+  const text = err instanceof Error ? err.message : String(err);
+  return /model_not_found|model\b[^\n]{0,80}\b(not supported|not found|does not exist|is not available|unknown|invalid)/i.test(
+    text,
+  );
+}
+
 export function agent<S extends z.ZodType | undefined = undefined>(
   key: string,
   opts: AgentOptions<S>,
@@ -197,7 +213,7 @@ export function agent<S extends z.ZodType | undefined = undefined>(
       const sessionOpts: SessionOptions = {
         cwd: opts.cwd ?? run.host.repo,
         prompt: opts.prompt,
-        systemPrompt: opts.system ?? null,
+        systemPrompt: [opts.mode === 'read' ? null : WORKING_GUIDE, opts.system].filter(Boolean).join('\n\n') || null,
         model: chosen.model,
         effort: chosen.effort,
         mcp: run.host.mcp?.() ?? null,
@@ -241,21 +257,39 @@ export function agent<S extends z.ZodType | undefined = undefined>(
         ...(chosen.model ? { model: chosen.model } : {}),
         ...(chosen.effort ? { effort: chosen.effort } : {}),
       };
+      // The run's own limit, then the session's across all runs (leads' included).
       const release = await run.agents.acquire();
+      const releaseSession = run.host.acquireAgent ? await run.host.acquireAgent() : () => {};
       try {
         checkCancelled(run);
         await ensureCwd(run, sessionOpts.cwd);
-        const session = resumeId
-          ? await engine.resume(resumeId, { ...sessionOpts, prompt })
-          : await engine.start({ ...sessionOpts, prompt });
-        run.host.agentSession?.(full, session);
+        const attempt = async (options: SessionOptions) => {
+          const session = resumeId
+            ? await engine.resume(resumeId, { ...options, prompt })
+            : await engine.start({ ...options, prompt });
+          run.host.agentSession?.(full, session);
+          try {
+            return await drive(run, full, session, opts.output, meta);
+          } finally {
+            run.host.agentSession?.(full, null);
+          }
+        };
         try {
-          const result = await drive(run, full, session, opts.output, meta);
-          return { output: result as AgentResult<S>, meta };
-        } finally {
-          run.host.agentSession?.(full, null);
+          return { output: (await attempt(sessionOpts)) as AgentResult<S>, meta };
+        } catch (err) {
+          // A configured model the account cannot use: once more on the engine's default model.
+          if (!sessionOpts.model || !isModelRejected(err) || run.signal.aborted) throw err;
+          run.host.emit({
+            type: 'log',
+            runId: run.runId,
+            message: `${full}: ${kind} rejected model ${sessionOpts.model}; retrying on its default model`,
+          });
+          delete meta.model;
+          resumeId = null;
+          return { output: (await attempt({ ...sessionOpts, model: null })) as AgentResult<S>, meta };
         }
       } finally {
+        releaseSession();
         release();
       }
     },
@@ -325,6 +359,14 @@ async function drive(
           break;
         }
         case 'turn_complete': {
+          if (event.isError && event.reason === 'missing_structured_output' && schema && retries < MAX_OUTPUT_RETRIES) {
+            // Ended without its result: ask for it in the same session rather than lose the step's work.
+            retries++;
+            await session.send(
+              'Your turn ended without the structured result this step requires. Reply now with the complete result in the required format.',
+            );
+            break;
+          }
           if (event.isError) {
             outcome = { ok: false, error: event.reason ?? 'the agent turn failed' };
             break;
@@ -689,26 +731,3 @@ export const git = {
 };
 
 // ---------------------------------------------------------------------------------------------
-
-class Semaphore {
-  private available: number;
-  private readonly waiters: (() => void)[] = [];
-  constructor(size: number) {
-    this.available = Math.max(1, size);
-  }
-  async acquire(): Promise<() => void> {
-    if (this.available > 0) {
-      this.available--;
-    } else {
-      await new Promise<void>((resolve) => this.waiters.push(resolve));
-    }
-    let released = false;
-    return () => {
-      if (released) return;
-      released = true;
-      const next = this.waiters.shift();
-      if (next) next();
-      else this.available++;
-    };
-  }
-}

@@ -3,12 +3,14 @@
  * `~/.legion/worktrees/<repo>-<hash>/<runId>/<name>`, so the user's checkout (and the assistant's searches in it)
  * never see them. Branches are `legion/<run>/integration` and `legion/<run>/<name>`.
  */
-import { existsSync } from 'node:fs';
+import { existsSync, realpathSync } from 'node:fs';
+import { rm } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { basename, join } from 'node:path';
 import {
   branchExists,
   changedFiles,
+  checkDiskSpace,
   commitAll,
   createWorktree,
   currentBranch,
@@ -19,6 +21,7 @@ import {
   gitText,
   integrationBranchName,
   isDirty,
+  listWorktrees,
   lockWorktree,
   mergeIntoBase,
   mergeIntoTaskBranch,
@@ -30,8 +33,11 @@ import {
   taskBranchName,
   toplevel,
   untrackedFiles,
+  type WarmSettings,
+  warmWorktree,
   withRepoLock,
 } from '../git/index.ts';
+import { type Logger, silentLogger } from '../util/log.ts';
 import type { GitOps, Worktree } from './host.ts';
 
 export interface GitOpsOptions {
@@ -39,6 +45,9 @@ export interface GitOpsOptions {
   /** Default `~/.legion/worktrees`. */
   worktreeRoot?: string;
   prHost?: PrHost;
+  /** How new worktrees are prepared (`[worktrees]`), read each time one is made. */
+  warm?: () => WarmSettings;
+  log?: Logger;
 }
 
 /**
@@ -56,6 +65,18 @@ export async function createGitOps(opts: GitOpsOptions): Promise<GitOps> {
   const repo = await toplevel(opts.repo);
   const root = worktreeRoot(repo, opts.worktreeRoot);
   const prHost = opts.prHost ?? ghPrHost;
+  const log = opts.log ?? silentLogger;
+
+  /** Disk check before, build caches and setup commands after a worktree is made. */
+  const beforeCreate = async () => {
+    if (opts.warm) await checkDiskSpace(root, opts.warm().minFreeGb);
+  };
+  const afterCreate = async (path: string) => {
+    if (!opts.warm) return;
+    const { cloned, warnings } = await warmWorktree(repo, path, opts.warm());
+    if (cloned.length) log.info(`worktree ${path}: cloned ${cloned.join(', ')}`);
+    for (const w of warnings) log.warn(`worktree ${path}: ${w}`);
+  };
 
   const branchOrNull = async (rev: string): Promise<string | null> => ((await branchExists(repo, rev)) ? rev : null);
 
@@ -69,18 +90,22 @@ export async function createGitOps(opts: GitOpsOptions): Promise<GitOps> {
       return wt;
     }
     const startSha = await resolveSha(repo, from ?? 'HEAD');
+    await beforeCreate();
     await createWorktree({ repo, path, branch, startSha });
+    await afterCreate(path);
     return { name, branch, path, baseSha: startSha, baseBranch };
   };
 
   const restore = async (wt: Worktree): Promise<void> => {
     if (existsSync(wt.path)) return;
+    await beforeCreate();
     await withRepoLock(repo, async () => {
       // A registered worktree whose directory vanished blocks `worktree add` for its branch; drop just that entry.
       await git(repo, ['worktree', 'remove', '--force', wt.path], { okExitCodes: [0, 128] });
       await git(repo, ['worktree', 'add', wt.path, wt.branch]);
     });
     await lockWorktree(repo, wt.path);
+    await afterCreate(wt.path);
   };
 
   /** Agents leave their work uncommitted; merging needs it in a commit. */
@@ -143,6 +168,19 @@ export async function createGitOps(opts: GitOpsOptions): Promise<GitOps> {
     },
 
     remove: (wt) => removeWorktree({ repo, path: wt.path, branch: null }),
+
+    async release(runId) {
+      // Every worktree of the run; the branches stay (a resumed run re-creates what it needs from them).
+      const dir = join(root, runId);
+      // git reports resolved paths (/private/var on macOS for /var).
+      const dirs = existsSync(dir) ? [dir, realpathSync(dir)] : [dir];
+      for (const w of await listWorktrees(repo)) {
+        if (dirs.some((d) => w.path === d || w.path.startsWith(`${d}/`))) {
+          await removeWorktree({ repo, path: w.path, branch: null });
+        }
+      }
+      await rm(dir, { recursive: true, force: true });
+    },
 
     restore,
   };

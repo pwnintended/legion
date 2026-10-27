@@ -96,6 +96,22 @@ describe('buildClaudeArgs', () => {
     expect(args.slice(-4)).toEqual(['--add-dir', '/a', '--add-dir', '/b']);
   });
 
+  it('lets only sessions allowed git (the assistant, leads) commit and push', () => {
+    const denied = (git: boolean) =>
+      (
+        flag(
+          buildClaudeArgs({ opts: base({ permission: permissionProfile('workspace_write', { git }) }) }),
+          '--disallowedTools',
+        ) as string
+      ).split(',');
+    expect(denied(false)).toEqual(expect.arrayContaining(['Bash(git commit *)', 'Bash(git push *)']));
+    expect(denied(true)).not.toContain('Bash(git commit *)');
+    expect(denied(true)).not.toContain('Bash(git push *)');
+    expect(denied(true)).toContain('EnterWorktree');
+    // Read-only sessions never get it.
+    expect(permissionProfile('read_only', { git: true }).git).toBe(false);
+  });
+
   it('gives writing sessions the temp directories as working directories, read-only ones not', () => {
     expect(tempDirs()).toContain('/tmp');
     const added = (args: string[]) => args.flatMap((a, i) => (args[i - 1] === '--add-dir' ? [a] : []));

@@ -1,7 +1,8 @@
 /**
  * Shared by `feature` and `tasks`: runs an approved plan. Every task in its own worktree, in dependency order and in
- * parallel where possible: code → verify → review by the other engine → fix rounds → squash-merge into the
- * integration branch (an agent resolves conflicts) → final review of the whole → draft PR, local merge or branch.
+ * parallel where possible: code → its own scoped checks → review by the other engine → fix rounds → squash-merge into
+ * the integration branch (an agent resolves conflicts) → the repository-wide checks once, and a final review of the
+ * whole when there was more than one task → draft PR, local merge (conflicts resolved, not fatal) or branch.
  *
  * A helper, not a workflow (its name starts with `_`); ejecting a workflow that imports it copies it along.
  */
@@ -57,7 +58,7 @@ export interface ExecuteOptions {
   /** Engine that writes code; the other one reviews. A task's own `engine` overrides it. */
   coder: 'claude' | 'codex';
   finish: 'pr' | 'merge' | 'branch';
-  /** Repository-wide checks run on every task and on the result. */
+  /** Repository-wide checks: run once on the result (and on a task only when it declares no checks of its own). */
   verify: readonly string[];
   maxFixRounds: number;
   /** For the PR when the plan's markdown has no level-1 heading. */
@@ -97,12 +98,13 @@ export async function executePlan(plan: Plan, opts: ExecuteOptions) {
     const coder = opts.engines?.[task.id] ?? opts.coder;
     const taskReviewer = otherEngine(coder);
     const wt = await git.worktree(task.id, { from: integration });
-    const checks = [...task.verify, ...opts.verify];
+    // A task's own scoped checks; the slow repository-wide ones run once, on the result.
+    const checks = task.verify.length > 0 ? [...task.verify] : [...opts.verify];
     const report = await agent('code', {
       engine: coder,
       cwd: wt.path,
       output: Report,
-      allow: checks,
+      allow: [...checks, ...opts.verify],
       label: `${task.id} code: ${task.title}`,
       prompt: coderPrompt(plan, task, upstream, checks),
     });
@@ -184,10 +186,25 @@ export async function executePlan(plan: Plan, opts: ExecuteOptions) {
   const mergedTasks = tasks.filter((t) => t.merged);
   if (mergedTasks.length === 0) throw new Error('No task was merged');
 
-  // ---- final review of the whole ------------------------------------------------------------
+  // ---- the whole: repository-wide checks, and a review when tasks met --------------------------
   let remaining: Finding[] = [];
   await loop('final', { max: 2 }, async (round) => {
     const verification = await verify(opts.verify, integration);
+    if (mergedTasks.length === 1) {
+      // One task was reviewed as a whole already: only the checks it skipped remain.
+      if (verification.every((v) => v.ok) || round === 2) return { done: true };
+      await agent('fix', {
+        engine: opts.coder,
+        cwd: integration.path,
+        allow: [...opts.verify],
+        label: 'fix the checks',
+        prompt: `The repository-wide checks fail on the merged result. Make them pass without changing what the task does. Do not commit.
+
+${formatVerification(verification.filter((v) => !v.ok))}`,
+      });
+      await git.commit(integration, 'Fix repository checks', { key: 'commit-fix' });
+      return;
+    }
     const review = await agent('review', {
       engine: reviewer,
       mode: 'read',
@@ -228,8 +245,38 @@ export async function executePlan(plan: Plan, opts: ExecuteOptions) {
     const pr = await git.pr(integration, { title, body });
     return { pr: pr.url, branch: integration.branch, tasks: summarize(tasks) };
   }
-  const result = await git.mergeToBase(integration, { message: title });
-  return { merged: result.sha, tasks: summarize(tasks) };
+  return { merged: await mergeUp(integration, title, opts.coder), tasks: summarize(tasks) };
+}
+
+/**
+ * Merges the integration branch into its base. When the base moved on meanwhile (other work merged into it) and
+ * conflicts, the base is merged into the integration branch, an agent resolves the conflicts, and it merges again.
+ */
+async function mergeUp(integration: Worktree, title: string, coder: 'claude' | 'codex'): Promise<string> {
+  try {
+    return (await git.mergeToBase(integration, { message: title })).sha;
+  } catch (err) {
+    const base = integration.baseBranch;
+    if (!base || !/conflicts with/.test(err instanceof Error ? err.message : String(err))) throw err;
+    log(`${base} moved on and conflicts; merging it in and resolving`);
+    const sync = await git.mergeInto(integration, { ...integration, name: 'base', branch: base }, { key: 'sync-base' });
+    if (!sync.ok) {
+      await agent('resolve-base', {
+        engine: coder,
+        cwd: integration.path,
+        label: `resolve conflicts with ${base}`,
+        prompt: `Merging ${base} (which moved on while this work ran) into the integration branch left conflicts in:
+${sync.conflicts.map((c) => `- ${c}`).join('\n')}
+
+Resolve every conflict keeping both sides' intent: ${base} holds other reviewed work, this branch holds the plan's tasks. Remove all conflict markers and make sure the checks still pass. Do not commit.`,
+      });
+      await git.finishMerge(integration, {
+        message: `Merge ${base} into the integration branch`,
+        key: 'finish-sync-base',
+      });
+    }
+    return (await git.mergeToBase(integration, { message: title, key: 'merge-to-base-again' })).sha;
+  }
 }
 
 interface TaskResult {

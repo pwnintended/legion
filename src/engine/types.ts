@@ -59,6 +59,11 @@ export interface PermissionProfile {
   web: boolean;
   /** What `workspace_write` would ask: the human answers (`ask`), or it is allowed (`auto`: Claude auto mode, Codex bypass). */
   approvals: Approvals;
+  /**
+   * May run `git commit` and `git push` itself (the assistant and leads, `workspace_write` only). Workflow agents may
+   * not: their workflow commits and merges through its git steps.
+   */
+  git: boolean;
 }
 
 export type Approvals = 'ask' | 'auto';
@@ -72,6 +77,7 @@ export function permissionProfile(
     allowedCommands: mode === 'workspace_write' ? (opts.allowedCommands ?? []) : [],
     web: opts.web ?? false,
     approvals: mode === 'workspace_write' ? (opts.approvals ?? 'ask') : 'ask',
+    git: mode === 'workspace_write' && (opts.git ?? false),
   };
 }
 

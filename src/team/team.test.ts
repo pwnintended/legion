@@ -192,6 +192,25 @@ describe('team', () => {
     expect(await (await as('assets')).tools()).not.toContain('present');
   });
 
+  it("sends a lead's run tool approvals to the user, never through the lead", async () => {
+    const root = await as(ROOT);
+    await root.call('spawn_lead', { role: 'assets-lead', name: 'assets', brief: 'b' });
+    await until(() => callsOf('assets').length === 1);
+    claude().script = (call) =>
+      call.prompts[0] === 'make it'
+        ? { approval: { tool: 'Bash', input: { command: 'make' } }, text: 'art' }
+        : { text: 'ok' };
+    const assets = await as('assets');
+    await assets.call('run_workflow', { name: 'critique', input: {} });
+    await until(() => session.runs.pendingInteractions().some((p) => p.interaction.kind === 'approval'));
+    const approval = session.runs.pendingInteractions().find((p) => p.interaction.kind === 'approval');
+    expect(approval && session.team.userAnswers(approval)).toBe(true);
+    expect(session.team.pending('assets')).toEqual([]);
+    expect(await assets.call('pending_interactions')).toEqual([]);
+    await tick(100);
+    expect(callsOf('assets')[0]?.prompts.some((p) => p.includes('Bash'))).toBe(false);
+  });
+
   it('delivers reports to the parent as one bundled message', async () => {
     await session.assistant.send('hello');
     await until(() => !session.assistant.busy);

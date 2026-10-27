@@ -2,7 +2,7 @@
  * The builtin `feature` workflow end to end on a real git repository: fake agents that really edit files, the
  * real git operations, a PR host that never touches GitHub.
  */
-import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { FakeEngine, type FakeScript } from '../../src/engine/fake/index.ts';
@@ -142,5 +142,56 @@ describe('feature workflow', () => {
     // Every agent step came from the journal.
     expect([...second.engines.values()].reduce((n, e) => n + e.calls.length, 0)).toBe(0);
     expect(prHost.prs).toHaveLength(1);
+  });
+});
+
+describe('tasks workflow', () => {
+  it('runs one task with one review, then resolves a base that moved on instead of failing at the merge', async () => {
+    const prHost = new FakePrHost({ push: false });
+    const { runs, engines } = await manager([], prHost);
+    // The resolver writes the merged file; everything else follows the shared script.
+    const resolving: FakeScript = (call, turn) => {
+      if (call.opts.prompt.includes('moved on')) {
+        writeFileSync(join(call.opts.cwd, 'T1.txt'), 'T1 and main\n');
+        return { text: 'resolved' };
+      }
+      return script(call, turn);
+    };
+    for (const kind of ['claude', 'codex'] as const) {
+      const e = new FakeEngine(kind, resolving, `${kind}-1`);
+      engines.set(kind, e);
+    }
+    // Meanwhile someone commits a conflicting T1.txt on main: right before the ship gate is approved.
+    runs.removeAllListeners('interaction');
+    runs.on('interaction', async ({ id, interaction }) => {
+      if (interaction.kind === 'gate' && interaction.key === 'ship') {
+        writeFileSync(join(repo.path, 'T1.txt'), 'main\n');
+        await repo.git('add', 'T1.txt');
+        await repo.git('commit', '-qm', 'main moves on');
+      }
+      runs.answer(id, { choice: 'approve', note: null });
+    });
+    const runId = await runs.start('tasks', {
+      title: 'One file',
+      summary: 'Writes T1.txt.',
+      tasks: [{ id: 'T1', title: 'task T1', goal: 'write T1.txt', verify: ['test -f T1.txt'] }],
+      finish: 'merge',
+      verify: ['test -f README.md'],
+    });
+    const record = await runs.wait(runId);
+    expect(record?.error).toBeNull();
+    expect(record?.status).toBe('done');
+    expect(readFileSync(join(repo.path, 'T1.txt'), 'utf8')).toBe('T1 and main\n');
+
+    // One review (no fix rounds needed, no final review for a single task), on the other engine.
+    expect(engines.get('codex')?.calls).toHaveLength(1);
+    // The task ran its own check, the repository-wide one ran once on the result.
+    const journal = readFileSync(join(repo.path, '.legion', 'runs', runId, 'journal.jsonl'), 'utf8');
+    expect(journal).toContain('"T1/review/1/verify-1"');
+    expect(journal).toContain('"final/1/verify-1"');
+    expect(journal).not.toContain('"T1/review/1/verify-2"');
+    // The run's worktrees are gone; its branches stay.
+    expect(readdirSync(worktrees.path).flatMap((d) => readdirSync(join(worktrees.path, d)))).toEqual([]);
+    expect(await repo.git('branch', '--list', `legion/${runId}/*`)).toContain('integration');
   });
 });

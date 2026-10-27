@@ -4,6 +4,7 @@ export {
   bashRules,
   buildClaudeArgs,
   childEnv,
+  GIT_DENIED,
   HOST_SESSION_ENV_VARS,
   mcpConfig,
   permissionArgs,

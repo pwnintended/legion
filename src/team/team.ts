@@ -224,9 +224,11 @@ export class TeamManager extends EventEmitter<TeamEvents> {
     return this.opts.runs.activeRuns().filter((r) => (r.owner ?? ROOT) === name);
   }
 
-  /** Gates, questions and tool approvals of a lead's runs that wait for its answer. */
+  /** Gates and questions of a lead's runs that wait for its answer (tool approvals are the user's). */
   pending(name: string): PendingInteraction[] {
-    return this.opts.runs.pendingInteractions().filter((p) => this.ownerOf(p.interaction.runId) === name);
+    return this.opts.runs
+      .pendingInteractions()
+      .filter((p) => this.ownerOf(p.interaction.runId) === name && p.interaction.kind !== 'approval');
   }
 
   // ---- acting (the MCP tools and the UI call these) --------------------------------------------
@@ -336,6 +338,15 @@ export class TeamManager extends EventEmitter<TeamEvents> {
   gateMode(owner: string): 'ask' | 'decide' | 'tell' {
     if (owner === ROOT) return this.opts.config().team.gates;
     return this.leads.get(owner)?.role.gates ?? 'ask';
+  }
+
+  /**
+   * Whether the user answers this interaction of a run. Tool approvals always are the user's (they only exist with
+   * `approvals = "ask"`, which means "ask me"): routing them through a lead's turn made agents wait minutes per
+   * command. Gates and questions follow the owner's gate mode.
+   */
+  userAnswers(p: PendingInteraction): boolean {
+    return p.interaction.kind === 'approval' || this.gateMode(this.ownerOf(p.interaction.runId)) === 'ask';
   }
 
   /** Tells a lead the user answered one of its runs' interactions in its place. */
@@ -612,9 +623,9 @@ export class TeamManager extends EventEmitter<TeamEvents> {
   private runInteraction(pending: PendingInteraction): void {
     const owner = this.ownerOf(pending.interaction.runId);
     const run = this.opts.runs.run(pending.interaction.runId);
-    if (this.gateMode(owner) === 'ask') {
-      // The user answers it in the UI; a lead hears why its run is waiting.
-      if (owner !== ROOT) {
+    if (this.userAnswers(pending)) {
+      // The user answers it in the UI; a lead hears why its run is waiting (not for each tool approval).
+      if (owner !== ROOT && pending.interaction.kind !== 'approval') {
         this.enqueue(owner, {
           at: Date.now(),
           from: 'legion',

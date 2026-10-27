@@ -52,7 +52,7 @@ describe('config layers', () => {
       ['local', true],
     ]);
     const config = loadConfig(repo, sub);
-    expect(config.workflows).toEqual({ maxAgents: 5, approvals: 'auto' });
+    expect(config.workflows).toMatchObject({ maxAgents: 5, approvals: 'auto' });
     expect(config.assistant).toMatchObject({ model: 'b', effort: 'low' });
   });
 

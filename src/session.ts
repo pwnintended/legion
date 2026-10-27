@@ -126,9 +126,10 @@ export class Session {
       const kind = config.assistant.engine;
       if (saved && saved.kind === kind && saved.profile === profiles[kind].name) resumeAssistant = saved.sessionId;
     }
-    const git = isGitRepo ? await createGitOps({ repo }) : notAGitRepo(repo);
     // Runs ask the session for engines, and the session needs the runs' MCP server: bind late.
     const self: { session?: Session } = {};
+    const warm = () => self.session?.config.worktrees ?? config.worktrees;
+    const git = isGitRepo ? await createGitOps({ repo, warm, log }) : notAGitRepo(repo);
     const bound = () => {
       if (!self.session) throw new Error('session not ready');
       return self.session;
@@ -139,6 +140,7 @@ export class Session {
       profiles: () => bound().profileNames(),
       git,
       maxAgents: config.workflows.maxAgents,
+      maxAgentsTotal: config.workflows.maxAgentsTotal,
       approvals: config.workflows.approvals,
       agentModels: () => bound().config.workflow,
       mcp: () => mcpServers(bound().config),
@@ -162,7 +164,7 @@ export class Session {
           maxDepth: bound().config.team.maxDepth,
           workspace: lead.workspace ?? null,
         }),
-      workspaces: isGitRepo ? createWorkspaces(repo) : null,
+      workspaces: isGitRepo ? createWorkspaces(repo, { warm, log }) : null,
       log,
     });
     const mcp = await startMcpServer({ repo, runs, team, log });
@@ -186,6 +188,12 @@ export class Session {
 
   get config(): Config {
     return this._config;
+  }
+
+  /** Runs the last session left unfinished (its exit, or a crash), continued unless `[workflows] resumeOnStart = false`. */
+  async resumeInterruptedRuns(): Promise<string[]> {
+    if (!this._config.workflows.resumeOnStart || !this.isGitRepo) return [];
+    return this.runs.resumeInterrupted();
   }
 
   /** The Legion MCP endpoint (each caller authenticates with its own token: `team.tokens()`). */
@@ -219,7 +227,11 @@ export class Session {
       this.profiles[kind] = profile;
     }
     this._config = next;
-    this.runs.configure({ maxAgents: next.workflows.maxAgents, approvals: next.workflows.approvals });
+    this.runs.configure({
+      maxAgents: next.workflows.maxAgents,
+      maxAgentsTotal: next.workflows.maxAgentsTotal,
+      approvals: next.workflows.approvals,
+    });
     const nextAssistant = { ...next.assistant, profile: this.profiles[next.assistant.engine].name };
     if (JSON.stringify(prevAssistant) !== JSON.stringify(nextAssistant)) {
       await this.assistant.restart();

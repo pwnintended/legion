@@ -46,6 +46,8 @@ export interface RunRecord {
   base?: string;
   /** Where agents and shell commands without a `cwd` work (a lead's worktree). Absent: `repo`. */
   cwd?: string;
+  /** The Legion process running it (to tell a crashed run from one another session is running). */
+  pid?: number;
 }
 
 export type StepKind = 'agent' | 'gate' | 'ask' | 'sh' | 'step' | 'git' | 'loop' | 'parallel';
