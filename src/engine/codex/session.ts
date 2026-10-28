@@ -4,7 +4,8 @@
  * `send` steers the active turn (turn/steer) or starts a new one; `interrupt` = turn/interrupt; approval
  * server requests become `approval_request` events and stay pending until `respond`.
  */
-import { type ChildProcess, spawn } from 'node:child_process';
+import { spawn } from 'node:child_process';
+import type { Readable, Writable } from 'node:stream';
 import { AsyncQueue, deferred } from '../../util/async-queue.ts';
 import { type Logger, silentLogger } from '../../util/log.ts';
 import type { AgentEvent, AgentSession, ApprovalDecision, QuestionAnswers, SessionOptions } from '../types.ts';
@@ -12,6 +13,25 @@ import { isPreapproved, threadResumeParams, threadStartParams, turnStartParams, 
 import { JSON_RPC_ERROR, JsonRpcError, JsonRpcPeer, LineSplitter, type RequestOptions } from './json-rpc.ts';
 import type { ClientMethod, ClientMethods, ServerNotification, ServerRequest } from './methods.ts';
 import { APPROVAL_METHODS, approvalRequestId, approvalResponse, CodexNormalizer } from './normalize.ts';
+
+/** What the session uses of its child process: a local one, or one in a box (`remote/process.ts`). */
+export interface CodexChild {
+  readonly stdin: Writable | null;
+  readonly stdout: Readable | null;
+  readonly stderr: Readable | null;
+  /** Undefined when it never started. */
+  readonly pid?: number | undefined;
+  kill(signal?: NodeJS.Signals): boolean;
+  once(event: 'spawn', listener: () => void): this;
+  once(event: 'error', listener: (error: Error) => void): this;
+  once(event: 'exit', listener: (code: number | null, signal: NodeJS.Signals | null) => void): this;
+}
+
+export type CodexSpawn = (
+  command: string,
+  args: readonly string[],
+  options: { cwd: string; env: Record<string, string> },
+) => CodexChild;
 
 export interface CodexProcessSpec {
   /** Executable (absolute path), spawned directly (no shell). */
@@ -22,6 +42,8 @@ export interface CodexProcessSpec {
   clientVersion: string;
   /** Receives the child's stderr lines (codex logs warnings/errors there). */
   log?: Logger;
+  /** Starts the process somewhere else (default: a local child). */
+  spawn?: CodexSpawn;
 }
 
 export type OpenMode = { kind: 'start' } | { kind: 'resume'; threadId: string };
@@ -40,7 +62,7 @@ export class CodexSession implements AgentSession {
 
   private threadId = '';
   private version: string | null = null;
-  private readonly child: ChildProcess;
+  private readonly child: CodexChild;
   private readonly rpc: JsonRpcPeer;
   private readonly normalizer: CodexNormalizer;
   private readonly approvals = new Map<string, { request: ServerRequest; resolve(result: unknown): void }>();
@@ -67,11 +89,9 @@ export class CodexSession implements AgentSession {
     this.log = spec.log ?? silentLogger;
     this.normalizer = new CodexNormalizer({ cwd: opts.cwd, structuredOutput: Boolean(opts.outputSchema) });
     this.turnDone.resolve();
-    this.child = spawn(spec.command, [...spec.args], {
-      cwd: opts.cwd,
-      env: { ...spec.env },
-      stdio: ['pipe', 'pipe', 'pipe'],
-    });
+    this.child = spec.spawn
+      ? spec.spawn(spec.command, spec.args, { cwd: opts.cwd, env: { ...spec.env } })
+      : spawn(spec.command, [...spec.args], { cwd: opts.cwd, env: { ...spec.env }, stdio: ['pipe', 'pipe', 'pipe'] });
     this.rpc = new JsonRpcPeer({
       write: (line) => {
         if (!this.child.stdin?.writable) throw new Error('codex app-server stdin is closed');

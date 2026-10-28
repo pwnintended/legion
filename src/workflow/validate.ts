@@ -12,7 +12,7 @@ import { dirname, join, resolve } from 'node:path';
 import { z } from 'zod';
 import { defaultScript, FakeEngine, sampleFromSchema } from '../engine/fake/index.ts';
 import type { Effort, EngineKind } from '../engine/types.ts';
-import type { GitOps, Interaction, InteractionAnswer, RunEvent, RunHost, Worktree } from './host.ts';
+import type { GitOps, Interaction, InteractionAnswer, RunEvent, RunHost, StepTier, Worktree } from './host.ts';
 import { Journal } from './journal.ts';
 import { builtinSourceDir, loadWorkflow, PACKAGE_ROOT, SDK_TYPES, workflowName } from './loader.ts';
 import { executeInRun } from './runtime.ts';
@@ -30,6 +30,7 @@ export interface AgentSeen {
   key: string;
   step: string;
   engine: EngineKind;
+  tier: StepTier | null;
   model: string | null;
   effort: Effort | null;
 }

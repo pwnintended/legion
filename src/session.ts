@@ -12,6 +12,7 @@ import {
   type Config,
   type ConfigLayer,
   configLayers,
+  type Effort,
   ensureProjectConfig,
   loadConfig,
   mcpServers,
@@ -19,16 +20,19 @@ import {
   type RealKind,
   type ResolvedProfile,
   resolveProfile,
+  resolveTier,
 } from './config.ts';
 import { ClaudeEngine } from './engine/claude/index.ts';
 import { CodexEngine } from './engine/codex/index.ts';
 import { FakeEngine } from './engine/fake/index.ts';
 import type { AgentEngine, EngineKind } from './engine/types.ts';
 import { isRepo, toplevel } from './git/index.ts';
+import { UpstashBoxes } from './remote/box.ts';
+import { Remote } from './remote/remote.ts';
 import { TeamManager } from './team/team.ts';
 import { createWorkspaces } from './team/workspace.ts';
 import { fileLogger, type Logger } from './util/log.ts';
-import { createGitOps } from './workflow/git-ops.ts';
+import { createGitOps, worktreeRoot } from './workflow/git-ops.ts';
 import type { GitOps } from './workflow/host.ts';
 import { RunManager } from './workflow/manager.ts';
 
@@ -40,6 +44,8 @@ export interface SessionOptions {
   continueLast?: boolean;
   /** Use scripted engines everywhere (demos, tests): `LEGION_FAKE_ENGINES=1`. */
   fake?: boolean;
+  /** Remote mode for this session, over `[remote] enabled` (`--remote` / `--local`). */
+  remote?: boolean;
 }
 
 interface SavedState {
@@ -63,6 +69,8 @@ export class Session {
   private readonly engines = new Map<string, AgentEngine>();
   private readonly fake: boolean;
   private mcp: McpHandle | null = null;
+  /** `/remote on|off` or `--remote` / `--local`; null: `[remote] enabled` decides. */
+  private remoteOverride: boolean | null;
 
   private constructor(init: {
     repo: string;
@@ -77,6 +85,7 @@ export class Session {
     mcp: McpHandle;
     resumeAssistant: string | null;
     fake: boolean;
+    remote: boolean | null;
   }) {
     this.repo = init.repo;
     this.cwd = init.cwd;
@@ -86,22 +95,23 @@ export class Session {
     this.log = init.log;
     this.profiles = init.profiles;
     this.fake = init.fake;
+    this.remoteOverride = init.remote;
     this.mcp = init.mcp;
     this.runs = init.runs;
     this.team = init.team;
     this.assistant = new Assistant({
       cwd: this.repo,
-      engine: () => this.engine(this.config.assistant.engine),
+      engine: () => this.engine(this.assistantModel().engine as RealKind),
       systemPrompt: () => assistantSystemPrompt({ repo: this.repo, profiles: this.profileNames() }),
       mcp: { legion: { type: 'http', url: init.mcp.url, headers: { Authorization: `Bearer ${init.mcp.token}` } } },
-      model: () => this.config.assistant.model ?? null,
-      effort: () => this.config.assistant.effort ?? null,
+      model: () => this.assistantModel().model,
+      effort: () => this.assistantModel().effort,
       approvals: () => this.config.assistant.approvals,
       sessionId: init.resumeAssistant,
       log: this.log,
     });
     this.assistant.on('session', ({ id, profile }) =>
-      this.save({ assistant: { sessionId: id, profile, kind: this.config.assistant.engine } }),
+      this.save({ assistant: { sessionId: id, profile, kind: this.assistantModel().engine as RealKind } }),
     );
   }
 
@@ -123,7 +133,7 @@ export class Session {
     let resumeAssistant: string | null = null;
     if (opts.continueLast) {
       const saved = readState(repo).assistant;
-      const kind = config.assistant.engine;
+      const kind = resolveTier(config.models, 'assistant', config.assistant).engine as RealKind;
       if (saved && saved.kind === kind && saved.profile === profiles[kind].name) resumeAssistant = saved.sessionId;
     }
     // Runs ask the session for engines, and the session needs the runs' MCP server: bind late.
@@ -134,6 +144,23 @@ export class Session {
       if (!self.session) throw new Error('session not ready');
       return self.session;
     };
+    let boxes: { key: string; provider: UpstashBoxes } | null = null;
+    const remote = new Remote({
+      worktreeRoot: worktreeRoot(repo),
+      config: () => bound().config.remote,
+      enabled: () => bound().remoteEnabled,
+      provider: () => {
+        const key = process.env.UPSTASH_BOX_API_KEY || bound().config.remote.apiKey;
+        if (!key) {
+          throw new Error(
+            'remote mode needs an Upstash Box API key: set [remote] apiKey in ~/.config/legion/config.toml or .legion/config.local.toml (or UPSTASH_BOX_API_KEY)',
+          );
+        }
+        if (boxes?.key !== key) boxes = { key, provider: new UpstashBoxes(() => bound().config.remote, key) };
+        return boxes.provider;
+      },
+      log,
+    });
     const runs = new RunManager({
       repo,
       engine: (kind) => bound().engine(kind),
@@ -142,8 +169,10 @@ export class Session {
       maxAgents: config.workflows.maxAgents,
       maxAgentsTotal: config.workflows.maxAgentsTotal,
       approvals: config.workflows.approvals,
-      agentModels: () => bound().config.workflow,
+      agentModels: () => bound().config,
       mcp: () => mcpServers(bound().config),
+      wrapHost: (host, runId) => remote.host(host, runId),
+      onRunEnded: (runId) => remote.release(runId),
       log,
     });
     const team = new TeamManager({
@@ -181,6 +210,7 @@ export class Session {
       mcp,
       resumeAssistant,
       fake: opts.fake ?? false,
+      remote: opts.remote ?? null,
     });
     team.bind(self.session.assistant, mcp.url);
     return self.session;
@@ -188,6 +218,11 @@ export class Session {
 
   get config(): Config {
     return this._config;
+  }
+
+  /** The assistant's engine, model and effort: `[assistant]` on the `assistant` tier of the provider. */
+  assistantModel(): { engine: string; model: string | null; effort: Effort | null } {
+    return resolveTier(this._config.models, 'assistant', this._config.assistant);
   }
 
   /** Runs the last session left unfinished (its exit, or a crash), continued unless `[workflows] resumeOnStart = false`. */
@@ -215,7 +250,11 @@ export class Session {
     const next = loadConfig(this.repo, this.cwd);
     const prev = this._config;
     const notes: string[] = [];
-    const prevAssistant = { ...prev.assistant, profile: this.profiles[prev.assistant.engine].name };
+    const assistantOf = (c: Config) => {
+      const r = resolveTier(c.models, 'assistant', c.assistant);
+      return { ...c.assistant, ...r, profile: this.profiles[r.engine as RealKind].name };
+    };
+    const prevAssistant = assistantOf(prev);
     for (const kind of ['claude', 'codex'] as const) {
       const keep = this.profiles[kind].name;
       const names = profileNames(next, kind);
@@ -227,17 +266,40 @@ export class Session {
       this.profiles[kind] = profile;
     }
     this._config = next;
+    if (next.remote.enabled !== prev.remote.enabled) {
+      // A changed setting wins over an earlier `/remote` for this session.
+      this.remoteOverride = null;
+      notes.push(`remote mode ${next.remote.enabled ? 'on' : 'off'} from the next step`);
+    }
     this.runs.configure({
       maxAgents: next.workflows.maxAgents,
       maxAgentsTotal: next.workflows.maxAgentsTotal,
       approvals: next.workflows.approvals,
     });
-    const nextAssistant = { ...next.assistant, profile: this.profiles[next.assistant.engine].name };
+    const nextAssistant = assistantOf(next);
     if (JSON.stringify(prevAssistant) !== JSON.stringify(nextAssistant)) {
       await this.assistant.restart();
       notes.push('the assistant starts a new conversation with the new settings');
     }
     return notes;
+  }
+
+  /** Workflow steps in run worktrees go to Upstash Boxes (`remote/`). */
+  get remoteEnabled(): boolean {
+    return this.remoteOverride ?? this._config.remote.enabled;
+  }
+
+  /** Turns remote mode on or off for this session (null: back to `[remote] enabled`). Applies from the next step. */
+  setRemote(on: boolean | null): void {
+    this.remoteOverride = on;
+  }
+
+  /** Why remote mode cannot work right now, or null. */
+  remoteProblem(): string | null {
+    if (!process.env.UPSTASH_BOX_API_KEY && !this._config.remote.apiKey) {
+      return 'no Upstash Box API key: set [remote] apiKey in ~/.config/legion/config.toml or .legion/config.local.toml';
+    }
+    return this.isGitRepo ? null : 'not a git repository';
   }
 
   profile(kind: RealKind): ResolvedProfile {
@@ -287,7 +349,7 @@ export class Session {
         throw new Error(`setup for ${kind} profile "${name}" failed (${result.status}): ${setupOutput ?? ''}`);
     }
     this.profiles[kind] = profile;
-    if (this.config.assistant.engine === kind) await this.assistant.restart();
+    if (this.assistantModel().engine === kind) await this.assistant.restart();
     return { setupOutput };
   }
 

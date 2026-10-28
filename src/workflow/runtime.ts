@@ -18,7 +18,7 @@ import type { AgentSession, ApprovalDecision, Effort, EngineKind, SessionOptions
 import { permissionProfile } from '../engine/types.ts';
 import { toStrictJsonSchema } from '../util/json-schema.ts';
 import { Semaphore } from '../util/semaphore.ts';
-import type { RunHost, ShellResult, Worktree } from './host.ts';
+import type { RunHost, ShellResult, StepTier, Worktree } from './host.ts';
 import type { Journal, JournalEntry, StepKind } from './journal.ts';
 
 export class WorkflowCancelled extends Error {
@@ -155,6 +155,12 @@ export interface AgentOptions<S extends z.ZodType | undefined = undefined> {
   mode?: 'read' | 'write';
   /** Working directory: a worktree path for coders. Default: the repository root. */
   cwd?: string;
+  /**
+   * How demanding the step is: `hard` (planning, review, tricky code), `medium` (the default) or `easy` (summaries,
+   * small edits). The user's settings say which model and effort each tier means on each engine.
+   */
+  tier?: StepTier;
+  /** A specific model, over the tier's: only when the step needs one by design. */
   model?: string;
   effort?: Effort;
   /** Appended to the engine's system prompt. */
@@ -206,7 +212,12 @@ export function agent<S extends z.ZodType | undefined = undefined>(
     key,
     opts.label,
     async (full, previous) => {
-      const code = { engine: opts.engine ?? 'claude', model: opts.model ?? null, effort: opts.effort ?? null };
+      const code = {
+        engine: opts.engine ?? 'claude',
+        tier: opts.tier ?? null,
+        model: opts.model ?? null,
+        effort: opts.effort ?? null,
+      };
       const chosen = run.host.agentModel?.({ key, step: full, ...code }) ?? code;
       const kind: EngineKind = chosen.engine ?? code.engine;
       const engine = run.host.engine(kind);

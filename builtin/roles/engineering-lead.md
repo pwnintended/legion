@@ -1,7 +1,6 @@
 ---
 description: "Leads an engineering stream: plans changes, runs implement/review workflows, keeps the build green"
 engine: claude
-model: opus
 workflows: "*"
 spawns: [engineering-lead]
 ---

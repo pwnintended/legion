@@ -71,6 +71,7 @@ Follow the repository's conventions, write or update tests, and make ${input.ver
     const reviewed = await loop('review', { max: input.maxFixRounds + 1 }, async (round) => {
       const checks = await verify(input.verify, wt);
       const review = await agent('review', {
+        tier: 'hard',
         engine: reviewer,
         mode: 'read',
         untrusted: true,

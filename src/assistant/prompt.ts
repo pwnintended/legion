@@ -27,7 +27,8 @@ agent(key, {
   cwd?: string,                      // e.g. a worktree's path; default the repo root
   output?: zodSchema,                // structured result, validated (one corrective retry). Without it: final text (string)
   resume?: string,                   // continue an earlier agent step's session: 'code', or a full key 'T1/review/1/fix'
-  system?: string, model?: string, effort?: 'low'|'medium'|'high'|'xhigh'|'max',
+  tier?: 'hard' | 'medium' | 'easy',  // how demanding the step is; the user's config maps tiers to models. default medium
+  system?: string, model?: string, effort?: 'low'|'medium'|'high'|'xhigh'|'max',  // model/effort: rarely; over the tier's
   allow?: string[],                  // shell commands it may run without asking, e.g. ['pnpm test']
   untrusted?: boolean,               // cwd holds another agent's work: load no project config (use for reviewers)
   approvals?: 'ask' | 'auto', web?: boolean, label?: string,
@@ -180,24 +181,28 @@ The session's engine accounts: ${Object.entries(opts.profiles)
 - Do not run a workflow you just wrote unless the user asks.
 
 ## Models
-Which model and effort a workflow's agents use is the user's setting, not something to bake into the code. It lives
-in the config (\`.legion/config.toml\`, and the user can set it from the /workflows menu):
+Workflows say how demanding a step is, not which model runs it: \`agent(key, { tier: 'hard' })\` for planning,
+review and tricky code, \`'easy'\` for summaries and small edits, nothing for \`medium\` (the default). The user's
+config says which model and effort each tier means on each engine, and which provider everything runs on:
 \`\`\`toml
-[workflow.feature.claude]      # every Claude agent of \`feature\` whose code picks no model
+[models]
+provider = "mixed"             # claude | codex: everything runs there (the user switches with /provider) | mixed
+[models.claude.medium]         # tiers: assistant (you), lead, hard, medium, easy
 model = "sonnet"
-[workflow.feature.agent.plan]  # the \`plan\` agent step (by its agent() key), over what the code picks
-model = "opus"
-effort = "high"
-[workflow.feature.agent.review]  # run \`review\` on Codex, whatever the code says
+[models.codex.hard]
+effort = "xhigh"
+[workflow.feature]             # the tier of \`feature\`'s steps whose code and step setting name none
+tier = "easy"
+[workflow.feature.agent.plan]  # the \`plan\` agent step (by its agent() key), over the code's tier
+tier = "hard"
+[workflow.feature.agent.review]  # in mixed mode, run \`review\` on Codex whatever the code says
 engine = "codex"
-[workflow."*".codex]           # every workflow
-effort = "high"
 \`\`\`
-A step's \`engine\` setting overrides the code's engine (a code model for the other engine is then ignored).
-Model/effort precedence: a step setting, then the code's \`model\`/\`effort\`, then the workflow's engine setting, then \`"*"\`,
-then the CLI's default. When the user asks for different models, edit these settings (the project config file;
-keep its comments) rather than the workflow. Put \`model\` in code only when a step needs a particular kind of model
-by design (a cheap one for a trivial step), and give agent steps distinct keys so they can be set one by one.
+Tier precedence: a step setting, then the code's \`tier\`, then \`[workflow.<name>] tier\`, then \`"*"\`, then \`medium\`.
+A step setting's or the code's \`model\`/\`effort\` wins over the tier's, but only on the engine it was meant for.
+When the user asks for different models, change the tiers ([models]) or a step's tier in the project config file
+(keep its comments) rather than the workflow. Put \`tier\` in code to say how hard a step is; put \`model\` in code
+only when a step needs one particular model by design. Give agent steps distinct keys so they can be set one by one.
 
 ${audience === 'root' ? RUNNING_ROOT : RUNNING_LEAD}
 

@@ -124,12 +124,17 @@ export function withDefaultBase(ops: GitOps, base: string): GitOps {
   };
 }
 
+/** How demanding an agent step is; the user's `[models]` settings say which model each tier means. */
+export type StepTier = 'hard' | 'medium' | 'easy';
+
 export interface AgentModelRequest {
   /** The key passed to `agent()`. */
   key: string;
   /** The full step key (`T1/review/2/fix`). */
   step: string;
   engine: EngineKind;
+  /** What the code says the step is (`hard`, `medium`, `easy`); null: it does not say. */
+  tier: StepTier | null;
   model: string | null;
   effort: Effort | null;
 }

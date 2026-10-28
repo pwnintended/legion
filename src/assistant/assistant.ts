@@ -62,8 +62,8 @@ export class Assistant extends EventEmitter<AssistantEvents> {
   private session: AgentSession | null = null;
   private opening: Promise<AgentSession> | null = null;
   private sessionId: string | null;
-  /** Profile the session id belongs to: a different profile cannot resume it. */
-  private sessionProfile: string | null = null;
+  /** Engine and profile the session id belongs to: another engine or profile cannot resume it. */
+  private sessionProfile: { kind: string; name: string } | null = null;
   private readonly pending = new Map<string, AssistantApproval>();
   private readonly questions = new Map<string, AssistantQuestion>();
   private busyState = false;
@@ -73,7 +73,7 @@ export class Assistant extends EventEmitter<AssistantEvents> {
     this.opts = opts;
     this.log = opts.log ?? silentLogger;
     this.sessionId = opts.sessionId ?? null;
-    if (this.sessionId) this.sessionProfile = opts.engine().profile.name;
+    if (this.sessionId) this.sessionProfile = profileOf(opts.engine());
   }
 
   get busy(): boolean {
@@ -136,7 +136,7 @@ export class Assistant extends EventEmitter<AssistantEvents> {
     const session = this.session;
     this.session = null;
     await session?.close();
-    if (this.sessionProfile !== this.opts.engine().profile.name) {
+    if (!sameProfile(this.sessionProfile, this.opts.engine())) {
       this.sessionId = null;
       this.sessionProfile = null;
     }
@@ -161,7 +161,7 @@ export class Assistant extends EventEmitter<AssistantEvents> {
       });
     }
     const engine = this.opts.engine();
-    const canResume = this.sessionId !== null && this.sessionProfile === engine.profile.name;
+    const canResume = this.sessionId !== null && sameProfile(this.sessionProfile, engine);
     const opts = {
       cwd: this.opts.cwd,
       prompt,
@@ -176,7 +176,7 @@ export class Assistant extends EventEmitter<AssistantEvents> {
     this.opening = (canResume && this.sessionId ? engine.resume(this.sessionId, opts) : engine.start(opts))
       .then((session) => {
         this.session = session;
-        this.sessionProfile = engine.profile.name;
+        this.sessionProfile = profileOf(engine);
         void this.pump(session);
         return session;
       })
@@ -192,7 +192,7 @@ export class Assistant extends EventEmitter<AssistantEvents> {
         switch (event.type) {
           case 'session_started':
             this.sessionId = event.sessionId;
-            this.emit('session', { id: event.sessionId, profile: this.sessionProfile ?? '' });
+            this.emit('session', { id: event.sessionId, profile: this.sessionProfile?.name ?? '' });
             break;
           case 'approval_request': {
             const approval = { id: event.requestId, tool: event.tool, input: event.input, reason: event.reason };
@@ -241,4 +241,13 @@ export class Assistant extends EventEmitter<AssistantEvents> {
     this.busyState = busy;
     this.emit('busy', busy);
   }
+}
+
+function profileOf(engine: AgentEngine): { kind: string; name: string } {
+  return { kind: engine.profile.kind, name: engine.profile.name };
+}
+
+/** Profiles of different engines can share a name (`default`), so the kind counts too. */
+function sameProfile(saved: { kind: string; name: string } | null, engine: AgentEngine): boolean {
+  return saved !== null && saved.kind === engine.profile.kind && saved.name === engine.profile.name;
 }

@@ -12,7 +12,7 @@ import { EventEmitter } from 'node:events';
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { Assistant, type AssistantApproval, type AssistantQuestion } from '../assistant/assistant.ts';
-import type { Config, RealKind } from '../config.ts';
+import { type Config, type Effort, type RealKind, resolveTier } from '../config.ts';
 import type { AgentEngine, AgentEvent, ApprovalDecision, McpServer, QuestionAnswers } from '../engine/types.ts';
 import type { Logger } from '../util/log.ts';
 import { silentLogger } from '../util/log.ts';
@@ -254,7 +254,7 @@ export class TeamManager extends EventEmitter<TeamEvents> {
       parent: caller,
       brief: opts.brief,
       depth,
-      engine: role.engine,
+      engine: this.leadModel(role).engine,
       status: 'starting',
       createdAt: Date.now(),
       sessionId: null,
@@ -645,19 +645,31 @@ export class TeamManager extends EventEmitter<TeamEvents> {
 
   // ---- lead sessions ---------------------------------------------------------------------------
 
+  /** A lead's engine, model and effort: its role on its tier, on the provider in effect. */
+  private leadModel(role: Role): { engine: RealKind; model: string | null; effort: Effort | null } {
+    const r = resolveTier(this.opts.config().models, role.tier, role);
+    return { ...r, engine: r.engine as RealKind };
+  }
+
   private attach(record: LeadRecord, role: Role): LiveLead {
     const token = randomBytes(24).toString('base64url');
     this.tokenOwners.set(token, record.name);
+    // After a provider switch, its conversation is on the other engine: it starts a new one.
+    if (record.engine !== this.leadModel(role).engine) {
+      record.engine = this.leadModel(role).engine;
+      record.sessionId = null;
+      record.profile = null;
+    }
     const assistant = new Assistant({
       cwd: record.workspace?.path ?? this.opts.repo,
-      engine: () => this.opts.engine(role.engine),
+      engine: () => this.opts.engine(this.leadModel(role).engine),
       systemPrompt: () => this.opts.prompt(record, role),
       mcp: {
         ...this.opts.mcp(),
         legion: { type: 'http', url: this.mcpUrl ?? '', headers: { Authorization: `Bearer ${token}` } },
       },
-      model: () => role.model,
-      effort: () => role.effort,
+      model: () => this.leadModel(role).model,
+      effort: () => this.leadModel(role).effort,
       approvals: role.approvals,
       sessionId: record.sessionId,
       log: this.log,
@@ -665,6 +677,7 @@ export class TeamManager extends EventEmitter<TeamEvents> {
     const live: LiveLead = { record, role, assistant, token, lastActive: Date.now() };
     this.leads.set(record.name, live);
     assistant.on('session', ({ id, profile }) => {
+      record.engine = this.leadModel(role).engine;
       record.sessionId = id;
       record.profile = profile;
       this.save();

@@ -133,10 +133,18 @@ export interface BuildArgsInput {
    * `opts.mcp` is set, the JSON is passed inline.
    */
   mcpConfigPath?: string | null;
+  /** Scratch directories the session may use without asking. Default: this machine's ({@link tempDirs}). */
+  tempDirs?: readonly string[];
 }
 
 /** The adapter's own arguments (the profile's `args` go before them). */
-export function buildClaudeArgs({ opts, sessionId, resume, mcpConfigPath }: BuildArgsInput): string[] {
+export function buildClaudeArgs({
+  opts,
+  sessionId,
+  resume,
+  mcpConfigPath,
+  tempDirs: scratch,
+}: BuildArgsInput): string[] {
   if (sessionId && resume) throw new Error('buildClaudeArgs: sessionId and resume are mutually exclusive');
   const args = [...BASE_ARGS];
   if (resume) args.push('--resume', resume);
@@ -173,7 +181,7 @@ export function buildClaudeArgs({ opts, sessionId, resume, mcpConfigPath }: Buil
 
   // Scratch space: tools write previews and intermediates to /tmp; outside the working directories each
   // read or write there would be an approval.
-  if (opts.permission.mode !== 'read_only') for (const dir of tempDirs()) args.push('--add-dir', dir);
+  if (opts.permission.mode !== 'read_only') for (const dir of scratch ?? tempDirs()) args.push('--add-dir', dir);
   for (const dir of opts.addDirs ?? []) args.push('--add-dir', dir);
   return args;
 }

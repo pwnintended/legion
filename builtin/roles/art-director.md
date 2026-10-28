@@ -1,7 +1,6 @@
 ---
 description: "Leads asset production: briefs artists, runs critique rounds, holds the art direction"
 engine: claude
-model: opus
 workflows: "*"
 spawns: "*"
 ---

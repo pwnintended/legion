@@ -9,7 +9,9 @@ import {
   defaultProjectConfig,
   ensureProjectConfig,
   loadConfig,
+  providerEngine,
   resolveAgentModel,
+  resolveTier,
 } from './config.ts';
 
 let root: string;
@@ -67,6 +69,28 @@ describe('config layers', () => {
   });
 });
 
+describe('[remote]', () => {
+  it('is off by default', () => {
+    const repo = join(root, 'repo');
+    mkdirSync(repo, { recursive: true });
+    expect(loadConfig(repo).remote).toMatchObject({ enabled: false, size: 'medium', setup: [] });
+  });
+
+  it('takes the API key from the user and local files', () => {
+    const repo = join(root, 'repo');
+    write(join(root, 'xdg', 'legion', 'config.toml'), '[remote]\napiKey = "box_user"\n');
+    expect(loadConfig(repo).remote.apiKey).toBe('box_user');
+    write(join(repo, '.legion', 'config.local.toml'), '[remote]\napiKey = "box_local"\nenabled = true\n');
+    expect(loadConfig(repo).remote).toMatchObject({ apiKey: 'box_local', enabled: true });
+  });
+
+  it('refuses an API key in a project file that may be committed', () => {
+    const repo = join(root, 'repo');
+    write(join(repo, '.legion', 'config.toml'), '[remote]\nenabled = true\napiKey = "box_secret"\n');
+    expect(() => loadConfig(repo)).toThrow(/apiKey.*config\.local\.toml/);
+  });
+});
+
 describe('ensureProjectConfig', () => {
   it('writes a default with the settings in effect when there is no project config', () => {
     const repo = join(root, 'repo');
@@ -98,44 +122,124 @@ describe('ensureProjectConfig', () => {
 });
 
 describe('resolveAgentModel', () => {
-  const settings = ConfigSchema.parse({
-    workflow: {
-      '*': { codex: { effort: 'high' }, agent: { review: { model: 'gpt-x' } } },
-      feature: { claude: { model: 'sonnet' }, agent: { plan: { model: 'opus', effort: 'max' } } },
-    },
-  }).workflow;
-  const req = (key: string, engine: string, model: string | null = null) => ({
+  const config = (doc: Record<string, unknown>) => ConfigSchema.parse(doc);
+  const req = (key: string, engine: string, extra: { tier?: 'hard' | 'medium' | 'easy'; model?: string } = {}) => ({
     workflow: 'feature',
     key,
     engine,
-    model,
+    tier: extra.tier ?? null,
+    model: extra.model ?? null,
     effort: null,
   });
 
-  it('prefers the step setting, then the code, then the workflow engine default, then every workflow', () => {
-    expect(resolveAgentModel(settings, req('plan', 'claude', 'haiku'))).toMatchObject({ model: 'opus', effort: 'max' });
-    expect(resolveAgentModel(settings, req('code', 'claude', 'haiku'))).toMatchObject({
+  it('takes the tier from the step setting, then the code, then the workflow, then every workflow', () => {
+    const c = config({
+      workflow: {
+        '*': { tier: 'easy', agent: { review: { tier: 'hard' } } },
+        feature: { tier: 'medium', agent: { plan: { tier: 'hard' } } },
+        other: {},
+      },
+    });
+    expect(resolveAgentModel(c, req('plan', 'claude', { tier: 'easy' }))).toMatchObject({
+      tier: 'hard',
+      model: 'opus',
+      effort: 'high',
+      origin: { tier: 'agent', model: 'tier' },
+    });
+    expect(resolveAgentModel(c, req('review', 'claude'))).toMatchObject({ tier: 'hard', origin: { tier: 'agent' } });
+    expect(resolveAgentModel(c, req('code', 'claude', { tier: 'easy' }))).toMatchObject({
+      tier: 'easy',
+      model: 'haiku',
+      origin: { tier: 'code' },
+    });
+    expect(resolveAgentModel(c, req('code', 'claude'))).toMatchObject({ tier: 'medium', origin: { tier: 'workflow' } });
+    expect(resolveAgentModel(c, { ...req('code', 'claude'), workflow: 'other' })).toMatchObject({
+      tier: 'easy',
+      model: 'haiku',
+      origin: { tier: 'all' },
+    });
+    expect(resolveAgentModel(config({}), req('code', 'codex'))).toMatchObject({
+      tier: 'medium',
+      model: null,
+      effort: 'medium',
+      origin: { tier: 'default', model: 'default', effort: 'tier' },
+    });
+  });
+
+  it("puts a step's or the code's own model over the tier's, on its engine only", () => {
+    const c = config({ workflow: { feature: { agent: { plan: { model: 'claude-x', effort: 'max' } } } } });
+    expect(resolveAgentModel(c, req('plan', 'claude', { model: 'haiku' }))).toMatchObject({
+      model: 'claude-x',
+      effort: 'max',
+      origin: { model: 'agent' },
+    });
+    expect(resolveAgentModel(c, req('code', 'claude', { model: 'haiku' }))).toMatchObject({
       model: 'haiku',
       origin: { model: 'code' },
     });
-    expect(resolveAgentModel(settings, req('code', 'claude'))).toMatchObject({ model: 'sonnet', effort: null });
-    expect(resolveAgentModel(settings, req('code', 'codex'))).toMatchObject({
+    const codex = config({ models: { provider: 'codex' }, workflow: c.workflow });
+    expect(resolveAgentModel(codex, req('plan', 'claude', { model: 'haiku' }))).toMatchObject({
+      engine: 'codex',
       model: null,
-      effort: 'high',
-      origin: { model: 'default', effort: 'all' },
+      effort: 'medium',
+      origin: { engine: 'provider', model: 'default', effort: 'tier' },
     });
-    expect(resolveAgentModel(settings, req('review', 'codex'))).toMatchObject({ model: 'gpt-x' });
   });
 
-  it("moves a step to the other engine, dropping the code's model for the old one", () => {
-    const moved = ConfigSchema.parse({
-      workflow: { feature: { codex: { model: 'gpt-y' }, agent: { code: { engine: 'codex' } } } },
-    }).workflow;
-    expect(resolveAgentModel(moved, req('code', 'claude', 'haiku'))).toMatchObject({
+  it("moves a step to the other engine in mixed mode, dropping the code's model for the old one", () => {
+    const moved = config({
+      models: { codex: { medium: { model: 'gpt-y' } } },
+      workflow: { feature: { agent: { code: { engine: 'codex' } } } },
+    });
+    expect(resolveAgentModel(moved, req('code', 'claude', { model: 'haiku' }))).toMatchObject({
       engine: 'codex',
       model: 'gpt-y',
-      origin: { engine: 'agent', model: 'workflow' },
+      effort: 'medium',
+      origin: { engine: 'agent', model: 'tier' },
     });
-    expect(resolveAgentModel(moved, req('code', 'codex', 'gpt-z'))).toMatchObject({ engine: 'codex', model: 'gpt-z' });
+    expect(resolveAgentModel(moved, req('code', 'codex', { model: 'gpt-z' }))).toMatchObject({
+      engine: 'codex',
+      model: 'gpt-z',
+    });
+  });
+
+  it('runs everything on a single provider, whatever the code and the step settings say', () => {
+    const c = config({
+      models: { provider: 'claude' },
+      workflow: { feature: { agent: { code: { engine: 'codex' } } } },
+    });
+    expect(resolveAgentModel(c, req('code', 'codex', { tier: 'hard' }))).toMatchObject({
+      engine: 'claude',
+      model: 'opus',
+      effort: 'high',
+      origin: { engine: 'provider' },
+    });
+    expect(resolveAgentModel(c, req('other', 'fake'))).toMatchObject({ engine: 'fake', model: null });
+  });
+});
+
+describe('tiers', () => {
+  it('overrides a tier field by field and keeps the defaults of the rest', () => {
+    const models = ConfigSchema.parse({ models: { claude: { hard: { model: 'sonnet' } } } }).models;
+    expect(models.provider).toBe('mixed');
+    expect(models.claude.hard).toEqual({ model: 'sonnet', effort: 'high' });
+    expect(models.claude.medium).toEqual({ model: 'sonnet' });
+    expect(models.codex.easy).toEqual({ effort: 'low' });
+  });
+
+  it("gives the assistant or a lead the provider's engine, and its own model only on its own engine", () => {
+    const models = ConfigSchema.parse({}).models;
+    expect(resolveTier(models, 'assistant', { engine: 'claude', model: 'claude-x' })).toEqual({
+      engine: 'claude',
+      model: 'claude-x',
+      effort: null,
+    });
+    const codex = { ...models, provider: 'codex' as const };
+    expect(resolveTier(codex, 'lead', { engine: 'claude', model: 'claude-x', effort: 'max' })).toEqual({
+      engine: 'codex',
+      model: null,
+      effort: 'high',
+    });
+    expect(providerEngine(codex, 'fake')).toBe('fake');
   });
 });

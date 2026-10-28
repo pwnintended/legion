@@ -114,6 +114,7 @@ export async function executePlan(plan: Plan, opts: ExecuteOptions) {
     const reviewed = await loop('review', { max: opts.maxFixRounds + 1 }, async (round) => {
       const verification = await verify(checks, wt);
       const review = await agent('review', {
+        tier: 'hard',
         engine: taskReviewer,
         mode: 'read',
         untrusted: true,
@@ -206,6 +207,7 @@ ${formatVerification(verification.filter((v) => !v.ok))}`,
       return;
     }
     const review = await agent('review', {
+      tier: 'hard',
       engine: reviewer,
       mode: 'read',
       untrusted: true,

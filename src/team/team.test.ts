@@ -274,6 +274,25 @@ describe('team', () => {
     expect(callsOf('assets')[0]).toMatchObject({ resumed: true, sessionId });
   });
 
+  it("runs leads on their tier, and starts a lead's conversation over on the other provider", async () => {
+    const root = await as(ROOT);
+    await root.call('spawn_lead', { role: 'assets-lead', name: 'assets', brief: 'b' });
+    await until(() => callsOf('assets').length === 1);
+    expect(callsOf('assets')[0]?.opts).toMatchObject({ model: 'opus', effort: null });
+    await until(() => session.team.get('assets')?.sessionId !== null);
+    for (const c of clients.splice(0)) await c.close();
+    await session.close();
+
+    writeFileSync(join(repo.path, '.legion', 'config.local.toml'), '[models]\nprovider = "codex"\n');
+    session = await Session.open({ cwd: repo.path, fake: true });
+    await (await as(ROOT)).call('message_lead', { name: 'assets', text: 'status?' });
+    const codex = () =>
+      (session.engine('codex') as FakeEngine).calls.filter((c) => c.opts.systemPrompt?.startsWith('You are assets,'));
+    await until(() => codex().length === 1);
+    expect(codex()[0]).toMatchObject({ resumed: false, opts: { model: null, effort: 'high' } });
+    await until(() => session.team.get('assets')?.engine === 'codex');
+  });
+
   it("gate modes: ask sends a lead's gates to the user, tell reports answers to the parent", async () => {
     writeFileSync(
       join(repo.path, '.legion', 'roles', 'careful.md'),

@@ -71,6 +71,7 @@ ${input.task}`,
     const planned = await loop<Plan>('plan', { max: 5 }, async (round) => {
       const feedback = round > 1 ? lastFeedback : null;
       const plan = await agent('draft', {
+        tier: 'hard',
         mode: 'read',
         system: PLANNER,
         output: Plan,

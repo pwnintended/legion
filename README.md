@@ -38,6 +38,7 @@ legion                         # start a session in this directory
 legion "run review on my branch"   # … with a first message
 legion -c                      # continue the last conversation here
 legion --claude claude-2       # use another Claude account for this session
+legion --remote                # run workflow steps on Upstash Boxes (--local: on this machine)
 
 legion workflows               # list workflows (project, user, builtin)
 legion run feature --input '{"task":"Add a --json flag to status"}'   # headless run
@@ -65,14 +66,17 @@ In the session:
   iTerm2 with CSI u reporting). Elsewhere, end the line with `\` and press Enter, or use Alt+Enter.
 - Type `/` for the command menu: ↑↓ picks, Tab completes, Enter runs. `/help` lists everything.
 - `/workflows` opens the workflow browser. Enter opens a workflow: its description, its input fields, and its
-  agent steps, which a dry run finds along with their engines. There you set the **engine, model and effort** for
-  all of an engine's agents, or for a single step. ←→ moves between columns, Enter opens a picker, ⌫ resets the
-  cell and Esc saves. The model picker lists what each engine offers: Codex's own list (from `codex app-server`)
+  agent steps, which a dry run finds along with their engines. There you set the **tier** (`hard`, `medium`,
+  `easy`) for all of the workflow's agents, or for a single step, and, rarely needed, a step's own engine, model and
+  effort. ←→ moves between columns, Enter opens a picker, ⌫ resets the cell and Esc saves. The model picker lists what each engine offers: Codex's own list (from `codex app-server`)
   and Claude's aliases and current model IDs, plus anything in `[claude] models = [...]` or
   `[codex] models = [...]`. *other…* lets you type any other name. Moving a step to the other engine drops a model
   that engine doesn't have. `r` runs the workflow (the prompt is pre-filled when the workflow needs input), `v` validates it, `e`
   ejects a builtin so you can edit it, and `o` opens a project workflow in `$EDITOR`. *All workflows* at the top
   sets defaults for every workflow.
+- `/provider claude|openai|mixed` moves the assistant, every lead and every workflow agent onto one provider (when
+  the other is out of limits), or back to `mixed`. It saves to `.legion/config.local.toml`, so it lasts on this
+  machine until you switch back. `/provider` alone shows what each tier means on each engine.
 - `/run <name> [json]`, `/runs`, `/steps <run>`, `/log <run> <step>`, `/resume <run>`,
   `/cancel <run>`, `/validate <name>`.
 - `/config` opens the settings menu. ↑↓ picks a setting, ←→ changes it, Enter types a value (model, maxAgents),
@@ -82,6 +86,7 @@ In the session:
   and apply right away. *This session* switches the Claude and Codex profiles. *Open the file in $EDITOR* is
   there for anything else. `/config show`, `/config edit [user|project|local]` and `/config reload` also work.
 - `/claude [profile]` and `/codex [profile]` show or switch the account used for new agents.
+- `/remote [on|off|default]` shows or switches remote mode (Upstash Boxes) for this session, from the next step on.
 - `/takeover <run> <step>` opens that agent's session in its own CLI (`claude --resume …` / `codex resume …`)
   so you can steer it by hand. Legion's UI comes back when you exit.
 
@@ -119,9 +124,7 @@ env     = { CLAUDE_CONFIG_DIR = "~/.claude-2" }
 command = "codex"                        # env = { CODEX_HOME = "…" } for another account
 
 [assistant]
-engine = "claude"                        # which engine you talk to
-model  = "opus"                          # optional
-effort = "high"                          # optional
+engine = "claude"                        # which engine you talk to (in mixed mode)
 approvals = "auto"                       # its own tool approvals: auto (allowed) | ask (you)
 
 [workflows]
@@ -159,36 +162,94 @@ left alone.
 more for it. A model the engine rejects (unknown, or not available on your account) is logged and the step retries
 on the engine's default model.
 
-### Models for workflow agents
+### Remote mode (Upstash Boxes)
 
-The `/workflows` menu writes these for you:
+Builds and tests of several parallel agents can swamp one machine. In remote mode, every step that works in one of
+a run's worktrees (its agents and its `sh` steps) runs in an [Upstash Box](https://upstash.com/docs/box) instead:
+one box per worktree, made when a step first needs it and deleted when the run ends. The assistant, leads, and steps
+in your own checkout stay on this machine. Turn it on with `[remote] enabled = true`, `legion --remote`, or `/remote on`
+in a session (`--local` and `/remote off` turn it off). The switch is read at every step, so flipping it mid-run is
+safe.
 
 ```toml
-[workflow.feature.claude]        # every Claude agent of `feature` whose code picks no model
-model = "sonnet"
+# ~/.config/legion/config.toml or .legion/config.local.toml: the key never goes in a committed file
+[remote]
+apiKey = "box_…"                       # Upstash Console → Box → API keys (UPSTASH_BOX_API_KEY wins over it)
 
-[workflow.feature.agent.plan]    # the `plan` step: over what the workflow's code picks
-model  = "opus"
-effort = "high"
-
-[workflow.feature.agent.review]  # run the `review` steps on Codex, whatever the code says
-engine = "codex"
-
-[workflow."*".codex]             # every workflow
-effort = "high"
+# .legion/config.toml
+[remote]
+enabled  = true
+snapshot = "snap_…"                    # boxes start from it: CLIs, toolchain, a warm clone (default: a fresh box)
+clone    = "/workspace/home/repo"      # where that warm clone is in the snapshot: it becomes the worktree
+prelude  = "source tools/box/env.sh"   # run before every command in a box, in the worktree root
+setup    = ["pnpm install --offline"]  # run once in each new box
+size     = "medium"                    # small | medium | large: 2, 4 or 8 CPUs
+runtime  = "node"                      # a fresh box's image, without a snapshot
 ```
 
-A step's `engine` setting, when there is one, decides the engine; otherwise the code does. A model the code picks
-for its own engine is ignored once the step runs on the other one. Model and effort are each decided in this
-order, first match wins:
+- **Your checkout stays the source of truth.** The worktree exists on both sides at the same absolute path, so paths
+  in prompts and tool calls mean the same everywhere. Before a step, Legion uploads the commits the box lacks (a git
+  bundle, built here) and your uncommitted state (a patch). After it, what changed in the box comes back as a patch.
+  The workflow's git steps (commit, merge, diff, PR) run here as always, and the box never needs GitHub access.
+  Ignored files are not synced either way, so build caches stay on their side.
+- **Logins live in the Upstash account,** as account-level environment variables every box gets: Claude Code reads
+  `CLAUDE_CODE_OAUTH_TOKEN` (from `claude setup-token`) or `ANTHROPIC_API_KEY`. For Codex, `CODEX_AUTH_GZIP_B64`
+  (a gzipped, base64 `auth.json` of a ChatGPT login) seeds the box's own Codex home once, and the CLI keeps its
+  refreshed tokens there. Legion never reads or passes them.
+- **The CLIs:** a box without `claude` or `codex` gets it installed with npm on first use. A snapshot that already
+  has them starts faster.
+- **Sessions resume within their box.** A step resumed after its box is gone (the run ended, or the box expired)
+  starts a new session.
+- **MCP servers** on this machine's loopback (`http://127.0.0.1:…`) are out of a box's reach and left out. Stdio
+  servers start in the box, so the snapshot needs them.
+- `legion doctor` shows whether remote mode is on and whether a key is set.
 
-1. the step setting;
-2. the workflow code's `agent(key, { model, effort })`;
-3. the workflow's engine setting;
-4. `"*"`;
-5. the CLI's own default.
+### Models: tiers and providers
 
-Without any of these, the user's own CLI settings do not apply: Claude agents load only project settings, and Codex
+Nothing names a model directly. The assistant runs on the `assistant` tier, every lead on `lead` (a role can pick
+another), and every workflow agent step on `hard`, `medium` (the default) or `easy`. `[models]` says which model and
+effort each tier means on each engine, and which provider everything runs on:
+
+```toml
+[models]
+provider = "mixed"               # claude | codex | mixed  (/provider claude|openai|mixed switches it)
+
+[models.claude.hard]             # the defaults: opus for assistant, lead and hard (hard at high effort),
+model  = "opus"                  # sonnet for medium, haiku for easy
+effort = "high"
+
+[models.codex.hard]              # Codex: its CLI's model unless you set one; efforts high, high, high, medium, low
+model  = "…"                     # a model from Codex's list (the /workflows model picker shows it)
+effort = "xhigh"
+```
+
+A tier table overrides its defaults field by field: setting `model` alone keeps the tier's effort. With
+`provider = "claude"` or `"codex"`, everything runs on that engine, including steps whose code names the other one.
+With `mixed`, each runs on the engine its settings or code choose (Claude when nothing says).
+
+A workflow step's tier comes from the `/workflows` menu, which writes these, or from the code
+(`agent(key, { tier: 'hard' })`):
+
+```toml
+[workflow.feature]               # every agent step of `feature` whose code and step setting name no tier
+tier = "easy"
+
+[workflow.feature.agent.plan]    # the `plan` step
+tier = "hard"
+
+[workflow.feature.agent.review]  # in mixed mode, run the `review` steps on Codex whatever the code says
+engine = "codex"
+
+[workflow."*"]                   # every workflow
+tier = "medium"
+```
+
+The tier is the step setting's, then the code's, then the workflow's, then `"*"`'s, else `medium`. A step can still
+pin a `model` and `effort` (in the step setting or in code), over its tier's: they are names for one engine, so
+they apply only while the step runs on it, and the tier's apply on the other. `[assistant] model` and a role's
+`model` work the same way.
+
+Your own CLI settings do not apply to agents: Claude agents load only project settings, and Codex
 runs in its own `CODEX_HOME`. The model each step ran with is recorded in the run's journal.
 
 A profile spawns `command` directly with `env` applied, with no shell per agent. That is why
@@ -271,8 +332,8 @@ Resolution, first match by name wins: `.legion/roles/<name>.md`, `~/.config/legi
 ```markdown
 ---
 description: "Fauna for one planet: concept, model, critique, export"
-engine: claude            # claude | codex
-model: opus               # optional; effort too
+engine: claude            # claude | codex, in mixed mode (a single provider wins)
+tier: lead                # its model and effort: [models.<engine>.lead] (default); model/effort pin one
 workflows: [asset-critique, concept-sheet]   # which workflows it may run, or "*"
 spawns: []                # which roles it may spawn as sub-leads, or "*"
 approvals: auto           # its own tool approvals: auto, or ask (you answer them)
@@ -383,6 +444,7 @@ src/
                         run manager, git operations
   sdk/                  what workflow files import as `legion`
   git/                  worktrees, squash merges, conflicts, PRs (ported from Legion's desktop app)
+  remote/               remote mode: Upstash Boxes, worktree sync, engines and `sh` steps in a box
   tui/                  Ink UI: store (state), controller (commands), app (components)
 builtin/workflows/      feature, tasks (sharing _tasks.ts), implement, review (+ an end-to-end test)
 builtin/roles/          team-lead, engineering-lead, art-director, world-designer

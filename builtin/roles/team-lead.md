@@ -1,7 +1,6 @@
 ---
 description: "A general team lead: breaks an area of work into parts, delegates them, and checks the results"
 engine: claude
-model: opus
 workflows: "*"
 spawns: "*"
 ---

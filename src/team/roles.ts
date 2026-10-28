@@ -6,8 +6,8 @@
  * ```markdown
  * ---
  * description: Leads asset production for a planet
- * engine: claude
- * model: opus
+ * engine: claude                              # in mixed mode; a single provider ([models]) wins
+ * tier: lead                                  # its model and effort: [models.<engine>.<tier>]
  * workflows: [asset-critique, concept-sheet]   # or "*"
  * spawns: [fauna-lead, vegetation-lead]        # or "*", or []
  * gates: decide                                # decide | tell | ask: who answers its runs' gates
@@ -29,6 +29,9 @@ const Names = z.union([z.literal('*'), z.array(z.string().min(1))]);
 const FrontmatterSchema = z.object({
   description: z.string().default(''),
   engine: z.enum(['claude', 'codex']).default('claude'),
+  /** Which tier's model and effort it uses (`[models.<engine>.<tier>]`). */
+  tier: z.enum(['assistant', 'lead', 'hard', 'medium', 'easy']).default('lead'),
+  /** A specific model (and effort) over the tier's, on its own engine. */
   model: z.string().min(1).nullable().default(null),
   effort: z.enum(['low', 'medium', 'high', 'xhigh', 'max']).nullable().default(null),
   /** Workflows the lead may run. */

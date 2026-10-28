@@ -20,7 +20,7 @@
  */
 import { z } from 'zod';
 
-export type { MergeResult, ShellResult, Worktree } from '../workflow/host.ts';
+export type { MergeResult, ShellResult, StepTier, Worktree } from '../workflow/host.ts';
 export type { AgentOptions, AgentResult, GateOptions, GateResult, LoopResult, ShOptions } from '../workflow/runtime.ts';
 export {
   agent,

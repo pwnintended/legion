@@ -12,16 +12,20 @@ import {
   type ConfigLayer,
   defaultProjectConfig,
   type Effort,
+  type ModelsConfig,
+  PROVIDERS,
+  type Provider,
   type RealKind,
   readToml,
   resolveAgentModel,
+  TIERS,
 } from '../config.ts';
 import { getPath, setTomlValue, type TomlScalar } from '../config-file.ts';
 import { CodexEngine } from '../engine/codex/index.ts';
 import type { ApprovalDecision, QuestionAnswers } from '../engine/types.ts';
 import type { Session } from '../session.ts';
 import { ROOT } from '../team/team.ts';
-import type { AskAnswer, GateAnswer, QuestionsAnswer } from '../workflow/host.ts';
+import type { AskAnswer, GateAnswer, QuestionsAnswer, StepTier } from '../workflow/host.ts';
 import {
   builtinSourceDir,
   ejectWorkflow,
@@ -66,8 +70,20 @@ export const COMMANDS: readonly Command[] = [
   { group: 'Runs', name: 'cancel', args: '[run]', description: 'stop an active run' },
   { group: 'Runs', name: 'takeover', args: '<run> <step>', description: "steer an agent's session in its own CLI" },
   { group: 'Session', name: 'config', args: '', description: 'settings: change them in a menu' },
+  {
+    group: 'Session',
+    name: 'provider',
+    args: '[claude|openai|mixed]',
+    description: 'run everything on one provider, or mixed; shows the tiers (saved in config.local.toml)',
+  },
   { group: 'Session', name: 'claude', args: '[profile]', description: 'show or switch the Claude account' },
   { group: 'Session', name: 'codex', args: '[profile]', description: 'show or switch the Codex account' },
+  {
+    group: 'Session',
+    name: 'remote',
+    args: '[on|off|default]',
+    description: 'run workflow steps on Upstash Boxes, or on this machine (this session)',
+  },
   { group: 'Session', name: 'builtin', args: '', description: 'where the builtin workflows live' },
   { group: 'Session', name: 'help', args: '', description: 'commands and keys' },
   { group: 'Session', name: 'exit', args: '', description: 'quit (active runs stop; resume them later)' },
@@ -119,7 +135,7 @@ export interface SettingRow {
   kind: 'choice' | 'text' | 'number' | 'action';
   /** The value in effect; null = not set (the default applies). */
   value: TomlScalar | null;
-  choices?: readonly (string | null)[];
+  choices?: readonly (string | boolean | null)[];
   min?: number;
   max?: number;
   hint: string;
@@ -162,6 +178,14 @@ const CONFIG_SETTINGS: readonly Omit<SettingRow, 'value'>[] = [
     hint: "the assistant's own tool approvals · auto: allowed · ask: you answer them",
   },
   {
+    id: 'models.provider',
+    group: 'Models',
+    label: 'provider',
+    kind: 'choice',
+    choices: ['mixed', 'claude', 'codex'],
+    hint: 'claude | codex: everything runs there · mixed: as settings and code say ([models.<engine>.<tier>] in the file)',
+  },
+  {
     id: 'workflows.approvals',
     group: 'Workflows',
     label: 'approvals',
@@ -177,6 +201,22 @@ const CONFIG_SETTINGS: readonly Omit<SettingRow, 'value'>[] = [
     min: 1,
     max: 32,
     hint: 'agent sessions alive at once per run',
+  },
+  {
+    id: 'remote.enabled',
+    group: 'Remote',
+    label: 'enabled',
+    kind: 'choice',
+    choices: [false, true],
+    hint: 'workflow steps in run worktrees run on Upstash Boxes ([remote] in the config for the rest)',
+  },
+  {
+    id: 'remote.size',
+    group: 'Remote',
+    label: 'size',
+    kind: 'choice',
+    choices: ['small', 'medium', 'large'],
+    hint: 'box size: 2, 4 or 8 CPUs',
   },
   {
     id: 'team.gates',
@@ -222,6 +262,7 @@ export interface WorkflowAgent {
   engines: string[];
   steps: string[];
   /** What the code asks for. */
+  tier: StepTier | null;
   model: string | null;
   effort: Effort | null;
 }
@@ -237,7 +278,7 @@ export interface WorkflowDetail {
   error: string | null;
 }
 
-export type ModelFieldName = 'engine' | 'model' | 'effort';
+export type ModelFieldName = 'tier' | 'engine' | 'model' | 'effort';
 
 export interface ModelField {
   /** The value this row sets in the config, or null. */
@@ -250,17 +291,18 @@ export interface ModelField {
 }
 
 export interface ModelRow {
-  /** The config table: `['workflow', 'feature', 'claude']` or `['workflow', 'feature', 'agent', 'plan']`. */
+  /** The config table: `['workflow', 'feature']` or `['workflow', 'feature', 'agent', 'plan']`. */
   path: string[];
   label: string;
-  /** An engine's agents (`engine` is fixed), or one agent step (`engine` can move it). */
-  kind: 'engine' | 'step';
-  /** The engines the code runs this step on (an engine row: its own). */
+  /** The workflow's default tier (only `tier`), or one agent step (every field). */
+  kind: 'workflow' | 'step';
+  /** The engines the code runs this step on (the workflow row: none). */
   engines: RealKind[];
   steps: string[];
+  tier: ModelField;
   engine: ModelField | null;
-  model: ModelField;
-  effort: ModelField;
+  model: ModelField | null;
+  effort: ModelField | null;
 }
 
 /** A model a picker offers. */
@@ -732,6 +774,12 @@ export class Controller {
         case 'codex':
           await this.profile(cmd, rest[0]);
           return;
+        case 'remote':
+          this.remote(rest[0]);
+          return;
+        case 'provider':
+          await this.provider(rest[0]);
+          return;
         case 'builtin':
           this.store.info(`Builtin workflow sources: ${builtinSourceDir()}`);
           return;
@@ -741,6 +789,72 @@ export class Controller {
     } catch (err) {
       this.store.error(err instanceof Error ? err.message : String(err));
     }
+  }
+
+  /** `/remote [on|off|default]`: shows or switches remote mode for this session, from the next step on. */
+  private remote(arg: string | undefined): void {
+    if (arg !== undefined) {
+      const choice = { on: true, off: false, default: null }[arg];
+      if (choice === undefined) throw new Error('Usage: /remote [on|off|default]');
+      this.session.setRemote(choice);
+    }
+    const on = this.session.remoteEnabled;
+    const problem = on ? this.session.remoteProblem() : null;
+    this.store.info(
+      on
+        ? `Remote: workflow steps in run worktrees run on Upstash Boxes, from the next step on.${problem ? ` But ${problem}.` : ''}`
+        : 'Remote: off. Workflow steps run on this machine.',
+    );
+  }
+
+  /**
+   * `/provider [claude|openai|codex|mixed]`: moves the assistant, every lead and every workflow agent from its next
+   * session on to one provider (when the other is out of limits), or back to `mixed`. Saved in config.local.toml,
+   * so it lasts on this machine until switched back.
+   */
+  private async provider(arg: string | undefined): Promise<void> {
+    if (arg !== undefined) {
+      const choice = arg === 'openai' ? 'codex' : arg;
+      if (!PROVIDERS.includes(choice as Provider)) throw new Error('Usage: /provider [claude|openai|mixed]');
+      const { file, notes } = await this.writeConfig('local', [{ path: ['models'], key: 'provider', value: choice }]);
+      this.store.panel(`Provider: ${this.session.config.models.provider}`, [
+        [dim('saved to '), seg(this.showPath(file))],
+        ...notes.map((n): Line => [seg('• ', { color: 'accent' }), seg(n)]),
+        [dim('Agents and leads use it from their next session; running ones finish where they are.')],
+        [],
+        ...this.tierLines(),
+      ]);
+      return;
+    }
+    this.store.panel(`Provider: ${this.session.config.models.provider}`, this.tierLines());
+  }
+
+  /** The provider and what each tier means on each engine, the one in use marked. */
+  private tierLines(): Line[] {
+    const { models } = this.session.config;
+    const provider = models.provider;
+    const show = (m: { model?: string; effort?: Effort }) =>
+      [m.model ?? "CLI's model", m.effort].filter(Boolean).join(' · ');
+    const lines: Line[] = [
+      [
+        seg('Tiers', { bold: true }),
+        dim(
+          provider === 'mixed'
+            ? '  provider mixed: each runs on the engine its settings or code choose'
+            : `  provider ${provider}: everything runs on ${provider}`,
+        ),
+      ],
+      [dim(`  ${''.padEnd(10)}`), seg('claude'.padEnd(24), { color: 'claude' }), seg('codex', { color: 'codex' })],
+    ];
+    for (const tier of TIERS) {
+      const cell = (kind: RealKind) => {
+        const text = show(models[kind][tier]).padEnd(24);
+        return provider === 'mixed' || provider === kind ? seg(text) : dim(text);
+      };
+      lines.push([dim(`  ${tier.padEnd(10)}`), cell('claude'), cell('codex')]);
+    }
+    lines.push([dim('  [models.<engine>.<tier>] model / effort sets them; /provider claude|openai|mixed switches')]);
+    return lines;
   }
 
   /** A run id from an argument, accepting a unique prefix or suffix; default: the newest run. */
@@ -775,7 +889,7 @@ export class Controller {
     this.store.update({ profiles: this.session.profileNames() });
     this.store.info(
       `${kind} now uses profile "${name}" for new agents${setupOutput ? `\n${setupOutput}` : ''}` +
-        (this.session.config.assistant.engine === kind ? '\nThe assistant starts a new conversation on it.' : ''),
+        (this.session.assistantModel().engine === kind ? '\nThe assistant starts a new conversation on it.' : ''),
     );
   }
 
@@ -788,7 +902,7 @@ export class Controller {
     const branch = session.isGitRepo
       ? spawnSync('git', ['branch', '--show-current'], { cwd: session.cwd, encoding: 'utf8' }).stdout?.trim() || null
       : null;
-    const { engine, model } = session.config.assistant;
+    const { engine, model } = session.assistantModel();
     return {
       version,
       cwd: tildify(session.cwd, homedir()),
@@ -952,7 +1066,7 @@ export class Controller {
       const { setupOutput } = await this.session.switchProfile(kind, String(value));
       lines.push(change(`${kind} profile`, id, value));
       if (setupOutput) lines.push([dim(`  ${setupOutput}`)]);
-      if (this.session.config.assistant.engine === kind)
+      if (this.session.assistantModel().engine === kind)
         lines.push([seg('• ', { color: 'accent' }), seg('the assistant starts a new conversation on it')]);
     }
     this.store.update({ profiles: this.session.profileNames() });
@@ -996,11 +1110,19 @@ export class Controller {
     for (const a of report.dryRun?.agents ?? []) {
       const seen = agents.get(a.key);
       if (!seen) {
-        agents.set(a.key, { key: a.key, engines: [a.engine], steps: [a.step], model: a.model, effort: a.effort });
+        agents.set(a.key, {
+          key: a.key,
+          engines: [a.engine],
+          steps: [a.step],
+          tier: a.tier,
+          model: a.model,
+          effort: a.effort,
+        });
         continue;
       }
       if (!seen.engines.includes(a.engine)) seen.engines.push(a.engine);
       seen.steps.push(a.step);
+      seen.tier ??= a.tier;
       seen.model ??= a.model;
       seen.effort ??= a.effort;
     }
@@ -1053,56 +1175,64 @@ export class Controller {
     return { models: merge(models), error };
   }
 
-  /** The rows of a workflow's menu page (`*`: every workflow): its engines' agents, then each agent step. */
+  /** The provider in effect and what each tier means on each engine (`[models]`). */
+  models(): ModelsConfig {
+    return this.session.config.models;
+  }
+
+  /** The rows of a workflow's menu page (`*`: every workflow): its default tier, then each agent step. */
   workflowModels(detail: Pick<WorkflowDetail, 'name' | 'agents'>, scope: SaveScope): ModelRow[] {
-    const settings = this.session.config.workflow;
+    const { workflow: settings, models } = this.session.config;
     const origin = this.valueOrigins(scope);
     const name = detail.name;
     const all = settings['*'];
     const kinds = ['claude', 'codex'] as const;
-    const rows: ModelRow[] = [];
-    for (const engine of kinds) {
-      const field = (f: 'model' | 'effort'): ModelField => {
-        const value = name === '*' ? null : (all?.[engine]?.[f] ?? null);
-        const inherited = { value, from: value !== null ? 'all workflows' : 'default' };
-        return {
-          set: settings[name]?.[engine]?.[f] ?? null,
-          inherited: { claude: inherited, codex: inherited },
-          ...origin(['workflow', name, engine, f]),
-        };
-      };
-      rows.push({
-        path: ['workflow', name, engine],
-        label: name === '*' ? `${engine} agents, every workflow` : `${engine} agents`,
-        kind: 'engine',
-        engines: [engine],
+    const both = (value: string | null, from: string) => ({ claude: { value, from }, codex: { value, from } });
+    const allTier = name === '*' ? undefined : all?.tier;
+    const rows: ModelRow[] = [
+      {
+        path: ['workflow', name],
+        label: name === '*' ? 'every agent, every workflow' : 'every agent',
+        kind: 'workflow',
+        engines: [],
         steps: [],
+        tier: {
+          set: settings[name]?.tier ?? null,
+          inherited: allTier ? both(allTier, 'all workflows') : both('medium', 'default'),
+          ...origin(['workflow', name, 'tier']),
+        },
         engine: null,
-        model: field('model'),
-        effort: field('effort'),
-      });
-    }
-    const from: Record<string, string> = { code: 'workflow code', all: 'all workflows' };
+        model: null,
+        effort: null,
+      },
+    ];
+    const from: Record<string, string> = {
+      code: 'workflow code',
+      workflow: 'every agent',
+      all: 'all workflows',
+      agent: 'all workflows',
+    };
     for (const a of detail.agents) {
       const code = (a.engines[0] ?? 'claude') as RealKind;
-      // What applies without this step's own model/effort, were it on each engine.
+      // What applies without this step's own settings, were it on each engine (in `mixed`, so the engine sticks).
       const without = (on: RealKind) =>
         resolveAgentModel(
           {
-            ...settings,
-            [name]: { ...settings[name], agent: { [a.key]: { engine: on } } },
-            '*': { ...all, agent: {} },
+            models: { ...models, provider: 'mixed' },
+            workflow: {
+              ...settings,
+              [name]: { ...settings[name], agent: { [a.key]: { engine: on } } },
+              '*': { ...all, agent: {} },
+            },
           },
-          { workflow: name, key: a.key, engine: code, model: a.model, effort: a.effort },
+          { workflow: name, key: a.key, engine: code, tier: a.tier, model: a.model, effort: a.effort },
         );
-      const field = (f: 'model' | 'effort'): ModelField => {
+      const field = (f: 'tier' | 'model' | 'effort'): ModelField => {
         const inherited = Object.fromEntries(
           kinds.map((k) => {
             const r = without(k);
-            return [
-              k,
-              { value: r[f], from: from[r.origin[f]] ?? (r.origin[f] === 'workflow' ? `${k} agents` : 'default') },
-            ];
+            const o = r.origin[f];
+            return [k, { value: r[f], from: o === 'tier' ? `${r.tier} tier` : (from[o] ?? 'default') }];
           }),
         ) as ModelField['inherited'];
         return {
@@ -1118,6 +1248,7 @@ export class Controller {
         kind: 'step',
         engines: a.engines as RealKind[],
         steps: a.steps,
+        tier: field('tier'),
         engine: {
           set: settings[name]?.agent[a.key]?.engine ?? null,
           inherited: { claude: codeEngine, codex: codeEngine },
@@ -1234,6 +1365,7 @@ export class Controller {
 
   private configLines(layers: ConfigLayer[]): Line[] {
     const { config } = this.session;
+    const assistant = this.session.assistantModel();
     const lines: Line[] = [[seg('Files', { bold: true }), dim('  later ones win')]];
     layers.forEach((l, n) => {
       lines.push([
@@ -1252,9 +1384,13 @@ export class Controller {
     lines.push(
       [],
       [seg('Assistant', { bold: true })],
-      kv('engine', config.assistant.engine),
-      kv('model', config.assistant.model ?? 'default', config.assistant.model ? '' : "the CLI's own"),
-      kv('effort', config.assistant.effort ?? 'default'),
+      kv(
+        'engine',
+        assistant.engine,
+        assistant.engine !== config.assistant.engine ? `provider ${config.models.provider}` : '',
+      ),
+      kv('model', assistant.model ?? 'default', assistant.model ? '' : "the CLI's own"),
+      kv('effort', assistant.effort ?? 'default'),
       kv('approvals', config.assistant.approvals, config.assistant.approvals === 'ask' ? 'you answer them' : 'allowed'),
       [],
       [seg('Workflows', { bold: true })],
@@ -1266,6 +1402,8 @@ export class Controller {
           : "allowed: Claude's auto mode, Codex without sandbox or approvals",
       ),
       kv('maxAgents', String(config.workflows.maxAgents), 'agent sessions at once per run'),
+      [],
+      ...this.tierLines(),
     );
     for (const kind of ['claude', 'codex'] as const) {
       const current = this.session.profile(kind);

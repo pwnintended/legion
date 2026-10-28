@@ -97,9 +97,9 @@ describe('App', () => {
     await tick();
     ui.stdin.write('\r');
     await until(() => ui.lastFrame()?.includes('◆ Settings') ?? false);
-    // Save to, engine, model, effort, approvals (assistant), approvals (workflows), maxAgents: six rows down,
-    // then two steps right.
-    for (let i = 0; i < 6; i++) {
+    // Save to, engine, model, effort, approvals (assistant), provider, approvals (workflows), maxAgents: seven rows
+    // down, then two steps right.
+    for (let i = 0; i < 7; i++) {
       ui.stdin.write('\u001B[B');
       await tick(30);
     }
@@ -114,7 +114,7 @@ describe('App', () => {
     ui.unmount();
   });
 
-  it('sets a workflow agent model in the /workflows menu, and runs use it', async () => {
+  it('sets a workflow step tier and engine in the /workflows menu, and runs use them', async () => {
     const controller = new Controller(session);
     const ui = render(<App controller={controller} />);
     await tick();
@@ -129,22 +129,23 @@ describe('App', () => {
     }
     ui.stdin.write('\r');
     await until(() => ui.lastFrame()?.includes('found by a dry run') ?? false);
-    expect(ui.lastFrame()).toMatch(/greet +claude/);
-    // Rows: save to, claude agents (selected), codex agents, greet. Down twice to greet, focus is on model.
+    expect(ui.lastFrame()).toMatch(/greet +medium +claude +sonnet/);
+    // Rows: save to, every agent (selected), greet. Down once to greet, focus is on tier.
     const key = async (k: string) => {
       ui.stdin.write(k);
       await tick(30);
     };
     await key('\u001B[B');
-    await key('\u001B[B');
-    // Model picker: inherit, then the Claude models; the first is opus.
+    // Tier picker: inherit, hard, medium, easy.
     await key('\r');
-    await until(() => ui.lastFrame()?.includes('alias: the newest Opus') ?? false);
+    await until(() => ui.lastFrame()?.includes('planning, review') ?? false);
     await key('\u001B[B');
     await key('\r');
-    await until(() => /opus\s*›●/.test(ui.lastFrame() ?? ''));
+    await until(() => /hard\s*›●/.test(ui.lastFrame() ?? ''));
+    // The model follows the tier before saving.
+    expect(ui.lastFrame()).toMatch(/opus/);
     // Engine column: as coded, claude, codex.
-    await key('\u001B[D');
+    await key('\u001B[C');
     await key('\r');
     await until(() => ui.lastFrame()?.includes('as coded') ?? false);
     await key('\u001B[B');
@@ -155,7 +156,7 @@ describe('App', () => {
     await until(() => ui.lastFrame()?.includes('Models for hello') ?? false);
     ui.stdin.write('\u001B');
     await tick();
-    expect(session.config.workflow.hello?.agent.greet).toMatchObject({ model: 'opus', engine: 'codex' });
+    expect(session.config.workflow.hello?.agent.greet).toMatchObject({ tier: 'hard', engine: 'codex' });
 
     const id = await session.runs.start('hello', {});
     await until(() => session.runs.pendingInteractions().length > 0);
@@ -165,9 +166,28 @@ describe('App', () => {
     const [gate] = session.runs.pendingInteractions();
     session.runs.answer(gate?.id ?? '', { choice: 'approve', note: null });
     await session.runs.wait(id);
-    const fake = session.engine('codex') as unknown as { calls: { opts: { model: string | null } }[] };
-    expect(fake.calls.at(-1)?.opts.model).toBe('opus');
-    expect(session.runs.journal(id).get('greet')?.meta).toMatchObject({ engine: 'codex', model: 'opus' });
+    const fake = session.engine('codex') as unknown as {
+      calls: { opts: { model: string | null; effort: string | null } }[];
+    };
+    expect(fake.calls.at(-1)?.opts).toMatchObject({ model: null, effort: 'high' });
+    expect(session.runs.journal(id).get('greet')?.meta).toMatchObject({ engine: 'codex', effort: 'high' });
+    ui.unmount();
+  });
+
+  it('moves everything onto one provider with /provider, saved in config.local.toml', async () => {
+    const controller = new Controller(session);
+    const ui = render(<App controller={controller} />);
+    await tick();
+    await controller.submit('/provider openai');
+    await until(() => ui.lastFrame()?.includes('Provider: codex') ?? false);
+    expect(readFileSync(join(repo.path, '.legion', 'config.local.toml'), 'utf8')).toMatch(/^provider = "codex"$/m);
+    expect(session.config.models.provider).toBe('codex');
+    expect(session.assistantModel()).toMatchObject({ engine: 'codex', effort: 'high' });
+    await controller.submit('/provider mixed');
+    await until(() => session.config.models.provider === 'mixed');
+    expect(session.assistantModel()).toMatchObject({ engine: 'claude', model: 'opus' });
+    await controller.submit('/provider gemini');
+    await until(() => ui.lastFrame()?.includes('Usage: /provider') ?? false);
     ui.unmount();
   });
 

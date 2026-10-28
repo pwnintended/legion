@@ -343,7 +343,7 @@ function registerTeamTools(server: McpServer, ctx: Caller): void {
     'list_roles',
     {
       description:
-        'The roles a lead can have (what each is for, its engine and model, which workflows it may run and which roles it may spawn).',
+        'The roles a lead can have (what each is for, its engine, tier and model, which workflows it may run and which roles it may spawn).',
       inputSchema: {},
     },
     guard(log, async () => {
@@ -355,6 +355,7 @@ function registerTeamTools(server: McpServer, ctx: Caller): void {
           description: r.description,
           source: r.source,
           engine: r.engine,
+          tier: r.tier,
           model: r.model,
           workflows: r.workflows,
           spawns: r.spawns,

@@ -30,6 +30,7 @@ const USAGE = `Usage:
 Options:
   --claude <profile>   Claude Code profile (account) for this session
   --codex <profile>    Codex profile for this session
+  --remote, --local    run workflow steps on Upstash Boxes, or on this machine (over [remote] enabled)
   -h, --help
 
 Config: ${userConfigPath()} and .legion/config.toml`;
@@ -41,6 +42,8 @@ async function main(): Promise<number> {
       claude: { type: 'string' },
       codex: { type: 'string' },
       continue: { type: 'boolean', short: 'c' },
+      remote: { type: 'boolean' },
+      local: { type: 'boolean' },
       input: { type: 'string' },
       as: { type: 'string' },
       help: { type: 'boolean', short: 'h' },
@@ -50,6 +53,7 @@ async function main(): Promise<number> {
     console.log(USAGE);
     return 0;
   }
+  if (values.remote && values.local) throw new UsageError('--remote and --local exclude each other');
   installSdkResolution();
   const profiles: Partial<Record<RealKind, string>> = {
     ...(values.claude ? { claude: values.claude } : {}),
@@ -62,6 +66,7 @@ async function main(): Promise<number> {
       profiles,
       continueLast: values.continue ?? false,
       fake: process.env.LEGION_FAKE_ENGINES === '1',
+      ...(values.remote ? { remote: true } : values.local ? { remote: false } : {}),
     });
 
   switch (command) {
@@ -279,6 +284,12 @@ async function doctor(session: Session): Promise<number> {
       `${kind.padEnd(9)} ${status} profile "${profile.name}" (${session.availableProfiles(kind).join(', ')}) · ${info.path ?? profile.command} ${info.version ?? ''}${env ? ` · ${env}` : ''}${profile.setup ? ` · setup: ${profile.setup}` : ''}${info.error ? `\n          ${info.error}` : ''}`,
     );
   }
+  const remote = session.config.remote;
+  const problem = session.remoteProblem();
+  if (session.remoteEnabled && problem) ok = false;
+  console.log(
+    `remote    ${session.remoteEnabled ? 'on' : 'off'}${problem ? ` · ${session.remoteEnabled ? '✗' : '⚠'} ${problem}` : ''} · ${remote.snapshot ? `snapshot ${remote.snapshot}` : `fresh ${remote.runtime} boxes`}, ${remote.size}`,
+  );
   const workflows = await describeWorkflows(session.repo);
   console.log(`workflows ${workflows.map((w) => `${w.name}${'error' in w ? ' ⚠' : ''}`).join(', ')}`);
   await session.close();

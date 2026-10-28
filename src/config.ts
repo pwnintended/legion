@@ -16,9 +16,14 @@
  * command = "codex"
  *
  * [assistant]
- * engine = "claude"             # the engine you talk to
- * model  = "opus"
+ * engine = "claude"             # the engine you talk to (in mixed mode)
  * approvals = "auto"            # its tool approvals: auto (allowed) | ask (you)
+ *
+ * [models]
+ * provider = "mixed"            # claude | codex: everything runs there | mixed: as settings and code say
+ *
+ * [models.claude.medium]        # tiers: assistant, lead, hard, medium, easy
+ * model = "sonnet"
  *
  * [workflows]
  * approvals = "auto"            # agents' tool approvals: auto (Claude auto mode, Codex bypass) | ask (you)
@@ -60,12 +65,75 @@ export type Effort = z.infer<typeof EffortSchema>;
 const ModelSchema = z.object({ model: z.string().min(1).optional(), effort: EffortSchema.optional() });
 export type ModelSetting = z.infer<typeof ModelSchema>;
 
-/** `[workflow.<name>]`: models for one workflow's agents (`"*"`: every workflow). */
+/**
+ * What a model is for. `assistant` is the orchestrator you talk to, `lead` every team lead; workflow agent steps are
+ * `hard`, `medium` (the default) or `easy`. Each provider says which model and effort a tier means (`[models]`).
+ */
+export const TIERS = ['assistant', 'lead', 'hard', 'medium', 'easy'] as const;
+export const StepTierSchema = z.enum(['hard', 'medium', 'easy']);
+export type Tier = (typeof TIERS)[number];
+export type StepTier = z.infer<typeof StepTierSchema>;
+
+/** A provider's tiers. A tier's table overrides its defaults field by field (`model` alone keeps the effort). */
+const ProviderTiersSchema = (defaults: Record<Tier, ModelSetting>) =>
+  z.object(
+    Object.fromEntries(
+      TIERS.map((t) => [
+        t,
+        z.preprocess(
+          (v) => (v === undefined ? defaults[t] : isPlainObject(v) ? { ...defaults[t], ...v } : v),
+          ModelSchema,
+        ),
+      ]),
+    ) as unknown as Record<Tier, z.ZodType<ModelSetting>>,
+  );
+
+/** Claude's aliases follow the newest model of each family. Codex picks its own model unless one is set. */
+const CLAUDE_TIERS: Record<Tier, ModelSetting> = {
+  assistant: { model: 'opus' },
+  lead: { model: 'opus' },
+  hard: { model: 'opus', effort: 'high' },
+  medium: { model: 'sonnet' },
+  easy: { model: 'haiku' },
+};
+const CODEX_TIERS: Record<Tier, ModelSetting> = {
+  assistant: { effort: 'high' },
+  lead: { effort: 'high' },
+  hard: { effort: 'high' },
+  medium: { effort: 'medium' },
+  easy: { effort: 'low' },
+};
+
+export const PROVIDERS = ['claude', 'codex', 'mixed'] as const;
+export type Provider = (typeof PROVIDERS)[number];
+
+/**
+ * `[models]`: the provider everything runs on, and what each tier means on each. `claude` or `codex` moves every
+ * agent, lead and the assistant onto that engine (when one runs out of limits); `mixed` keeps the engines that the
+ * settings and the workflows' code choose.
+ */
+const ModelsSchema = z.object({
+  provider: z.enum(PROVIDERS).default('mixed'),
+  claude: ProviderTiersSchema(CLAUDE_TIERS).prefault(CLAUDE_TIERS),
+  codex: ProviderTiersSchema(CODEX_TIERS).prefault(CODEX_TIERS),
+});
+export type ModelsConfig = z.infer<typeof ModelsSchema>;
+export const DEFAULT_MODELS: ModelsConfig = ModelsSchema.parse({});
+
+/** `[workflow.<name>]`: the tiers of one workflow's agents (`"*"`: every workflow). */
 const WorkflowModelsSchema = z.object({
-  claude: ModelSchema.optional(),
-  codex: ModelSchema.optional(),
-  /** By agent key (the first argument of `agent()`); `engine` moves the step to the other engine. */
-  agent: z.record(z.string(), ModelSchema.extend({ engine: z.enum(['claude', 'codex']).optional() })).default({}),
+  /** The tier of the workflow's agent steps whose code and step setting name none. */
+  tier: StepTierSchema.optional(),
+  /**
+   * By agent key (the first argument of `agent()`): its tier, and (rarely needed) an engine, model or effort over
+   * the tier's. `engine` moves the step to the other engine in `mixed` mode.
+   */
+  agent: z
+    .record(
+      z.string(),
+      ModelSchema.extend({ engine: z.enum(['claude', 'codex']).optional(), tier: StepTierSchema.optional() }),
+    )
+    .default({}),
 });
 export type WorkflowModels = z.infer<typeof WorkflowModelsSchema>;
 
@@ -78,6 +146,34 @@ const McpServerSchema = z.union([
   }),
   z.object({ url: z.string().url(), headers: z.record(z.string(), z.string()).default({}) }),
 ]);
+
+/** `[remote]`: run workflow agents and `sh` steps on Upstash Boxes (`remote/`). */
+const RemoteSchema = z.object({
+  /** Off by default; `legion --remote` / `--local` and `/remote on|off` override it for a session. */
+  enabled: z.boolean().default(false),
+  /**
+   * The Upstash Box API key. Only in the user config or `.legion/config.local.toml`, never a committed file;
+   * `UPSTASH_BOX_API_KEY` wins over it.
+   */
+  apiKey: z.string().min(1).optional(),
+  /** Snapshot id new boxes start from (CLIs, toolchain and a warm clone already in place). Unset: a fresh box. */
+  snapshot: z.string().min(1).optional(),
+  /** Where the snapshot's warm clone of this repository is: it becomes the box's worktree, build caches included. */
+  clone: z.string().min(1).optional(),
+  size: z.enum(['small', 'medium', 'large']).default('medium'),
+  /** Runtime of a fresh box (no snapshot). */
+  runtime: z
+    .enum(['node', 'python', 'golang', 'ruby', 'rust', 'node-alpine', 'python-alpine', 'golang-alpine', 'ruby-alpine'])
+    .default('node'),
+  /**
+   * Shell code run (in the worktree root) before every command in a box, e.g. `source tools/box/env.sh` for the
+   * toolchain's PATH. Its output goes to stderr.
+   */
+  prelude: z.string().min(1).optional(),
+  /** Shell commands run once in each new box, in its worktree, after the first sync (e.g. `pnpm install`). */
+  setup: z.array(z.string().min(1)).default([]),
+});
+export type RemoteConfig = z.infer<typeof RemoteSchema>;
 
 export const ConfigSchema = z.object({
   claude: KindSchema.default({ profiles: {}, models: [] }),
@@ -116,6 +212,7 @@ export const ConfigSchema = z.object({
       minFreeGb: z.number().min(0).default(10),
     })
     .default({ clone: null, setup: [], minFreeGb: 10 }),
+  models: ModelsSchema.prefault({}),
   workflow: z.record(z.string(), WorkflowModelsSchema).default({}),
   /** `[mcp.servers.<name>]`: given to every lead and every workflow agent, on both engines. */
   mcp: z.object({ servers: z.record(z.string(), McpServerSchema).default({}) }).default({ servers: {} }),
@@ -132,6 +229,7 @@ export const ConfigSchema = z.object({
       maxLeads: z.number().int().min(1).max(64).default(12),
     })
     .default({ maxDepth: 3, maxLeads: 12, gates: 'ask' }),
+  remote: RemoteSchema.default({ enabled: false, size: 'medium', runtime: 'node', setup: [] }),
 });
 
 export type Config = z.infer<typeof ConfigSchema>;
@@ -215,10 +313,18 @@ export function configLayers(repo: string, cwd: string = repo): ConfigLayer[] {
 }
 
 export function loadConfig(repo: string, cwd: string = repo): Config {
-  const merged = configLayers(repo, cwd).reduce<Record<string, unknown>>(
-    (acc, layer) => (layer.exists ? mergeLayers(acc, readToml(layer.path)) : acc),
-    {},
-  );
+  const layers = configLayers(repo, cwd).filter((layer) => layer.exists);
+  const docs = layers.map((layer) => ({ layer, doc: readToml(layer.path) }));
+  // A secret in a file that is (or may be) committed would be pushed with it.
+  for (const { layer, doc } of docs) {
+    const remote = doc.remote;
+    if ((layer.scope === 'project' || layer.scope === 'parent') && isPlainObject(remote) && 'apiKey' in remote) {
+      throw new ConfigError(
+        `${layer.path} sets [remote] apiKey: move it to ${userConfigPath()} or .legion/config.local.toml (not committed)`,
+      );
+    }
+  }
+  const merged = docs.reduce<Record<string, unknown>>((acc, { doc }) => mergeLayers(acc, doc), {});
   const parsed = ConfigSchema.safeParse(merged);
   if (!parsed.success) {
     throw new ConfigError(
@@ -257,9 +363,27 @@ export function defaultProjectConfig(config: Config): string {
     '',
     '[assistant]',
     line('engine', assistant.engine, 'the engine you talk to: claude | codex'),
-    line('model', assistant.model ?? 'opus', "the assistant's model (default: the CLI's)", !!assistant.model),
+    line(
+      'model',
+      assistant.model ?? 'opus',
+      "pins the assistant's model (default: the assistant tier's)",
+      !!assistant.model,
+    ),
     line('effort', assistant.effort ?? 'high', 'low | medium | high | xhigh | max', !!assistant.effort),
     line('approvals', assistant.approvals, 'its tool approvals: auto (allowed) | ask (you)'),
+    '',
+    '# Models come from tiers: the assistant, leads, and hard / medium / easy workflow steps. Each provider says',
+    '# what a tier means; /provider claude|openai|mixed moves everything onto one (saved in config.local.toml).',
+    '# The defaults, which a table here overrides field by field:',
+    '#',
+    '# [models.claude.assistant]   model = "opus"',
+    '# [models.claude.lead]        model = "opus"',
+    '# [models.claude.hard]        model = "opus", effort = "high"',
+    '# [models.claude.medium]      model = "sonnet"',
+    '# [models.claude.easy]        model = "haiku"',
+    "# [models.codex.<tier>]       the CLI's model; effort high, high, high, medium, low",
+    '#',
+    "# A workflow step's tier: agent(key, { tier }) in its code, or set it from the /workflows menu.",
     '',
     '[workflows]',
     line('approvals', workflows.approvals, "agents' tool approvals: auto (allowed) | ask (you)"),
@@ -278,6 +402,16 @@ export function defaultProjectConfig(config: Config): string {
     line('gates', team.gates, "your runs' gates: ask (you) | decide (the assistant, escalating what it can't)"),
     line('maxDepth', team.maxDepth, 'levels of team leads under the assistant'),
     line('maxLeads', team.maxLeads, 'lead sessions alive at once (idle ones close, and resume later)'),
+    '',
+    '# Remote mode: workflow steps in run worktrees run on Upstash Boxes, one box per worktree (legion --remote,',
+    '# /remote on). The API key goes in the user config or config.local.toml, never here:',
+    '#',
+    '# [remote]',
+    '# enabled  = true',
+    '# snapshot = "snap_…"                  # boxes start from it: CLIs, toolchain, a warm clone',
+    '# clone    = "/workspace/home/repo"    # where that warm clone is in the snapshot',
+    '# prelude  = "source tools/box/env.sh" # before every command in a box (PATH and the like)',
+    '# size     = "medium"                  # small | medium | large: 2, 4 or 8 CPUs',
     '',
     "# MCP servers for workflow agents and leads (they do not load your own CLI's), e.g.:",
     '#',
@@ -302,51 +436,99 @@ export function defaultProjectConfig(config: Config): string {
   ].join('\n');
 }
 
-export type ModelOrigin = 'agent' | 'code' | 'workflow' | 'all' | 'default';
+/** The engine something runs on: the provider's when one is chosen, else its own (`mixed`). */
+export function providerEngine(models: ModelsConfig, own: string): string {
+  return models.provider === 'mixed' || (own !== 'claude' && own !== 'codex') ? own : models.provider;
+}
 
 /**
- * The engine, model and effort an agent step runs with.
- * Engine: the step setting (`[workflow.<name>.agent.<key>] engine`, then the `"*"` one), else the code's.
+ * The engine, model and effort of something on a tier (the assistant, a lead) that names its own engine and
+ * maybe a model: the provider decides the engine; its own model and effort apply only on its own engine (they are
+ * that engine's names), else the tier's.
+ */
+export function resolveTier(
+  models: ModelsConfig,
+  tier: Tier,
+  own: { engine: string; model?: string | null; effort?: Effort | null },
+): { engine: string; model: string | null; effort: Effort | null } {
+  const engine = providerEngine(models, own.engine);
+  const mine = engine === own.engine;
+  const setting = engine === 'claude' || engine === 'codex' ? models[engine][tier] : undefined;
+  return {
+    engine,
+    model: (mine ? own.model : null) ?? setting?.model ?? null,
+    effort: (mine ? own.effort : null) ?? setting?.effort ?? null,
+  };
+}
+
+export type ModelOrigin = 'agent' | 'code' | 'tier' | 'default';
+export type TierOrigin = 'agent' | 'code' | 'workflow' | 'all' | 'default';
+
+/**
+ * The engine, tier, model and effort an agent step runs with.
+ * Tier: the step setting (`[workflow.<name>.agent.<key>] tier`, then the `"*"` one), the code's
+ * (`agent(key, { tier })`), the workflow's (`[workflow.<name>] tier`, then `"*"`), else `medium`.
+ * Engine: the provider's (`[models] provider`), or in `mixed` the step setting's, else the code's.
  * Model and effort, each on its own, first match wins:
  * 1. the step setting: the user picked this step's model;
- * 2. the workflow's code (`agent(key, { model })`): its author chose deliberately (a cheap model for a small step).
- *    A code model is for the code's engine, so it is dropped when the step setting moved the step to the other;
- * 3. `[workflow.<name>.<engine>]`, then `[workflow."*".<engine>]`: defaults for that engine's agents;
+ * 2. the workflow's code (`agent(key, { model })`): its author chose deliberately;
+ * 3. the tier's on the engine (`[models.<engine>.<tier>]`);
  * 4. nothing: the CLI's own default.
+ * A model belongs to one engine, so 1 and 2 apply only when the step runs on the engine they were meant for.
  */
 export function resolveAgentModel(
-  settings: Config['workflow'],
-  req: { workflow: string; key: string; engine: string; model: string | null; effort: Effort | null },
+  config: Pick<Config, 'workflow' | 'models'>,
+  req: {
+    workflow: string;
+    key: string;
+    engine: string;
+    tier?: StepTier | null;
+    model: string | null;
+    effort: Effort | null;
+  },
 ): {
   engine: string;
+  tier: StepTier;
   model: string | null;
   effort: Effort | null;
-  origin: { engine: 'agent' | 'code'; model: ModelOrigin; effort: ModelOrigin };
+  origin: { engine: 'agent' | 'code' | 'provider'; tier: TierOrigin; model: ModelOrigin; effort: ModelOrigin };
 } {
+  const settings = config.workflow;
   const own = settings[req.workflow];
   const all = settings['*'];
   const step = { ...all?.agent[req.key], ...own?.agent[req.key] };
-  const moved = step.engine !== undefined && step.engine !== req.engine;
-  const engineName = step.engine ?? req.engine;
-  const engine = engineName === 'claude' || engineName === 'codex' ? engineName : null;
+  const tiers: [StepTier | null | undefined, TierOrigin][] = [
+    [step.tier, 'agent'],
+    [req.tier, 'code'],
+    [own?.tier, 'workflow'],
+    [all?.tier, 'all'],
+  ];
+  const [tier, tierOrigin] = tiers.find(([t]) => t) ?? ['medium', 'default'];
+  const wanted = step.engine ?? req.engine;
+  const engine = providerEngine(config.models, wanted);
+  const setting = engine === 'claude' || engine === 'codex' ? config.models[engine][tier as StepTier] : undefined;
   const pick = <K extends 'model' | 'effort'>(field: K, code: ModelSetting[K] | null) => {
     const candidates: [ModelSetting[K] | null | undefined, ModelOrigin][] = [
-      [own?.agent[req.key]?.[field], 'agent'],
-      [all?.agent[req.key]?.[field], 'agent'],
-      [code, 'code'],
-      [engine ? own?.[engine]?.[field] : undefined, 'workflow'],
-      [engine ? all?.[engine]?.[field] : undefined, 'all'],
+      [engine === wanted ? step[field] : undefined, 'agent'],
+      [engine === req.engine ? code : undefined, 'code'],
+      [setting?.[field], 'tier'],
     ];
     const hit = candidates.find(([v]) => v !== undefined && v !== null);
     return hit ? ([hit[0] as ModelSetting[K], hit[1]] as const) : ([null, 'default'] as const);
   };
-  const [model, modelOrigin] = pick('model', moved ? null : req.model);
+  const [model, modelOrigin] = pick('model', req.model);
   const [effort, effortOrigin] = pick('effort', req.effort);
   return {
-    engine: engineName,
+    engine,
+    tier: tier as StepTier,
     model: model ?? null,
     effort: effort ?? null,
-    origin: { engine: step.engine !== undefined ? 'agent' : 'code', model: modelOrigin, effort: effortOrigin },
+    origin: {
+      engine: engine !== wanted ? 'provider' : step.engine !== undefined ? 'agent' : 'code',
+      tier: tierOrigin,
+      model: modelOrigin,
+      effort: effortOrigin,
+    },
   };
 }
 

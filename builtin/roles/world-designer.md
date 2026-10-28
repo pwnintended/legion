@@ -1,7 +1,6 @@
 ---
 description: "Leads world and level design: biomes, layouts, points of interest, how areas connect"
 engine: claude
-model: opus
 workflows: "*"
 spawns: "*"
 ---

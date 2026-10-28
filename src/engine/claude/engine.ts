@@ -29,6 +29,12 @@ export interface ClaudeEngineOptions {
   log?: Logger;
   /** The environment the profile's env is laid over. Default: `process.env`. */
   baseEnv?: Readonly<Record<string, string | undefined>>;
+  /**
+   * Run the CLI on another machine (an Upstash Box, `remote/`): `spawn` starts it there. The profile's command is
+   * used as is (no local lookup), MCP config goes inline (no local temp file), and the child gets only the session's
+   * env: nothing of this machine's.
+   */
+  remote?: { spawn: SpawnFn; tempDirs: readonly string[] };
   /** Test seams. */
   spawn?: SpawnFn;
   exec?: ExecFn;
@@ -106,11 +112,13 @@ export class ClaudeEngine implements AgentEngine {
   private readonly exec: ExecFn;
   private readonly log: Logger;
   private readonly timing: Partial<SessionTiming> | undefined;
+  private readonly remote: ClaudeEngineOptions['remote'];
 
   constructor(profile: EngineProfile, opts: ClaudeEngineOptions = {}) {
     this.profile = profile;
     this.baseEnv = opts.baseEnv ?? process.env;
-    this.spawn = opts.spawn ?? defaultSpawn;
+    this.remote = opts.remote;
+    this.spawn = opts.remote?.spawn ?? opts.spawn ?? defaultSpawn;
     this.exec = opts.exec ?? defaultExec;
     this.log = opts.log ?? silentLogger;
     this.timing = opts.timing;
@@ -168,8 +176,8 @@ export class ClaudeEngine implements AgentEngine {
 
   private async open(opts: SessionOptions, sessionId: string, resumed: boolean): Promise<ClaudeSession> {
     if (opts.signal?.aborted) throw new Error('session aborted before start');
-    const env = this.env(opts.env);
-    const binary = resolveBinary(this.profile.command, env);
+    const env = this.remote ? childEnv(this.profile.env, opts.env) : this.env(opts.env);
+    const binary = this.remote ? this.profile.command : resolveBinary(this.profile.command, env);
     if (!binary) throw new Error(`${this.profile.command} not found on PATH`);
 
     const mcp = sessionMcp(opts);
@@ -180,7 +188,7 @@ export class ClaudeEngine implements AgentEngine {
       tempDir = null;
     };
     try {
-      if (mcp) {
+      if (mcp && !this.remote) {
         tempDir = mkdtempSync(join(tmpdir(), 'legion-claude-'));
         mcpConfigPath = join(tempDir, 'mcp.json');
         writeFileSync(mcpConfigPath, JSON.stringify(mcpConfig(mcp)), { mode: 0o600 });
@@ -197,6 +205,7 @@ export class ClaudeEngine implements AgentEngine {
         sessionId: resumed ? null : sessionId,
         resume: resumed ? sessionId : null,
         mcpConfigPath,
+        ...(this.remote ? { tempDirs: this.remote.tempDirs } : {}),
       }),
     ];
     let child: ChildProcessLike;

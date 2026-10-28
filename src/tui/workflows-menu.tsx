@@ -1,11 +1,12 @@
 /**
  * `/workflows`: browse the workflows, open one to see its description, inputs and agent steps (found by a dry
- * run), and set the model and effort its agents run with: for all of an engine's agents, or one step. Changes are
- * drafts until Esc saves them into the config file picked in the "Save to" row.
+ * run), and set the tier its agents run on (`hard`, `medium`, `easy`: `[models]` says which model each means), for
+ * the whole workflow or one step, and, rarely needed, a step's own engine, model or effort. Changes are drafts until
+ * Esc saves them into the config file picked in the "Save to" row.
  */
 import { Box, Text, useInput } from 'ink';
 import { type MutableRefObject, useEffect, useRef, useState } from 'react';
-import type { RealKind } from '../config.ts';
+import type { Provider, RealKind } from '../config.ts';
 import {
   type Controller,
   type ModelChoice,
@@ -24,7 +25,7 @@ const ALL: WorkflowDetail = {
   file: '',
   overrides: [],
   description:
-    "Defaults for the agents of every workflow. A workflow's own settings, and models its code picks, take precedence.",
+    "Defaults for the agents of every workflow. A workflow's own settings, and tiers its code picks, take precedence.",
   inputs: [],
   agents: [],
   error: null,
@@ -32,7 +33,7 @@ const ALL: WorkflowDetail = {
 
 type Draft = Map<string, string | null>;
 type KeyHandler = Parameters<typeof useInput>[0];
-const draftKey = (row: ModelRow, field: 'engine' | 'model' | 'effort') => `${row.path.join('\u0000')}|${field}`;
+const draftKey = (row: ModelRow, field: Column) => `${row.path.join('\u0000')}|${field}`;
 
 export function WorkflowsMenu({ controller, width }: { controller: Controller; width: number }) {
   const [list, setList] = useState<WorkflowSummary[] | null>(null);
@@ -144,7 +145,7 @@ export function WorkflowsMenu({ controller, width }: { controller: Controller; w
                     <Text bold={on} color={on ? theme.accent : undefined}>
                       {'All workflows'.padEnd(nameWidth + 9)}
                     </Text>
-                    <Text dimColor>models for every workflow's agents</Text>
+                    <Text dimColor>tiers for every workflow's agents</Text>
                   </Text>
                 ) : (
                   <Text wrap="truncate-end">
@@ -193,9 +194,15 @@ interface PickerOption {
   custom?: boolean;
 }
 
-const COLUMNS = ['engine', 'model', 'effort'] as const;
+const COLUMNS = ['tier', 'engine', 'model', 'effort'] as const;
 type Column = (typeof COLUMNS)[number];
-const WIDTH = { engine: 12, model: 26, effort: 12 } as const;
+const WIDTH = { tier: 10, engine: 12, model: 26, effort: 12 } as const;
+const STEP_TIERS = ['hard', 'medium', 'easy'] as const;
+const TIER_HELP: Record<(typeof STEP_TIERS)[number], string> = {
+  hard: 'planning, review, tricky code',
+  medium: 'most coding',
+  easy: 'summaries, small edits',
+};
 const PICKER_ROWS = 9;
 
 function WorkflowPage(props: {
@@ -208,7 +215,7 @@ function WorkflowPage(props: {
   const { controller, detail, width } = props;
   const [scope, setScope] = useState<SaveScope>('project');
   const [index, setIndex] = useState(1);
-  const [column, setColumn] = useState<Column>('model');
+  const [column, setColumn] = useState<Column>('tier');
   const [draft, setDraft] = useState<Draft>(new Map());
   const [picker, setPicker] = useState<{ field: Column; options: PickerOption[]; at: number } | null>(null);
   const [typing, setTyping] = useState<string | null>(null);
@@ -232,15 +239,30 @@ function WorkflowPage(props: {
   // Row 0 is "save to".
   const row = index === 0 ? null : (rows[index - 1] ?? null);
   const isAll = detail.name === '*';
-  const columns = (r: ModelRow | null): Column[] => (r?.kind === 'step' ? [...COLUMNS] : ['model', 'effort']);
-  const col = row && !columns(row).includes(column) ? 'model' : column;
+  const columns = (r: ModelRow | null): Column[] => (r?.kind === 'step' ? [...COLUMNS] : ['tier']);
+  const col = row && !columns(row).includes(column) ? 'tier' : column;
+  const tiers = controller.models();
+  const provider = tiers.provider;
 
   const value = (r: ModelRow, field: Column): string | null => {
     const k = draftKey(r, field);
     return draft.has(k) ? (draft.get(k) ?? null) : (r[field]?.set ?? null);
   };
-  /** The engine a row's agents run on, counting an unsaved engine change. */
-  const engineOf = (r: ModelRow): RealKind => (value(r, 'engine') as RealKind | null) ?? r.engines[0] ?? 'claude';
+  /** The engine a row's agents run on: the provider's, else counting an unsaved engine change. */
+  const engineOf = (r: ModelRow): RealKind =>
+    provider !== 'mixed' ? provider : ((value(r, 'engine') as RealKind | null) ?? r.engines[0] ?? 'claude');
+  /** The tier a row's agents run on, counting an unsaved change. */
+  const tierOf = (r: ModelRow) =>
+    (value(r, 'tier') ?? r.tier.inherited[engineOf(r)].value ?? 'medium') as (typeof STEP_TIERS)[number];
+  /** What a step's model or effort is without its own setting: the code's, else its tier's on its engine. */
+  const inheritedOf = (r: ModelRow, field: 'model' | 'effort') => {
+    const on = engineOf(r);
+    const base = r[field]?.inherited[on] ?? { value: null, from: 'default' };
+    if (base.from === 'workflow code' || !draft.has(draftKey(r, 'tier'))) return base;
+    const tier = tierOf(r);
+    const v = tiers[on][tier][field] ?? null;
+    return v !== null ? { value: v, from: `${tier} tier` } : { value: null, from: 'default' };
+  };
 
   const set = (r: ModelRow, field: Column, v: string | null) => {
     setDraft((prev) => {
@@ -267,6 +289,17 @@ function WorkflowPage(props: {
 
   const options = (r: ModelRow, field: Column): PickerOption[] => {
     const on = engineOf(r);
+    if (field === 'tier') {
+      const inherited = r.tier.inherited[on];
+      return [
+        { value: null, label: `inherit · ${inherited.value ?? 'medium'}`, description: `from ${inherited.from}` },
+        ...STEP_TIERS.map((t) => {
+          const m = tiers[on][t];
+          const means = [m.model ?? "CLI's model", m.effort].filter(Boolean).join(' · ');
+          return { value: t, label: t, description: `${TIER_HELP[t]} · ${on}: ${means}` };
+        }),
+      ];
+    }
     if (field === 'engine') {
       return [
         { value: null, label: `as coded · ${r.engines.join(', ')}`, description: 'what the workflow says' },
@@ -274,7 +307,7 @@ function WorkflowPage(props: {
         { value: 'codex', label: 'codex', description: 'Codex' },
       ];
     }
-    const inherited = r[field].inherited[on];
+    const inherited = inheritedOf(r, field);
     const inherit: PickerOption = {
       value: null,
       label: `inherit · ${inherited.value ?? (field === 'model' ? "the CLI's default" : 'default')}`,
@@ -493,8 +526,8 @@ function WorkflowPage(props: {
           const on = index === n + 1;
           const engine = engineOf(r);
           return (
-            <Box key={r.path.join('.')} flexDirection="column" marginTop={n === 2 ? 1 : 0}>
-              {n === 2 ? <Text dimColor>{'  Agent steps (found by a dry run)'}</Text> : null}
+            <Box key={r.path.join('.')} flexDirection="column" marginTop={n === 1 ? 1 : 0}>
+              {n === 1 ? <Text dimColor>{'  Agent steps (found by a dry run)'}</Text> : null}
               <Box>
                 <Cursor on={on} />
                 <Box width={labelWidth} flexShrink={0}>
@@ -505,12 +538,6 @@ function WorkflowPage(props: {
                 </Box>
                 {COLUMNS.map((c) => {
                   const focused = on && col === c && !typing;
-                  if (c === 'engine' && r.kind === 'engine')
-                    return (
-                      <Box key={c} width={WIDTH[c] + 2} flexShrink={0}>
-                        <Text color={engineColor(engine)}>{` ${engine}`}</Text>
-                      </Box>
-                    );
                   if (on && typing !== null && c === 'model')
                     return (
                       <Box key={c} width={WIDTH[c] + 2} flexShrink={0}>
@@ -525,17 +552,23 @@ function WorkflowPage(props: {
                   const v = value(r, c);
                   const changed = draft.has(draftKey(r, c));
                   const inherited =
-                    c === 'engine' ? { value: r.engines.join(','), from: 'code' } : field.inherited[engine];
+                    c === 'engine'
+                      ? { value: r.engines.join(','), from: 'code' }
+                      : c === 'tier'
+                        ? field.inherited[engine]
+                        : inheritedOf(r, c);
+                  // A single provider runs every step on its engine; the setting applies again in `mixed`.
+                  const forced = c === 'engine' && provider !== 'mixed';
                   return (
                     <Box key={c} width={WIDTH[c] + 2} flexShrink={0}>
                       <Cell
                         width={WIDTH[c]}
-                        text={v ?? inherited.value ?? 'default'}
-                        own={v !== null}
+                        text={forced ? provider : (v ?? inherited.value ?? 'default')}
+                        own={v !== null && !forced}
                         changed={changed}
                         focused={focused}
-                        color={c === 'engine' ? engineColor(v ?? r.engines[0]) : undefined}
-                        warn={field.shadowedBy ? `${field.shadowedBy} wins` : null}
+                        color={c === 'engine' ? engineColor(forced ? provider : (v ?? r.engines[0])) : undefined}
+                        warn={forced ? 'provider' : field.shadowedBy ? `${field.shadowedBy} wins` : null}
                       />
                     </Box>
                   );
@@ -549,11 +582,7 @@ function WorkflowPage(props: {
                   indent={
                     labelWidth +
                     2 +
-                    (picker.field === 'engine'
-                      ? 0
-                      : picker.field === 'model'
-                        ? WIDTH.engine + 2
-                        : WIDTH.engine + WIDTH.model + 4)
+                    COLUMNS.slice(0, COLUMNS.indexOf(picker.field)).reduce((sum, c) => sum + WIDTH[c] + 2, 0)
                   }
                   loading={picker.field === 'model' && !models[engine]}
                 />
@@ -569,7 +598,7 @@ function WorkflowPage(props: {
           ) : message ? (
             <Text color={message.tone}>{message.text}</Text>
           ) : (
-            <Text dimColor>{hint(row, col, isAll, engineOf, modelError)}</Text>
+            <Text dimColor>{hint(row, col, isAll, engineOf, modelError, provider)}</Text>
           )}
         </Box>
       </Box>
@@ -620,17 +649,23 @@ function hint(
   isAll: boolean,
   engineOf: (r: ModelRow) => RealKind,
   modelError: string | null,
+  provider: Provider,
 ): string {
   if (!row) return 'project: this repository · local: this machine only · user: every project';
   if (col === 'model' && modelError) return modelError;
   if (row.kind === 'step') {
     const runs = `${row.steps.slice(0, 3).join(', ')}${row.steps.length > 3 ? ', …' : ''}`;
-    if (col === 'engine') return `Run every \`${row.label}\` agent on another engine than the code says. Runs: ${runs}`;
-    return `Every \`${row.label}\` agent (on ${engineOf(row)}), over what the code picks. Runs: ${runs}`;
+    if (col === 'tier')
+      return `How demanding every \`${row.label}\` agent is ([models] maps tiers to models). Runs: ${runs}`;
+    if (col === 'engine')
+      return provider !== 'mixed'
+        ? `The provider is ${provider} (/provider): every agent runs there. This applies in mixed mode. Runs: ${runs}`
+        : `Run every \`${row.label}\` agent on another engine than the code says. Runs: ${runs}`;
+    return `Every \`${row.label}\` agent (on ${engineOf(row)}), over its tier's. Rarely needed. Runs: ${runs}`;
   }
   return isAll
-    ? `Every ${row.engines[0]} agent of every workflow, unless a workflow or its code says otherwise`
-    : `Every ${row.engines[0]} agent of this workflow whose code and step settings pick nothing`;
+    ? 'The tier of every agent step in every workflow, unless a workflow, a step or its code says otherwise'
+    : "The tier of this workflow's agent steps whose code and step settings name none";
 }
 
 /** A cell: the value set here (accent), or what applies otherwise (dim); focused cells get ‹ ›. */

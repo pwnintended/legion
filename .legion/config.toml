@@ -4,8 +4,21 @@
 
 [assistant]
 engine    = "claude"           # the engine you talk to: claude | codex
-# model     = "opus"           # the assistant's model (default: the CLI's)
+# model     = "opus"           # pins the assistant's model (default: the assistant tier's)
 # effort    = "high"           # low | medium | high | xhigh | max
+
+# Models come from tiers: the assistant, leads, and hard / medium / easy workflow steps. Each provider says
+# what a tier means; /provider claude|openai|mixed moves everything onto one (saved in config.local.toml).
+# The defaults, which a table here overrides field by field:
+#
+# [models.claude.assistant]   model = "opus"
+# [models.claude.lead]        model = "opus"
+# [models.claude.hard]        model = "opus", effort = "high"
+# [models.claude.medium]      model = "sonnet"
+# [models.claude.easy]        model = "haiku"
+# [models.codex.<tier>]       the CLI's model; effort high, high, high, medium, low
+#
+# A workflow step's tier: agent(key, { tier }) in its code, or set it from the /workflows menu.
 
 [workflows]
 approvals = "auto"             # agents' tool approvals: auto (allowed) | ask (you)
@@ -24,3 +37,6 @@ maxAgents = 4                  # agent sessions alive at once per run
 #
 # [codex.profiles.default]
 # command = "codex"                  # env = { CODEX_HOME = "..." } for another account
+
+[team]
+gates = "decide"

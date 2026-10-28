@@ -6,12 +6,13 @@
 
 import { EventEmitter } from 'node:events';
 import { join } from 'node:path';
-import { type Config, resolveAgentModel } from '../config.ts';
+import { type Config, DEFAULT_MODELS, resolveAgentModel } from '../config.ts';
 import type { AgentEngine, AgentSession, EngineKind, McpServer } from '../engine/types.ts';
 import type { Logger } from '../util/log.ts';
 import { silentLogger } from '../util/log.ts';
 import { Semaphore } from '../util/semaphore.ts';
 import {
+  type AgentModelRequest,
   type GitOps,
   type Interaction,
   type InteractionAnswer,
@@ -42,12 +43,16 @@ export interface RunManagerOptions {
   /** Agent sessions alive at once across all runs. Default: no limit beyond each run's own. */
   maxAgentsTotal?: number;
   approvals?: 'ask' | 'auto';
-  /** The user's model settings per workflow (`[workflow.<name>]`), read at every agent start. */
-  agentModels?: () => Config['workflow'];
+  /** The user's tiers and model settings (`[models]`, `[workflow.<name>]`), read at every agent start. */
+  agentModels?: () => Pick<Config, 'workflow' | 'models'>;
   /** MCP servers for every agent of every run. */
   mcp?: () => Readonly<Record<string, McpServer>>;
   log?: Logger;
   sh?: (command: string, opts: ShellOptions) => Promise<ShellResult>;
+  /** Wraps each run's host (remote mode sends worktree steps to boxes: `remote/remote.ts`). */
+  wrapHost?: (host: RunHost, runId: string) => RunHost;
+  /** Called when a run has ended (not when it was only interrupted), after its worktrees are gone. */
+  onRunEnded?: (runId: string) => Promise<void>;
 }
 
 interface ActiveRun {
@@ -271,7 +276,8 @@ export class RunManager extends EventEmitter<RunManagerEvents> {
     writeRun(dir, record);
     const journal = new Journal(dir);
     const controller = new AbortController();
-    const host = this.host(record, controller.signal);
+    const base = this.host(record, controller.signal);
+    const host = this.opts.wrapHost ? this.opts.wrapHost(base, record.id) : base;
     this.emit('event', { type: 'run', runId: record.id, status: 'running' });
     const done = executeInRun({ runId: record.id, host, journal, signal: controller.signal }, () => run(record.input))
       .then(
@@ -293,6 +299,9 @@ export class RunManager extends EventEmitter<RunManagerEvents> {
           await this.opts.git
             .release(record.id)
             .catch((err) => this.log.warn(`run ${record.id}: worktree cleanup`, err));
+        }
+        if (ended.status !== 'interrupted' && this.opts.onRunEnded) {
+          await this.opts.onRunEnded(record.id).catch((err) => this.log.warn(`run ${record.id}: cleanup`, err));
         }
         this.active.delete(record.id);
         this.sessions.delete(record.id);
@@ -327,10 +336,18 @@ export class RunManager extends EventEmitter<RunManagerEvents> {
       acquireAgent: () => manager.agentSlots.acquire(),
       approvals: opts.approvals ?? 'auto',
       mcp: () => opts.mcp?.() ?? {},
-      agentModel: (req) => {
-        const r = resolveAgentModel(opts.agentModels?.() ?? {}, { ...req, workflow: record.workflow });
-        return { engine: r.engine as EngineKind, model: r.model, effort: r.effort };
-      },
+      // Without the user's settings, agents run as the code says.
+      ...(opts.agentModels
+        ? {
+            agentModel: (req: AgentModelRequest) => {
+              const r = resolveAgentModel(opts.agentModels?.() ?? { workflow: {}, models: DEFAULT_MODELS }, {
+                ...req,
+                workflow: record.workflow,
+              });
+              return { engine: r.engine as EngineKind, model: r.model, effort: r.effort };
+            },
+          }
+        : {}),
       git: record.base ? withDefaultBase(opts.git, record.base) : opts.git,
       engine: (kind) => opts.engine(kind),
       agentSession: (step, session) => {

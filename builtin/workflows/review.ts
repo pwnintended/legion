@@ -53,11 +53,28 @@ ${input.focus ? `\nFocus: ${input.focus}\n` : ''}
 Look for real defects (logic errors, unhandled edge cases, broken contracts, missing or misleading tests, security problems) and for changes that make the code clearly messier than it needs to be. Back every finding with evidence (file and line, quoted code, or command output) and give a concrete suggestedFix. Severities: blocker, major, minor, nit. Prefer a few high-conviction findings over many small ones. You are read-only: never change files or git state; running tests and linters is fine.`;
 
     const [claude, codex] = await parallel([
-      () => agent('review-claude', { engine: 'claude', mode: 'read', output: Review, prompt, label: 'claude reviews' }),
-      () => agent('review-codex', { engine: 'codex', mode: 'read', output: Review, prompt, label: 'codex reviews' }),
+      () =>
+        agent('review-claude', {
+          tier: 'hard',
+          engine: 'claude',
+          mode: 'read',
+          output: Review,
+          prompt,
+          label: 'claude reviews',
+        }),
+      () =>
+        agent('review-codex', {
+          tier: 'hard',
+          engine: 'codex',
+          mode: 'read',
+          output: Review,
+          prompt,
+          label: 'codex reviews',
+        }),
     ]);
 
     const merged = await agent('merge', {
+      tier: 'easy',
       engine: 'claude',
       mode: 'read',
       output: Merged,

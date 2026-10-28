@@ -11,9 +11,9 @@ import { appServerArgs, childEnv, mergeEnv, prepareCodexHome, resolveBinary } fr
 import { JsonRpcPeer, LineSplitter } from './json-rpc.ts';
 import type { ClientMethod, ClientMethods } from './methods.ts';
 import type { ModelListResponse } from './protocol/v2/index.ts';
-import { CodexSession, type OpenMode } from './session.ts';
+import { CodexSession, type CodexSpawn, type OpenMode } from './session.ts';
 
-export { type CodexProcessSpec, CodexSession, type OpenMode } from './session.ts';
+export { type CodexChild, type CodexProcessSpec, CodexSession, type CodexSpawn, type OpenMode } from './session.ts';
 
 export interface CodexEngineOptions {
   log?: Logger;
@@ -25,6 +25,12 @@ export interface CodexEngineOptions {
   home?: string;
   /** Reported as `clientInfo.version` to the app-server. */
   clientVersion?: string;
+  /**
+   * Run the app-server on another machine (an Upstash Box, `remote/`): `spawn` starts it there. The profile's
+   * command is used as is, CODEX_HOME is the box's own (its launcher sets it), and the child gets only the
+   * session's env.
+   */
+  remote?: { spawn: CodexSpawn };
 }
 
 const PROBE_TIMEOUT_MS = 20_000;
@@ -35,6 +41,7 @@ export class CodexEngine implements AgentEngine {
   private readonly log: Logger;
   private readonly home: string;
   private readonly clientVersion: string;
+  private readonly remote: CodexEngineOptions['remote'];
   /** Told the user once that Codex runs in their own CODEX_HOME. */
   private reportedFallback = false;
 
@@ -43,6 +50,7 @@ export class CodexEngine implements AgentEngine {
     this.log = opts.log ?? silentLogger;
     this.home = opts.home ?? join(homedir(), '.legion', 'codex-home', profile.name);
     this.clientVersion = opts.clientVersion ?? '0.0.0';
+    this.remote = opts.remote;
   }
 
   start(opts: SessionOptions): Promise<AgentSession> {
@@ -59,6 +67,18 @@ export class CodexEngine implements AgentEngine {
   }
 
   private async open(opts: SessionOptions, mode: OpenMode): Promise<AgentSession> {
+    if (this.remote) {
+      const env = childEnv(mergeEnv(this.profile.env, opts.env), opts.mcp, '');
+      delete env.CODEX_HOME;
+      return CodexSession.open(opts, mode, {
+        command: this.profile.command,
+        args: appServerArgs(this.profile.args),
+        env,
+        clientVersion: this.clientVersion,
+        log: this.log,
+        spawn: this.remote.spawn,
+      });
+    }
     const env = mergeEnv(process.env, this.profile.env, opts.env);
     const command = resolveBinary(this.profile.command, env);
     if (!command) throw new Error(`${this.profile.command} not found on PATH`);

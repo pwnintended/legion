@@ -10,6 +10,9 @@ importers:
       "@modelcontextprotocol/sdk":
         specifier: ^1.32.2
         version: 1.32.2(zod@4.6.7)
+      "@upstash/box":
+        specifier: 0.7.10
+        version: 0.7.10(zod@4.6.7)
       ink:
         specifier: ^8.0.0
         version: 8.0.0(@types/react@19.3.0)(react@19.3.1)
@@ -625,6 +628,13 @@ packages:
     engines: { node: ">=16.20.0" }
     cpu: [x64]
     os: [win32]
+
+  "@upstash/box@0.7.10":
+    resolution:
+      { integrity: sha512-CPA4yyusIybDt+MlnrMgHTBFfFCYyn7OMkRhgYibSVmltzMDcRzbDCTgpN/Oge20uIzl2KVvD6fXs0odhBpjHA== }
+    engines: { node: ">=18.0.0" }
+    peerDependencies:
+      zod: ^3.25.0 || ^4.0.0
 
   "@vitest/mocker@5.0.5":
     resolution:
@@ -1592,6 +1602,19 @@ packages:
     resolution:
       { integrity: sha512-l4Sp/DRseor9wL6EvV2+TuQn63dMkPjZ/sp9XkghTEbV9KlPS1xUsZ3u7/IQO4wxtcFB4bgpQPRcR3QCvezPcQ== }
 
+  ws@8.22.0:
+    resolution:
+      { integrity: sha512-Ydggc987+RO0AnWtZ/7Wq9FtNvcrL1b/RO0ud9mWjUPgDrsAAwQSF51sm2hm1XofbU/4jkpGEsLFsZZxU+1DOg== }
+    engines: { node: ">=10.0.0" }
+    peerDependencies:
+      bufferutil: ^4.0.1
+      utf-8-validate: ">=5.0.2"
+    peerDependenciesMeta:
+      bufferutil:
+        optional: true
+      utf-8-validate:
+        optional: true
+
   yaml@2.9.1:
     resolution:
       { integrity: sha512-3NxN8+78OdzbT7C/WjGsyfPAtJaN3FNDsWxv7Y7mcDsT/oOmgW8BpyQQFFBnvZE3j9Y2Sdz1ULFLezL7Eb2yFw== }
@@ -1899,6 +1922,15 @@ snapshots:
 
   "@typescript/typescript-win32-x64@7.0.2":
     optional: true
+
+  "@upstash/box@0.7.10(zod@4.6.7)":
+    dependencies:
+      ws: 8.22.0
+      zod: 4.6.7
+      zod-to-json-schema: 3.25.2(zod@4.6.7)
+    transitivePeerDependencies:
+      - bufferutil
+      - utf-8-validate
 
   "@vitest/mocker@5.0.5(vite@8.3.5(@types/node@26.6.5)(esbuild@0.28.2)(tsx@4.23.15)(yaml@2.9.1))":
     dependencies:
@@ -2641,6 +2673,8 @@ snapshots:
       string-width: 8.3.0
 
   wrappy@1.0.2: {}
+
+  ws@8.22.0: {}
 
   yaml@2.9.1: {}
 

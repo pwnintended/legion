@@ -109,14 +109,14 @@ describe('runtime', () => {
     };
     await exec(host, async () => {
       await agent('a', { prompt: 'x', model: 'haiku' });
-      await group('g', () => agent('b', { engine: 'codex', prompt: 'y' }));
+      await group('g', () => agent('b', { engine: 'codex', tier: 'hard', prompt: 'y' }));
     });
     const calls = host.engines.get('claude')?.calls ?? [];
     expect(calls[0]?.opts).toMatchObject({ model: 'haiku', effort: null });
     expect(host.engines.get('codex')?.calls[0]?.opts).toMatchObject({ model: 'opus', effort: 'max' });
     expect(seen).toEqual([
-      { key: 'a', step: 'a', engine: 'claude', model: 'haiku', effort: null },
-      { key: 'b', step: 'g/b', engine: 'codex', model: null, effort: null },
+      { key: 'a', step: 'a', engine: 'claude', tier: null, model: 'haiku', effort: null },
+      { key: 'b', step: 'g/b', engine: 'codex', tier: 'hard', model: null, effort: null },
     ]);
     expect(new Journal(dir).get('g/b')?.meta).toMatchObject({ model: 'opus', effort: 'max' });
   });
