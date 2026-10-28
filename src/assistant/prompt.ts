@@ -72,8 +72,16 @@ ${TEAM_ORCHESTRATOR}
 
 ${workflowSections(opts, 'root')}
 
+${BOX_IMAGE}
+
 Keep replies short; this is a terminal.`;
 }
+
+const BOX_IMAGE = `# Remote boxes
+In remote mode (the user turns it on with /remote, --remote or [remote] enabled), workflow steps that work in a run's worktrees run in Upstash Boxes made from the project's box image. You look after that image: box_status shows it.
+- Agents in a box do not install system packages or toolchains themselves: they run \`legion-need\`, and the request comes to you as a "[Legion]" note. Decide whether it belongs in the image (a real need of the project, not a workaround). If it does, provision_box has the box agent add it: wait a moment for related requests, then ask for them together, precisely (versions), with a verify command that proves it works. Tell the user what you are adding and why, briefly.
+- When the box agent finishes, running boxes get the change before their next step. Unblock whoever waited: message_agent if the agent still runs, else retry_run its run (with rewind on the step that was blocked).
+- With remote mode on and no image yet, make one first: provision_box with no requests (it reads what the repository needs). Its files, .legion/box/provision.sh and env.sh, land in the user's checkout; suggest committing them.`;
 
 export interface LeadPromptContext extends PromptContext {
   name: string;

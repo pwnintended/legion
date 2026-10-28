@@ -7,7 +7,8 @@ import { type AgentEvent, permissionProfile } from '../engine/types.ts';
 import { type FixtureRepo, makeRepo, writeFiles } from '../git/test-helpers.ts';
 import type { RunHost } from '../workflow/host.ts';
 import { runShell } from '../workflow/shell.ts';
-import { boxName, REMOTE_PROFILE_SUFFIX, Remote, runLabel } from './remote.ts';
+import { readImage } from './image.ts';
+import { boxName, type Need, REMOTE_PROFILE_SUFFIX, Remote, runLabel } from './remote.ts';
 import { type LocalBox, LocalBoxes } from './testing.ts';
 
 const RUN = '20261029-0007-ab12';
@@ -21,6 +22,9 @@ let config: RemoteConfig;
 let remote: Remote;
 let host: RunHost;
 let localShells: string[];
+let base: RunHost;
+let needs: Need[];
+let notes: string[];
 
 beforeEach(async () => {
   repo = await makeRepo({ 'a.txt': 'a\n', '.gitignore': 'target/\n' });
@@ -30,9 +34,19 @@ beforeEach(async () => {
   boxes = new LocalBoxes(join(repo.scratch, 'boxes'), [root]);
   enabled = true;
   config = { enabled: true, size: 'medium', runtime: 'node', setup: [] };
-  remote = new Remote({ worktreeRoot: root, config: () => config, enabled: () => enabled, provider: () => boxes });
+  needs = [];
+  notes = [];
+  remote = new Remote({
+    repo: repo.path,
+    worktreeRoot: root,
+    config: () => config,
+    enabled: () => enabled,
+    provider: () => boxes,
+    onNeed: (need) => needs.push(need),
+    notify: (text) => notes.push(text),
+  });
   localShells = [];
-  const base = {
+  base = {
     repo: repo.path,
     dryRun: false,
     engine: () => new FakeEngine(),
@@ -41,7 +55,7 @@ beforeEach(async () => {
       return runShell(command, opts);
     },
   } as unknown as RunHost;
-  host = remote.host(base, RUN);
+  host = remote.host(base, { id: RUN, workflow: 'test' });
 });
 
 afterEach(() => repo.cleanup());
@@ -127,7 +141,7 @@ describe('remote mode', () => {
   });
 
   it('starts a warm clone from the snapshot as the worktree', async () => {
-    const box = (await boxes.open(boxName(RUN, wt), ['legion', runLabel(RUN)])).box as LocalBox;
+    const box = (await boxes.open(boxName(RUN, wt), ['legion', runLabel(RUN)], null)).box;
     const clone = join(root, 'warm');
     await repo.git('clone', '-q', repo.path, box.path(clone));
     mkdirSync(box.path(join(clone, 'target')), { recursive: true });
@@ -148,15 +162,17 @@ describe('remote mode', () => {
   });
 
   it('runs an agent in the box and has its edits here once the session is closed', async () => {
-    const box = (await boxes.open(boxName(RUN, wt), ['legion', runLabel(RUN)])).box as LocalBox;
+    const box = (await boxes.open(boxName(RUN, wt), ['legion', runLabel(RUN)], null)).box;
     installFakeClaude(box);
     const engine = host.engine('claude');
+    const step = 'T1/code';
 
     const session = await engine.start({
       cwd: wt,
       prompt: 'Write agent.txt',
       permission: permissionProfile('workspace_write', { approvals: 'ask' }),
     });
+    host.agentSession?.(step, session);
     const events: AgentEvent[] = [];
     for await (const event of session.events) {
       events.push(event);
@@ -169,6 +185,71 @@ describe('remote mode', () => {
     expect(read(join(wt, 'agent.txt'))).toBe('from the box\n');
     const argv = box.started.find((a) => a.includes('claude'));
     expect(argv?.slice(0, 2)).toEqual(['bash', '-c']);
+    // Told to ask rather than install, and its request reached the assistant's side with its step.
+    expect(argv?.some((a) => a.includes('legion-need'))).toBe(true);
+    expect(needs).toMatchObject([{ what: 'ffmpeg 7', why: 'capture videos', runId: RUN, step }]);
+    expect(remote.pendingNeeds()).toHaveLength(1);
+  });
+});
+
+describe('the box image', () => {
+  const BOX_RUN = '20261029-0100-box1';
+  let boxWt: string;
+  let boxHost: RunHost;
+
+  beforeEach(async () => {
+    boxWt = join(root, BOX_RUN, 'box');
+    await repo.git('worktree', 'add', '-q', '-b', 'box', boxWt);
+    boxHost = remote.host(base, { id: BOX_RUN, workflow: 'box' });
+  });
+
+  /** What the box agent does: write the box files, run them, and have Legion save its box as the image. */
+  async function makeImage(provision: string, env: string): Promise<string> {
+    await boxHost.box?.prepare(boxWt);
+    writeFiles(boxWt, { '.legion/box/provision.sh': provision, '.legion/box/env.sh': env });
+    const r = await boxHost.sh('bash .legion/box/provision.sh', { cwd: boxWt });
+    expect(r.code).toBe(0);
+    const image = await boxHost.box?.snapshot(boxWt, { requests: ['greeting'], summary: 'greets' });
+    return image?.snapshot ?? '';
+  }
+
+  it("runs the box agent's steps in a box even when remote mode is off, and makes boxes start from its image", async () => {
+    enabled = false;
+    const snapshot = await makeImage('touch "$HOME/provisioned"\n', 'export GREETING=from-env\n');
+    enabled = true;
+
+    expect(localShells).toEqual([]);
+    expect(readImage(repo.path)).toMatchObject({ snapshot, clone: boxWt, requests: ['greeting'] });
+    // The box files land in the user's checkout, to be committed.
+    expect(read(join(repo.path, '.legion', 'box', 'env.sh'))).toBe('export GREETING=from-env\n');
+
+    const r = await host.sh('echo "$GREETING" && test -f "$HOME/provisioned" && echo provisioned', { cwd: wt });
+
+    expect(r.stdout).toBe('from-env\nprovisioned\n');
+    expect(boxes.madeFrom.get(boxName(RUN, wt))).toBe(snapshot);
+    expect(notes).toEqual([]);
+  });
+
+  it('brings a box made before the image up to it before its next step', async () => {
+    await host.sh('true', { cwd: wt });
+    expect(notes[0]).toMatch(/no box image/);
+    await makeImage('echo run >> "$HOME/provision.log"\n', 'export GREETING=upgraded\n');
+
+    const r = await host.sh('echo "$GREETING" && cat "$HOME/provision.log"', { cwd: wt });
+
+    expect(r.stdout).toBe('upgraded\nrun\n');
+  });
+
+  it("gives the box agent the checkout's box files and replaces its old image", async () => {
+    writeFiles(repo.path, { '.legion/box/provision.sh': 'echo from the checkout\n' });
+    await boxHost.box?.prepare(boxWt);
+    expect(read(join(boxWt, '.legion', 'box', 'provision.sh'))).toBe('echo from the checkout\n');
+
+    const first = await makeImage('true\n', '\n');
+    const second = await makeImage('true\n', 'export X=1\n');
+
+    expect(second).not.toBe(first);
+    expect(boxes.deletedSnapshots).toEqual([first]);
   });
 });
 
@@ -191,6 +272,7 @@ process.stdin.on('data', () => {
   if (started) return;
   started = true;
   fs.writeFileSync('agent.txt', 'from the box\\n');
+  require('node:child_process').execFileSync('legion-need', ['ffmpeg 7', 'capture videos']);
   for (const line of lines) if (line.dir === 'out') process.stdout.write(JSON.stringify(line.msg) + '\\n');
 });
 process.stdin.on('end', () => process.exit(0));

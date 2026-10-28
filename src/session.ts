@@ -6,7 +6,7 @@ import { spawnSync } from 'node:child_process';
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { Assistant } from './assistant/assistant.ts';
-import { type McpHandle, startMcpServer } from './assistant/mcp.ts';
+import { type BoxTools, type McpHandle, startMcpServer } from './assistant/mcp.ts';
 import { assistantSystemPrompt, leadSystemPrompt } from './assistant/prompt.ts';
 import {
   type Config,
@@ -28,7 +28,7 @@ import { FakeEngine } from './engine/fake/index.ts';
 import type { AgentEngine, EngineKind } from './engine/types.ts';
 import { isRepo, toplevel } from './git/index.ts';
 import { UpstashBoxes } from './remote/box.ts';
-import { Remote } from './remote/remote.ts';
+import { BOX_WORKFLOW, Remote } from './remote/remote.ts';
 import { TeamManager } from './team/team.ts';
 import { createWorkspaces } from './team/workspace.ts';
 import { fileLogger, type Logger } from './util/log.ts';
@@ -146,6 +146,7 @@ export class Session {
     };
     let boxes: { key: string; provider: UpstashBoxes } | null = null;
     const remote = new Remote({
+      repo,
       worktreeRoot: worktreeRoot(repo),
       config: () => bound().config.remote,
       enabled: () => bound().remoteEnabled,
@@ -159,6 +160,13 @@ export class Session {
         if (boxes?.key !== key) boxes = { key, provider: new UpstashBoxes(() => bound().config.remote, key) };
         return boxes.provider;
       },
+      onNeed: (need) => {
+        const run = bound().runs.run(need.runId);
+        bound().team.notifyOrchestrator(
+          `Agent ${need.step ?? '(a step)'} of run ${need.runId}${run ? ` (${run.workflow})` : ''} needs in its box: ${need.what}${need.why ? `. Why: ${need.why}` : ''}. Decide whether the box image should get it: provision_box has the box agent add it (gather what more agents asked for first, box_status lists them). Once it is in, unblock the agent: message_agent while it still runs, else retry_run.`,
+        );
+      },
+      notify: (text) => bound().team.notifyOrchestrator(text),
       log,
     });
     const runs = new RunManager({
@@ -171,7 +179,7 @@ export class Session {
       approvals: config.workflows.approvals,
       agentModels: () => bound().config,
       mcp: () => mcpServers(bound().config),
-      wrapHost: (host, runId) => remote.host(host, runId),
+      wrapHost: (host, run) => remote.host(host, run),
       onRunEnded: (runId) => remote.release(runId),
       log,
     });
@@ -196,7 +204,13 @@ export class Session {
       workspaces: isGitRepo ? createWorkspaces(repo, { warm, log }) : null,
       log,
     });
-    const mcp = await startMcpServer({ repo, runs, team, log });
+    const mcp = await startMcpServer({
+      repo,
+      runs,
+      team,
+      boxes: isGitRepo ? boxTools(remote, runs, () => bound()) : null,
+      log,
+    });
     self.session = new Session({
       repo,
       cwd: opts.cwd,
@@ -393,6 +407,51 @@ function ensureGitignore(repo: string): void {
   }
   // Projects from before teams.
   if (!/^team\/$/m.test(text)) writeFileSync(file, `${text.replace(/\n?$/, '\n')}team/\n`);
+}
+
+/** `box_status` and `provision_box`: the box agent is the builtin `box` workflow. */
+function boxTools(remote: Remote, runs: RunManager, session: () => Session): BoxTools {
+  const active = () => runs.activeRuns().find((r) => r.workflow === BOX_WORKFLOW) ?? null;
+  return {
+    status() {
+      const s = session();
+      const image = remote.image();
+      return {
+        remote: s.remoteEnabled ? 'on' : 'off',
+        ...(s.remoteProblem() ? { problem: s.remoteProblem() } : {}),
+        image: image
+          ? {
+              snapshot: image.snapshot,
+              ...(image.managed
+                ? {
+                    madeBy: `run ${image.managed.runId}`,
+                    at: new Date(image.managed.builtAt).toISOString(),
+                    requests: image.managed.requests,
+                    summary: image.managed.summary,
+                  }
+                : { from: '[remote] snapshot in the config' }),
+            }
+          : 'none yet: boxes start bare',
+        waitingRequests: remote.pendingNeeds().map((n) => ({
+          what: n.what,
+          why: n.why,
+          run: n.runId,
+          step: n.step,
+        })),
+        boxAgentRun: active()?.id ?? null,
+      };
+    },
+    async provision(requests, verify) {
+      const running = active();
+      if (running) return { runId: running.id, started: false, requests: [] };
+      const all = [
+        ...new Set([...requests, ...remote.pendingNeeds().map((n) => (n.why ? `${n.what} (${n.why})` : n.what))]),
+      ];
+      const runId = await runs.start(BOX_WORKFLOW, { requests: all, verify });
+      remote.clearNeeds();
+      return { runId, started: true, requests: all };
+    },
+  };
 }
 
 function notAGitRepo(dir: string): GitOps {

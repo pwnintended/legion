@@ -94,17 +94,25 @@ export function runSummary(runs: RunManager, runId: string) {
   };
 }
 
+/** Remote mode's box image, for the orchestrator's `box_status` and `provision_box`. */
+export interface BoxTools {
+  status(): Record<string, unknown>;
+  /** Starts the box agent with these requests (and the ones waiting); an active box run is returned instead. */
+  provision(requests: string[], verify: string[]): Promise<{ runId: string; started: boolean; requests: string[] }>;
+}
+
 interface Caller {
   repo: string;
   runs: RunManager;
   team: TeamManager;
+  boxes: BoxTools | null;
   /** `orchestrator` or a lead's name. */
   name: string;
   log: Logger;
 }
 
 function buildServer(ctx: Caller): McpServer {
-  const { repo, runs, team, log } = ctx;
+  const { repo, runs, team, log, boxes } = ctx;
   const isRoot = ctx.name === ROOT;
   /** Leads see and touch only their own runs. */
   const ownRun = (runId: string) => {
@@ -167,6 +175,39 @@ function buildServer(ctx: Caller): McpServer {
       return formatReport(await validateWorkflow(found.file, { repo }));
     }),
   );
+
+  if (isRoot && boxes) {
+    server.registerTool(
+      'box_status',
+      {
+        description:
+          "Remote mode's box image (what every Upstash Box starts from): whether remote mode is on, the current image and what it was made for, the requests agents made with legion-need that no box agent has taken yet, and a box agent run in progress.",
+        inputSchema: {},
+      },
+      guard(log, async () => boxes.status()),
+    );
+
+    server.registerTool(
+      'provision_box',
+      {
+        description:
+          'Have the box agent add tools or dependencies to the box image: it updates .legion/box/provision.sh (and env.sh), runs it in a box, warms the build, and the box becomes the new image. Boxes already running get the change before their next step. Requests agents made that are still waiting are included. Runs as the `box` workflow (you are told when it finishes). Use it to make the first image too (no requests: the toolchain the repository needs). Returns the run id; when a box agent is already running, returns that one: call again once it has finished.',
+        inputSchema: {
+          requests: z
+            .array(z.string())
+            .default([])
+            .describe('What to add, as precisely as you can (versions when they matter).'),
+          verify: z
+            .array(z.string())
+            .default([])
+            .describe('Commands that must pass in the box afterwards (e.g. the build or a quick test).'),
+        },
+      },
+      guard(log, async ({ requests, verify }: { requests: string[]; verify: string[] }) =>
+        boxes.provision(requests, verify),
+      ),
+    );
+  }
 
   server.registerTool(
     'run_workflow',
@@ -568,6 +609,7 @@ export async function startMcpServer(opts: {
   repo: string;
   runs: RunManager;
   team: TeamManager;
+  boxes?: BoxTools | null;
   log: Logger;
 }): Promise<McpHandle> {
   const token = opts.team.rootToken;
@@ -620,7 +662,14 @@ export async function startMcpServer(opts: {
       return reply(res, 400, { jsonrpc: '2.0', error: { code: -32700, message: (err as Error).message }, id: null });
     }
     // Stateless: a server and transport per request.
-    const server = buildServer({ repo: opts.repo, runs: opts.runs, team: opts.team, name: caller, log: opts.log });
+    const server = buildServer({
+      repo: opts.repo,
+      runs: opts.runs,
+      team: opts.team,
+      boxes: opts.boxes ?? null,
+      name: caller,
+      log: opts.log,
+    });
     const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
     res.on('close', () => {
       void transport.close().catch(() => {});

@@ -349,6 +349,11 @@ export class TeamManager extends EventEmitter<TeamEvents> {
     return p.interaction.kind === 'approval' || this.gateMode(this.ownerOf(p.interaction.runId)) === 'ask';
   }
 
+  /** A note from Legion itself for the orchestrator (remote mode: an agent needs something in its box). */
+  notifyOrchestrator(text: string): void {
+    this.enqueue(ROOT, { at: Date.now(), from: 'legion', kind: 'note', text });
+  }
+
   /** Tells a lead the user answered one of its runs' interactions in its place. */
   userAnswered(id: string, what: string): void {
     const pending = this.opts.runs.pendingInteractions().find((p) => p.id === id);

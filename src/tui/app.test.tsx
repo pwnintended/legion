@@ -153,8 +153,8 @@ describe('App', () => {
     await tick();
     ui.stdin.write('\r');
     await until(() => ui.lastFrame()?.includes('Says hello') ?? false);
-    // All workflows, feature, hello: open hello.
-    for (let i = 0; i < 2; i++) {
+    // All workflows, box, feature, hello: open hello.
+    for (let i = 0; i < 3; i++) {
       ui.stdin.write('\u001B[B');
       await tick(30);
     }

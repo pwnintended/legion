@@ -36,6 +36,8 @@ if [ ! -f "$CODEX_HOME/auth.json" ] && [ -n "\${CODEX_AUTH_GZIP_B64:-}" ]; then
     mv "$CODEX_HOME/auth.json.tmp" "$CODEX_HOME/auth.json") || echo "legion: could not seed Codex's login" >&2
 fi
 unset CODEX_AUTH_GZIP_B64
+# The box image's environment (.legion/box/env.sh, installed by the box agent), then the project's prelude.
+if [ -f "$HOME/.legion/env.sh" ]; then . "$HOME/.legion/env.sh" >&2; fi
 if [ -n "\${LEGION_PRELUDE:-}" ]; then
   c="$PWD"; cd "$w" || exit 1
   eval "$LEGION_PRELUDE" >&2
@@ -91,7 +93,19 @@ tree="$( ${TREE.replace(/\n/g, '\n  ')} )"
 echo "$tree"
 if [ "$tree" != "$2" ]; then git diff --binary --full-index "$2" "$tree" > "$3"; fi`;
 
-/** Installs the CLI \`$1\` (claude | codex) when the box does not have it. */
+/**
+ * \`legion-need <what> [why]\`: how an agent in a box asks for a tool or dependency instead of installing it. The
+ * request waits in \`~/.legion/requests\` until Legion collects it and passes it to the assistant.
+ */
+export const LEGION_NEED = `#!/bin/sh
+if [ -z "$1" ]; then echo "usage: legion-need '<tool or dependency>' '<why it is needed>'" >&2; exit 2; fi
+d="$HOME/.legion/requests"; mkdir -p "$d"
+f="$d/$(date +%s)-$$.req"
+{ printf '%s\\n' "$1"; printf '%s' "\${2:-}"; } > "$f.tmp" && mv "$f.tmp" "$f"
+echo "Requested: $1. The assistant decides; the box agent then adds it to the box image. Do not install it yourself."
+echo "Carry on with what you can do without it. If you cannot finish without it, end your turn and say you are blocked on: $1"`;
+
+/** Installs the CLI \`$1\` (claude | codex) when the box does not have it, and \`legion-need\`. */
 export const ENSURE_CLI = `set -e
 case "$1" in
   claude) bin=claude; pkg=@anthropic-ai/claude-code ;;
@@ -100,7 +114,31 @@ case "$1" in
 esac
 if ! command -v "$bin" >/dev/null 2>&1; then
   npm install -g --prefix "$HOME/.legion/cli" --no-audit --no-fund "$pkg" >&2
-fi`;
+fi
+mkdir -p "$HOME/.legion/cli/bin"
+cat > "$HOME/.legion/cli/bin/legion-need" <<'LEGION_NEED'
+${LEGION_NEED}
+LEGION_NEED
+chmod +x "$HOME/.legion/cli/bin/legion-need"`;
+
+/** Prints the waiting \`legion-need\` requests, each followed by a NUL, and removes them. */
+const TAKE_REQUESTS = `d="$HOME/.legion/requests"
+[ -d "$d" ] || exit 0
+for f in "$d"/*.req; do
+  [ -f "$f" ] || continue
+  cat "$f"; printf '\\0'; rm -f "$f"
+done`;
+
+/** Installs \`$1\` (a file in the box) as the box's \`~/.legion/env.sh\`, or \`$2\`'s \`.legion/box/env.sh\`. */
+const INSTALL_ENV = `set -e
+mkdir -p "$HOME/.legion"
+if [ -n "$1" ]; then mv "$1" "$HOME/.legion/env.sh"
+elif [ -f "$2/.legion/box/env.sh" ]; then cp "$2/.legion/box/env.sh" "$HOME/.legion/env.sh"; fi`;
+
+export interface NeedRequest {
+  what: string;
+  why: string;
+}
 
 interface LocalState {
   head: string;
@@ -121,6 +159,8 @@ export interface WorkspaceOptions {
   box: RemoteBox;
   /** The box was made just now (nothing from an earlier session in it). */
   created: boolean;
+  /** The box image (snapshot) it was made from; null when unknown (reattached) or a fresh box. */
+  image: string | null;
   config: () => RemoteConfig;
   log?: Logger;
 }
@@ -131,6 +171,8 @@ export class Workspace {
   readonly created: boolean;
   /** Agent sessions started in this box since it was attached (the ones a step may resume). */
   readonly sessions = new Set<string>();
+  /** The box image this box is on: made from it, or brought up to it (`upgrade`). */
+  image: string | null;
   private readonly config: () => RemoteConfig;
   private readonly log: Logger;
   private synced: Synced | null = null;
@@ -142,6 +184,7 @@ export class Workspace {
     this.path = opts.path;
     this.box = opts.box;
     this.created = opts.created;
+    this.image = opts.image;
     this.config = opts.config;
     this.log = opts.log ?? silentLogger;
   }
@@ -154,6 +197,49 @@ export class Workspace {
   /** Brings what changed in the box since the last sync into the local worktree. */
   pull(): Promise<void> {
     return this.serial(() => this.doPull());
+  }
+
+  /**
+   * Brings the box up to a new box image without remaking it: its env file, then its provision script (idempotent)
+   * run in the worktree. Runs after any sync in progress.
+   */
+  upgrade(image: string, files: { provision: string | null; env: string | null }): Promise<void> {
+    return this.serial(async () => {
+      if (this.image === image) return;
+      const tag = randomBytes(4).toString('hex');
+      const envFile = files.env !== null ? `/tmp/legion-${tag}.env` : '';
+      if (files.env !== null) await this.box.writeFile(envFile, Buffer.from(files.env));
+      await execOk(this.box, ['bash', '-c', INSTALL_ENV, 'legion', envFile, this.path]);
+      if (files.provision !== null) {
+        const script = `/tmp/legion-${tag}.provision.sh`;
+        await this.box.writeFile(script, Buffer.from(files.provision));
+        const r = await this.exec(['bash', script], { cwd: this.path });
+        void exec(this.box, ['rm', '-f', script]).catch(() => undefined);
+        if (r.code !== 0) {
+          throw new Error(
+            `the box image's provision script failed in box ${this.box.id} (exit ${r.code}): ${(r.stderr || r.stdout).trim().slice(-2000)}`,
+          );
+        }
+      }
+      this.image = image;
+    });
+  }
+
+  /** Makes this box's own \`.legion/box/env.sh\` (the box agent's) the one its commands source. */
+  async installEnv(): Promise<void> {
+    await execOk(this.box, ['bash', '-c', INSTALL_ENV, 'legion', '', this.path]);
+  }
+
+  /** The \`legion-need\` requests made in this box since the last call. */
+  async takeRequests(): Promise<NeedRequest[]> {
+    const out = await execOk(this.box, ['bash', '-c', TAKE_REQUESTS]);
+    return out
+      .split('\0')
+      .filter((entry) => entry.trim() !== '')
+      .map((entry) => {
+        const [what = '', ...why] = entry.split('\n');
+        return { what: what.trim(), why: why.join('\n').trim() };
+      });
   }
 
   /** Makes sure the box has `claude` or `codex` (once per box). */

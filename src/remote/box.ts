@@ -31,12 +31,18 @@ export interface RemoteBox {
   /** Copies a local file into the box (multipart; for large files such as git bundles). */
   upload(localPath: string, path: string): Promise<void>;
   readFile(path: string): Promise<Buffer>;
+  /** Saves the box's filesystem as a snapshot (waits until it is ready); returns its id. */
+  snapshot(name: string): Promise<string>;
   delete(): Promise<void>;
 }
 
 export interface BoxProvider {
-  /** The box called `name`: reattached when it exists (`created: false`), else made. */
-  open(name: string, labels: readonly string[]): Promise<{ box: RemoteBox; created: boolean }>;
+  /**
+   * The box called `name`: reattached when it exists (`created: false`), else made from the snapshot `from` (null:
+   * a fresh box).
+   */
+  open(name: string, labels: readonly string[], from: string | null): Promise<{ box: RemoteBox; created: boolean }>;
+  deleteSnapshot(id: string): Promise<void>;
   /** Deletes every box carrying `label`. */
   removeLabeled(label: string): Promise<void>;
 }
@@ -118,7 +124,11 @@ export class UpstashBoxes implements BoxProvider {
     this.apiKey = apiKey;
   }
 
-  async open(name: string, labels: readonly string[]): Promise<{ box: RemoteBox; created: boolean }> {
+  async open(
+    name: string,
+    labels: readonly string[],
+    from: string | null,
+  ): Promise<{ box: RemoteBox; created: boolean }> {
     const settings = this.config();
     const existing = await this.find(name);
     if (existing) return { box: wrap(existing), created: false };
@@ -129,10 +139,14 @@ export class UpstashBoxes implements BoxProvider {
       size: settings.size,
       enableTelemetry: false,
     };
-    const box = settings.snapshot
-      ? await Box.fromSnapshot(settings.snapshot, config)
+    const box = from
+      ? await Box.fromSnapshot(from, config)
       : await Box.create({ ...config, runtime: settings.runtime });
     return { box: wrap(box), created: true };
+  }
+
+  async deleteSnapshot(id: string): Promise<void> {
+    await Box.deleteSnapshots({ apiKey: this.apiKey, snapshotIds: id, enableTelemetry: false });
   }
 
   async removeLabeled(label: string): Promise<void> {
@@ -174,6 +188,7 @@ function wrap(box: Box): RemoteBox {
       box.files.write({ path, content: Buffer.from(content).toString('base64'), encoding: 'base64' }),
     upload: (localPath, path) => box.files.upload([{ path: localPath, destination: path }]),
     readFile: async (path) => Buffer.from(await box.files.read(path, { encoding: 'base64' }), 'base64'),
+    snapshot: async (name) => (await box.snapshot({ name })).id,
     delete: () => box.delete(),
   };
 }

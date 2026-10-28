@@ -5,7 +5,7 @@
  * so the real box scripts and git run unchanged.
  */
 import { spawn } from 'node:child_process';
-import { mkdirSync } from 'node:fs';
+import { cpSync, mkdirSync } from 'node:fs';
 import { readFile, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import type { BoxProvider, RemoteBox, RemoteProcess } from './box.ts';
@@ -13,6 +13,9 @@ import type { BoxProvider, RemoteBox, RemoteProcess } from './box.ts';
 export class LocalBoxes implements BoxProvider {
   readonly boxes = new Map<string, LocalBox>();
   readonly removed: string[] = [];
+  /** Snapshot ids each box was made from (null: fresh). */
+  readonly madeFrom = new Map<string, string | null>();
+  readonly deletedSnapshots: string[] = [];
   private readonly root: string;
   private readonly prefixes: readonly string[];
 
@@ -22,12 +25,23 @@ export class LocalBoxes implements BoxProvider {
     this.prefixes = [...prefixes, '/tmp/legion-'];
   }
 
-  async open(name: string, labels: readonly string[]): Promise<{ box: RemoteBox; created: boolean }> {
+  async open(
+    name: string,
+    labels: readonly string[],
+    from: string | null,
+  ): Promise<{ box: LocalBox; created: boolean }> {
     const existing = this.boxes.get(name);
     if (existing) return { box: existing, created: false };
-    const box = new LocalBox(name, join(this.root, name), this.prefixes, labels);
+    const root = join(this.root, name);
+    if (from) cpSync(join(this.root, 'snapshots', from), root, { recursive: true, verbatimSymlinks: true });
+    const box = new LocalBox(name, root, this.prefixes, labels, join(this.root, 'snapshots'));
     this.boxes.set(name, box);
+    this.madeFrom.set(name, from);
     return { box, created: true };
+  }
+
+  async deleteSnapshot(id: string): Promise<void> {
+    this.deletedSnapshots.push(id);
   }
 
   async removeLabeled(label: string): Promise<void> {
@@ -48,9 +62,12 @@ export class LocalBox implements RemoteBox {
   /** Every argv started in this box. */
   readonly started: string[][] = [];
   private readonly prefixes: readonly string[];
+  private readonly snapshots: string;
+  private snapshotCount = 0;
 
-  constructor(id: string, root: string, prefixes: readonly string[], labels: readonly string[]) {
+  constructor(id: string, root: string, prefixes: readonly string[], labels: readonly string[], snapshots: string) {
     this.id = id;
+    this.snapshots = snapshots;
     this.root = root;
     this.home = join(root, 'home');
     this.prefixes = prefixes;
@@ -106,6 +123,12 @@ export class LocalBox implements RemoteBox {
 
   async readFile(path: string): Promise<Buffer> {
     return readFile(this.path(path));
+  }
+
+  async snapshot(name: string): Promise<string> {
+    const id = `${this.id}-${name}-${++this.snapshotCount}`;
+    cpSync(this.root, join(this.snapshots, id), { recursive: true, verbatimSymlinks: true });
+    return id;
   }
 
   async delete(): Promise<void> {}

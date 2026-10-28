@@ -50,7 +50,7 @@ export interface RunManagerOptions {
   log?: Logger;
   sh?: (command: string, opts: ShellOptions) => Promise<ShellResult>;
   /** Wraps each run's host (remote mode sends worktree steps to boxes: `remote/remote.ts`). */
-  wrapHost?: (host: RunHost, runId: string) => RunHost;
+  wrapHost?: (host: RunHost, run: RunRecord) => RunHost;
   /** Called when a run has ended (not when it was only interrupted), after its worktrees are gone. */
   onRunEnded?: (runId: string) => Promise<void>;
 }
@@ -277,7 +277,7 @@ export class RunManager extends EventEmitter<RunManagerEvents> {
     const journal = new Journal(dir);
     const controller = new AbortController();
     const base = this.host(record, controller.signal);
-    const host = this.opts.wrapHost ? this.opts.wrapHost(base, record.id) : base;
+    const host = this.opts.wrapHost ? this.opts.wrapHost(base, record) : base;
     this.emit('event', { type: 'run', runId: record.id, status: 'running' });
     const done = executeInRun({ runId: record.id, host, journal, signal: controller.signal }, () => run(record.input))
       .then(

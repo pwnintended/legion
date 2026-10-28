@@ -166,4 +166,19 @@ export interface RunHost {
   notes?(step: string): string | null;
   /** Default for agents that do not say who answers their tool approvals. */
   readonly approvals: 'ask' | 'auto';
+  /** The box agent's operations (remote mode, `remote/remote.ts`); absent where there are no boxes. */
+  box?: BoxOps;
+}
+
+export interface BoxOps {
+  /** Puts the box files of the user's checkout (`.legion/box/`) into the worktree `cwd`; returns those it wrote. */
+  prepare(cwd: string): Promise<string[]>;
+  /**
+   * Makes the box of the worktree `cwd` the box image every box starts from; its box files go into the user's
+   * checkout (returned: the ones that changed there).
+   */
+  snapshot(
+    cwd: string,
+    about: { requests: string[]; summary: string },
+  ): Promise<{ snapshot: string; changed: string[] }>;
 }

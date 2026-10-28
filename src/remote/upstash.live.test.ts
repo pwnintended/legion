@@ -35,9 +35,15 @@ describe.skipIf(!LIVE)('Upstash Boxes (live)', () => {
     wt = join(root, RUN, 'task');
     await repo.git('worktree', 'add', '-q', '-b', 'task', wt);
     const provider = new UpstashBoxes(() => config, key);
-    remote = new Remote({ worktreeRoot: root, config: () => config, enabled: () => true, provider: () => provider });
+    remote = new Remote({
+      repo: repo.path,
+      worktreeRoot: root,
+      config: () => config,
+      enabled: () => true,
+      provider: () => provider,
+    });
     const base = { repo: repo.path, dryRun: false, engine: () => new FakeEngine(), sh: runShell };
-    host = remote.host(base as unknown as RunHost, RUN);
+    host = remote.host(base as unknown as RunHost, { id: RUN, workflow: 'test' });
   });
 
   afterAll(async () => {

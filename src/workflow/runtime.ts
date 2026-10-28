@@ -632,6 +632,39 @@ export function runInfo(): { runId: string; repo: string; dryRun: boolean } {
 }
 
 // ---------------------------------------------------------------------------------------------
+// box (the box agent's workflow: remote mode's box image)
+// ---------------------------------------------------------------------------------------------
+
+export const box = {
+  /** Puts the box files of the user's checkout (`.legion/box/provision.sh`, `env.sh`) into `wt`. */
+  prepare(key: string, wt: Worktree): Promise<string[]> {
+    const { run } = current();
+    return memo('step', key, 'box files', async () => {
+      if (run.host.dryRun) return { output: [] };
+      if (!run.host.box) throw new Error('box.prepare: no boxes here (remote mode is not set up)');
+      await ensureCwd(run, wt.path);
+      return { output: await run.host.box.prepare(wt.path) };
+    });
+  },
+  /**
+   * Makes the box `wt` ran in the box image: every box starts from it from now on, and boxes already running are
+   * brought up to it. Its box files go into the user's checkout.
+   */
+  snapshot(
+    key: string,
+    wt: Worktree,
+    about: { requests: string[]; summary: string },
+  ): Promise<{ snapshot: string; changed: string[] }> {
+    const { run } = current();
+    return memo('step', key, 'box image', async () => {
+      if (run.host.dryRun) return { output: { snapshot: 'dry-run', changed: [] } };
+      if (!run.host.box) throw new Error('box.snapshot: no boxes here (remote mode is not set up)');
+      return { output: await run.host.box.snapshot(wt.path, about) };
+    });
+  },
+};
+
+// ---------------------------------------------------------------------------------------------
 // git
 // ---------------------------------------------------------------------------------------------
 

@@ -179,8 +179,8 @@ apiKey = "box_…"                       # Upstash Console → Box → API keys 
 # .legion/config.toml
 [remote]
 enabled  = true
-snapshot = "snap_…"                    # boxes start from it: CLIs, toolchain, a warm clone (default: a fresh box)
-clone    = "/workspace/home/repo"      # where that warm clone is in the snapshot: it becomes the worktree
+snapshot = "snap_…"                    # your own image, when the box agent does not make one (below)
+clone    = "/workspace/home/repo"      # where that image's warm clone is: it becomes the worktree
 prelude  = "source tools/box/env.sh"   # run before every command in a box, in the worktree root
 setup    = ["pnpm install --offline"]  # run once in each new box
 size     = "medium"                    # small | medium | large: 2, 4 or 8 CPUs
@@ -202,7 +202,27 @@ runtime  = "node"                      # a fresh box's image, without a snapshot
   starts a new session.
 - **MCP servers** on this machine's loopback (`http://127.0.0.1:…`) are out of a box's reach and left out. Stdio
   servers start in the box, so the snapshot needs them.
+- **Talking to the assistant and leads** works as it does locally: the CLI's stdio protocol (stream-json for Claude,
+  the app-server for Codex) is piped through the box's exec session, so approvals, questions, steering
+  (`message_agent`) and results travel the same way. Workflow agents do not get Legion's own MCP tools either way.
 - `legion doctor` shows whether remote mode is on and whether a key is set.
+
+#### The box image and the box agent
+
+Boxes start from the box image: a snapshot with the project's toolchain, dependencies and a warm build. The box
+agent (the builtin `box` workflow) makes and extends it, and the assistant coordinates it:
+
+- **Agents ask, they do not install.** An agent in a box that lacks a tool runs `legion-need '<what>' '<why>'` and
+  carries on as far as it can. Legion passes the request to the assistant, which starts the box agent
+  (`provision_box`, with any other pending requests and the commands that must pass afterwards), then unblocks the
+  agent (`message_agent`) or retries its step. `box_status` shows the image and what is waiting.
+- **The box agent** works in a box of its own (whether remote mode is on or not). It updates
+  `.legion/box/provision.sh` (an idempotent install script) and `.legion/box/env.sh` (sourced before every command
+  in a box), runs them, and warms the build. Legion runs the script once more and the verify commands, saves the
+  box as the new image, copies the two files into your checkout (commit them), deletes the previous image, and
+  brings running boxes up to date.
+- **Which snapshot is current** is per machine and account: `.legion/box/image.local.json` (gitignored). It takes
+  precedence over `[remote] snapshot`. Without either, boxes start bare and the assistant is told to make an image.
 
 ### Models: tiers and providers
 
@@ -373,7 +393,8 @@ Resolution order, first match by name wins:
 1. `.legion/workflows/<name>.ts` in the project (commit them)
 2. `~/.config/legion/workflows/<name>.ts`
 3. builtin: [`feature`](builtin/workflows/feature.ts), [`tasks`](builtin/workflows/tasks.ts),
-   [`implement`](builtin/workflows/implement.ts), and [`review`](builtin/workflows/review.ts)
+   [`implement`](builtin/workflows/implement.ts), [`review`](builtin/workflows/review.ts), and
+   [`box`](builtin/workflows/box.ts)
 
 | Builtin | What it does |
 |---|---|
@@ -387,6 +408,7 @@ the integration branch first instead of failing. Leads and the assistant are tol
 themselves instead of starting a workflow.
 | `implement` | One focused change in a worktree: code, then cross-engine review and fix rounds, then a gate, then a draft PR or merge. |
 | `review` | Both engines review your branch and uncommitted changes independently. Their findings are merged, and an agent can then fix the ones you pick. |
+| `box` | The box agent (remote mode): sets up or extends the image Upstash Boxes start from. The assistant starts it when agents ask for tools (`legion-need`). |
 
 A workflow is a plain TypeScript module (erasable syntax only) that imports from `legion`:
 

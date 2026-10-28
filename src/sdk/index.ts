@@ -25,6 +25,7 @@ export type { AgentOptions, AgentResult, GateOptions, GateResult, LoopResult, Sh
 export {
   agent,
   ask,
+  box,
   gate,
   git,
   group,
