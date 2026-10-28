@@ -223,7 +223,9 @@ model  = "…"                     # a model from Codex's list (the /workflows m
 effort = "xhigh"
 ```
 
-A tier table overrides its defaults field by field: setting `model` alone keeps the tier's effort. With
+`/config` sets these: the provider, and each tier's model and effort per engine (←→ cycles through the engine's
+models, Enter types one). A tier table overrides its defaults field by field: setting `model` alone keeps the tier's
+effort. With
 `provider = "claude"` or `"codex"`, everything runs on that engine, including steps whose code names the other one.
 With `mixed`, each runs on the engine its settings or code choose (Claude when nothing says).
 

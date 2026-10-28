@@ -14,6 +14,15 @@ let session: Session;
 
 const tick = (ms = 60) => new Promise((r) => setTimeout(r, ms));
 
+/** Presses ↓ until the menu's hint line shows `hint` (the cursor is on that row). */
+async function downTo(ui: { stdin: { write(s: string): void }; lastFrame(): string | undefined }, hint: string) {
+  for (let i = 0; i < 60 && !(ui.lastFrame() ?? '').includes(hint); i++) {
+    ui.stdin.write('\u001B[B');
+    await tick(30);
+  }
+  await until(() => ui.lastFrame()?.includes(hint) ?? false);
+}
+
 async function until(check: () => boolean, ms = 3000): Promise<void> {
   const end = Date.now() + ms;
   while (!check()) {
@@ -97,12 +106,8 @@ describe('App', () => {
     await tick();
     ui.stdin.write('\r');
     await until(() => ui.lastFrame()?.includes('◆ Settings') ?? false);
-    // Save to, engine, model, effort, approvals (assistant), provider, approvals (workflows), maxAgents: seven rows
-    // down, then two steps right.
-    for (let i = 0; i < 7; i++) {
-      ui.stdin.write('\u001B[B');
-      await tick(30);
-    }
+    // Down to maxAgents (after the assistant, provider and tier rows), then two steps right.
+    await downTo(ui, 'agent sessions alive at once per run');
     ui.stdin.write('\u001B[C');
     await tick(30);
     ui.stdin.write('\u001B[C');
@@ -111,6 +116,32 @@ describe('App', () => {
     await until(() => ui.lastFrame()?.includes('Settings changed') ?? false);
     expect(readFileSync(join(repo.path, '.legion', 'config.toml'), 'utf8')).toMatch(/^maxAgents = 6 +# /m);
     expect(session.config.workflows.maxAgents).toBe(6);
+    ui.unmount();
+  });
+
+  it('sets what a tier means in the /config menu', async () => {
+    const ui = render(<App controller={new Controller(session)} />);
+    await tick();
+    ui.stdin.write('/config');
+    await tick();
+    ui.stdin.write('\r');
+    await until(() => ui.lastFrame()?.includes('Claude models') ?? false);
+    await downTo(ui, 'hard workflow steps');
+    ui.stdin.write('\r');
+    await tick(30);
+    ui.stdin.write('\u0015');
+    await tick(30);
+    ui.stdin.write('claude-x');
+    await tick(30);
+    ui.stdin.write('\r');
+    await until(() => ui.lastFrame()?.includes('claude-x') ?? false);
+    ui.stdin.write('\u001B');
+    await until(() => ui.lastFrame()?.includes('Settings changed') ?? false);
+    expect(readFileSync(join(repo.path, '.legion', 'config.toml'), 'utf8')).toMatch(
+      /\[models\.claude\.hard\]\nmodel = "claude-x"/,
+    );
+    // The tier keeps its default effort.
+    expect(session.config.models.claude.hard).toEqual({ model: 'claude-x', effort: 'high' });
     ui.unmount();
   });
 

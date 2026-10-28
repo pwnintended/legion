@@ -55,10 +55,11 @@ export function ConfigMenu({ controller, width }: { controller: Controller; widt
 
   const step = (r: SettingRow, dir: -1 | 1) => {
     const current = draftOf(r);
-    if (r.id === 'assistant.model') {
-      // The models of the assistant's engine (as it will be after saving); Enter types any other.
+    const tierModel = /^models\.(claude|codex)\.[a-z]+\.model$/.exec(r.id);
+    if (r.id === 'assistant.model' || tierModel) {
+      // The models of the row's engine (the assistant's: as it will be after saving); Enter types any other.
       const engineRow = rows.find((x) => x.id === 'assistant.engine');
-      const engine = String((engineRow && draftOf(engineRow)) ?? 'claude');
+      const engine = tierModel?.[1] ?? String((engineRow && draftOf(engineRow)) ?? 'claude');
       const list: (string | null)[] = [null, ...(models[engine] ?? [])];
       if (current !== null && !list.includes(current as string)) list.splice(1, 0, current as string);
       const at = Math.max(0, list.indexOf(current as string | null));

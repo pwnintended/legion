@@ -19,6 +19,7 @@ import {
   readToml,
   resolveAgentModel,
   TIERS,
+  type Tier,
 } from '../config.ts';
 import { getPath, setTomlValue, type TomlScalar } from '../config-file.ts';
 import { CodexEngine } from '../engine/codex/index.ts';
@@ -145,6 +146,14 @@ export interface SettingRow {
   shadowedBy?: string;
 }
 
+const TIER_HINT: Record<Tier, string> = {
+  assistant: 'the assistant you talk to',
+  lead: 'team leads (unless their role picks another tier)',
+  hard: 'hard workflow steps: planning, review, tricky code',
+  medium: 'medium workflow steps (the default): most coding',
+  easy: 'easy workflow steps: summaries, small edits',
+};
+
 const CONFIG_SETTINGS: readonly Omit<SettingRow, 'value'>[] = [
   {
     id: 'assistant.engine',
@@ -159,7 +168,7 @@ const CONFIG_SETTINGS: readonly Omit<SettingRow, 'value'>[] = [
     group: 'Assistant',
     label: 'model',
     kind: 'text',
-    hint: "←→ picks from the engine's models, Enter types one; empty: the CLI's default",
+    hint: "pins the assistant's model over its tier's · ←→ picks from the engine's models, Enter types one",
   },
   {
     id: 'assistant.effort',
@@ -183,8 +192,27 @@ const CONFIG_SETTINGS: readonly Omit<SettingRow, 'value'>[] = [
     label: 'provider',
     kind: 'choice',
     choices: ['mixed', 'claude', 'codex'],
-    hint: 'claude | codex: everything runs there · mixed: as settings and code say ([models.<engine>.<tier>] in the file)',
+    hint: 'claude | codex: everything runs there · mixed: each runs on the engine its settings or code choose',
   },
+  ...(['claude', 'codex'] as const).flatMap((engine) =>
+    TIERS.flatMap((tier): Omit<SettingRow, 'value'>[] => [
+      {
+        id: `models.${engine}.${tier}.model`,
+        group: `${engine === 'claude' ? 'Claude' : 'Codex'} models`,
+        label: tier,
+        kind: 'text',
+        hint: `${TIER_HINT[tier]} on ${engine} · ←→ picks from its models, Enter types one; empty: the default`,
+      },
+      {
+        id: `models.${engine}.${tier}.effort`,
+        group: `${engine === 'claude' ? 'Claude' : 'Codex'} models`,
+        label: `${tier} effort`,
+        kind: 'choice',
+        choices: [null, 'low', 'medium', 'high', 'xhigh', 'max'],
+        hint: `reasoning effort of the ${tier} tier on ${engine} · default: the tier's built-in one`,
+      },
+    ]),
+  ),
   {
     id: 'workflows.approvals',
     group: 'Workflows',
