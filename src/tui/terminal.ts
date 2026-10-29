@@ -43,6 +43,7 @@ export class Terminal implements TerminalModes {
   constructor(input: NodeJS.ReadStream = process.stdin, output: NodeJS.WriteStream = process.stdout) {
     this.output = output;
     input.setEncoding('utf8');
+    let reading = false;
     const onData = (chunk: string) => {
       const { rest, wheel } = takeMouse(chunk);
       for (const direction of wheel) for (const listener of this.listeners) listener(direction);
@@ -54,6 +55,8 @@ export class Terminal implements TerminalModes {
       // child gets the keys and the process can end.
       setRawMode: (on: boolean) => {
         input.setRawMode(on);
+        if (on === reading) return;
+        reading = on;
         if (on) input.on('data', onData).resume();
         else input.off('data', onData).pause();
       },

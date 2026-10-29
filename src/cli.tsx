@@ -150,6 +150,9 @@ async function interactive(session: Session, initial: string): Promise<number> {
   // Mouse reporting brings the wheel to the conversation view; Shift (Option in iTerm2) still selects text.
   const terminal = new Terminal();
   process.once('exit', () => terminal.leave());
+  // Raw mode before Ink starts: it asks the terminal about the kitty keyboard protocol right away, and with echo
+  // still on the terminal would print the reply (`^[[?0u`) over the first frame.
+  terminal.stdin.setRawMode(true);
   const instance = render(<App controller={controller} terminal={terminal} />, {
     stdin: terminal.stdin,
     exitOnCtrlC: false,

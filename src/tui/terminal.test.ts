@@ -28,6 +28,8 @@ describe('Terminal', () => {
     const wheel: number[] = [];
     terminal.onWheel((d) => wheel.push(d));
 
+    // Twice (Legion before Ink starts, then Ink): still read once.
+    terminal.stdin.setRawMode(true);
     terminal.stdin.setRawMode(true);
     input.write('hi\u001B[<65;2;2M');
     expect(terminal.stdin.read()).toBe('hi');
@@ -35,7 +37,7 @@ describe('Terminal', () => {
     terminal.stdin.setRawMode(false);
     input.write('later');
     expect(terminal.stdin.read()).toBeNull();
-    expect(raw).toEqual([true, false]);
+    expect(raw).toEqual([true, true, false]);
 
     terminal.enter();
     terminal.enter();
