@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { matchCommands } from './input.tsx';
-import { parseBlocks } from './markdown.tsx';
+import { parseBlocks, segments, wrapSegments } from './markdown.tsx';
 import { formatValue } from './store.ts';
 
 describe('parseBlocks', () => {
@@ -30,6 +30,25 @@ describe('parseBlocks', () => {
         ['1', '2'],
       ],
     });
+  });
+});
+
+describe('wrapSegments', () => {
+  const wrap = (text: string, width: number) =>
+    wrapSegments(segments(text), width).map((l) => l.map((s) => s.text).join(''));
+
+  it('breaks between words without carrying the space to the next line', () => {
+    // "aaaa bbbb" fills 9 columns exactly; Ink alone would start the next line with the space.
+    expect(wrap('aaaa bbbb cc', 9)).toEqual(['aaaa bbbb', 'cc']);
+  });
+
+  it('keeps a word that spans styles together and cuts words longer than a line', () => {
+    expect(wrap('see `a.b`, ok', 6)).toEqual(['see', 'a.b,', 'ok']);
+    expect(wrap('abcdefgh', 3)).toEqual(['abc', 'def', 'gh']);
+  });
+
+  it('keeps leading spaces of the text', () => {
+    expect(wrap('  x y', 10)).toEqual(['  x y']);
   });
 });
 

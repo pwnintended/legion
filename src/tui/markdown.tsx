@@ -53,85 +53,144 @@ export function parseBlocks(text: string): Block[] {
   return blocks.filter((b, n) => !(b.kind === 'blank' && (n === 0 || blocks[n - 1]?.kind === 'blank')));
 }
 
-/** `**bold**`, `*em*`/`_em_`, `` `code` ``, `[text](url)` and bare URLs. */
-export function Inline({ text, dim }: { text: string; dim?: boolean }): ReactNode {
-  const parts: ReactNode[] = [];
+type Style = { bold?: boolean; italic?: boolean; underline?: boolean; dim?: boolean; color?: string };
+/** A run of text in one style. */
+export type Seg = Style & { text: string };
+
+/** `**bold**`, `*em*`/`_em_`, `` `code` ``, `[text](url)` and bare URLs, as styled runs. */
+export function segments(text: string): Seg[] {
+  const segs: Seg[] = [];
   const re =
     /(\*\*([^*]+)\*\*|__([^_]+)__|`([^`]+)`|\[([^\]]+)\]\(([^)\s]+)\)|(?<![\w*])\*([^*\s][^*]*)\*(?!\w)|(?<!\w)_([^_\s][^_]*)_(?!\w)|https?:\/\/[^\s)]+)/g;
   let last = 0;
-  let n = 0;
   for (let m = re.exec(text); m; m = re.exec(text)) {
-    if (m.index > last) parts.push(text.slice(last, m.index));
-    const key = n++;
-    if (m[2] ?? m[3])
-      parts.push(
-        <Text key={key} bold>
-          {m[2] ?? m[3]}
-        </Text>,
-      );
-    else if (m[4] !== undefined)
-      parts.push(
-        <Text key={key} color={theme.code}>
-          {m[4]}
-        </Text>,
-      );
-    else if (m[5] !== undefined)
-      parts.push(
-        <Text key={key}>
-          <Text underline>{m[5]}</Text>
-          <Text dimColor> ({m[6]})</Text>
-        </Text>,
-      );
-    else if (m[7] ?? m[8])
-      parts.push(
-        <Text key={key} italic>
-          {m[7] ?? m[8]}
-        </Text>,
-      );
-    else
-      parts.push(
-        <Text key={key} color={theme.info} underline>
-          {m[0]}
-        </Text>,
-      );
+    if (m.index > last) segs.push({ text: text.slice(last, m.index) });
+    if (m[2] ?? m[3]) segs.push({ text: m[2] ?? m[3] ?? '', bold: true });
+    else if (m[4] !== undefined) segs.push({ text: m[4], color: theme.code });
+    else if (m[5] !== undefined) segs.push({ text: m[5], underline: true }, { text: ` (${m[6]})`, dim: true });
+    else if (m[7] ?? m[8]) segs.push({ text: m[7] ?? m[8] ?? '', italic: true });
+    else segs.push({ text: m[0], color: theme.info, underline: true });
     last = m.index + m[0].length;
   }
-  if (last < text.length) parts.push(text.slice(last));
-  return <Text dimColor={dim}>{parts}</Text>;
+  if (last < text.length) segs.push({ text: text.slice(last) });
+  return segs;
 }
 
-export function Markdown({ text }: { text: string }) {
-  const blocks = parseBlocks(text.replace(/\s+$/, ''));
+const cols = (s: string) => [...s].length;
+
+/**
+ * Word-wraps styled runs into lines of at most `width` columns. Ink wraps without trimming, so a line that fills the
+ * width exactly pushes the space after it to the start of the next line; wrapping here drops the spaces at breaks.
+ * Words longer than a line are cut.
+ */
+export function wrapSegments(segs: Seg[], width: number): Seg[][] {
+  // Words are runs between spaces; one word can span several styles (`` `code`, `` is one word).
+  const words: { space: Seg | null; parts: Seg[] }[] = [];
+  let space: Seg | null = null;
+  for (const seg of segs) {
+    for (const piece of seg.text.split(/( +)/)) {
+      if (!piece) continue;
+      if (piece.startsWith(' ')) space = { ...seg, text: piece };
+      else if (space || words.length === 0) {
+        words.push({ space, parts: [{ ...seg, text: piece }] });
+        space = null;
+      } else words[words.length - 1]?.parts.push({ ...seg, text: piece });
+    }
+  }
+  const max = Math.max(1, width);
+  const lines: Seg[][] = [[]];
+  let col = 0;
+  for (const [n, word] of words.entries()) {
+    const w = word.parts.reduce((sum, p) => sum + cols(p.text), 0);
+    // Leading spaces of the text are kept; spaces at a break are not.
+    const gap = word.space ? cols(word.space.text) : 0;
+    if (col > 0 && col + gap + w > max) {
+      lines.push([]);
+      col = 0;
+    } else if (word.space && (col > 0 || n === 0)) {
+      lines[lines.length - 1]?.push(word.space);
+      col += gap;
+    }
+    for (const part of word.parts) {
+      let rest = part.text;
+      while (col + cols(rest) > max) {
+        const room = max - col;
+        if (room > 0) lines[lines.length - 1]?.push({ ...part, text: [...rest].slice(0, room).join('') });
+        rest = [...rest].slice(Math.max(0, room)).join('');
+        lines.push([]);
+        col = 0;
+      }
+      if (rest) {
+        lines[lines.length - 1]?.push({ ...part, text: rest });
+        col += cols(rest);
+      }
+    }
+  }
+  return lines;
+}
+
+function SegsView({ segs }: { segs: Seg[] }) {
+  return (
+    <Text>
+      {segs.map((s, n) => (
+        // biome-ignore lint/suspicious/noArrayIndexKey: runs are positional.
+        <Text key={n} bold={s.bold} italic={s.italic} underline={s.underline} dimColor={s.dim} color={s.color}>
+          {s.text}
+        </Text>
+      ))}
+    </Text>
+  );
+}
+
+/** Inline Markdown; with a `width`, wrapped here rather than by Ink (see `wrapSegments`). */
+export function Inline({ text, width, style }: { text: string; width?: number; style?: Style }): ReactNode {
+  const segs = segments(text).map((s) => ({ ...style, ...s }));
+  if (width === undefined) return <SegsView segs={segs} />;
   return (
     <Box flexDirection="column">
-      {blocks.map((block, i) => (
-        // biome-ignore lint/suspicious/noArrayIndexKey: blocks have no identity beyond their position.
-        <BlockView key={i} block={block} />
+      {wrapSegments(segs, width).map((line, n) => (
+        // biome-ignore lint/suspicious/noArrayIndexKey: lines are positional.
+        <SegsView key={n} segs={line} />
       ))}
     </Box>
   );
 }
 
-function BlockView({ block }: { block: Block }) {
+/** `width` is the columns the text has; give it whenever it is known, so wrapped lines break cleanly. */
+export function Markdown({ text, width }: { text: string; width?: number }) {
+  const blocks = parseBlocks(text.replace(/\s+$/, ''));
+  return (
+    <Box flexDirection="column">
+      {blocks.map((block, i) => (
+        // biome-ignore lint/suspicious/noArrayIndexKey: blocks have no identity beyond their position.
+        <BlockView key={i} block={block} width={width} />
+      ))}
+    </Box>
+  );
+}
+
+function BlockView({ block, width }: { block: Block; width?: number }) {
+  const less = (n: number) => (width === undefined ? undefined : width - n);
   switch (block.kind) {
     case 'blank':
       return <Text> </Text>;
     case 'rule':
       return <Text dimColor>{'─'.repeat(40)}</Text>;
     case 'heading':
+      // The title in the plain foreground, sections in the accent: a title underlined in color reads as a link.
       return (
-        <Text bold color={block.level <= 2 ? theme.accent : undefined} underline={block.level === 1}>
+        <Text bold color={block.level === 2 ? theme.accent : undefined}>
           {block.text.replace(/\*\*/g, '')}
         </Text>
       );
     case 'quote':
       return (
-        <Text>
+        <Box>
           <Text color={theme.muted}>│ </Text>
-          <Text italic dimColor>
-            <Inline text={block.text} />
-          </Text>
-        </Text>
+          <Box flexShrink={1}>
+            <Inline text={block.text} width={less(2)} style={{ italic: true, dim: true }} />
+          </Box>
+        </Box>
       );
     case 'code':
       return (
@@ -161,12 +220,12 @@ function BlockView({ block }: { block: Block }) {
               <Text color={theme.accent}>{task ? (task[1] === ' ' ? '☐' : '☑') : marker}</Text>{' '}
             </Text>
             <Box flexShrink={1}>
-              <Inline text={task ? (task[2] ?? '') : (list[3] ?? '')} />
+              <Inline text={task ? (task[2] ?? '') : (list[3] ?? '')} width={less(indent.length + 2)} />
             </Box>
           </Box>
         );
       }
-      return <Inline text={block.line} />;
+      return <Inline text={block.line} width={width} />;
     }
   }
 }

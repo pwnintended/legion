@@ -172,7 +172,7 @@ export function App({ controller }: { controller: Controller }) {
       <Box flexDirection="column">
         {state.streaming ? (
           <Bullet mark={glyph.assistant} markColor="white" marginTop={1}>
-            <Markdown text={tail(state.streaming, 40)} />
+            <Markdown text={tail(state.streaming, 40)} width={width - 2} />
           </Bullet>
         ) : null}
         {state.busy ? <Busy frame={frame} since={state.busySince} activity={state.activity} /> : null}
@@ -772,7 +772,7 @@ function ItemView({ item, width }: { item: Item; width: number }) {
               {item.speaker}
             </Text>
           ) : null}
-          <Markdown text={item.text} />
+          <Markdown text={item.text} width={width - 2} />
         </Bullet>
       );
     case 'info':
@@ -791,16 +791,10 @@ function ItemView({ item, width }: { item: Item; width: number }) {
       );
     case 'run':
       return <RunItem item={item} />;
-    case 'gate':
+    case 'gate': {
+      const box = Math.min(width, 100);
       return (
-        <Box
-          flexDirection="column"
-          marginTop={1}
-          borderStyle="round"
-          borderColor={theme.warn}
-          paddingX={1}
-          width={Math.min(width, 100)}
-        >
+        <Box flexDirection="column" marginTop={1} borderStyle="round" borderColor={theme.warn} paddingX={1} width={box}>
           <Box justifyContent="space-between">
             <Box flexShrink={1}>
               <Text color={theme.warn} bold>
@@ -811,11 +805,13 @@ function ItemView({ item, width }: { item: Item; width: number }) {
           </Box>
           {item.body ? (
             <Box marginTop={1}>
-              <Markdown text={clipLines(item.body, 200)} />
+              {/* Border and padding take two columns on each side. */}
+              <Markdown text={clipLines(item.body, 200)} width={box - 4} />
             </Box>
           ) : null}
         </Box>
       );
+    }
   }
 }
 

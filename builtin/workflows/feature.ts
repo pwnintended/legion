@@ -113,14 +113,25 @@ Find every place the change touches (entry points, modules, callers, tests), the
 - A small change may be a single task. Use at most 10 tasks, ids T1, T2, … in dependency order.
 
 ## Plan document
-\`markdown\` is what the human approves and every coder reads: ## Summary (2–5 sentences), ## Approach (key decisions and contracts), ## Tasks (one line each), ## Risks and open questions, ## Out of scope. Start it with a one-line title as a level-1 heading.`;
+\`markdown\` is what the human approves and every coder reads: ## Summary (2–5 sentences), ## Approach (key decisions and contracts, one short bullet each, details in the tasks), ## Tasks (one line each), ## Risks and open questions, ## Out of scope. Start it with a one-line title as a level-1 heading.`;
 }
+/**
+ * The plan as the approver reads it: the planner's one-line task list gives way to the task graph (dependencies and
+ * acceptance criteria), in the same place.
+ */
 function showPlan(plan: Plan): string {
   const tasks = plan.tasks
-    .map(
-      (t) =>
-        `- **${t.id}** ${t.title}${t.dependsOn.length ? ` (after ${t.dependsOn.join(', ')})` : ''}\n  ${t.acceptanceCriteria.map((a) => `· ${a}`).join('\n  ')}`,
+    .map((t) =>
+      [
+        `- **${t.id}** ${t.title}${t.dependsOn.length ? ` _(after ${t.dependsOn.join(', ')})_` : ''}`,
+        ...t.acceptanceCriteria.map((a) => `  - ${a}`),
+      ].join('\n'),
     )
-    .join('\n');
-  return `${plan.markdown}\n\n## Task graph\n${tasks}`;
+    .join('\n\n');
+  const section = `## Tasks\n\n${tasks}\n`;
+  const lines = plan.markdown.split('\n');
+  const from = lines.findIndex((l) => /^##\s+Tasks\b/i.test(l));
+  if (from < 0) return `${plan.markdown.trimEnd()}\n\n${section}`;
+  const to = lines.findIndex((l, n) => n > from && /^#{1,2}\s/.test(l));
+  return [...lines.slice(0, from), section, ...(to < 0 ? [] : lines.slice(to))].join('\n');
 }
