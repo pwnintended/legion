@@ -1447,7 +1447,9 @@ export class Controller {
       lines.push([], [seg(`${kind} profiles`, { bold: true })]);
       for (const name of this.session.availableProfiles(kind)) {
         const on = name === current.name;
-        const raw = config[kind].profiles[name];
+        const raw = undefined as
+          | { env?: Record<string, string>; command?: string; args: string[]; setup?: string }
+          | undefined; // temporary: profiles are gone
         const env = Object.keys(raw?.env ?? {});
         lines.push([
           on ? seg('  ● ', { color: kind }) : dim('  ○ '),
