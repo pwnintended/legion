@@ -7,6 +7,7 @@
  * A helper, not a workflow (its name starts with `_`); ejecting a workflow that imports it copies it along.
  */
 import { agent, ask, gate, git, group, log, loop, sh, WorkflowCancelled, type Worktree, z } from 'legion';
+import { approves, blockingFindings, type Finding, formatFindings, RE_REVIEW, REVIEWER, Review } from './_review.ts';
 
 export const Engine = z.enum(['claude', 'codex']);
 
@@ -32,27 +33,6 @@ export const Report = z.object({
   summary: z.string().describe('What you changed and why, for the reviewer and later tasks'),
   commitMessage: z.string().describe('Conventional one-line subject, optional body'),
 });
-
-export const Finding = z.object({
-  severity: z.enum(['blocker', 'major', 'minor', 'nit']),
-  file: z.string().nullable(),
-  line: z.number().int().nullable(),
-  title: z.string(),
-  body: z.string(),
-  suggestedFix: z.string().nullable(),
-});
-export type Finding = z.infer<typeof Finding>;
-
-export const Review = z.object({
-  verdict: z.enum(['approve', 'request_changes']),
-  findings: z.array(Finding),
-  summary: z.string(),
-});
-export type Review = z.infer<typeof Review>;
-
-export const REVIEWER = `You are an independent code reviewer. You did not write the code under review. Approve only when it is correct and leaves the codebase no messier than it found it; be demanding and fair, and do not invent problems.
-Severities: blocker = wrong behavior, broken build/tests, an acceptance criterion not met, a security hole; major = a real bug in an edge case that matters, a missing test the criteria require, a broken contract, unjustified changes outside the task, or a clear structural regression; minor = worth a follow-up; nit = style (rarely worth mentioning).
-Every claim needs evidence (file and line, quoted code, or command output you saw). Give each finding a concrete suggestedFix. You are read-only: do not change files or git state; running tests and linters is fine.`;
 
 export interface ExecuteOptions {
   /** Engine that writes code; the other one reviews. A task's own `engine` overrides it. */
@@ -100,7 +80,7 @@ export async function executePlan(plan: Plan, opts: ExecuteOptions) {
     const wt = await git.worktree(task.id, { from: integration });
     // A task's own scoped checks; the slow repository-wide ones run once, on the result.
     const checks = task.verify.length > 0 ? [...task.verify] : [...opts.verify];
-    const report = await agent('code', {
+    let report = await agent('code', {
       engine: coder,
       cwd: wt.path,
       output: Report,
@@ -121,13 +101,15 @@ export async function executePlan(plan: Plan, opts: ExecuteOptions) {
         cwd: wt.path,
         output: Review,
         label: `${task.id} review${round > 1 ? ` (round ${round})` : ''}`,
+        ...(round > 1 ? { resume: `${task.id}/review/${round - 1}/review` } : {}),
         system: REVIEWER,
         prompt: reviewPrompt(plan, task, wt, report.summary, verification, round > 1 ? findings : null),
       });
       findings = review.findings;
       if (approves(review) && verification.every((v) => v.ok)) return { done: true };
       if (round > opts.maxFixRounds) return;
-      await agent('fix', {
+      report = await agent('fix', {
+        output: Report,
         engine: coder,
         cwd: wt.path,
         resume: lastSession,
@@ -215,7 +197,8 @@ ${formatVerification(verification.filter((v) => !v.ok))}`,
       output: Review,
       system: REVIEWER,
       label: `final review${round > 1 ? ' (again)' : ''}`,
-      prompt: finalPrompt(plan, mergedTasks, integration, verification),
+      ...(round > 1 ? { resume: `final/${round - 1}/review` } : {}),
+      prompt: finalPrompt(plan, mergedTasks, integration, verification, round > 1 ? remaining : null),
     });
     remaining = review.findings;
     const blocking = review.findings.filter((f) => f.severity === 'blocker');
@@ -226,7 +209,7 @@ ${formatVerification(verification.filter((v) => !v.ok))}`,
       cwd: integration.path,
       allow: [...opts.verify],
       label: 'final fix',
-      prompt: fixPrompt(review, verification),
+      prompt: fixPrompt({ ...review, findings: blocking }, verification),
     });
     await git.commit(integration, 'Address final review', { key: 'commit-fix' });
   });
@@ -304,12 +287,6 @@ async function verify(commands: readonly string[], wt: Worktree): Promise<Verifi
   return results;
 }
 
-function approves(review: Review): boolean {
-  return (
-    review.verdict === 'approve' && !review.findings.some((f) => f.severity === 'blocker' || f.severity === 'major')
-  );
-}
-
 export function checkPlan(plan: Plan): string[] {
   const problems: string[] = [];
   const ids = new Set<string>();
@@ -385,23 +362,29 @@ ${summary}
 
 ## Checks
 ${formatVerification(verification)}
-${previous ? `\n## Re-review\nThe coder was asked to fix the findings below. Drop the fixed ones, repeat (same title) the ones that are not; raise new findings only for real problems, including ones the fix introduced.\n${formatFindings(previous)}\n` : ''}
+${previous ? `\n## Re-review\n${RE_REVIEW}\n${formatFindings(blockingFindings(previous))}\n` : ''}
 Verdict \`approve\` only when every criterion is met and there is no blocker or major finding.`;
 }
 
 function fixPrompt(review: Review, verification: Verification[]): string {
   const failing = verification.filter((v) => !v.ok);
-  return `A reviewer looked at your work. Fix every blocker and major finding (minor ones where cheap), then make the checks pass. Do not commit.
+  return `A reviewer looked at your work. Address the blocking findings below and make the checks pass. Keep fixes focused; leave optional suggestions for follow-up. If a finding is incorrect, explain the evidence instead of making an unnecessary change. Do not commit. Finish with an updated summary of the whole change, what you fixed or disputed, and a commit message.
 
 ## Review
 ${review.summary}
 
-${formatFindings(review.findings)}
+${formatFindings(blockingFindings(review.findings))}
 ${failing.length ? `\n## Failing checks\n${formatVerification(failing)}` : ''}`;
 }
 
-function finalPrompt(plan: Plan, tasks: TaskResult[], wt: Worktree, verification: Verification[]): string {
-  return `Review the combined change on the integration branch. The working directory has it checked out; \`git diff ${wt.baseSha}\` shows everything. Each task was reviewed on its own already: look for what only shows when they meet — duplicated helpers, contracts used differently, inconsistent naming or error handling, wiring that is missing, and whether the whole actually does what the plan says.
+function finalPrompt(
+  plan: Plan,
+  tasks: TaskResult[],
+  wt: Worktree,
+  verification: Verification[],
+  previous: Finding[] | null,
+): string {
+  return `Review the combined change on the integration branch. The working directory has it checked out; \`git diff ${wt.baseSha}\` shows everything. Each task was reviewed on its own already: look for what only shows when they meet — broken contracts between tasks, missing wiring, and whether the combined behavior fulfills the plan. Do not reopen each task for stylistic consistency or optional refactoring.
 
 ## Plan
 ${clip(plan.markdown, 8000)}
@@ -412,17 +395,8 @@ ${tasks.map((t) => `- ${t.id} ${t.title}: ${t.summary}`).join('\n')}
 ## Checks
 ${formatVerification(verification)}
 
+${previous ? `\n## Re-review\n${RE_REVIEW}\n${formatFindings(previous.filter((f) => f.severity === 'blocker'))}\n` : ''}
 Only a blocker triggers another fix round; everything else goes into the pull request description.`;
-}
-
-function formatFindings(findings: Finding[]): string {
-  if (findings.length === 0) return '(no findings)';
-  return findings
-    .map(
-      (f) =>
-        `- [${f.severity}] ${f.title}${f.file ? ` (${f.file}${f.line ? `:${f.line}` : ''})` : ''}\n  ${f.body}${f.suggestedFix ? `\n  Fix: ${f.suggestedFix}` : ''}`,
-    )
-    .join('\n');
 }
 
 function formatVerification(results: Verification[]): string {

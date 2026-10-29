@@ -29,6 +29,17 @@ the final review. When the base branch moved on and conflicts by the time the ru
 the integration branch first instead of failing. Leads and the assistant are told to make small changes
 themselves instead of starting a workflow.
 
+Planning prefers one cohesive task with implementation, types, wiring and tests together. `feature` enforces
+`maxTasks: 3` by default (configurable from 1 to 10); this is a ceiling, not a target. Split only substantial
+independent work when parallel execution pays for the additional setup and reviews. `tasks` keeps the task
+list you explicitly supply.
+
+Task reviews request fixes only for evidenced blocker or major findings, or failing configured checks.
+A `request_changes` verdict with only minor/nit findings does not trigger a fix round. Suggestions remain in
+the PR description. Follow-up reviews resume the reviewer, receive the coder's updated report, and focus on
+unresolved findings and regressions from the fixes. The final integration review retains its blocker-only
+fix threshold and checks how tasks work together.
+
 ## Writing a workflow
 
 A workflow is a plain TypeScript module (erasable syntax only) that imports from `legion`:
