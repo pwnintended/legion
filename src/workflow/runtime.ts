@@ -14,7 +14,15 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { existsSync } from 'node:fs';
 import type { z } from 'zod';
-import type { AgentSession, ApprovalDecision, Effort, EngineKind, SessionOptions } from '../engine/types.ts';
+import type { AccountKind } from '../accounts/index.ts';
+import type {
+  AgentEvent,
+  AgentSession,
+  ApprovalDecision,
+  Effort,
+  EngineKind,
+  SessionOptions,
+} from '../engine/types.ts';
 import { permissionProfile } from '../engine/types.ts';
 import { toStrictJsonSchema } from '../util/json-schema.ts';
 import { Semaphore } from '../util/semaphore.ts';
@@ -35,6 +43,40 @@ export class StepError extends Error {
     this.name = 'StepError';
     this.key = key;
   }
+}
+
+/** An agent session ended because its account is out of quota: the step may go on another account. */
+export class LimitReached extends Error {
+  readonly limit: Extract<AgentEvent, { type: 'limit_reached' }>;
+  constructor(limit: Extract<AgentEvent, { type: 'limit_reached' }>) {
+    super(limit.message);
+    this.name = 'LimitReached';
+    this.limit = limit;
+  }
+}
+
+/** Every account of an engine is at its limit (or was tried). */
+export class AccountsExhausted extends Error {
+  readonly earliestReset: number | null;
+  constructor(kind: string, earliestReset: number | null) {
+    super(
+      `all ${kind} accounts are at their limits; ${
+        earliestReset === null ? 'no reset time is known' : `the earliest resets at ${clock(earliestReset)}`
+      }. Resume the run then (resume_run).`,
+    );
+    this.name = 'AccountsExhausted';
+    this.earliestReset = earliestReset;
+  }
+}
+
+/** Accounts a step may try after limits: at most this many. */
+const MAX_ATTEMPTS = 4;
+const DEFAULT_COOLDOWN_MINUTES = 60;
+
+function clock(ms: number): string {
+  const d = new Date(ms);
+  const hm = `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+  return Date.now() + 20 * 3_600_000 < ms ? `${d.toLocaleDateString()} ${hm}` : hm;
 }
 
 interface RunState {
@@ -150,7 +192,7 @@ async function memo<T>(
 
 export interface AgentOptions<S extends z.ZodType | undefined = undefined> {
   prompt: string;
-  /** Which CLI runs the step; the session decides which profile (account) that is. Default: claude. */
+  /** Which CLI runs the step; Legion picks the account from its pool. Default: claude. */
   engine?: 'claude' | 'codex';
   /** `read` may look but never change files; `write` may edit the working directory. Default: write. */
   mode?: 'read' | 'write';
@@ -227,7 +269,6 @@ export function agent<S extends z.ZodType | undefined = undefined>(
     async (full, previous) => {
       const chosen = choose(full);
       const kind: EngineKind = chosen.engine ?? code.engine;
-      const engine = run.host.engine(kind);
       const sessionOpts: SessionOptions = {
         cwd: opts.cwd ?? run.host.repo,
         prompt: opts.prompt,
@@ -244,67 +285,130 @@ export function agent<S extends z.ZodType | undefined = undefined>(
         signal: run.signal,
         untrustedWorkdir: opts.untrusted ?? false,
       };
+      const where = run.host.where?.(sessionOpts.cwd) ?? 'local';
 
       // Pick an earlier session up: this step's own (interrupted mid-turn) or the one `resume` names. Sessions live
-      // in the profile's config dir, so only the same profile can resume them.
-      let resumeId: string | null = null;
-      let prompt = opts.prompt;
+      // in the account's config dir, so only the same account (in the same place) can resume them; the step then
+      // starts over, with what the earlier step produced.
+      interface Earlier {
+        id: string;
+        account: string | null;
+        where: string;
+        prompt: string;
+      }
+      const earlier: Earlier[] = [];
+      const accountOf = (meta: Record<string, unknown>) => (meta.account ?? meta.profile ?? null) as string | null;
       const interrupted = previous?.status === 'started' ? previous.meta : undefined;
-      if (interrupted?.sessionId && interrupted.profile === engine.profile.name && interrupted.engine === kind) {
-        resumeId = String(interrupted.sessionId);
-        prompt = `You were interrupted. Continue where you left off and finish the task.\n\nThe task was:\n${opts.prompt}`;
-      } else if (opts.resume) {
+      if (interrupted?.sessionId && interrupted.engine === kind) {
+        earlier.push({
+          id: String(interrupted.sessionId),
+          account: accountOf(interrupted),
+          where: String(interrupted.where ?? 'local'),
+          prompt: `You were interrupted. Continue where you left off and finish the task.\n\nThe task was:\n${opts.prompt}`,
+        });
+      }
+      let prompt = opts.prompt;
+      if (opts.resume) {
         const from = lookup(run.journal, scope.prefix, opts.resume);
         if (!from) throw new Error(`resume: no agent step "${opts.resume}" ran before this one`);
-        if (from.meta?.sessionId && from.meta.profile === engine.profile.name && from.meta.engine === kind) {
-          resumeId = String(from.meta.sessionId);
-        } else {
-          // Different account or engine: start over with what the earlier step produced.
-          prompt = `${opts.prompt}\n\nContext — the result of the earlier step "${opts.resume}":\n${stringify(from.output)}`;
+        if (from.meta?.sessionId && from.meta.engine === kind) {
+          earlier.push({
+            id: String(from.meta.sessionId),
+            account: accountOf(from.meta),
+            where: String(from.meta.where ?? 'local'),
+            prompt: opts.prompt,
+          });
         }
+        // Used whenever that session cannot continue (another engine, account or place).
+        prompt = `${opts.prompt}\n\nContext — the result of the earlier step "${opts.resume}":\n${stringify(from.output)}`;
       }
+      const prefer = earlier[0]?.account ?? null;
 
       const notes = run.host.notes?.(full) ?? null;
-      if (notes)
-        prompt = `${prompt}\n\n## Notes for this attempt\nAn earlier attempt did not work out. Take these into account:\n${notes}`;
+      const withNotes = (p: string) =>
+        notes
+          ? `${p}\n\n## Notes for this attempt\nAn earlier attempt did not work out. Take these into account:\n${notes}`
+          : p;
 
-      const meta: Record<string, unknown> = {
-        engine: kind,
-        profile: engine.profile.name,
-        cwd: sessionOpts.cwd,
-        ...(chosen.model ? { model: chosen.model } : {}),
-        ...(chosen.effort ? { effort: chosen.effort } : {}),
-      };
       // The run's own limit, then the session's across all runs (leads' included).
       const release = await run.agents.acquire();
       const releaseSession = run.host.acquireAgent ? await run.host.acquireAgent() : () => {};
       try {
         checkCancelled(run);
         await ensureCwd(run, sessionOpts.cwd);
-        const attempt = async (options: SessionOptions) => {
-          const session = resumeId
-            ? await engine.resume(resumeId, { ...options, prompt })
-            : await engine.start({ ...options, prompt });
-          run.host.agentSession?.(full, session);
-          try {
-            return await drive(run, full, session, opts.output, meta);
-          } finally {
-            run.host.agentSession?.(full, null);
+        const tried: string[] = [];
+        let earliest: number | null = null;
+        let stoppedBy: { account: string; what: string; until: number } | null = null;
+        let want = prefer;
+        for (;;) {
+          const picked = run.host.account(kind as AccountKind, { what: full, prefer: want, avoid: tried, where });
+          if ('exhausted' in picked) {
+            const resets = [earliest, picked.earliestReset].filter((t): t is number => t !== null);
+            throw new AccountsExhausted(kind, resets.length > 0 ? Math.min(...resets) : null);
           }
-        };
-        try {
-          return { output: (await attempt(sessionOpts)) as AgentResult<S>, meta };
-        } catch (err) {
-          // A configured model the account cannot use: once more on the engine's default model.
-          if (!sessionOpts.model || !isModelRejected(err) || run.signal.aborted) throw err;
-          run.host.emit({
-            type: 'log',
-            runId: run.runId,
-            message: `${full}: ${kind} rejected model ${sessionOpts.model}; retrying on its default model`,
-          });
-          delete meta.model;
-          resumeId = null;
-          return { output: (await attempt({ ...sessionOpts, model: null })) as AgentResult<S>, meta };
+          const name = picked.account.name;
+          tried.push(name);
+          if (stoppedBy) {
+            run.host.emit({
+              type: 'log',
+              runId: run.runId,
+              message: `${full}: ${kind} account "${stoppedBy.account}" hit its ${stoppedBy.what} until ${clock(stoppedBy.until)}; retrying on "${name}"`,
+            });
+          }
+          const engine = run.host.engine(kind, name);
+          // A session only continues on the account (and place) it started in.
+          const same = earlier.find((e) => e.account === name && e.where === where);
+          let resumeId = same?.id ?? null;
+          let attemptPrompt = withNotes(same?.prompt ?? prompt);
+          if (stoppedBy)
+            attemptPrompt = `${attemptPrompt}\n\n## An earlier attempt was stopped\nAn earlier attempt at this task was stopped by a ${stoppedBy.what} of its account. The worktree may hold its partial work: look at it before you start over.`;
+          const meta: Record<string, unknown> = {
+            engine: kind,
+            account: name,
+            where,
+            cwd: sessionOpts.cwd,
+            ...(chosen.model ? { model: chosen.model } : {}),
+            ...(chosen.effort ? { effort: chosen.effort } : {}),
+          };
+          const attempt = async (options: SessionOptions) => {
+            const session = resumeId
+              ? await engine.resume(resumeId, { ...options, prompt: attemptPrompt })
+              : await engine.start({ ...options, prompt: attemptPrompt });
+            run.host.agentSession?.(full, session);
+            try {
+              return await drive(run, full, session, opts.output, meta);
+            } finally {
+              run.host.agentSession?.(full, null);
+            }
+          };
+          try {
+            try {
+              return { output: (await attempt(sessionOpts)) as AgentResult<S>, meta };
+            } catch (err) {
+              // A configured model the account cannot use: once more on the engine's default model.
+              if (!sessionOpts.model || !isModelRejected(err) || run.signal.aborted) throw err;
+              run.host.emit({
+                type: 'log',
+                runId: run.runId,
+                message: `${full}: ${kind} rejected model ${sessionOpts.model}; retrying on its default model`,
+              });
+              delete meta.model;
+              resumeId = null;
+              return { output: (await attempt({ ...sessionOpts, model: null })) as AgentResult<S>, meta };
+            }
+          } catch (err) {
+            if (!(err instanceof LimitReached) || run.signal.aborted) throw err;
+            const until =
+              err.limit.resetsAt && err.limit.resetsAt > Date.now()
+                ? err.limit.resetsAt
+                : Date.now() + (run.host.cooldownMinutes ?? DEFAULT_COOLDOWN_MINUTES) * 60_000;
+            earliest = earliest === null ? until : Math.min(earliest, until);
+            const what = err.limit.kind === 'rate' ? 'rate limit' : 'usage limit';
+            run.host.cooldown(kind as AccountKind, name, until, what);
+            stoppedBy = { account: name, what, until };
+            if (tried.length >= MAX_ATTEMPTS) throw new AccountsExhausted(kind, earliest);
+            want = null;
+          }
         }
       } finally {
         releaseSession();
@@ -338,6 +442,7 @@ async function drive(
   let lastText = '';
   let retries = 0;
   let outcome: { ok: true; value: unknown } | { ok: false; error: string } | null = null;
+  let limit: Extract<AgentEvent, { type: 'limit_reached' }> | null = null;
   try {
     for await (const event of session.events) {
       run.journal.agentEvent(key, event);
@@ -409,6 +514,11 @@ async function drive(
           }
           break;
         }
+        case 'limit_reached':
+          // The account is out of quota: the rest of this session is moot, the step goes on another account.
+          limit = event;
+          outcome = { ok: false, error: event.message };
+          break;
         case 'error':
           if (!event.retryable) outcome ??= { ok: false, error: event.message };
           break;
@@ -421,6 +531,7 @@ async function drive(
     await session.close();
   }
   if (run.signal.aborted) throw new WorkflowCancelled();
+  if (limit) throw new LimitReached(limit);
   if (!outcome) throw new Error('the agent exited before finishing its turn');
   if (!outcome.ok) throw new Error(outcome.error);
   return outcome.value;

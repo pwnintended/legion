@@ -203,6 +203,19 @@ async function dryRun(
         return { model: req.model, effort: req.effort };
       },
       git: simulatedGit(repo),
+      account: () => ({
+        account: {
+          kind: 'claude',
+          name: 'dry',
+          dir: null,
+          token: null,
+          env: {},
+          remote: false,
+          enabled: true,
+          source: 'implicit',
+        },
+      }),
+      cooldown() {},
       engine(kind) {
         let engine = engines.get(kind);
         if (!engine) {

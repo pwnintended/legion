@@ -1,6 +1,6 @@
 /**
  * `AgentEngine` for Claude Code: spawns the user's installed `claude` CLI (no Agent SDK). Auth is whatever
- * the profile's CLI account (`CLAUDE_CONFIG_DIR` in the profile env, else the CLI default) is logged in with;
+ * the account's CLI account (`CLAUDE_CONFIG_DIR` in the account env, else the CLI default) is logged in with;
  * Legion never reads or passes credentials.
  */
 import { execFile, spawn as nodeSpawn } from 'node:child_process';
@@ -9,7 +9,7 @@ import { accessSync, constants, mkdtempSync, rmSync, statSync, writeFileSync } f
 import { tmpdir } from 'node:os';
 import { delimiter, isAbsolute, join, resolve } from 'node:path';
 import { type Logger, silentLogger } from '../../util/log.ts';
-import type { AgentEngine, AgentSession, EngineInfo, EngineProfile, SessionOptions } from '../types.ts';
+import type { AgentEngine, AgentSession, EngineAccount, EngineInfo, SessionOptions } from '../types.ts';
 import { buildClaudeArgs, childEnv, mcpConfig, sessionMcp } from './args.ts';
 import { type ChildProcessLike, ClaudeSession, type SessionTiming } from './session.ts';
 
@@ -27,10 +27,10 @@ export type ExecFn = (
 
 export interface ClaudeEngineOptions {
   log?: Logger;
-  /** The environment the profile's env is laid over. Default: `process.env`. */
+  /** The environment the account's env is laid over. Default: `process.env`. */
   baseEnv?: Readonly<Record<string, string | undefined>>;
   /**
-   * Run the CLI on another machine (an Upstash Box, `remote/`): `spawn` starts it there. The profile's command is
+   * Run the CLI on another machine (an Upstash Box, `remote/`): `spawn` starts it there. The account's command is
    * used as is (no local lookup), MCP config goes inline (no local temp file), and the child gets only the session's
    * env: nothing of this machine's.
    */
@@ -106,7 +106,7 @@ const defaultExec: ExecFn = (command, args, options) =>
 
 export class ClaudeEngine implements AgentEngine {
   readonly kind = 'claude' as const;
-  readonly profile: EngineProfile;
+  readonly account: EngineAccount;
   private readonly baseEnv: Readonly<Record<string, string | undefined>>;
   private readonly spawn: SpawnFn;
   private readonly exec: ExecFn;
@@ -114,8 +114,8 @@ export class ClaudeEngine implements AgentEngine {
   private readonly timing: Partial<SessionTiming> | undefined;
   private readonly remote: ClaudeEngineOptions['remote'];
 
-  constructor(profile: EngineProfile, opts: ClaudeEngineOptions = {}) {
-    this.profile = profile;
+  constructor(account: EngineAccount, opts: ClaudeEngineOptions = {}) {
+    this.account = account;
     this.baseEnv = opts.baseEnv ?? process.env;
     this.remote = opts.remote;
     this.spawn = opts.remote?.spawn ?? opts.spawn ?? defaultSpawn;
@@ -124,23 +124,23 @@ export class ClaudeEngine implements AgentEngine {
     this.timing = opts.timing;
   }
 
-  /** `claude --version` + `claude auth status --json` under the profile's env; never starts a model turn. */
+  /** `claude --version` + `claude auth status --json` under the account's env; never starts a model turn. */
   async probe(): Promise<EngineInfo> {
     const base: EngineInfo = {
       kind: 'claude',
-      profile: this.profile.name,
+      account: this.account.name,
       installed: false,
       path: null,
       version: null,
       loggedIn: null,
       error: null,
     };
-    // The merged env carries the profile's `CLAUDE_CONFIG_DIR`, so `auth status` reports that account.
+    // The merged env carries the account's `CLAUDE_CONFIG_DIR`, so `auth status` reports that account.
     const env = this.env();
-    const path = resolveBinary(this.profile.command, env);
-    if (!path) return { ...base, error: `${this.profile.command} not found on PATH` };
+    const path = resolveBinary(this.account.command, env);
+    if (!path) return { ...base, error: `${this.account.command} not found on PATH` };
     const run = (args: string[]) =>
-      this.exec(path, [...this.profile.args, ...args], { env, timeoutMs: PROBE_TIMEOUT_MS });
+      this.exec(path, [...this.account.args, ...args], { env, timeoutMs: PROBE_TIMEOUT_MS });
     const version = await run(['--version']);
     if (version.code !== 0) {
       return { ...base, path, error: `claude --version failed: ${(version.stderr || version.stdout).trim()}` };
@@ -155,7 +155,7 @@ export class ClaudeEngine implements AgentEngine {
       loggedIn,
       error:
         loggedIn === false
-          ? `Claude Code is not logged in (profile ${this.profile.name}: run \`claude auth login\`)`
+          ? `Claude Code is not logged in (account ${this.account.name}: run \`claude auth login\`)`
           : null,
     };
   }
@@ -169,16 +169,16 @@ export class ClaudeEngine implements AgentEngine {
     return this.open(opts, sessionId, true);
   }
 
-  /** process env → profile env → session env, parent Claude Code session variables stripped. */
+  /** process env → account env → session env, parent Claude Code session variables stripped. */
   private env(session?: Readonly<Record<string, string>>): Record<string, string> {
-    return childEnv(this.baseEnv, this.profile.env, session);
+    return childEnv(this.baseEnv, this.account.env, session);
   }
 
   private async open(opts: SessionOptions, sessionId: string, resumed: boolean): Promise<ClaudeSession> {
     if (opts.signal?.aborted) throw new Error('session aborted before start');
-    const env = this.remote ? childEnv(this.profile.env, opts.env) : this.env(opts.env);
-    const binary = this.remote ? this.profile.command : resolveBinary(this.profile.command, env);
-    if (!binary) throw new Error(`${this.profile.command} not found on PATH`);
+    const env = this.remote ? childEnv(this.account.env, opts.env) : this.env(opts.env);
+    const binary = this.remote ? this.account.command : resolveBinary(this.account.command, env);
+    if (!binary) throw new Error(`${this.account.command} not found on PATH`);
 
     const mcp = sessionMcp(opts);
     let tempDir: string | null = null;
@@ -199,7 +199,7 @@ export class ClaudeEngine implements AgentEngine {
     }
 
     const args = [
-      ...this.profile.args,
+      ...this.account.args,
       ...buildClaudeArgs({
         opts,
         sessionId: resumed ? null : sessionId,

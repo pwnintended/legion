@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { permissionProfile } from '../types.ts';
 import { ClaudeEngine, parseAuthStatus, parseVersion, resolveBinary } from './engine.ts';
-import { claudeProfile } from './testing.ts';
+import { claudeAccount } from './testing.ts';
 
 let dir: string;
 beforeEach(() => {
@@ -54,15 +54,15 @@ describe('resolveBinary', () => {
 });
 
 describe('ClaudeEngine.probe', () => {
-  it("reports version and login state for the profile's account without starting a session", async () => {
+  it('reports version and login state for the account without starting a session', async () => {
     const bin = fakeClaude();
     const engine = new ClaudeEngine(
-      claudeProfile({ name: 'claude-1', args: ['--prefix'], env: { CLAUDE_CONFIG_DIR: join(dir, 'account') } }),
+      claudeAccount({ name: 'claude-1', args: ['--prefix'], env: { CLAUDE_CONFIG_DIR: join(dir, 'account') } }),
       { baseEnv: { PATH: bin, CLAUDECODE: '1' } },
     );
     expect(await engine.probe()).toEqual({
       kind: 'claude',
-      profile: 'claude-1',
+      account: 'claude-1',
       installed: true,
       path: join(bin, 'claude'),
       version: '2.1.289',
@@ -77,7 +77,7 @@ describe('ClaudeEngine.probe', () => {
 
   it('reports a logged-out account', async () => {
     const bin = fakeClaude();
-    const engine = new ClaudeEngine(claudeProfile({ env: { CLAUDE_CONFIG_DIR: join(dir, 'other') } }), {
+    const engine = new ClaudeEngine(claudeAccount({ env: { CLAUDE_CONFIG_DIR: join(dir, 'other') } }), {
       baseEnv: { PATH: bin },
     });
     const info = await engine.probe();
@@ -86,20 +86,20 @@ describe('ClaudeEngine.probe', () => {
   });
 
   it('reports a missing CLI', async () => {
-    const info = await new ClaudeEngine(claudeProfile(), { baseEnv: { PATH: '/nonexistent' } }).probe();
+    const info = await new ClaudeEngine(claudeAccount(), { baseEnv: { PATH: '/nonexistent' } }).probe();
     expect(info).toMatchObject({ installed: false, path: null, error: 'claude not found on PATH' });
   });
 
-  it("resolves the command on the profile env's PATH", async () => {
+  it("resolves the command on the account env's PATH", async () => {
     const bin = fakeClaude();
-    const info = await new ClaudeEngine(claudeProfile({ env: { PATH: bin } }), { baseEnv: {} }).probe();
+    const info = await new ClaudeEngine(claudeAccount({ env: { PATH: bin } }), { baseEnv: {} }).probe();
     expect(info.installed).toBe(true);
   });
 });
 
 describe('ClaudeEngine.start', () => {
   it('fails fast when the CLI is not on the session PATH', async () => {
-    const engine = new ClaudeEngine(claudeProfile(), {
+    const engine = new ClaudeEngine(claudeAccount(), {
       baseEnv: { PATH: '/nonexistent' },
       spawn: () => {
         throw new Error('unreachable');

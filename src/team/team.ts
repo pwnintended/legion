@@ -78,7 +78,8 @@ export interface LeadRecord {
   status: LeadStatus;
   createdAt: number;
   sessionId: string | null;
-  profile: string | null;
+  /** The engine account its conversation (`sessionId`) belongs to; kept until it hits a limit. */
+  account: string | null;
   plan: Plan | null;
   inbox: InboxItem[];
   lastReport: { kind: ReportKind; text: string; at: number } | null;
@@ -123,7 +124,13 @@ export interface TeamOptions {
   repo: string;
   runs: RunManager;
   config: () => Config;
-  engine: (kind: RealKind) => AgentEngine;
+  /**
+   * The engine of a kind on an account from the pool: `prefer` (the lead's own) when it is free, else the next one.
+   * Throws when all are at their limits.
+   */
+  engine: (kind: RealKind, req: { what: string; prefer: string | null }) => AgentEngine;
+  /** A lead's account hit its limit: cools it down and returns what to tell its parent. */
+  onLimit?: (engine: AgentEngine, event: Extract<AgentEvent, { type: 'limit_reached' }>) => string | null;
   /** MCP servers every lead gets besides its own Legion endpoint. */
   mcp: () => Readonly<Record<string, McpServer>>;
   /** A lead's system prompt. */
@@ -258,7 +265,7 @@ export class TeamManager extends EventEmitter<TeamEvents> {
       status: 'starting',
       createdAt: Date.now(),
       sessionId: null,
-      profile: null,
+      account: null,
       plan: null,
       inbox: [],
       lastReport: null,
@@ -663,11 +670,27 @@ export class TeamManager extends EventEmitter<TeamEvents> {
     if (record.engine !== this.leadModel(role).engine) {
       record.engine = this.leadModel(role).engine;
       record.sessionId = null;
-      record.profile = null;
+      record.account = null;
     }
     const assistant = new Assistant({
       cwd: record.workspace?.path ?? this.opts.repo,
-      engine: () => this.opts.engine(this.leadModel(role).engine),
+      engine: () =>
+        this.opts.engine(this.leadModel(role).engine, { what: `lead ${record.name}`, prefer: record.account }),
+      onLimit: (engine, event) => {
+        const note = this.opts.onLimit?.(engine, event) ?? null;
+        if (note) {
+          record.sessionId = null;
+          record.account = null;
+          this.save();
+          this.enqueue(record.parent, {
+            at: Date.now(),
+            from: 'legion',
+            kind: 'note',
+            text: `Lead ${record.name}: ${note}`,
+          });
+        }
+        return note;
+      },
       systemPrompt: () => this.opts.prompt(record, role),
       mcp: {
         ...this.opts.mcp(),
@@ -677,14 +700,15 @@ export class TeamManager extends EventEmitter<TeamEvents> {
       effort: () => this.leadModel(role).effort,
       approvals: role.approvals,
       sessionId: record.sessionId,
+      sessionAccount: record.account ? { kind: record.engine, name: record.account } : null,
       log: this.log,
     });
     const live: LiveLead = { record, role, assistant, token, lastActive: Date.now() };
     this.leads.set(record.name, live);
-    assistant.on('session', ({ id, profile }) => {
+    assistant.on('session', ({ id, account }) => {
       record.engine = this.leadModel(role).engine;
       record.sessionId = id;
-      record.profile = profile;
+      record.account = account;
       this.save();
     });
     assistant.on('busy', (busy) => {
@@ -732,6 +756,10 @@ export class TeamManager extends EventEmitter<TeamEvents> {
     this.rootPlan = state.root?.plan ?? null;
     this.rootInbox = state.root?.inbox ?? [];
     for (const record of state.leads ?? []) {
+      // Teams saved before the account pool kept the engine profile's name, which is the account's.
+      const legacy = record as LeadRecord & { profile?: string | null };
+      record.account ??= legacy.profile ?? null;
+      delete legacy.profile;
       let role: Role;
       try {
         role = findRole(this.opts.repo, record.role);

@@ -1,7 +1,7 @@
 /**
  * Live tests against the user's real `claude` CLI (haiku, tiny prompts), excluded from the default run:
  * run with `LEGION_LIVE=1` and a vitest config that includes `*.live.test.ts`.
- * `LEGION_CLAUDE_CONFIG_DIR=<dir>` picks the account (`CLAUDE_CONFIG_DIR` of the profile).
+ * `LEGION_CLAUDE_CONFIG_DIR=<dir>` picks the account (`CLAUDE_CONFIG_DIR` of the account).
  * Set `LEGION_RECORD_DIR=<dir>` to also record every transcript (raw material for `fixtures/`).
  */
 import { spawn as nodeSpawn } from 'node:child_process';
@@ -23,7 +23,7 @@ import {
   type SessionOptions,
 } from '../types.ts';
 import { ClaudeEngine, type SpawnFn } from './index.ts';
-import { CLARIFY_JSON_SCHEMA, ClarifyOutputSchema, claudeProfile, recordingSpawn } from './testing.ts';
+import { CLARIFY_JSON_SCHEMA, ClarifyOutputSchema, claudeAccount, recordingSpawn } from './testing.ts';
 
 const LIVE = process.env.LEGION_LIVE === '1';
 const RECORD_DIR = process.env.LEGION_RECORD_DIR ?? null;
@@ -46,7 +46,7 @@ function engine(recordAs?: string): ClaudeEngine {
     };
   }
   const configDir = process.env.LEGION_CLAUDE_CONFIG_DIR;
-  return new ClaudeEngine(claudeProfile({ env: configDir ? { CLAUDE_CONFIG_DIR: configDir } : {} }), { spawn });
+  return new ClaudeEngine(claudeAccount({ env: configDir ? { CLAUDE_CONFIG_DIR: configDir } : {} }), { spawn });
 }
 
 let dir: { path: string };
@@ -105,7 +105,7 @@ async function closeAndDrain(session: AgentSession): Promise<AgentEvent[]> {
 describe.skipIf(!LIVE)('Claude adapter (live)', () => {
   it('probes the installed CLI', async () => {
     const info = await engine().probe();
-    expect(info).toMatchObject({ kind: 'claude', profile: 'claude', installed: true, loggedIn: true, error: null });
+    expect(info).toMatchObject({ kind: 'claude', account: 'claude', installed: true, loggedIn: true, error: null });
     expect(info.version).toMatch(/^\d+\.\d+\.\d+/);
   });
 

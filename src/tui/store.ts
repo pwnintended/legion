@@ -28,7 +28,7 @@ export interface Banner {
   cwd: string;
   branch: string | null;
   isGitRepo: boolean;
-  profiles: Record<string, string>;
+  accounts: Record<string, string>;
   assistant: string;
   workflows: number;
   createdConfig: string | null;
@@ -192,7 +192,7 @@ export interface UiState {
   menu: 'config' | 'workflows' | null;
   /** Text to put in the prompt (a command for the user to finish); `n` changes each time. */
   seed: { text: string; n: number } | null;
-  profiles: Record<string, string>;
+  accounts: Record<string, string>;
   costUsd: number | null;
   /** The assistant session's tokens so far, and its output tokens when the current turn started. */
   tokens: { input: number; output: number; outputAtTurnStart: number } | null;
@@ -226,7 +226,7 @@ export class UiStore {
       interactions: [],
       menu: null,
       seed: null,
-      profiles: {},
+      accounts: {},
       costUsd: null,
       tokens: null,
       showTools: false,

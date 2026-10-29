@@ -40,13 +40,12 @@
  * Without any account for a kind, there is one called `default` that runs the plain binary (`claude`, `codex`)
  * with the user's own login. Legion picks an account for each agent session from the pool (`accounts/`).
  */
-import { spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { parse, stringify } from 'smol-toml';
 import { z } from 'zod';
-import type { EngineProfile, McpServer } from './engine/types.ts';
+import type { McpServer } from './engine/types.ts';
 import { configHome } from './workflow/loader.ts';
 
 /** Env an account must not set: they would route the CLI around its own login (proxy, or a token Legion manages). */
@@ -271,10 +270,6 @@ export const ConfigSchema = z.object({
 
 export type Config = z.infer<typeof ConfigSchema>;
 export type RealKind = 'claude' | 'codex';
-
-export interface ResolvedProfile extends EngineProfile {
-  setup: string | null;
-}
 
 export class ConfigError extends Error {}
 
@@ -696,35 +691,4 @@ export function mcpServers(config: Config): Record<string, McpServer> {
 
 export function expandHome(value: string): string {
   return value === '~' ? homedir() : value.startsWith('~/') ? join(homedir(), value.slice(2)) : value;
-}
-
-/** Temporary shim for the session code, until it takes accounts from the pool: the plain default account. */
-export function profileNames(_config: Config, _kind: RealKind): string[] {
-  return ['default'];
-}
-
-export function resolveProfile(config: Config, kind: RealKind, _name?: string): ResolvedProfile {
-  const section = config[kind];
-  return {
-    name: 'default',
-    kind,
-    command: expandHome(section.command ?? kind),
-    args: section.args,
-    env: {},
-    setup: null,
-  };
-}
-
-/**
- * Runs a profile's `setup` command through the user's login shell, with the terminal attached (it may print or
- * prompt). Called once per session per profile, before the UI takes over the terminal.
- */
-export function runSetup(profile: ResolvedProfile): { ok: boolean; code: number | null } {
-  if (!profile.setup) return { ok: true, code: 0 };
-  const shell = process.env.SHELL || '/bin/sh';
-  const result = spawnSync(shell, ['-lc', profile.setup], {
-    stdio: 'inherit',
-    env: { ...process.env, ...profile.env },
-  });
-  return { ok: result.status === 0, code: result.status };
 }

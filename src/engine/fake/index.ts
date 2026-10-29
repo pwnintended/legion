@@ -10,9 +10,9 @@ import type {
   AgentEvent,
   AgentSession,
   ApprovalDecision,
+  EngineAccount,
   EngineInfo,
   EngineKind,
-  EngineProfile,
   JsonSchema,
   QuestionAnswers,
   SessionOptions,
@@ -30,10 +30,14 @@ export interface FakeTurn {
   questions?: UserQuestion[];
   /** End the turn with an error. */
   error?: string;
+  /** End the turn because the account is out of quota (`limit_reached`, then the failing turn). */
+  limit?: { kind?: 'usage' | 'rate'; resetsAt?: number | null; message?: string };
 }
 
 export interface FakeCall {
   kind: EngineKind;
+  /** The account (engine instance) the session runs on. */
+  account: string;
   sessionId: string;
   resumed: boolean;
   opts: SessionOptions;
@@ -51,21 +55,21 @@ export const defaultScript: FakeScript = (call) =>
 
 export class FakeEngine implements AgentEngine {
   readonly kind: EngineKind;
-  readonly profile: EngineProfile;
+  readonly account: EngineAccount;
   readonly calls: FakeCall[] = [];
   /** Decides the turns of sessions started from now on (tests swap it). */
   script: FakeScript;
 
-  constructor(kind: EngineKind = 'fake', script: FakeScript = defaultScript, profileName = 'fake') {
+  constructor(kind: EngineKind = 'fake', script: FakeScript = defaultScript, accountName = 'fake') {
     this.kind = kind;
     this.script = script;
-    this.profile = { name: profileName, kind, command: 'fake', args: [], env: {} };
+    this.account = { name: accountName, kind, command: 'fake', args: [], env: {} };
   }
 
   async probe(): Promise<EngineInfo> {
     return {
       kind: this.kind,
-      profile: this.profile.name,
+      account: this.account.name,
       installed: true,
       path: null,
       version: 'fake',
@@ -83,7 +87,15 @@ export class FakeEngine implements AgentEngine {
   }
 
   private open(sessionId: string, resumed: boolean, opts: SessionOptions): AgentSession {
-    const call: FakeCall = { kind: this.kind, sessionId, resumed, opts, prompts: [opts.prompt], answers: [] };
+    const call: FakeCall = {
+      kind: this.kind,
+      account: this.account.name,
+      sessionId,
+      resumed,
+      opts,
+      prompts: [opts.prompt],
+      answers: [],
+    };
     this.calls.push(call);
     return new FakeSession(this.kind, call, this.script);
   }
@@ -141,6 +153,18 @@ class FakeSession implements AgentSession {
       });
       if (this.closed) return;
       this.call.answers.push(answered);
+    }
+    if (turn.limit) {
+      const message = turn.limit.message ?? "You've hit your usage limit";
+      this.queue.push({
+        type: 'limit_reached',
+        engine: this.engine,
+        kind: turn.limit.kind ?? 'usage',
+        resetsAt: turn.limit.resetsAt ?? null,
+        message,
+      });
+      this.queue.push({ type: 'turn_complete', structuredOutput: null, isError: true, reason: message });
+      return;
     }
     if (turn.error) {
       this.queue.push({ type: 'turn_complete', structuredOutput: null, isError: true, reason: turn.error });

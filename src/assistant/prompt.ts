@@ -22,7 +22,7 @@ export default workflow(
 
 agent(key, {
   prompt: string,
-  engine?: 'claude' | 'codex',      // default claude. The session decides which account (profile) that is.
+  engine?: 'claude' | 'codex',      // default claude. Legion picks the account from its pool.
   mode?: 'read' | 'write',          // read = may not change files (planners, reviewers). default write
   cwd?: string,                      // e.g. a worktree's path; default the repo root
   output?: zodSchema,                // structured result, validated (one corrective retry). Without it: final text (string)
@@ -62,7 +62,6 @@ git.remove(wt)
 
 export interface PromptContext {
   repo: string;
-  profiles: Record<string, string>;
 }
 
 export function assistantSystemPrompt(opts: PromptContext): string {
@@ -178,9 +177,7 @@ Where they live (first match by name wins):
 2. ${userWorkflowDir()}/<name>.ts — the user's own
 3. builtin, shipped with Legion (TypeScript sources: ${builtinSourceDir()})
 
-The session's engine accounts: ${Object.entries(opts.profiles)
-    .map(([k, v]) => `${k} → profile "${v}"`)
-    .join(', ')}. Workflows only say \`engine: 'claude'\` or \`'codex'\`; never put profile names in them.
+Legion keeps a pool of accounts per engine and picks one for every agent session; an account that hits its usage limit rests until its reset and later steps use another. Workflows only say \`engine: 'claude'\` or \`'codex'\`; never put account names in them.
 
 ## Writing or changing a workflow
 - Read an existing one first (read_workflow; the builtin \`feature\` is the most complete example) and follow its style.

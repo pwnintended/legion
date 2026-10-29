@@ -192,7 +192,7 @@ describe('childEnv', () => {
     ).toEqual({ PATH: '/bin', ANTHROPIC_API_KEY: 'k', CLAUDE_CODE_USE_BEDROCK: '1' });
   });
 
-  it('lays process env, profile env and session env over each other in order', () => {
+  it('lays process env, account env and session env over each other in order', () => {
     expect(
       childEnv(
         { PATH: '/bin', HOME: '/h', CLAUDECODE: '1' },

@@ -19,7 +19,7 @@ import type {
   AgentEngine,
   AgentEvent,
   AgentSession,
-  EngineProfile,
+  EngineAccount,
   McpServer,
   SessionOptions,
 } from '../engine/types.ts';
@@ -65,9 +65,6 @@ export interface Need extends NeedRequest {
   at: number;
 }
 
-/** Profile names get this suffix in remote mode, so a session is only resumed where it was started. */
-export const REMOTE_PROFILE_SUFFIX = '@box';
-
 export class Remote {
   private readonly opts: RemoteOptions;
   private readonly log: Logger;
@@ -96,10 +93,13 @@ export class Remote {
     const on = () => !host.dryRun && (boxRun || this.opts.enabled());
     return {
       ...host,
-      engine: (kind) => {
-        const local = host.engine(kind);
+      engine: (kind, account) => {
+        const local = host.engine(kind, account);
         return kind === 'fake' || !on() ? local : this.engine(local, kind, run.id, boxRun);
       },
+      // Until boxes have accounts of their own, a step in a box takes its account from the same pool.
+      account: (kind, req) => host.account(kind, { ...req, where: 'local' }),
+      where: (cwd) => (on() && this.owns(run.id, cwd) ? 'box' : 'local'),
       sh: (command, opts) =>
         on() && this.owns(run.id, opts.cwd) ? this.sh(run.id, command, opts) : host.sh(command, opts),
       agentSession: (step, session) => {
@@ -151,13 +151,13 @@ export class Remote {
   }
 
   private engine(local: AgentEngine, kind: 'claude' | 'codex', runId: string, boxRun: boolean): AgentEngine {
-    const profile: EngineProfile = { ...local.profile, name: `${local.profile.name}${REMOTE_PROFILE_SUFFIX}` };
+    const account: EngineAccount = local.account;
     const open = async (opts: SessionOptions, resumeId: string | null): Promise<AgentSession> => {
       const { ws, cwd } = await this.workspace(runId, opts.cwd);
       await this.upToDate(ws);
       await ws.push();
       await ws.ensureCli(kind);
-      const engine = this.boxEngine(ws, kind, profile.name);
+      const engine = this.boxEngine(ws, kind, account.name);
       const boxOpts: SessionOptions = {
         ...opts,
         cwd,
@@ -176,7 +176,7 @@ export class Remote {
     };
     return {
       kind,
-      profile,
+      account,
       probe: () => local.probe(),
       start: (opts) => (this.owns(runId, opts.cwd) ? open(opts, null) : local.start(opts)),
       resume: (id, opts) => (this.owns(runId, opts.cwd) ? open(opts, id) : local.resume(id, opts)),
@@ -258,12 +258,12 @@ export class Remote {
 
   /** An engine whose processes run in `ws`'s box, on the CLI installed there. */
   private boxEngine(ws: Workspace, kind: 'claude' | 'codex', name: string): AgentEngine {
-    const profile: EngineProfile = { name, kind, command: kind, args: [], env: {} };
+    const account: EngineAccount = { name, kind, command: kind, args: [], env: {} };
     const spawn = (command: string, args: readonly string[], o: { cwd: string; env: Record<string, string> }) =>
       new RemoteChild((io) => ws.start([command, ...args], { cwd: o.cwd, env: o.env, ...io }));
     return kind === 'claude'
-      ? new ClaudeEngine(profile, { log: this.log, remote: { spawn, tempDirs: ['/tmp'] } })
-      : new CodexEngine(profile, { log: this.log, remote: { spawn } });
+      ? new ClaudeEngine(account, { log: this.log, remote: { spawn, tempDirs: ['/tmp'] } })
+      : new CodexEngine(account, { log: this.log, remote: { spawn } });
   }
 
   private async sh(runId: string, command: string, opts: ShellOptions): Promise<ShellResult> {

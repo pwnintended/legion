@@ -5,14 +5,14 @@ stdio), one child process per session. Verified live against codex-cli 0.160.0; 
 and MCP sessions re-verified against 0.164.0.
 
 ```ts
-const codex = new CodexEngine(profile, { log, home }); // home default: ~/.legion/codex-home/<profile.name>
+const codex = new CodexEngine(account, { log, home }); // home default: ~/.legion/codex-home/<account.name>
 await codex.probe(); // installed, version, loggedIn (no turn)
 const s = await codex.start(opts); // resolves after initialize + thread/start + turn/start
 await codex.resume(threadId, opts); // thread/resume (same home!) + turn/start(opts.prompt)
 ```
 
-The binary is `profile.command`, spawned directly (no shell) with `profile.args` before `app-server`. Child
-env = `process.env`, then `profile.env`, then `opts.env`, then `CODEX_HOME` and the MCP token vars.
+The binary is `account.command`, spawned directly (no shell) with `account.args` before `app-server`. Child
+env = `process.env`, then `account.env`, then `opts.env`, then `CODEX_HOME` and the MCP token vars.
 
 | File           |                                                                                                  |
 | -------------- | ------------------------------------------------------------------------------------------------ |
@@ -61,9 +61,9 @@ env = `process.env`, then `profile.env`, then `opts.env`, then `CODEX_HOME` and 
 ## Config isolation
 
 `codex app-server` has no `--ignore-user-config`/`--ignore-rules` (those are `exec` flags). Legion runs it
-with a **Legion-owned `CODEX_HOME`** (one per profile) whose only content from the user is `auth.json`, as a
+with a **Legion-owned `CODEX_HOME`** (one per account) whose only content from the user is `auth.json`, as a
 **symlink** to `~/.codex/auth.json` (or `$CODEX_HOME/auth.json` when the merged env sets `CODEX_HOME`; that is
-how a profile points at another account). Credentials are never read or copied. Evidence:
+how an account points at another account). Credentials are never read or copied. Evidence:
 
 - Login works: `account/read` → `chatgpt`/`pro` and all live turns ran with the user's ChatGPT login.
 - Token refresh: codex writes auth.json in place — a `codex login --with-api-key` with a dummy key in a

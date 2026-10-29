@@ -8,7 +8,7 @@ import { type FixtureRepo, makeRepo, writeFiles } from '../git/test-helpers.ts';
 import type { RunHost } from '../workflow/host.ts';
 import { runShell } from '../workflow/shell.ts';
 import { readImage } from './image.ts';
-import { boxName, type Need, REMOTE_PROFILE_SUFFIX, Remote, runLabel } from './remote.ts';
+import { boxName, type Need, Remote, runLabel } from './remote.ts';
 import { type LocalBox, LocalBoxes } from './testing.ts';
 
 const RUN = '20261029-0007-ab12';
@@ -126,7 +126,7 @@ describe('remote mode', () => {
 
     expect(localShells).toEqual(['true', 'echo local > local.txt']);
     expect(boxes.boxes.size).toBe(0);
-    expect(host.engine('claude').profile.name).not.toContain(REMOTE_PROFILE_SUFFIX);
+    expect(host.where?.(repo.path)).toBe('local');
   });
 
   it('runs `setup` once in a new box, with the prelude before every command', async () => {
@@ -164,7 +164,7 @@ describe('remote mode', () => {
   it('runs an agent in the box and has its edits here once the session is closed', async () => {
     const box = (await boxes.open(boxName(RUN, wt), ['legion', runLabel(RUN)], null)).box;
     installFakeClaude(box);
-    const engine = host.engine('claude');
+    const engine = host.engine('claude', 'default');
     const step = 'T1/code';
 
     const session = await engine.start({
@@ -180,7 +180,7 @@ describe('remote mode', () => {
     }
     await session.close();
 
-    expect(engine.profile.name).toMatch(new RegExp(`${REMOTE_PROFILE_SUFFIX}$`));
+    expect(host.where?.(wt)).toBe('box');
     expect(events.some((e) => e.type === 'message' && e.text === 'OK')).toBe(true);
     expect(read(join(wt, 'agent.txt'))).toBe('from the box\n');
     const argv = box.started.find((a) => a.includes('claude'));

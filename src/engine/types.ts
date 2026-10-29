@@ -14,11 +14,11 @@ export type Effort = (typeof EFFORTS)[number];
 export type JsonSchema = { readonly [key: string]: unknown };
 
 /**
- * How to launch an engine's CLI: the session's profile for that kind (`config.ts`). The binary is spawned
- * directly (no shell), with `env` laid over the process environment.
+ * How to launch an engine's CLI for one account of the pool (`accounts/`). The binary is spawned
+ * directly (no shell), with `env` (the account's config dir / token env) laid over the process environment.
  */
-export interface EngineProfile {
-  /** Profile name as configured, e.g. "claude-1". Recorded in run journals so resumes use the same account. */
+export interface EngineAccount {
+  /** Account name, e.g. "work". Recorded in run journals so resumes use the same account. */
   name: string;
   kind: EngineKind;
   /** Binary name or path, e.g. "claude". */
@@ -30,7 +30,7 @@ export interface EngineProfile {
 
 export interface EngineInfo {
   kind: EngineKind;
-  profile: string;
+  account: string;
   installed: boolean;
   /** Absolute path of the resolved binary. */
   path: string | null;
@@ -99,7 +99,7 @@ export interface SessionOptions {
   outputSchema?: JsonSchema | null;
   /** MCP servers by name (e.g. `legion` for the assistant's workflow tools). */
   mcp?: Readonly<Record<string, McpServer>> | null;
-  /** Extra environment for the child process, laid over the profile's env. */
+  /** Extra environment for the child process, laid over the account's env. */
   env?: Readonly<Record<string, string>>;
   /** Extra readable (and, for workspace_write, writable) directories. */
   addDirs?: readonly string[];
@@ -204,7 +204,7 @@ export type QuestionAnswers = Record<string, string[]>;
 
 export interface AgentEngine {
   readonly kind: EngineKind;
-  readonly profile: EngineProfile;
+  readonly account: EngineAccount;
   /** Installed? version? logged in? Must not start a model turn. */
   probe(): Promise<EngineInfo>;
   /** Start a new session. Resolves once the process is spawned (not when the turn ends). */
