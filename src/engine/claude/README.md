@@ -7,7 +7,7 @@ Claude Code CLI adapter: implements `AgentEngine` (`../types.ts`) by spawning th
 translating stream-json + control-protocol frames into normalized `AgentEvent`s. No Agent SDK;
 the control-protocol shapes follow the published `@anthropic-ai/claude-agent-sdk` 0.3.292 sources.
 
-- `args.ts`: pure flag builder: model/effort/system prompt/`--json-schema`, permission profile → flags, MCP config, config isolation, child env (process → account → session, parent-session vars stripped)
+- `args.ts`: pure flag builder: model/effort/system prompt/`--json-schema`, permission mode → flags, MCP config, config isolation, child env (process → account → session, parent-session vars stripped)
 - `parser.ts`: pure stream-json → `AgentEvent` normalizer (+ control frames as `ParserOutput`)
 - `protocol.ts`: stdin messages: user turns, interrupt, `can_use_tool` answers
 - `read-only-policy.ts`: host-side answers for read-only sessions' `can_use_tool` requests: read tools, version/help probes and plain reads pass (chains parsed strictly), the rest is denied with a message; no human involved. `READ_ONLY_GUIDE` states the rules in the system prompt

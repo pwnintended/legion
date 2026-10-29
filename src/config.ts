@@ -478,7 +478,7 @@ export function loadConfig(repo: string, cwd: string = repo): Config {
 /**
  * Writes a commented `.legion/config.toml` at the project root when no project config exists in `cwd` or any
  * directory above it. The active values are the ones in effect now (from the user config or the defaults), so
- * creating the file changes nothing; profiles stay in the user config, since they are per machine.
+ * creating the file changes nothing; accounts stay in the user config, since they are per machine.
  * Returns the path written, or null.
  */
 export function ensureProjectConfig(repo: string, cwd: string, config: Config): string | null {

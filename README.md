@@ -127,9 +127,10 @@ On Claude, for example, `hard` is Opus, `medium` is Sonnet and `easy` is Haiku. 
 **Which agent does which job.** Open `/workflows`, pick a workflow and give its steps a tier. You can also move a
 step to the other engine, say if you'd like Codex to do all the reviewing.
 
-**Which accounts they use.** If you have more than one Claude or Codex account, add each one as a *profile*,
-then switch with `/claude` or `/codex`. `/provider` moves everything onto Claude or onto OpenAI when one of them is
-out of usage.
+**Which accounts they use.** Legion keeps a pool of your Claude and Codex accounts and picks one for every agent.
+Add each with `legion login claude work` (or `/login claude work` in a session); it runs the official `claude auth login`
+for that account. `/accounts` shows them, with logins and cooldowns. When one runs out of usage, it rests until it
+resets and the next step moves to another. `/provider` moves everything onto Claude or onto OpenAI.
 
 **How much they may do on their own.** By default agents run commands without asking, so they can work fast. Set
 permissions to `ask` in `/config` and they check with you first.
@@ -161,11 +162,11 @@ the agents are allowed to run commands without asking each time. That's what let
 first, set `approvals = "ask"` (see [Configuration](docs/configuration.md)).
 
 **I have two Claude accounts. Can I switch between them?**
-Yes. Set them up once as *profiles*, then start with `legion --claude claude-2`, or switch inside a session with
-`/claude claude-2`. The [Configuration](docs/configuration.md) page shows how.
+Yes, and Legion uses both. Log each in once with `legion login claude work` and `legion login claude home`, then
+check them with `/accounts`. Legion picks an account for each agent. The [Configuration](docs/configuration.md) page shows how.
 
 **One of my accounts ran out of usage.**
-Type `/provider claude` or `/provider openai` to move everything onto the other one. `/provider mixed` switches back.
+Legion rests that account until its limit resets and uses your other accounts meanwhile. To move everything to the other engine, type `/provider claude` or `/provider openai`. `/provider mixed` switches back.
 
 **My laptop can't keep up with several agents building at once.**
 Turn on [remote mode](docs/remote.md), and the heavy lifting runs on cloud machines instead.
