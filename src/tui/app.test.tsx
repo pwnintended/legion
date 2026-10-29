@@ -66,7 +66,7 @@ afterEach(async () => {
 });
 
 describe('App', () => {
-  it('opens a fake sub agent from Ctrl+T and returns to the conversation', async () => {
+  it('opens a fake sub agent with Down and Enter and returns to the assistant with Esc', async () => {
     const engine = session.engine('claude') as FakeEngine;
     engine.script = (call, turn) => ({
       ...defaultScript(call, turn),
@@ -79,7 +79,13 @@ describe('App', () => {
     await tick();
     ui.stdin.write('\r');
     await until(() => controller.store.get().subagents.some((s) => s.status === 'done'));
-    ui.stdin.write('\u0014');
+    // Up and Down still traverse history; a further Down on the empty prompt opens agents.
+    ui.stdin.write('\u001B[A');
+    await tick();
+    ui.stdin.write('\u001B[B');
+    await tick();
+    expect(controller.store.get().menu).toBeNull();
+    ui.stdin.write('\u001B[B');
     await until(() => ui.lastFrame()?.includes('Agents') ?? false);
     expect(ui.lastFrame()).toContain('sub agent · Explore · Find the entry point');
     expect(ui.lastFrame()).toContain('talk');
@@ -140,6 +146,9 @@ describe('App', () => {
     await tick();
     ui.stdin.write('\r');
     await until(() => ui.lastFrame()?.includes('Talking to assets') ?? false);
+    ui.stdin.write('\u001B');
+    await until(() => controller.store.get().target === 'orchestrator');
+    expect(controller.store.get().view).toBeNull();
     ui.unmount();
   });
 
