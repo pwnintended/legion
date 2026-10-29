@@ -154,12 +154,12 @@ export function PromptInput(props: PromptInputProps) {
           setSelected((n) => (Math.min(n, menu.length - 1) + dir + menu.length) % menu.length);
           return;
         }
-        if (!value && props.onNavigate?.(dir)) return;
+        if (!value && historyIndex.current === null && props.onNavigate?.(dir)) return;
         const h = history.current;
         if (h.length === 0) return;
         let i = historyIndex.current ?? h.length;
         i = dir < 0 ? Math.max(0, i - 1) : Math.min(h.length, i + 1);
-        historyIndex.current = i;
+        historyIndex.current = i === h.length ? null : i;
         const next = h[i] ?? '';
         setValue(next);
         setCursor(next.length);

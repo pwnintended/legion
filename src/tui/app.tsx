@@ -313,6 +313,10 @@ export function App({
             onSubmit={submit}
             onEmptyKey={hotkey}
             onNavigate={(dir) => {
+              if (dir === 1 && !state.view && !answering) {
+                controller.openAgents();
+                return true;
+              }
               if (state.view || (!ask && !question) || !answering || choices.length === 0) return false;
               setOption((n) => (n + dir + choices.length) % choices.length);
               return true;
@@ -330,7 +334,7 @@ export function App({
             onPasteFiles={typing ? undefined : (paths) => void controller.attachImages(paths)}
             onEmptyBackspace={() => controller.detachLast()}
             onEscape={() => {
-              if (state.view) return controller.closeView();
+              if (state.view || state.target !== 'orchestrator') return controller.openAgent({ kind: 'orchestrator' });
               if (shortcuts) return setShortcuts(false);
               // Esc declines an agent's questions (it is told the user would not answer).
               if (head && question && mode !== 'chat') controller.answerQuestions(head, null);
@@ -542,7 +546,8 @@ function Shortcuts({ width }: { width: number }) {
     [
       ['enter', 'send'],
       ['shift+enter', 'new line'],
-      ['↑↓', 'history'],
+      ['↑', 'history'],
+      ['↓', 'agents (empty prompt)'],
       ['tab', 'complete a command'],
     ],
     [
