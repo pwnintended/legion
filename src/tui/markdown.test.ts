@@ -1,6 +1,8 @@
+import { render } from 'ink-testing-library';
+import { createElement } from 'react';
 import { describe, expect, it } from 'vitest';
 import { matchCommands } from './input.tsx';
-import { parseBlocks, segments, wrapSegments } from './markdown.tsx';
+import { Inline, parseBlocks, segments, wrapSegments } from './markdown.tsx';
 import { formatValue } from './store.ts';
 
 describe('parseBlocks', () => {
@@ -49,6 +51,32 @@ describe('wrapSegments', () => {
 
   it('keeps leading spaces of the text', () => {
     expect(wrap('  x y', 10)).toEqual(['  x y']);
+  });
+
+  it('keeps link targets across wrapped labels and bare URLs', () => {
+    for (const text of ['[read the docs](https://example.com/docs)', 'https://example.com/docs']) {
+      const lines = wrapSegments(segments(text), 8);
+      expect(lines.length).toBeGreaterThan(1);
+      for (const seg of lines.flat()) expect(seg.href).toBe('https://example.com/docs');
+    }
+  });
+
+  it('turns absolute file targets into file URLs', () => {
+    expect(segments('[source](/tmp/source.ts)')[0]?.href).toBe('file:///tmp/source.ts');
+  });
+
+  it('renders terminal hyperlinks on every wrapped line', () => {
+    const ui = render(createElement(Inline, { text: '[read the docs](https://example.com/docs)', width: 8 }));
+    try {
+      const lines = ui.lastFrame()?.split('\n') ?? [];
+      expect(lines.length).toBeGreaterThan(1);
+      for (const line of lines) {
+        expect(line).toContain('\u001B]8;;https://example.com/docs\u001B\\');
+        expect(line).toContain('\u001B]8;;\u001B\\');
+      }
+    } finally {
+      ui.unmount();
+    }
   });
 });
 

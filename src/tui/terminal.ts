@@ -1,5 +1,6 @@
 /**
- * The terminal while Legion owns it: mouse reporting on, so the wheel scrolls the conversation. Ink drops mouse
+ * The terminal while Legion owns it: native selection by default; LEGION_MOUSE=1 captures the mouse so the wheel
+ * scrolls the conversation. Ink drops mouse
  * reports before `useInput` sees them, so it reads from {@link Terminal.stdin}, a copy of the real stdin with the
  * reports taken out; wheel turns go to {@link Terminal.onWheel} instead.
  */
@@ -7,7 +8,7 @@ import { PassThrough } from 'node:stream';
 
 /** What the UI needs of the terminal: the mouse mode around a child process, and the wheel. */
 export interface TerminalModes {
-  /** Turns mouse reporting on (Legion has the screen). */
+  /** Turns mouse reporting on if opted in (Legion has the screen). */
   enter(): void;
   /** Turns it off (an editor or other child has the screen, or Legion is leaving). */
   leave(): void;
@@ -38,10 +39,16 @@ export class Terminal implements TerminalModes {
   readonly stdin: PassThrough & { isTTY: true; setRawMode(on: boolean): void; ref(): void; unref(): void };
   private readonly listeners = new Set<(direction: -1 | 1) => void>();
   private readonly output: NodeJS.WriteStream;
+  private readonly mouse: boolean;
   private on = false;
 
-  constructor(input: NodeJS.ReadStream = process.stdin, output: NodeJS.WriteStream = process.stdout) {
+  constructor(
+    input: NodeJS.ReadStream = process.stdin,
+    output: NodeJS.WriteStream = process.stdout,
+    mouse = process.env.LEGION_MOUSE === '1',
+  ) {
     this.output = output;
+    this.mouse = mouse;
     input.setEncoding('utf8');
     let reading = false;
     const onData = (chunk: string) => {
@@ -67,7 +74,7 @@ export class Terminal implements TerminalModes {
   }
 
   enter(): void {
-    if (this.on) return;
+    if (this.on || !this.mouse) return;
     this.on = true;
     this.output.write(MOUSE_ON);
   }

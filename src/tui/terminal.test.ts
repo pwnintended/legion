@@ -24,7 +24,7 @@ describe('Terminal', () => {
     }) as unknown as NodeJS.ReadStream;
     const written: string[] = [];
     const output = { write: (s: string) => written.push(s) } as unknown as NodeJS.WriteStream;
-    const terminal = new Terminal(input, output);
+    const terminal = new Terminal(input, output, true);
     const wheel: number[] = [];
     terminal.onWheel((d) => wheel.push(d));
 
@@ -43,5 +43,15 @@ describe('Terminal', () => {
     terminal.enter();
     terminal.leave();
     expect(written).toEqual(['\u001B[?1000h\u001B[?1006h', '\u001B[?1006l\u001B[?1000l']);
+  });
+
+  it('leaves mouse gestures to the terminal when mouse capture is off', () => {
+    const input = new PassThrough() as unknown as NodeJS.ReadStream;
+    const written: string[] = [];
+    const output = { write: (s: string) => written.push(s) } as unknown as NodeJS.WriteStream;
+    const terminal = new Terminal(input, output, false);
+    terminal.enter();
+    terminal.leave();
+    expect(written).toEqual([]);
   });
 });
