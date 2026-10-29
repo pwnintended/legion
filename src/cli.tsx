@@ -2,10 +2,24 @@
  * `legion` — a single-session terminal agent for writing and running multi-agent workflows in the current
  * directory, over the Claude Code and Codex CLIs you already have.
  */
+
+import { spawnSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { createInterface } from 'node:readline/promises';
 import { parseArgs } from 'node:util';
 import { render } from 'ink';
+import type { AccountKind } from './accounts/index.ts';
+import {
+  describeAccount,
+  isAccountKind,
+  type LoginSpec,
+  loginSpec,
+  migrateConfigFile,
+  nextAccountName,
+  prepareLoginDir,
+  probeAccount,
+  tokenHint,
+} from './accounts/login.ts';
 import { describeWorkflows } from './assistant/mcp.ts';
 import { ConfigError, userConfigPath } from './config.ts';
 import { Session } from './session.ts';
@@ -28,6 +42,8 @@ const USAGE = `Usage:
   legion runs                     list recent runs
   legion validate <workflow>      type-check and dry-run a workflow
   legion eject <workflow> [--as <name>]    copy a workflow into .legion/workflows to edit it
+  legion login <claude|codex> [name] [--token]   log an account in with the official CLI (claude: --token for setup-token)
+  legion accounts [reset [kind[/name]]|migrate]   list accounts and cooldowns; clear cooldowns; convert old profiles
   legion doctor                   check engines, accounts and configuration
 
 Options:
@@ -45,6 +61,7 @@ async function main(): Promise<number> {
       local: { type: 'boolean' },
       input: { type: 'string' },
       as: { type: 'string' },
+      token: { type: 'boolean' },
       help: { type: 'boolean', short: 'h' },
     },
   });
@@ -102,6 +119,74 @@ async function main(): Promise<number> {
         throw new UsageError(err instanceof Error ? err.message : String(err));
       }
       return 0;
+    }
+    case 'login': {
+      const kind = args[0];
+      if (!isAccountKind(kind)) throw new UsageError('legion login <claude|codex> [name] [--token]');
+      const session = await open();
+      try {
+        const name =
+          args[1] ??
+          nextAccountName(
+            kind,
+            session.listAccounts(kind).map((a) => a.name),
+          );
+        let spec: LoginSpec;
+        try {
+          spec = loginSpec(session.config, kind, name, {
+            existing: session.listAccounts(kind).find((a) => a.name === name),
+            token: values.token ?? false,
+            legionHome: session.legionHome,
+          });
+        } catch (err) {
+          throw new UsageError(err instanceof Error ? err.message : String(err));
+        }
+        prepareLoginDir(spec);
+        console.log(`Logging in ${kind} account "${name}" (${spec.dir}): ${spec.command} ${spec.args.join(' ')}`);
+        const r = spawnSync(spec.command, spec.args, { stdio: 'inherit', env: spec.env });
+        if (r.error || r.status !== 0) {
+          console.error(
+            r.error ? `Could not run ${spec.command}: ${r.error.message}` : `${spec.command} exited with ${r.status}`,
+          );
+          return 1;
+        }
+        console.log(values.token ? tokenHint(spec) : `Account "${name}" is ready; Legion picks it up automatically.`);
+        return 0;
+      } finally {
+        await session.close();
+      }
+    }
+    case 'accounts': {
+      if (args[0] === 'migrate') {
+        const { changed, notes } = migrateConfigFile(userConfigPath());
+        console.log(
+          changed
+            ? `Rewrote ${userConfigPath()} (backup: ${userConfigPath()}.bak)\n${notes.join('\n')}`
+            : 'Nothing to migrate.',
+        );
+        return 0;
+      }
+      const session = await open();
+      try {
+        if (args[0] === 'reset') {
+          const [kind, name] = (args[1] ?? '').split('/');
+          if (kind && !isAccountKind(kind)) throw new UsageError('legion accounts reset [claude|codex][/name]');
+          for (const k of kind ? [kind as AccountKind] : (['claude', 'codex'] as const))
+            session.accounts.clear(k, name || undefined);
+          console.log('Cooldowns cleared.');
+          return 0;
+        }
+        if (args[0]) throw new UsageError('legion accounts [reset [kind[/name]]|migrate]');
+        for (const kind of ['claude', 'codex'] as const) {
+          for (const row of session.accounts.status(kind)) {
+            const info = await probeAccount(() => session.engine(kind, row.account.name).probe());
+            console.log(describeAccount({ ...row, ...info }));
+          }
+        }
+        return 0;
+      } finally {
+        await session.close();
+      }
     }
     case 'doctor':
       return doctor(await open());

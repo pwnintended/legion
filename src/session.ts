@@ -65,7 +65,7 @@ export class Session {
   readonly team: TeamManager;
   /** Which account each engine kind runs on, and when it is out of quota. */
   readonly accounts: AccountPool;
-  private readonly legionHome: string;
+  readonly legionHome: string;
   /** The account the assistant's conversation is on (kept until it hits a limit). */
   private assistantAccount: string | null;
   private readonly engines = new Map<string, AgentEngine>();

@@ -7,6 +7,16 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join, relative } from 'node:path';
 import { z } from 'zod';
+import type { AccountKind } from '../accounts/index.ts';
+import {
+  describeAccount,
+  isAccountKind,
+  loginSpec,
+  nextAccountName,
+  prepareLoginDir,
+  probeAccount,
+  tokenHint,
+} from '../accounts/login.ts';
 import { describeWorkflows } from '../assistant/mcp.ts';
 import {
   type ConfigLayer,
@@ -71,6 +81,18 @@ export const COMMANDS: readonly Command[] = [
   { group: 'Runs', name: 'resume', args: '[run]', description: 'continue a stopped run' },
   { group: 'Runs', name: 'cancel', args: '[run]', description: 'stop an active run' },
   { group: 'Runs', name: 'takeover', args: '<run> <step>', description: "steer an agent's session in its own CLI" },
+  {
+    group: 'Session',
+    name: 'accounts',
+    args: '[reset [kind[/name]]]',
+    description: 'the account pool: login status, cooldowns, last use',
+  },
+  {
+    group: 'Session',
+    name: 'login',
+    args: '<claude|codex> [name] [--token]',
+    description: 'log an account in with the official CLI',
+  },
   { group: 'Session', name: 'config', args: '', description: 'settings: change them in a menu' },
   {
     group: 'Session',
@@ -802,6 +824,12 @@ export class Controller {
           this.store.info(formatReport(await validateWorkflow(found.file, { repo: this.session.repo })));
           return;
         }
+        case 'accounts':
+          await this.accountsCommand(rest[0], rest[1]);
+          return;
+        case 'login':
+          await this.login(rest);
+          return;
         case 'config':
           await this.config(rest[0], rest[1]);
           return;
@@ -820,6 +848,60 @@ export class Controller {
     } catch (err) {
       this.store.error(err instanceof Error ? err.message : String(err));
     }
+  }
+
+  private async accountsCommand(sub: string | undefined, target: string | undefined): Promise<void> {
+    if (sub === 'reset') {
+      const [kind, name] = (target ?? '').split('/');
+      if (kind && !isAccountKind(kind)) throw new Error('Usage: /accounts reset [claude|codex][/name]');
+      for (const k of kind ? [kind as AccountKind] : (['claude', 'codex'] as const))
+        this.session.accounts.clear(k, name || undefined);
+      this.store.update({ accounts: this.session.accountSummary() });
+      this.store.info('Cooldowns cleared.');
+      return;
+    }
+    if (sub) throw new Error('Usage: /accounts [reset [kind[/name]]]');
+    const lines: string[] = [];
+    for (const kind of ['claude', 'codex'] as const) {
+      for (const row of this.session.accounts.status(kind)) {
+        const info = await probeAccount(() => this.session.engine(kind, row.account.name).probe());
+        lines.push(describeAccount({ ...row, ...info }));
+      }
+    }
+    this.store.info(lines.join('\n'));
+  }
+
+  /** `/login <claude|codex> [name] [--token]`: the official CLI's login in the terminal, like takeover. */
+  private async login(rest: string[]): Promise<void> {
+    const token = rest.includes('--token');
+    const [kind, given] = rest.filter((a) => a !== '--token');
+    if (!isAccountKind(kind)) throw new Error('Usage: /login <claude|codex> [name] [--token]');
+    const name =
+      given ??
+      nextAccountName(
+        kind,
+        this.session.listAccounts(kind).map((a) => a.name),
+      );
+    const spec = loginSpec(this.session.config, kind, name, {
+      existing: this.session.listAccounts(kind).find((a) => a.name === name),
+      token,
+      legionHome: this.session.legionHome,
+    });
+    prepareLoginDir(spec);
+    this.herdr?.pause();
+    let failure: string | null = null;
+    try {
+      await this.hooks?.suspend(() => {
+        const r = spawnSync(spec.command, spec.args, { stdio: 'inherit', env: spec.env });
+        if (r.error) failure = `Could not run ${spec.command}: ${r.error.message}`;
+        else if (r.status !== 0) failure = `${spec.command} exited with ${r.status}`;
+      });
+    } finally {
+      this.herdr?.resume();
+    }
+    this.store.update({ accounts: this.session.accountSummary() });
+    if (failure) throw new Error(failure);
+    this.store.info(token ? tokenHint(spec) : `${kind} account "${name}" is ready.`);
   }
 
   /** `/remote [on|off|default]`: shows or switches remote mode for this session, from the next step on. */
