@@ -482,3 +482,54 @@ it.each(['discovery-first', 'spawn-first'])('enriches child metadata: %s', async
     event: { type: 'tool_result', id: 'cmd', ok: true, output: 'exit 0' },
   });
 });
+
+it('reactivates a child for followup and delivers both completions to the store', async () => {
+  const { UiStore } = await import('../../tui/store.ts');
+  const notify = (item: unknown) => ({
+    dir: 'in',
+    msg: { method: 'item/completed', params: { threadId: 't1', item } },
+  });
+  const item = {
+    type: 'collabAgentToolCall',
+    id: 'spawn',
+    tool: 'spawnAgent',
+    status: 'completed',
+    senderThreadId: 't1',
+    receiverThreadIds: ['child'],
+    prompt: 'inspect',
+    model: 'small',
+    agentsStates: { child: { status: 'running', message: null } },
+  };
+  const done = (id: string) => ({
+    ...item,
+    id,
+    tool: 'wait',
+    agentsStates: { child: { status: 'completed', message: id } },
+  });
+  const path = await synthetic('followup', [
+    ...handshake(),
+    notify(item),
+    notify(done('first')),
+    notify({ ...item, id: 'followup', tool: 'followupTask' }),
+    notify(done('second')),
+    completed(),
+  ]);
+  const { session, stream } = await open(path);
+  await stream.next('turn_complete');
+  await session.close();
+  await stream.done;
+  const store = new UiStore();
+  const owner = { kind: 'orchestrator' } as const;
+  let transcript: ReturnType<typeof store.transcriptOf> = null;
+  for (const event of stream.events) {
+    store.subagentEvent(owner, event);
+    if (event.type === 'subagent_done') {
+      const current = store.transcriptOf({ kind: 'sub', owner, id: 'child' });
+      if (transcript) expect(current).toBe(transcript);
+      transcript = current;
+    }
+    if (event.type === 'subagent_started' && event.resumed) expect(store.get().subagents[0]?.status).toBe('working');
+  }
+  expect(stream.events.filter((e) => e.type === 'subagent_done')).toHaveLength(2);
+  expect(store.get().subagents[0]?.status).toBe('done');
+});

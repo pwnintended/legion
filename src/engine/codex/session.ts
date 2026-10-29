@@ -305,6 +305,10 @@ export class CodexSession implements AgentSession {
     if (this.threadId && typeof params?.threadId === 'string' && params.threadId !== this.threadId) {
       const child = this.children.get(params.threadId);
       if (!child) return;
+      if (notification.method === 'turn/started' && this.doneChildren.has(params.threadId)) {
+        const metadata = this.childMetadata.get(params.threadId);
+        if (metadata) this.routeAgentEvents([{ ...metadata, resumed: true }]);
+      }
       this.routeAgentEvents(child.handle(notification), params.threadId);
       return;
     }
@@ -341,6 +345,11 @@ export class CodexSession implements AgentSession {
             }),
           );
         }
+        if (event.resumed) {
+          this.doneChildren.delete(event.id);
+          this.normalizer.reactivateChild(event.id);
+          for (const normalizer of this.children.values()) normalizer.reactivateChild(event.id);
+        }
         const previous = this.childMetadata.get(event.id);
         const merged = {
           ...event,
@@ -349,6 +358,7 @@ export class CodexSession implements AgentSession {
           prompt: previous?.prompt ?? event.prompt,
         };
         if (
+          !event.resumed &&
           previous &&
           previous.agentType === merged.agentType &&
           previous.description === merged.description &&

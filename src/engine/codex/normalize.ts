@@ -61,6 +61,10 @@ export class CodexNormalizer {
     this.options = { ...options };
   }
 
+  reactivateChild(id: string): void {
+    this.doneAgents.delete(id);
+  }
+
   setStructuredOutput(enabled: boolean): void {
     this.options.structuredOutput = enabled;
   }
@@ -205,6 +209,17 @@ export class CodexNormalizer {
         }
       }
       for (const [id, state] of Object.entries(item.agentsStates)) {
+        if (state && (state.status === 'running' || state.status === 'pendingInit') && this.doneAgents.delete(id)) {
+          events.push({
+            type: 'subagent_started',
+            id,
+            resumed: true,
+            parent: this.options.parent ?? null,
+            agentType: null,
+            description: null,
+            prompt: null,
+          });
+        }
         if (state && state.status !== 'running' && state.status !== 'pendingInit') {
           events.push(...this.agentDone(id, state.status === 'completed', state.message));
         }

@@ -151,6 +151,7 @@ export type AgentEvent =
   /** Starts a subagent whose output never appears as the parent's own events. */
   | {
       type: 'subagent_started';
+      resumed?: boolean;
       id: string;
       parent: string | null;
       agentType: string | null;

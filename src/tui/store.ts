@@ -216,6 +216,12 @@ export interface UiState {
 
 export class UiStore {
   private state: UiState;
+  private readonly incompleteTranscripts = new Set<string>();
+
+  transcriptIncomplete(ref: AgentRef): boolean {
+    return this.incompleteTranscripts.has(agentKey(ref));
+  }
+
   private readonly transcripts = new Map<string, { ref: AgentRef; transcript: Transcript }>();
   private readonly listeners = new Set<() => void>();
   private nextId = 1;
@@ -324,12 +330,16 @@ export class UiStore {
       const victim =
         [...this.transcripts].find(([k, v]) => k !== key && this.finished(v.ref)) ??
         [...this.transcripts].find(([k]) => k !== key);
-      if (victim) this.transcripts.delete(victim[0]);
+      if (victim) {
+        this.incompleteTranscripts.add(victim[0]);
+        this.transcripts.delete(victim[0]);
+      }
     }
     return transcript;
   }
 
   openView(ref: AgentRef, title: string, seed?: Transcript): void {
+    if (seed) this.incompleteTranscripts.delete(agentKey(ref));
     const transcript = seed ? this.keepTranscript(ref, seed) : (this.transcriptOf(ref) ?? this.keepTranscript(ref));
     this.update({
       view: {
@@ -376,6 +386,7 @@ export class UiStore {
               matches(s)
                 ? {
                     ...s,
+                    ...(event.resumed ? { status: 'working' as const, endedAt: null, activity: null } : {}),
                     parent: event.parent ?? s.parent,
                     agentType: event.agentType ?? s.agentType,
                     description: event.description ?? s.description,

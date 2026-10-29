@@ -1191,7 +1191,7 @@ export class Controller {
     const title = sub ? subagentLabel(sub) : (node?.label ?? (ref.kind === 'step' ? ref.key : 'sub agent'));
     let transcript = this.store.transcriptOf(ref);
     const owner = ref.kind === 'sub' ? ref.owner : ref;
-    if (!transcript && owner.kind === 'step') {
+    if ((!transcript || this.store.transcriptIncomplete(ref)) && owner.kind === 'step') {
       const path = this.session.runs.journal(owner.runId).transcriptPath(owner.key);
       transcript = existsSync(path)
         ? transcriptFromJournal(readFileSync(path, 'utf8'), ref.kind === 'sub' ? ref.id : undefined)

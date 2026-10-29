@@ -84,3 +84,49 @@ it('tracks subagents from every lead even when talking to the orchestrator', () 
   }
   expect(controller.store.get().subagents).toHaveLength(2);
 });
+
+it.each([false, true])('restores evicted history after more events, child: %s', (child) => {
+  const controller = new Controller(session);
+  const owner = { kind: 'step', runId: 'eviction', key: 'step' } as const;
+  const ref = child ? { kind: 'sub' as const, owner, id: 'child' } : owner;
+  const events = [
+    { type: 'message' as const, text: 'earlier' },
+    { type: 'message' as const, text: 'later' },
+  ];
+  const envelopes = events.map((event) => (child ? { type: 'subagent_event' as const, id: 'child', event } : event));
+  if (child)
+    controller.store.subagentEvent(owner, {
+      type: 'subagent_started',
+      id: 'child',
+      parent: null,
+      agentType: null,
+      description: null,
+      prompt: null,
+    });
+  const [first, second] = envelopes;
+  if (!first || !second) throw new Error('Missing events');
+  controller.store.runEvent({ type: 'agent', runId: owner.runId, key: owner.key, event: first }, () => null);
+  for (let i = 0; i < 65; i++) {
+    if (child)
+      controller.store.subagentEvent(owner, {
+        type: 'subagent_started',
+        id: String(i),
+        parent: null,
+        agentType: null,
+        description: null,
+        prompt: null,
+      });
+    else controller.store.openView({ kind: 'step', runId: 'other', key: String(i) }, 'other');
+  }
+  controller.store.runEvent({ type: 'agent', runId: owner.runId, key: owner.key, event: second }, () => null);
+  expect(controller.store.transcriptIncomplete(ref)).toBe(true);
+  const path = session.runs.journal(owner.runId).transcriptPath(owner.key);
+  mkdirSync(join(path, '..'), { recursive: true });
+  writeFileSync(path, envelopes.map((event) => JSON.stringify({ ts: 1, event })).join('\n'));
+  controller.openAgent(ref);
+  expect(controller.store.get().view?.items.map((item) => ('text' in item ? item.text : null))).toEqual([
+    'earlier',
+    'later',
+  ]);
+  expect(controller.store.transcriptIncomplete(ref)).toBe(false);
+});
