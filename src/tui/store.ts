@@ -41,6 +41,7 @@ export type Item =
   | { id: number; type: 'user'; text: string; to?: string; images?: Attachment[] }
   /** `speaker`: a lead, or the orchestrator while the user talks to a lead (absent: the agent being talked to). */
   | { id: number; type: 'assistant'; text: string; speaker?: string }
+  | { id: number; type: 'reasoning'; text: string; speaker?: string }
   | { id: number; type: 'info'; text: string }
   | { id: number; type: 'panel'; title: string; lines: Line[] }
   | { id: number; type: 'error'; text: string }

@@ -967,6 +967,15 @@ const ItemView = memo(function ItemView({
           {item.images ? <Thumbnails attachments={item.images} kitty={kitty} /> : null}
         </Box>
       );
+    case 'reasoning':
+      return (
+        <Bullet mark={glyph.assistant} markColor={theme.muted} marginTop={1}>
+          <Text dimColor>
+            {item.speaker ? `${item.speaker}: ` : ''}
+            {item.text}
+          </Text>
+        </Bullet>
+      );
     case 'assistant':
       return (
         <Bullet mark={glyph.assistant} markColor={item.speaker ? theme.accent : 'white'} marginTop={1}>

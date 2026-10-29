@@ -28,6 +28,8 @@ export interface FakeTurn {
   approval?: { tool: string; input: unknown };
   /** Ask the user questions before answering; the answers land in `call.answers` (and the default text). */
   questions?: UserQuestion[];
+  /** Subagents that finish before the turn's own text. */
+  subagents?: { type?: string; description: string; text?: string; ok?: boolean }[];
   /** End the turn with an error. */
   error?: string;
 }
@@ -155,6 +157,20 @@ class FakeSession implements AgentSession {
     if (turn.error) {
       this.queue.push({ type: 'turn_complete', structuredOutput: null, isError: true, reason: turn.error });
       return;
+    }
+    for (const sub of turn.subagents ?? []) {
+      const id = randomUUID();
+      const text = sub.text ?? '';
+      this.queue.push({
+        type: 'subagent_started',
+        id,
+        parent: null,
+        agentType: sub.type ?? null,
+        description: sub.description,
+        prompt: null,
+      });
+      this.queue.push({ type: 'subagent_event', id, event: { type: 'message', text } });
+      this.queue.push({ type: 'subagent_done', id, ok: sub.ok ?? true, result: text });
     }
     const text =
       turn.text ??
