@@ -55,7 +55,10 @@ In the session:
   resized; your shell's screen comes back when it exits. **PgUp/PgDn** or the **mouse wheel** scroll the
   conversation; it follows new output again when you scroll back to the end or send something. Since Legion
   reports the mouse, hold Shift (Option in iTerm2) to select text.
-- **Esc** interrupts the assistant. **Ctrl+C** twice exits.
+- **Esc** interrupts the assistant. **Ctrl+C** twice exits. **?** on an empty prompt shows every shortcut.
+- The tool calls between two replies fold into one line (`Read ×3 · Bash · 2 files +14 −3`); **Ctrl+O** shows
+  each call, and folds them again. Slash commands match loosely: `/wf` finds `/workflows`, `/account` finds
+  `/claude` and `/codex`.
 - **Gates, questions and tool approvals** appear above the prompt. Gates: `y` approve, `c` request changes
   (then type a note), `x` abort the run. Approvals: `y` once, `s` for the session, `n` deny. Questions: type an
   answer or an option number. **Tab** switches between answering and messaging the assistant.

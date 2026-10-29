@@ -54,8 +54,26 @@ export type Item =
       durationMs: number | null;
     }
   | { id: number; type: 'gate'; runId: string; workflow: string; title: string; body: string | null }
+  /** The tool calls between two replies, folded into one line (Ctrl+O shows each). */
+  | { id: number; type: 'tools'; calls: ToolCallView[]; files: FileChangeView[]; speaker?: string }
   /** Something the orchestrator shows the user (`present`): a link to each item. */
   | { id: number; type: 'presentation'; presentation: Presentation };
+
+export interface ToolCallView {
+  /** `Bash`, `Run workflow`: what kind of call, to count them. */
+  tool: string;
+  line: string;
+  /** null: still running (or its result never came). */
+  ok: boolean | null;
+  /** The first line of what a failed call returned. */
+  error: string | null;
+}
+
+export interface FileChangeView {
+  path: string;
+  added: number;
+  removed: number;
+}
 
 /** One line of the activity feed under the prompt; `/activity` prints the recent ones in full. */
 export interface FeedEntry {
@@ -176,6 +194,10 @@ export interface UiState {
   seed: { text: string; n: number } | null;
   profiles: Record<string, string>;
   costUsd: number | null;
+  /** The assistant session's tokens so far, and its output tokens when the current turn started. */
+  tokens: { input: number; output: number; outputAtTurnStart: number } | null;
+  /** Show each tool call of the folded tool lines (Ctrl+O). */
+  showTools: boolean;
   /** Who the prompt talks to: `orchestrator` or a lead's name (`/lead`). */
   target: string;
   team: TeamRow[];
@@ -189,6 +211,9 @@ export class UiStore {
   /** The feed line of each tool call of the assistant or a lead still running, so a failure names what failed. */
   private readonly toolLines = new Map<string, string>();
   private scheduled: NodeJS.Timeout | null = null;
+  /** The tool calls and file changes since the last reply, pushed as one `tools` item before the next. */
+  private calls: (ToolCallView & { id: string })[] = [];
+  private files = new Map<string, FileChangeView>();
 
   constructor(initial: Partial<UiState> = {}) {
     this.state = {
@@ -203,6 +228,8 @@ export class UiStore {
       seed: null,
       profiles: {},
       costUsd: null,
+      tokens: null,
+      showTools: false,
       target: 'orchestrator',
       team: [],
       feed: [],
@@ -253,9 +280,23 @@ export class UiStore {
 
   // ---- assistant -----------------------------------------------------------------------------
 
+  /** The tool calls since the last reply as one item, then the reply. */
+  private reply(text: string, speaker?: string): void {
+    this.foldTools(speaker);
+    if (text) this.push({ type: 'assistant', text, ...(speaker ? { speaker } : {}) });
+  }
+
+  private foldTools(speaker?: string): void {
+    if (this.calls.length === 0 && this.files.size === 0) return;
+    const calls = this.calls.map(({ id: _, ...c }) => c);
+    const files = [...this.files.values()];
+    this.calls = [];
+    this.files = new Map();
+    this.push({ type: 'tools', calls, files, ...(speaker ? { speaker } : {}) });
+  }
+
   /** Events of the agent the user is talking to (`speaker`: a lead's name, when it is one). */
   assistantEvent(event: AgentEvent, speaker?: string): void {
-    const said = speaker ? { speaker } : {};
     const who = speaker ?? 'orchestrator';
     switch (event.type) {
       case 'text_delta':
@@ -263,15 +304,25 @@ export class UiStore {
         break;
       case 'message':
         this.update({ streaming: '' }, false);
-        if (event.text.trim()) this.push({ type: 'assistant', text: event.text.trim(), ...said });
+        this.reply(event.text.trim(), speaker);
         break;
       case 'tool_call': {
         // Text streamed before a tool call is a reply in its own right.
-        if (this.state.streaming.trim()) this.push({ type: 'assistant', text: this.state.streaming.trim(), ...said });
+        if (this.state.streaming.trim()) this.reply(this.state.streaming.trim(), speaker);
         const line = toolLine(event.name, event.input);
         this.update({ streaming: '', activity: line }, false);
         this.note({ who, kind: 'tool', text: line });
         this.toolLines.set(event.id, line);
+        this.calls.push({ id: event.id, tool: toolLabel(event.name), line, ok: null, error: null });
+        break;
+      }
+      case 'file_change': {
+        const prev = this.files.get(event.path);
+        this.files.set(event.path, {
+          path: event.path,
+          added: (prev?.added ?? 0) + event.added,
+          removed: (prev?.removed ?? 0) + event.removed,
+        });
         break;
       }
       case 'tool_result': {
@@ -279,6 +330,11 @@ export class UiStore {
         // /activity, so the feed does not read as if the agent stopped while the busy line still spins.
         const line = this.toolLines.get(event.id);
         this.toolLines.delete(event.id);
+        const call = this.calls.find((c) => c.id === event.id);
+        if (call) {
+          call.ok = event.ok;
+          call.error = event.ok ? null : (event.output?.trim().split('\n')[0] ?? null);
+        }
         if (!event.ok && event.output)
           this.note({
             who,
@@ -295,14 +351,25 @@ export class UiStore {
         );
         break;
       case 'usage':
-        if (event.costUsd !== null && !speaker) this.update({ costUsd: event.costUsd }, false);
+        if (speaker) break;
+        this.update(
+          (s) => ({
+            ...(event.costUsd !== null ? { costUsd: event.costUsd } : {}),
+            tokens: {
+              input: event.inputTokens,
+              output: event.outputTokens,
+              outputAtTurnStart: s.tokens?.outputAtTurnStart ?? 0,
+            },
+          }),
+          false,
+        );
         break;
       case 'error':
         if (!event.retryable) this.error(event.message);
         break;
       case 'turn_complete':
         if (event.isError && event.reason && event.reason !== 'interrupted') this.error(`Turn failed: ${event.reason}`);
-        if (this.state.streaming.trim()) this.push({ type: 'assistant', text: this.state.streaming.trim(), ...said });
+        this.reply(this.state.streaming.trim(), speaker);
         this.update({ streaming: '', activity: null });
         break;
       default:
@@ -312,7 +379,12 @@ export class UiStore {
 
   setBusy(busy: boolean): void {
     if (busy === this.state.busy) return;
-    this.update({ busy, busySince: busy ? Date.now() : null, ...(busy ? {} : { activity: null }) });
+    this.update((s) => ({
+      busy,
+      busySince: busy ? Date.now() : null,
+      ...(busy ? {} : { activity: null }),
+      ...(busy && s.tokens ? { tokens: { ...s.tokens, outputAtTurnStart: s.tokens.output } } : {}),
+    }));
   }
 
   assistantApproval(approval: AssistantApproval, lead?: string): void {
@@ -478,9 +550,13 @@ export function toolName(name: string): string {
 /** `Bash cd src`, `Run workflow feature`: a tool call in one line. */
 export function toolLine(name: string, input: unknown): string {
   const summary = summarizeInput(name, input);
+  return `${toolLabel(name)}${summary ? ` ${summary}` : ''}`;
+}
+
+/** `Bash`, `Run workflow` (Legion's own tools by what they do). */
+export function toolLabel(name: string): string {
   const short = toolName(name);
-  const label = short.startsWith('legion.') ? (LEGION_TOOLS[short.slice('legion.'.length)] ?? short) : short;
-  return `${label}${summary ? ` ${summary}` : ''}`;
+  return short.startsWith('legion.') ? (LEGION_TOOLS[short.slice('legion.'.length)] ?? short) : short;
 }
 
 const LEGION_TOOLS: Record<string, string> = {

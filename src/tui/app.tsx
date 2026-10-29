@@ -54,6 +54,8 @@ export function App({ controller, terminal }: { controller: Controller; terminal
   const [armedExit, setArmedExit] = useState(false);
   // Which of the welcome card's starters Tab fills in next.
   const starter = useRef(0);
+  // The keyboard shortcuts, over the prompt (`?` on an empty prompt).
+  const [shortcuts, setShortcuts] = useState(false);
   const head = state.interactions[0] ?? null;
   const animating = state.busy || state.runs.length > 0;
   const width = Math.max(40, columns || 80);
@@ -90,9 +92,10 @@ export function App({ controller, terminal }: { controller: Controller; terminal
   const shownBack = Math.min(back, maxBack);
   const scroll = (rowsBy: number) => setBack((b) => Math.max(0, Math.min(Math.min(b, maxBack) + rowsBy, maxBack)));
   const page = Math.max(1, view.height - 2);
-  useInput((_, key) => {
+  useInput((input, key) => {
     if (key.pageUp) scroll(page);
     else if (key.pageDown) scroll(-page);
+    else if (key.ctrl && input === 'o') store.update((s) => ({ showTools: !s.showTools }));
   });
   const wheel = useRef(scroll);
   wheel.current = scroll;
@@ -153,6 +156,7 @@ export function App({ controller, terminal }: { controller: Controller; terminal
 
   const submit = (value: string) => {
     setArmedExit(false);
+    setShortcuts(false);
     setBack(0);
     if (head && typing && question) {
       answerQuestion(value);
@@ -168,6 +172,10 @@ export function App({ controller, terminal }: { controller: Controller; terminal
   };
 
   const hotkey = (key: string): boolean => {
+    if (!head && key === '?') {
+      setShortcuts((on) => !on);
+      return true;
+    }
     if (!head || !answering) return false;
     if (question) {
       // Space toggles the highlighted option of a multi-select question.
@@ -193,7 +201,7 @@ export function App({ controller, terminal }: { controller: Controller; terminal
       >
         <Box ref={content} flexDirection="column" flexShrink={0}>
           {state.items.slice(-ITEMS_SHOWN).map((item) => (
-            <ItemView key={item.id} item={item} width={width} />
+            <ItemView key={item.id} item={item} width={width} showTools={state.showTools} />
           ))}
           {state.streaming ? (
             <Bullet mark={glyph.assistant} markColor="white" marginTop={1}>
@@ -210,7 +218,14 @@ export function App({ controller, terminal }: { controller: Controller; terminal
         </Box>
       ) : null}
       <Box flexDirection="column" flexShrink={0}>
-        {state.busy ? <Busy frame={frame} since={state.busySince} activity={state.activity} /> : null}
+        {state.busy ? (
+          <Busy
+            frame={frame}
+            since={state.busySince}
+            activity={state.activity}
+            tokens={state.tokens ? state.tokens.output - state.tokens.outputAtTurnStart : 0}
+          />
+        ) : null}
         {head && !state.menu ? (
           <InteractionView
             item={head}
@@ -220,7 +235,12 @@ export function App({ controller, terminal }: { controller: Controller; terminal
             question={questions && question ? { list: questions, index: qIndex, picked } : null}
           />
         ) : null}
-        <Box display={state.menu ? 'none' : 'flex'} flexDirection="column" marginTop={head || state.busy ? 0 : 1}>
+        {shortcuts && !head && !state.menu ? <Shortcuts width={width} /> : null}
+        <Box
+          display={state.menu ? 'none' : 'flex'}
+          flexDirection="column"
+          marginTop={head || state.busy || shortcuts ? 0 : 1}
+        >
           <PromptInput
             prompt={typing ? glyph.ask : state.target === 'orchestrator' ? glyph.user : `${state.target} ${glyph.user}`}
             mask={typing && question?.secret === true}
@@ -244,7 +264,9 @@ export function App({ controller, terminal }: { controller: Controller; terminal
               setOption((n) => (n + dir + choices.length) % choices.length);
               return true;
             }}
+            onChange={() => setShortcuts(false)}
             onEscape={() => {
+              if (shortcuts) return setShortcuts(false);
               // Esc declines an agent's questions (it is told the user would not answer).
               if (head && question && mode !== 'chat') controller.answerQuestions(head, null);
               else if (mode !== 'hotkeys') setMode('hotkeys');
@@ -280,8 +302,8 @@ export function App({ controller, terminal }: { controller: Controller; terminal
                     : head && mode === 'chat'
                       ? 'tab: back to the question'
                       : state.items.length <= 1
-                        ? 'tab fills in an idea · / for commands'
-                        : '/ for commands'
+                        ? 'tab fills in an idea · / for commands · ? for shortcuts'
+                        : '/ for commands · ? for shortcuts'
           }
           urgent={armedExit || shownBack > 0}
           profiles={state.profiles}
@@ -314,7 +336,8 @@ export function App({ controller, terminal }: { controller: Controller; terminal
 
 // ---- live region ---------------------------------------------------------------------------------
 
-function Busy({ frame, since, activity }: { frame: number; since: number | null; activity: string | null }) {
+function Busy(props: { frame: number; since: number | null; activity: string | null; tokens: number }) {
+  const { frame, since, activity } = props;
   const mark = BUSY_FRAMES[frame % BUSY_FRAMES.length] ?? '░';
   const elapsed = since ? formatDuration(Date.now() - since) : '';
   const text = `${activity ? oneLine(capitalize(activity), 90) : 'Working'}…`;
@@ -332,9 +355,20 @@ function Busy({ frame, since, activity }: { frame: number; since: number | null;
         </Text>
         {text.slice(to)}
       </Text>
-      <Text dimColor> ({elapsed ? `${elapsed} · ` : ''}esc to interrupt)</Text>
+      <Text dimColor>
+        {' '}
+        ({elapsed ? `${elapsed} · ` : ''}
+        {props.tokens > 0 ? `↓ ${formatCount(props.tokens)} tokens · ` : ''}esc to interrupt)
+      </Text>
     </Box>
   );
+}
+
+/** `840`, `12.3k`, `1.2M`. */
+export function formatCount(n: number): string {
+  if (n < 1000) return String(n);
+  if (n < 1_000_000) return `${(n / 1000).toFixed(n < 10_000 ? 1 : 0)}k`;
+  return `${(n / 1_000_000).toFixed(1)}M`;
 }
 
 /** How many characters the busy line's highlight spans. */
@@ -424,6 +458,55 @@ function answerText(controller: Controller, head: UiInteraction, value: string, 
     const option = n !== null ? i.options[n - 1] : undefined;
     controller.answerAsk(head.id, option ?? value.trim());
   }
+}
+
+/** Every key at a glance, in the order they come up. */
+function Shortcuts({ width }: { width: number }) {
+  // Four columns, the border and padding taking two on each side.
+  const column = Math.max(20, Math.floor((width - 4) / 4));
+  const rows: [string, string][][] = [
+    [
+      ['enter', 'send'],
+      ['shift+enter', 'new line'],
+      ['↑↓', 'history'],
+      ['tab', 'complete a command'],
+    ],
+    [
+      ['esc', 'interrupt'],
+      ['ctrl+c', 'clear, ×2 quits'],
+      ['ctrl+o', 'show tool calls'],
+      ['pgup/pgdn', 'scroll'],
+    ],
+    [
+      ['ctrl+a/e', 'start/end of line'],
+      ['ctrl+w', 'delete a word'],
+      ['ctrl+u/k', 'delete to start/end'],
+    ],
+    [
+      ['/', 'commands'],
+      ['/help', 'all of them'],
+      ['?', 'close this'],
+    ],
+  ];
+  return (
+    <Box flexDirection="column" borderStyle="round" borderColor={theme.muted} paddingX={1} marginTop={1}>
+      <Text bold>Shortcuts</Text>
+      {rows.map((keys) => (
+        <Box key={keys[0]?.[0]}>
+          {keys.map(([k, label]) => (
+            <Box key={k} width={column} flexShrink={0}>
+              <Text wrap="truncate-end">
+                <Text color={theme.accent} bold>
+                  {k}
+                </Text>
+                <Text dimColor> {label}</Text>
+              </Text>
+            </Box>
+          ))}
+        </Box>
+      ))}
+    </Box>
+  );
 }
 
 function Keys({ keys }: { keys: [string, string][] }) {
@@ -806,16 +889,30 @@ function TeamPanel({ rows, target, frame }: { rows: TeamRow[]; target: string; f
 }
 
 // Items never change once pushed: only new ones (or a new width) render.
-const ItemView = memo(function ItemView({ item, width }: { item: Item; width: number }) {
+const ItemView = memo(function ItemView({ item, width, showTools }: { item: Item; width: number; showTools: boolean }) {
   switch (item.type) {
+    case 'tools':
+      return <ToolsView item={item} open={showTools} />;
     case 'banner':
       return <BannerView banner={item.banner} width={width} />;
     case 'user':
+      // A rule down the left of everything the user said, so their turns stand out in a long conversation.
       return (
-        <Box marginTop={1}>
-          <Text color={theme.user} bold>
-            {item.to ? <Text dimColor>{item.to} </Text> : null}
-            {glyph.user} {item.text}
+        <Box
+          marginTop={1}
+          borderStyle="bold"
+          borderTop={false}
+          borderRight={false}
+          borderBottom={false}
+          borderColor={theme.user}
+          paddingLeft={1}
+        >
+          <Text>
+            {item.to ? <Text dimColor>to {item.to} </Text> : null}
+            <Text color={theme.user} bold>
+              {glyph.user}{' '}
+            </Text>
+            {item.text}
           </Text>
         </Box>
       );
@@ -871,6 +968,62 @@ const ItemView = memo(function ItemView({ item, width }: { item: Item; width: nu
       return <PresentationView presentation={item.presentation} />;
   }
 });
+
+/** The tool calls between two replies: one quiet line, or (Ctrl+O) one line each. */
+function ToolsView({ item, open }: { item: Extract<Item, { type: 'tools' }>; open: boolean }) {
+  const failed = item.calls.filter((c) => c.ok === false).length;
+  const added = item.files.reduce((n, f) => n + f.added, 0);
+  const removed = item.files.reduce((n, f) => n + f.removed, 0);
+  const counts = new Map<string, number>();
+  for (const c of item.calls) counts.set(c.tool, (counts.get(c.tool) ?? 0) + 1);
+  const rail = (
+    <Box width={4} flexShrink={0} paddingLeft={2}>
+      <Text dimColor>{glyph.result}</Text>
+    </Box>
+  );
+  if (!open) {
+    return (
+      <Box>
+        {rail}
+        <Text wrap="truncate-end" dimColor>
+          {[...counts].map(([tool, n]) => (n > 1 ? `${tool} ×${n}` : tool)).join(' · ')}
+          {item.files.length ? (
+            <Text>
+              {' · '}
+              {item.files.length} file{item.files.length > 1 ? 's' : ''} <Text color={theme.ok}>+{added}</Text>{' '}
+              <Text color={theme.error}>−{removed}</Text>
+            </Text>
+          ) : null}
+          {failed ? <Text color={theme.error}> · {failed} failed</Text> : null}
+          {'  ctrl+o'}
+        </Text>
+      </Box>
+    );
+  }
+  return (
+    <Box>
+      {rail}
+      <Box flexDirection="column" flexShrink={1}>
+        {item.calls.map((c, n) => (
+          // biome-ignore lint/suspicious/noArrayIndexKey: calls are positional.
+          <Text key={n} wrap="truncate-end">
+            <Text color={c.ok === false ? theme.error : c.ok ? theme.ok : theme.muted}>
+              {c.ok === false ? glyph.fail : c.ok ? glyph.ok : glyph.pending}{' '}
+            </Text>
+            <Text dimColor={c.ok !== false}>{c.line}</Text>
+            {c.error ? <Text color={theme.error}> · {oneLine(c.error, 120)}</Text> : null}
+          </Text>
+        ))}
+        {item.files.map((f) => (
+          <Text key={f.path} wrap="truncate-end">
+            <Text color={theme.info}>± </Text>
+            {f.path} <Text color={theme.ok}>+{f.added}</Text> <Text color={theme.error}>−{f.removed}</Text>
+          </Text>
+        ))}
+      </Box>
+    </Box>
+  );
+}
 
 function PresentationView({ presentation }: { presentation: Presentation }) {
   return (

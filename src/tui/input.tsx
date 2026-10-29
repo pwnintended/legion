@@ -32,16 +32,38 @@ export interface PromptInputProps {
   onCtrlC?(): void;
   /** Tab with no command to complete; `empty`: nothing is typed. */
   onTab?(empty: boolean): void;
+  /** The text changed (typed, pasted, cleared). */
+  onChange?(value: string): void;
 }
 
 const MENU_SIZE = 7;
 
+/**
+ * The commands `value` (`/…`, no arguments yet) could mean: names it starts, then names that contain it, then names
+ * that have its letters in order (`/wf` → workflows), then commands whose description has it (`/account`).
+ */
 export function matchCommands(commands: readonly CommandSpec[], value: string): CommandSpec[] {
   if (!value.startsWith('/') || /\s/.test(value)) return [];
   const typed = value.slice(1).toLowerCase();
-  const starts = commands.filter((c) => c.name.startsWith(typed));
-  const contains = commands.filter((c) => !c.name.startsWith(typed) && c.name.includes(typed));
-  return [...starts, ...contains];
+  const tiers = [
+    (c: CommandSpec) => c.name.startsWith(typed),
+    (c: CommandSpec) => c.name.includes(typed),
+    (c: CommandSpec) => inOrder(typed, c.name),
+    (c: CommandSpec) => typed.length >= 3 && c.description.toLowerCase().includes(typed),
+  ];
+  const seen = new Set<CommandSpec>();
+  for (const tier of tiers) for (const c of commands) if (!seen.has(c) && tier(c)) seen.add(c);
+  return [...seen];
+}
+
+/** Whether the letters of `typed` appear in `name` in order. */
+function inOrder(typed: string, name: string): boolean {
+  let at = 0;
+  for (const ch of typed) {
+    at = name.indexOf(ch, at) + 1;
+    if (at === 0) return false;
+  }
+  return true;
 }
 
 export function PromptInput(props: PromptInputProps) {
@@ -62,6 +84,7 @@ export function PromptInput(props: PromptInputProps) {
   const choice = menu[Math.min(selected, menu.length - 1)];
 
   const set = (next: string, at = next.length) => {
+    if (next !== value) props.onChange?.(next);
     setValue(next);
     setCursor(Math.max(0, Math.min(at, next.length)));
     setSelected(0);

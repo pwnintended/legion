@@ -111,7 +111,11 @@ export function helpLines(): Line[] {
       seg('  Esc', { color: 'accent' }),
       dim(' interrupt the assistant   '),
       seg('Ctrl+C ×2', { color: 'accent' }),
-      dim(' exit'),
+      dim(' exit   '),
+      seg('Ctrl+O', { color: 'accent' }),
+      dim(' show or fold tool calls   '),
+      seg('?', { color: 'accent' }),
+      dim(' shortcuts'),
     ],
     [
       seg('  ↑↓', { color: 'accent' }),

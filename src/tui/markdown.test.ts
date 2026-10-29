@@ -60,10 +60,18 @@ describe('matchCommands', () => {
     { name: 'config', args: '', description: '' },
   ];
   it('matches by prefix first, then by substring, and closes once arguments start', () => {
-    expect(matchCommands(commands, '/ru').map((c) => c.name)).toEqual(['run', 'runs']);
+    expect(matchCommands(commands, '/ru').map((c) => c.name)).toEqual(['run', 'runs', 'resume']);
     expect(matchCommands(commands, '/n').map((c) => c.name)).toEqual(['run', 'runs', 'config']);
     expect(matchCommands(commands, '/run x')).toEqual([]);
     expect(matchCommands(commands, 'run')).toEqual([]);
+  });
+
+  it('then by letters in order, then by description', () => {
+    const more = [...commands, { name: 'workflows', args: '', description: 'browse workflows' }];
+    expect(matchCommands(more, '/wfs').map((c) => c.name)).toEqual(['workflows']);
+    expect(matchCommands(more, '/rme').map((c) => c.name)).toEqual(['resume']);
+    expect(matchCommands(more, '/browse').map((c) => c.name)).toEqual(['workflows']);
+    expect(matchCommands(more, '/br')).toEqual([]);
   });
 });
 
