@@ -152,6 +152,8 @@ export interface RunHost {
   ): { account: Account } | { exhausted: true; earliestReset: number | null };
   /** An account hit its limit: no session uses it until `until` (ms). */
   cooldown(kind: AccountKind, name: string, until: number, reason: string): void;
+  /** When the first cooling account of a kind is free again (null: none is cooling). */
+  earliestReset?(kind: AccountKind, where: 'local' | 'box'): number | null;
   /** Minutes an account rests after a limit when the CLI named no reset time (`[accounts] cooldownMinutes`). Default 60. */
   readonly cooldownMinutes?: number;
   /** Where a step with this working directory runs: on this machine or in a box (remote mode). Default: local. */

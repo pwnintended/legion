@@ -344,6 +344,7 @@ export class RunManager extends EventEmitter<RunManagerEvents> {
       engine: (kind, account) => opts.engine(kind, account),
       account: (kind, req) => opts.accounts.acquire(kind, req),
       cooldown: (kind, name, until, reason) => opts.accounts.cooldown(kind, name, until, reason),
+      earliestReset: (kind, where) => opts.accounts.earliestReset(kind, where),
       ...(opts.cooldownMinutes ? { cooldownMinutes: opts.cooldownMinutes() } : {}),
       agentSession: (step, session) => {
         let live = manager.sessions.get(record.id);

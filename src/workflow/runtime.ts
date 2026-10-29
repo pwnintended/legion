@@ -406,7 +406,11 @@ export function agent<S extends z.ZodType | undefined = undefined>(
             const what = err.limit.kind === 'rate' ? 'rate limit' : 'usage limit';
             run.host.cooldown(kind as AccountKind, name, until, what);
             stoppedBy = { account: name, what, until };
-            if (tried.length >= MAX_ATTEMPTS) throw new AccountsExhausted(kind, earliest);
+            if (tried.length >= MAX_ATTEMPTS) {
+              // Accounts that were cooling before this step may be free sooner than the ones it tried.
+              const pooled = run.host.earliestReset?.(kind as AccountKind, where) ?? null;
+              throw new AccountsExhausted(kind, pooled === null ? earliest : Math.min(earliest, pooled));
+            }
             want = null;
           }
         }

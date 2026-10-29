@@ -76,6 +76,8 @@ export class Assistant extends EventEmitter<AssistantEvents> {
   private readonly pending = new Map<string, AssistantApproval>();
   private readonly questions = new Map<string, AssistantQuestion>();
   private busyState = false;
+  /** Counts the sessions opened: a pump whose session is no longer the latest leaves the state alone. */
+  private generation = 0;
 
   constructor(opts: AssistantOptions) {
     super();
@@ -188,11 +190,13 @@ export class Assistant extends EventEmitter<AssistantEvents> {
       mcp: this.opts.mcp,
       userSettings: true,
     };
+    // Counted when opening starts, so the session it replaces stands down at once.
+    const generation = ++this.generation;
     this.opening = (canResume && this.sessionId ? engine.resume(this.sessionId, opts) : engine.start(opts))
       .then((session) => {
         this.session = session;
         this.sessionAccount = accountOf(engine);
-        void this.pump(session, engine);
+        void this.pump(session, engine, generation);
         return session;
       })
       .finally(() => {
@@ -201,10 +205,14 @@ export class Assistant extends EventEmitter<AssistantEvents> {
     return this.opening;
   }
 
-  private async pump(session: AgentSession, engine: AgentEngine): Promise<void> {
+  private async pump(session: AgentSession, engine: AgentEngine, generation: number): Promise<void> {
     let limited = false;
+    // Once another session took over (after a limit or a restart), what is left of this one's stream while its
+    // process ends must not touch the conversation, the approvals or the busy state: they are the new one's.
+    const replaced = () => this.generation !== generation;
     try {
       for await (const event of session.events) {
+        if (replaced()) continue;
         switch (event.type) {
           case 'session_started':
             this.sessionId = event.sessionId;
@@ -241,16 +249,19 @@ export class Assistant extends EventEmitter<AssistantEvents> {
       }
     } catch (err) {
       this.log.error('assistant session failed', err);
+      if (replaced()) return;
       this.emit('event', {
         type: 'error',
         message: err instanceof Error ? err.message : String(err),
         retryable: false,
       });
     } finally {
-      if (limited && (this.session === session || this.session === null)) this.retire(session);
-      if (this.session === session) this.session = null;
-      this.dropApprovals();
-      this.setBusy(false);
+      if (!replaced()) {
+        if (limited) this.retire(session);
+        if (this.session === session) this.session = null;
+        this.dropApprovals();
+        this.setBusy(false);
+      }
     }
   }
 

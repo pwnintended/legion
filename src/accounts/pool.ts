@@ -77,11 +77,26 @@ export class AccountPool {
     });
   }
 
+  /** Rests an account until `until`; a later reset already known (another window, another process) stands. */
   cooldown(kind: AccountKind, name: string, until: number, reason: string): void {
     this.update((state) => {
       const key = `${kind}/${name}`;
-      state.accounts[key] = { ...blank(state.accounts[key]), cooldownUntil: until, reason };
+      const entry = blank(state.accounts[key]);
+      if (entry.cooldownUntil !== null && entry.cooldownUntil >= until) return;
+      state.accounts[key] = { ...entry, cooldownUntil: until, reason };
     });
+  }
+
+  /** When the first of the cooling accounts of a kind (in a box: the `remote` ones) is free again; null: none cools. */
+  earliestReset(kind: AccountKind, where: 'local' | 'box' = 'local'): number | null {
+    const state = this.read();
+    const now = this.now();
+    let list = this.accounts(kind).filter((a) => a.enabled && (where !== 'box' || a.remote));
+    if (where === 'box' && list.length === 0) list = [implicitBoxAccount(kind)];
+    const resets = list
+      .map((a) => state.accounts[`${kind}/${a.name}`]?.cooldownUntil ?? null)
+      .filter((t): t is number => t !== null && t > now);
+    return resets.length > 0 ? Math.min(...resets) : null;
   }
 
   /** Ends the cooldown of one account, or of every account of the kind. */

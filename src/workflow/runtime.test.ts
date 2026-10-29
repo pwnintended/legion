@@ -81,6 +81,7 @@ function testHost(
       host.cooled.push({ kind, name, until, reason });
       pool.cooldown(kind, name, until, reason);
     },
+    earliestReset: (kind, where) => pool.earliestReset(kind, where),
     emit(event) {
       host.events.push(event);
     },
@@ -339,6 +340,19 @@ describe('runtime', () => {
       const tries = [...host.accountEngines.values()].map((e) => e.calls.length);
       expect(tries.every((n) => n === 1)).toBe(true);
       expect(tries.length).toBe(4);
+    });
+
+    it('at the attempt cap, names an account that was already cooling and resets sooner', async () => {
+      const soon = Date.now() + 5 * 60_000;
+      const host = testHost({
+        accounts: ['a', 'b', 'c', 'd', 'e'],
+        script: () => ({ limit: { resetsAt: Date.now() + 3_600_000 } }),
+      });
+      host.pool.cooldown('claude', 'e', soon, 'usage limit');
+      const err = await exec(host, () => agent('s', { prompt: 'work' })).catch((e: unknown) => e);
+      expect(err).toBeInstanceOf(AccountsExhausted);
+      expect((err as AccountsExhausted).earliestReset).toBe(soon);
+      expect(host.accountEngines.has('claude/e')).toBe(false);
     });
 
     it('does not move on for a failure that is not a limit', async () => {

@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { type Account, AccountPool } from '../accounts/index.ts';
 import { FakeEngine, type FakeScript } from '../engine/fake/index.ts';
-import type { AgentEvent } from '../engine/types.ts';
+import type { AgentEngine, AgentEvent, AgentSession } from '../engine/types.ts';
 import { Assistant } from './assistant.ts';
 
 let dir: string;
@@ -24,7 +24,7 @@ const account = (name: string): Account => ({
   source: 'config',
 });
 
-function setup(script: FakeScript) {
+function setup(script: FakeScript, wrap?: (session: AgentSession, account: string) => AgentSession) {
   const pool = new AccountPool({ file: join(dir, 'pool.json'), accounts: () => ['a', 'b'].map(account) });
   const engines = new Map<string, FakeEngine>();
   let prefer: string | null = null;
@@ -37,7 +37,15 @@ function setup(script: FakeScript) {
       prefer = name;
       const engine = engines.get(name) ?? new FakeEngine('claude', script, name);
       engines.set(name, engine);
-      return engine;
+      if (!wrap) return engine;
+      const wrapped: AgentEngine = {
+        kind: engine.kind,
+        account: engine.account,
+        probe: () => engine.probe(),
+        start: async (opts) => wrap(await engine.start(opts), name),
+        resume: async (id, opts) => wrap(await engine.resume(id, opts), name),
+      };
+      return wrapped;
     },
     onLimit: (engine, event) => {
       pool.cooldown('claude', engine.account.name, event.resetsAt ?? Date.now() + 60_000, 'usage limit');
@@ -85,6 +93,62 @@ describe('assistant accounts', () => {
     expect(engines.get('a')?.calls).toHaveLength(1);
     expect(engines.get('b')?.calls).toHaveLength(1);
     expect(engines.get('b')?.calls[0]).toMatchObject({ resumed: false, prompts: ['two'] });
+    await assistant.close();
+  });
+
+  it('a retired session that is slow to end leaves its replacement alone', async () => {
+    let release = () => {};
+    const ended = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let oldDone = () => {};
+    const oldFinished = new Promise<void>((resolve) => {
+      oldDone = resolve;
+    });
+    // Account a's process takes its time to exit after its last turn.
+    const slow = (session: AgentSession, name: string): AgentSession =>
+      name !== 'a'
+        ? session
+        : {
+            engine: session.engine,
+            get id() {
+              return session.id;
+            },
+            events: (async function* () {
+              for await (const event of session.events) {
+                if (event.type === 'exited') await ended;
+                yield event;
+              }
+              oldDone();
+            })(),
+            send: (t, p) => session.send(t, p),
+            interrupt: () => session.interrupt(),
+            close: () => session.close(),
+            respond: (i, d) => session.respond(i, d),
+            answer: (i, a) => session.answer(i, a),
+          };
+    const { assistant } = setup(
+      (call) =>
+        call.account === 'a'
+          ? { limit: { resetsAt: Date.now() + 3_600_000 } }
+          : { approval: { tool: 'Bash', input: { command: 'ls' } }, text: 'done' },
+      slow,
+    );
+    const firstDone = new Promise<void>((resolve) =>
+      assistant.on('event', (e) => {
+        if (e.type === 'turn_complete') resolve();
+      }),
+    );
+    await assistant.send('one');
+    await firstDone;
+    const asked = new Promise<void>((resolve) => assistant.once('approval', () => resolve()));
+    await assistant.send('two');
+    await asked;
+    release();
+    await oldFinished;
+    await new Promise((r) => setTimeout(r, 10));
+    expect(assistant.pendingApprovals()).toHaveLength(1);
+    expect(assistant.busy).toBe(true);
     await assistant.close();
   });
 });

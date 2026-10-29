@@ -26,48 +26,38 @@ describe('acquireLock', () => {
     acquireLock(path, { waitMs: 50 })();
   });
 
-  it('a delayed former owner cannot release its successor', () => {
+  it('takes over a lock whose owner process is gone', () => {
+    writeFileSync(path, '999999999 dead-owner');
+    const release = acquireLock(path, { waitMs: 50 });
+    expect(readFileSync(path, 'utf8')).toMatch(new RegExp(`^${process.pid} `));
+    release();
+    expect(existsSync(path)).toBe(false);
+  });
+
+  it('takes over a live owner only once its lock is older than staleMs', () => {
+    writeFileSync(path, `${process.pid} stalled`);
+    expect(() => acquireLock(path, { waitMs: 50 })).toThrow(/locked/);
+    age(path);
+    acquireLock(path, { waitMs: 50 })();
+  });
+
+  it('a lock whose token is not written yet is not stale', () => {
+    writeFileSync(path, '');
+    expect(() => acquireLock(path, { waitMs: 50 })).toThrow(/locked/);
+  });
+
+  it('a former owner that wakes up after a takeover does not release its successor', () => {
     const first = acquireLock(path);
-    age(`${path}.1`);
-    const second = acquireLock(path);
-    first(); // wakes up late
-    expect(existsSync(`${path}.2`)).toBe(true);
+    age(path);
+    const second = acquireLock(path, { staleMs: 1_000 });
+    first(); // late: the lock is the successor's now
     expect(() => acquireLock(path, { waitMs: 50 })).toThrow(/locked/);
     second();
     acquireLock(path, { waitMs: 50 })();
   });
 
-  it('a contender that saw a stale generation loses to the one that already took over', () => {
-    writeFileSync(`${path}.1`, 'dead-owner');
-    age(`${path}.1`);
-    writeFileSync(`${path}.2`, 'taker'); // another reclaimer won generation 2 meanwhile
-    expect(() => acquireLock(path, { waitMs: 50 })).toThrow(/locked/);
-    expect(existsSync(`${path}.2`)).toBe(true);
-  });
-
-  it('a released lock is taken at the next generation and numbers never go back', () => {
-    acquireLock(path)();
-    const release = acquireLock(path);
-    expect(existsSync(`${path}.2`)).toBe(true);
-    release();
-    expect(existsSync(`${path}.2.released`)).toBe(true);
-    expect(existsSync(`${path}.1.released`)).toBe(false);
-  });
-
-  it('a former owner resumed after takeover does not disturb the successor, even after the successor releases', () => {
-    const first = acquireLock(path);
-    age(`${path}.1`);
-    const second = acquireLock(path);
-    second();
-    const third = acquireLock(path);
-    first(); // late release of generation 1, long gone
-    expect(() => acquireLock(path, { waitMs: 50 })).toThrow(/locked/);
-    third();
-  });
-
   it('competing reclaimers of a stale lock never overlap', async () => {
-    writeFileSync(`${path}.1`, 'dead-owner');
-    age(`${path}.1`);
+    writeFileSync(path, '999999999 dead-owner');
     const counter = join(dir, 'counter');
     writeFileSync(counter, '0');
     const script = join(dir, 'w.mts');
