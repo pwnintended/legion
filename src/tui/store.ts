@@ -617,12 +617,19 @@ export class UiStore {
         }
         if (event.status === 'waiting' || event.status === 'interrupted') return;
         const view = this.state.runs.find((r) => r.id === event.runId);
-        this.update((s) => ({
-          runs: s.runs.filter((r) => r.id !== event.runId),
-          finishedRuns: view
+        this.update((s) => {
+          const finishedRuns = view
             ? [...s.finishedRuns.filter((r) => r.id !== event.runId), view].slice(-10)
-            : s.finishedRuns,
-        }));
+            : s.finishedRuns;
+          // The sub agents of a run that falls off the list go with it.
+          const kept = new Set([...s.runs, ...finishedRuns].map((r) => r.id));
+          const subagents = s.subagents.filter((a) => a.owner.kind !== 'step' || kept.has(a.owner.runId));
+          return {
+            runs: s.runs.filter((r) => r.id !== event.runId),
+            finishedRuns,
+            ...(subagents.length !== s.subagents.length ? { subagents } : {}),
+          };
+        });
         const status = event.status === 'done' ? 'done' : event.status === 'cancelled' ? 'cancelled' : 'failed';
         const detail =
           status === 'done'

@@ -155,6 +155,28 @@ it('isolates subagent transcripts, updates the view and bounds finished children
   expect(store.get().view).toBeNull();
 });
 
+it('drops the sub agents of runs that fall off the finished list', () => {
+  const store = new UiStore();
+  const lookup = () => null;
+  for (let i = 0; i < 12; i++) {
+    const runId = `r${i}`;
+    store.runEvent({ type: 'run', runId, status: 'running' }, lookup);
+    const owner = { kind: 'step', runId, key: 'a' } as const;
+    store.subagentEvent(owner, {
+      type: 'subagent_started',
+      id: 'child',
+      parent: null,
+      agentType: 'Explore',
+      description: runId,
+      prompt: null,
+    });
+    store.subagentEvent(owner, { type: 'subagent_done', id: 'child', ok: true, result: 'ok' });
+    store.runEvent({ type: 'run', runId, status: 'done' }, lookup);
+  }
+  expect(store.get().finishedRuns.map((r) => r.id)).toEqual(Array.from({ length: 10 }, (_, i) => `r${i + 2}`));
+  expect(store.get().subagents.map((s) => s.description)).toEqual(store.get().finishedRuns.map((r) => r.id));
+});
+
 it('feeds steps independently and bounds transcript storage', () => {
   const store = new UiStore();
   for (let i = 0; i < 70; i++) {

@@ -404,9 +404,17 @@ export class Session {
     const kind = engine.account.kind as RealKind;
     const name = engine.account.name;
     const what = event.kind === 'rate' ? 'rate limit' : 'usage limit';
-    const until = event.resetsAt ?? Date.now() + this._config.accounts.cooldownMinutes * 60_000;
+    // A reset already past (or unknown) would free the account at once: rest it for the configured cooldown instead.
+    const until =
+      event.resetsAt && event.resetsAt > Date.now()
+        ? event.resetsAt
+        : Date.now() + this._config.accounts.cooldownMinutes * 60_000;
     this.accounts.cooldown(kind, name, until, what);
-    if (who === 'the assistant' && this.assistantAccount === name) this.assistantAccount = null;
+    if (who === 'the assistant' && this.assistantAccount === name) {
+      this.assistantAccount = null;
+      // `--continue` must not bring the retired conversation back.
+      this.save({ assistant: undefined });
+    }
     const time = new Date(until).toTimeString().slice(0, 5);
     this.log.info(`${kind} account "${name}" hit its ${what} until ${time} (${who})`);
     return `${kind} account "${name}" hit its ${what} until ${time}; the next message starts a new conversation on another account.`;

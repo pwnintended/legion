@@ -107,6 +107,25 @@ describe('App', () => {
     ui.unmount();
   });
 
+  it("shows the viewed transcript's activity, not the chat target's busy turn", async () => {
+    const controller = new Controller(session);
+    const ui = render(<App controller={controller} />);
+    await tick();
+    const ref = { kind: 'sub', owner: { kind: 'orchestrator' }, id: 'child' } as const;
+    controller.store.update({ busy: true, busySince: Date.now(), activity: 'orchestrating' });
+    controller.store.openView(ref, 'sub agent · child');
+    await until(() => ui.lastFrame()?.includes('read-only · sub agent') ?? false);
+    expect(ui.lastFrame()).not.toContain('Orchestrating');
+    expect(ui.lastFrame()).not.toContain('esc to interrupt');
+    controller.store.update({ busy: false, activity: null });
+    const view = controller.store.get().view;
+    if (!view) throw new Error('no view');
+    controller.store.update({ view: { ...view, activity: 'Read x.ts' } });
+    await until(() => ui.lastFrame()?.includes('Read x.ts') ?? false);
+    expect(ui.lastFrame()).toContain('esc goes back');
+    ui.unmount();
+  });
+
   it('talks to a lead selected through /agents', async () => {
     const controller = new Controller(session);
     session.team.spawn(ROOT, { role: 'team-lead', name: 'assets', brief: 'Make the assets.' });

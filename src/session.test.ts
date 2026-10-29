@@ -1,4 +1,4 @@
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { FakeEngine } from './engine/fake/index.ts';
@@ -35,6 +35,32 @@ describe('Session.open --continue', () => {
 
   it('resumes one saved before the account pool (profile = account)', () =>
     resumes({ sessionId: 's-old', profile: 'default', kind: 'claude' }));
+});
+
+describe('Session limits', () => {
+  async function hitLimit(resetsAt: number | null): Promise<Session> {
+    const s = await Session.open({ cwd: repo.path, fake: true });
+    session = s;
+    (s.engine('claude', 'default') as FakeEngine).script = (_call, turn) =>
+      turn === 0 ? { text: 'hi' } : { limit: { resetsAt } };
+    await s.assistant.send('one');
+    await new Promise((r) => setTimeout(r, 50));
+    await s.assistant.send('two');
+    await new Promise((r) => setTimeout(r, 50));
+    return s;
+  }
+
+  it('rests an account whose reported reset is already past for the configured cooldown', async () => {
+    const s = await hitLimit(Date.now() - 60_000);
+    expect(s.accountSummary().claude).toBe('0/1');
+  });
+
+  it('forgets the saved assistant conversation so --continue does not resume it', async () => {
+    await hitLimit(Date.now() + 3_600_000);
+    const file = join(repo.path, '.legion', 'session', 'state.json');
+    const saved = existsSync(file) ? JSON.parse(readFileSync(file, 'utf8')) : {};
+    expect(saved.assistant).toBeUndefined();
+  });
 });
 
 describe('Session.engineAccount', () => {

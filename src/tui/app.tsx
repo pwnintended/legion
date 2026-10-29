@@ -251,7 +251,12 @@ export function App({
         </Box>
       ) : null}
       <Box flexDirection="column" flexShrink={0}>
-        {state.busy ? (
+        {/* A read-only transcript shows what its own agent is doing, not the chat target's turn. */}
+        {state.view ? (
+          state.view.activity ? (
+            <Busy frame={frame} since={null} activity={state.view.activity} tokens={0} hint="esc goes back" />
+          ) : null
+        ) : state.busy ? (
           <Busy
             frame={frame}
             since={state.busySince}
@@ -360,7 +365,7 @@ export function App({
                 : (notice ??
                   (shownBack > 0
                     ? `↓ ${shownBack} more line${shownBack === 1 ? '' : 's'} below · PgDn, or send to jump back`
-                    : state.busy
+                    : state.busy && !state.view
                       ? 'esc to interrupt'
                       : head && mode === 'chat'
                         ? 'tab: back to the question'
@@ -404,7 +409,7 @@ export function App({
 
 // ---- live region ---------------------------------------------------------------------------------
 
-function Busy(props: { frame: number; since: number | null; activity: string | null; tokens: number }) {
+function Busy(props: { frame: number; since: number | null; activity: string | null; tokens: number; hint?: string }) {
   const { frame, since, activity } = props;
   const mark = BUSY_FRAMES[frame % BUSY_FRAMES.length] ?? '░';
   const elapsed = since ? formatDuration(Date.now() - since) : '';
@@ -426,7 +431,8 @@ function Busy(props: { frame: number; since: number | null; activity: string | n
       <Text dimColor>
         {' '}
         ({elapsed ? `${elapsed} · ` : ''}
-        {props.tokens > 0 ? `↓ ${formatCount(props.tokens)} tokens · ` : ''}esc to interrupt)
+        {props.tokens > 0 ? `↓ ${formatCount(props.tokens)} tokens · ` : ''}
+        {props.hint ?? 'esc to interrupt'})
       </Text>
     </Box>
   );
