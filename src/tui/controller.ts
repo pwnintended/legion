@@ -454,6 +454,8 @@ export class Controller {
   async submit(text: string): Promise<void> {
     const trimmed = text.trim();
     if (!trimmed) return;
+    // The welcome has done its job once the user starts: the session gets the whole window.
+    this.store.dropBanner();
     if (trimmed.startsWith('/')) {
       await this.command(trimmed);
       return;

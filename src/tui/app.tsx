@@ -59,6 +59,7 @@ export function App({ controller, terminal }: { controller: Controller; terminal
   const head = state.interactions[0] ?? null;
   const animating = state.busy || state.runs.length > 0;
   const width = Math.max(40, columns || 80);
+  const welcome = state.items.some((i) => i.type === 'banner');
 
   useEffect(() => {
     controller.attach({
@@ -274,7 +275,7 @@ export function App({ controller, terminal }: { controller: Controller; terminal
             }}
             onTab={(empty) => {
               if (head) setMode((m) => (m === 'chat' ? 'hotkeys' : 'chat'));
-              else if (empty) controller.seed(TRY[starter.current++ % TRY.length] ?? '');
+              else if (empty && welcome) controller.seed(TRY[starter.current++ % TRY.length] ?? '');
             }}
             onCtrlC={() => {
               if (state.busy) {
@@ -301,7 +302,7 @@ export function App({ controller, terminal }: { controller: Controller; terminal
                     ? 'esc to interrupt'
                     : head && mode === 'chat'
                       ? 'tab: back to the question'
-                      : state.items.length <= 1
+                      : welcome
                         ? 'tab fills in an idea · / for commands · ? for shortcuts'
                         : '/ for commands · ? for shortcuts'
           }

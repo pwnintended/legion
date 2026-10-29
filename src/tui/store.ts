@@ -256,6 +256,12 @@ export class UiStore {
     this.update((s) => ({ items: [...s.items, withId] }));
   }
 
+  /** Takes the welcome banner out, so the session has the whole window. */
+  dropBanner(): void {
+    if (this.state.items.some((i) => i.type === 'banner'))
+      this.update((s) => ({ items: s.items.filter((i) => i.type !== 'banner') }));
+  }
+
   info(text: string): void {
     this.push({ type: 'info', text });
   }

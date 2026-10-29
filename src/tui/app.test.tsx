@@ -69,12 +69,15 @@ describe('App', () => {
     const controller = new Controller(session);
     const ui = render(<App controller={controller} />);
     await tick();
+    expect(ui.lastFrame()).toContain('workflows ready');
 
     ui.stdin.write('hi there');
     await tick();
     ui.stdin.write('\r');
     await until(() => ui.lastFrame()?.includes('(fake claude reply)') ?? false);
     expect(ui.lastFrame()).toContain('› hi there');
+    // The welcome makes room for the session.
+    expect(ui.lastFrame()).not.toContain('workflows ready');
 
     ui.stdin.write('/run hello {"who":"ada"}');
     await tick();
