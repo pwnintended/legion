@@ -90,6 +90,8 @@ export interface SessionOptions {
   cwd: string;
   /** First user message of the session (or the follow-up message when resuming). */
   prompt: string;
+  /** Images that go with the prompt (paths to PNG files the user attached). */
+  images?: readonly string[];
   /** Appended to the engine's own system prompt. */
   systemPrompt?: string | null;
   model?: string | null;
@@ -166,8 +168,11 @@ export interface AgentSession {
   readonly id: string;
   /** Normalized events. Ends after the `exited` event, when the process is gone. Single consumer. */
   readonly events: AsyncIterable<AgentEvent>;
-  /** Send a follow-up / steering message. `now` interrupts the current turn first if supported. */
-  send(text: string, priority?: 'now' | 'next'): Promise<void>;
+  /**
+   * Send a follow-up / steering message. `now` interrupts the current turn first if supported. `images`: paths to
+   * PNG files that go with it.
+   */
+  send(text: string, priority?: 'now' | 'next', images?: readonly string[]): Promise<void>;
   /** Stop the current turn but keep the session alive. */
   interrupt(): Promise<void>;
   /** Kill the process. Idempotent. */

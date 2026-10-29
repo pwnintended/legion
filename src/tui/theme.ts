@@ -44,6 +44,7 @@ export const glyph = {
   ask: '?',
   pending: '○',
   dot: '·',
+  image: '▣',
 } as const;
 
 export function formatDuration(ms: number): string {

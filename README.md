@@ -108,6 +108,7 @@ Want to say something to the assistant instead? Press **Tab** to switch to the c
 | **Esc** | Stop the assistant mid-reply |
 | **/** | Show the commands. Type a few letters to find one |
 | **?** | Show every shortcut |
+| **Ctrl+V** | Attach the screenshot on your clipboard (or paste or drop image files) |
 | **Ctrl+O** | Show or hide the details of what the agents did |
 | **PgUp / PgDn** or the mouse wheel | Scroll back through the conversation |
 | **Ctrl+C** twice | Quit |

@@ -17,6 +17,7 @@ import {
   threadResumeParams,
   threadStartParams,
   turnStartParams,
+  userInput,
 } from './config.ts';
 
 const legionMcp = {
@@ -39,6 +40,18 @@ beforeEach(async () => {
 });
 afterEach(async () => {
   await rm(dir, { recursive: true, force: true });
+});
+
+describe('user input', () => {
+  it('is the text, or the images as local files then the text', () => {
+    expect(userInput('hi')).toEqual([{ type: 'text', text: 'hi', text_elements: [] }]);
+    expect(userInput('look', ['/a.png', '/b.png'])).toEqual([
+      { type: 'localImage', path: '/a.png' },
+      { type: 'localImage', path: '/b.png' },
+      { type: 'text', text: 'look', text_elements: [] },
+    ]);
+    expect(userInput('', ['/a.png'])).toEqual([{ type: 'localImage', path: '/a.png' }]);
+  });
 });
 
 describe('permissions', () => {
