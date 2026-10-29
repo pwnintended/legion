@@ -115,11 +115,43 @@ Want to say something to the assistant instead? Press **Tab** to switch to the c
 A few commands you'll use often: `/workflows` to browse what Legion can do, `/runs` to see what's been running,
 `/config` for settings, and `/help` for everything else.
 
-## Questions people ask
+## Setting up your agents
 
-**Does it cost anything extra?**
-Legion adds no costs of its own. The agents run on your own Claude and Codex plans, just as if you were using
-those apps yourself. The status bar shows what the session has cost so far.
+Type `/config` for a settings menu: ↑↓ picks a setting, ←→ changes it, and Esc saves. You never have to edit a
+file, though you can.
+
+**How smart each agent is.** Every job gets a *tier*: `hard` for the tricky thinking (like planning), `medium`
+for everyday work (the default), and `easy` for quick chores. You choose which model and effort each tier uses.
+On Claude, for example, `hard` is Opus, `medium` is Sonnet and `easy` is Haiku. Change these in `/config`.
+
+**Which agent does which job.** Open `/workflows`, pick a workflow and give its steps a tier. You can also move a
+step to the other engine, say if you'd like Codex to do all the reviewing.
+
+**Which accounts they use.** If you have more than one Claude or Codex account, add each one as a *profile*,
+then switch with `/claude` or `/codex`. `/provider` moves everything onto Claude or onto OpenAI when one of them is
+out of usage.
+
+**How much they may do on their own.** By default agents run commands without asking, so they can work fast. Set
+permissions to `ask` in `/config` and they check with you first.
+
+Settings are kept in `.legion/config.toml` in your project (commit it to share it with your team), or in
+`~/.config/legion/config.toml` for all your projects. They look like this:
+
+```toml
+[models.claude.medium]          # everyday work on Claude: Opus instead of Sonnet
+model = "opus"
+
+[workflow.feature.agent.review] # in the feature workflow, Codex does all the reviewing
+engine = "codex"
+
+[workflows]
+approvals = "ask"               # agents ask before running commands
+maxAgents = 4                   # how many agents may work at the same time
+```
+
+All the settings are in [Configuration](docs/configuration.md).
+
+## Questions people ask
 
 **Will it mess up my code?**
 Agents build in separate copies of your repository (git worktrees), each on its own branch, so your checkout is left
