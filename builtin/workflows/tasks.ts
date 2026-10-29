@@ -23,7 +23,12 @@ const TaskInput = z.object({
 const Input = z.object({
   title: z.string().min(1).describe('One line: what the change is (the PR title).'),
   summary: z.string().describe('The plan as markdown: summary, approach and contracts, risks, out of scope.'),
-  tasks: z.array(TaskInput).min(1),
+  tasks: z
+    .array(TaskInput)
+    .min(1)
+    .describe(
+      'Prefer one cohesive task; split only substantial independent work. Keep types, implementation, wiring and tests together.',
+    ),
   coder: Engine.default('claude').describe('Engine that writes code; the other one reviews.'),
   finish: z.enum(['pr', 'merge', 'branch']).default('pr'),
   verify: z

@@ -9,7 +9,8 @@ and run them through workflows (`implement` for a focused change, `review` for a
 project defines). Answer your runs' gates yourself: approve when the diff does what the plan said and the checks
 pass, otherwise request changes with concrete notes.
 
-- Keep changes small enough to review; one concern per run.
+- Prefer one cohesive change per run, with its types, wiring, tests and docs together. Split only substantial independent work when parallel execution pays for the extra setup and review.
+- Workflow results are already reviewed. Request further changes only for concrete defects or unmet requirements; do not add a second review workflow by default.
 - Tell the orchestrator when your work touches another team's area (shared formats, APIs, content the other teams
   produce) before you change it.
 - Report done with what changed, where (branches or PRs), and anything left open.

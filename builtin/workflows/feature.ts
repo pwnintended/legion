@@ -20,6 +20,13 @@ const Input = z.object({
     .default([])
     .describe('Repository-wide checks, run once on the result (e.g. "pnpm test").'),
   maxFixRounds: z.number().int().min(0).max(5).default(1),
+  maxTasks: z
+    .number()
+    .int()
+    .min(1)
+    .max(10)
+    .default(3)
+    .describe('Planning ceiling, not a target. Prefer one cohesive task.'),
   clarify: z.boolean().default(true).describe('Let the planner ask questions first.'),
 });
 
@@ -41,6 +48,7 @@ export default workflow(
       finish: 'pr',
       verify: [],
       maxFixRounds: 1,
+      maxTasks: 3,
       clarify: true,
     },
   },
@@ -78,9 +86,15 @@ ${input.task}`,
         label: round === 1 ? 'plan' : `plan (revision ${round - 1})`,
         // Revisions continue the previous draft's session, which already explored the repository.
         ...(round > 1 ? { resume: `plan/${round - 1}/draft` } : input.clarify ? { resume: 'clarify' } : {}),
-        prompt: round > 1 ? `Revise the plan.\n\n${feedback}` : planPrompt(input.task, answers, input.verify),
+        prompt:
+          round > 1 ? `Revise the plan.\n\n${feedback}` : planPrompt(input.task, answers, input.verify, input.maxTasks),
       });
       const problems = checkPlan(plan);
+      if (plan.tasks.length > input.maxTasks) {
+        problems.push(
+          `the plan has ${plan.tasks.length} tasks; consolidate into at most ${input.maxTasks} cohesive tasks, preferably fewer`,
+        );
+      }
       if (problems.length > 0) {
         lastFeedback = `The plan is invalid; fix all of these:\n${problems.map((p) => `- ${p}`).join('\n')}`;
         return;
@@ -95,7 +109,12 @@ ${input.task}`,
   },
 );
 
-function planPrompt(task: string, answers: { question: string; answer: string }[], verify: readonly string[]): string {
+function planPrompt(
+  task: string,
+  answers: { question: string; answer: string }[],
+  verify: readonly string[],
+  maxTasks: number,
+): string {
   return `Produce the implementation plan for the task below.
 
 ## Task
@@ -105,12 +124,12 @@ ${answers.length ? `\n## Clarifications from the human\n${answers.map((a) => `- 
 Find every place the change touches (entry points, modules, callers, tests), the conventions to follow, the check commands that really exist (package scripts, Makefile, CI) with their fastest scoped forms, and the hot files several changes would want to edit (manifests, lockfiles, barrels, registries).
 
 ## Design the task graph
-- Contracts first: shared types, interfaces, schemas and names go into an early task so parallel tasks never guess a shared shape.
-- Wide and shallow: one contracts task, many independent tasks, one integration task at the end when there are three or more. Add a dependency only when a task needs another's code merged first.
-- Right-sized: one focused agent session each (≤ ~400 changed lines, usually 1–5 files), independently verifiable, tests in the same task as the code.
-- One writer per file: if two tasks must write the same file, make one depend on the other.
-- 2–5 testable acceptance criteria per task; at least one real, fast, scoped verify command per task (one test file, one package or crate: seconds, not the whole suite). ${verify.length ? `These repository-wide checks run once on the merged result, do not repeat them: ${verify.map((v) => `\`${v}\``).join(', ')}.` : ''}
-- A small change may be a single task. Use at most 10 tasks, ids T1, T2, … in dependency order.
+- Default to one cohesive task that implements the requested behavior end to end, including its types, wiring, tests and necessary docs. A task may span several files or layers; file count and line count are not reasons to split it.
+- Split only when substantial parts can be implemented and verified independently and the parallel work saves more time than the extra agent setup, review and merge cost. Usually one task, occasionally two or three. Explain the benefit of each split in the approach.
+- Keep shared contracts with their implementation unless multiple substantial independent consumers truly need a separate prerequisite. Do not add standalone planning, tests, cleanup, or integration tasks by default; the workflow already integrates and reviews the whole.
+- Consolidate tightly coupled work and work that edits the same files. Add a dependency only when a task needs another's code merged first.
+- Give each task concrete, testable acceptance criteria and the fastest relevant verify commands that actually exist. Do not invent extra requirements or tests just to fill a quota. ${verify.length ? `These repository-wide checks run once on the merged result, do not repeat them: ${verify.map((v) => `\`${v}\``).join(', ')}.` : ''}
+- Use at most ${maxTasks} tasks; this is a ceiling, not a target. Use ids T1, T2, … in dependency order.
 
 ## Plan document
 \`markdown\` is what the human approves and every coder reads: ## Summary (2–5 sentences), ## Approach (key decisions and contracts, one short bullet each, details in the tasks), ## Tasks (one line each), ## Risks and open questions, ## Out of scope. Start it with a one-line title as a level-1 heading.`;

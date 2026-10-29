@@ -3,6 +3,7 @@
  * independently, their findings are merged into one list, and — if you want — an agent fixes the ones you pick.
  */
 import { agent, gate, parallel, sh, workflow, z } from 'legion';
+import { Finding, REVIEWER } from './_review.ts';
 
 const Input = z.object({
   base: z
@@ -14,16 +15,6 @@ const Input = z.object({
   fix: z.boolean().default(false).describe('Offer to fix the findings afterwards (edits your checkout).'),
   fixer: z.enum(['claude', 'codex']).default('claude'),
 });
-
-const Finding = z.object({
-  severity: z.enum(['blocker', 'major', 'minor', 'nit']),
-  file: z.string().nullable(),
-  line: z.number().int().nullable(),
-  title: z.string(),
-  body: z.string(),
-  suggestedFix: z.string().nullable(),
-});
-type Finding = z.infer<typeof Finding>;
 
 const Review = z.object({ findings: z.array(Finding), summary: z.string() });
 const Merged = z.object({
@@ -50,7 +41,7 @@ export default workflow(
 
     const prompt = `Review the changes in this repository: \`git diff ${base}\` shows them (committed on this branch and uncommitted). Untracked files count too (\`git status\`).
 ${input.focus ? `\nFocus: ${input.focus}\n` : ''}
-Look for real defects (logic errors, unhandled edge cases, broken contracts, missing or misleading tests, security problems) and for changes that make the code clearly messier than it needs to be. Back every finding with evidence (file and line, quoted code, or command output) and give a concrete suggestedFix. Severities: blocker, major, minor, nit. Prefer a few high-conviction findings over many small ones. You are read-only: never change files or git state; running tests and linters is fine.`;
+Look for concrete defects introduced by this change. Prefer a few high-conviction findings over many small ones; an empty findings list is fine. Give a concrete suggestedFix for each finding.`;
 
     const [claude, codex] = await parallel([
       () =>
@@ -58,6 +49,7 @@ Look for real defects (logic errors, unhandled edge cases, broken contracts, mis
           tier: 'hard',
           engine: 'claude',
           mode: 'read',
+          system: REVIEWER,
           output: Review,
           prompt,
           label: 'claude reviews',
@@ -67,6 +59,7 @@ Look for real defects (logic errors, unhandled edge cases, broken contracts, mis
           tier: 'hard',
           engine: 'codex',
           mode: 'read',
+          system: REVIEWER,
           output: Review,
           prompt,
           label: 'codex reviews',

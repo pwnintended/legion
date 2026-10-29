@@ -148,11 +148,18 @@ export function ejectWorkflow(repo: string, name: string, as?: string): { path: 
   mkdirSync(dir, { recursive: true });
   const source = workflowSource(found);
   copyFileSync(source, target);
-  // Helpers it imports (`./_tasks.ts`) come along unless the project has its own.
-  for (const m of readFileSync(source, 'utf8').matchAll(/from '\.\/(_[\w-]+\.ts)'/g)) {
-    const helper = m[1] as string;
-    if (!existsSync(join(dir, helper))) copyFileSync(join(dirname(source), helper), join(dir, helper));
-  }
+  // Include transitive helpers too (e.g. feature → _tasks → _review). Existing project helpers win.
+  const copyHelpers = (file: string): void => {
+    for (const m of readFileSync(file, 'utf8').matchAll(/from '\.\/(_[\w-]+\.ts)'/g)) {
+      const helper = m[1] as string;
+      const dest = join(dir, helper);
+      if (existsSync(dest)) continue;
+      const origin = join(dirname(file), helper);
+      copyFileSync(origin, dest);
+      copyHelpers(origin);
+    }
+  };
+  copyHelpers(source);
   return { path: target, from: found };
 }
 

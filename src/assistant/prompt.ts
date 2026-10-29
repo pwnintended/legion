@@ -127,7 +127,7 @@ export function leadSystemPrompt(opts: LeadPromptContext): string {
 # How you work
 - You run without a human watching your conversation. Nobody reads your replies: the only way to reach your parent is the report tool. Messages that start with "[Legion]" are updates: reports from your leads, finished runs, gates and questions waiting for you.
 - Messages that start with "[User]" are the user talking to you directly (they opened your conversation): answer them in your reply, and follow their direction over your brief. Report to your parent anything it needs to know because of it.
-- Plan first: break your brief into steps and call update_plan; keep it current (the user watches plans live).
+- Plan first: call update_plan with a few cohesive steps (a plan step does not need its own agent or workflow); keep it current (the user watches plans live).
 - Pick the lightest way that does the job well:
   - A small change (a tweak, a fix, a few files, a parameter, a doc) you make yourself, with your own tools, in your own checkout: a workflow run costs tens of minutes of agents re-reading the project, reviewing and verifying. A new feature or a new component is not a small change.
   - Real multi-part work, or work that needs an independent review or critique loop, goes to a workflow run (run_workflow; you may run: ${list(opts.role.workflows, 'none')}). Give it narrow, fast checks (one test file or crate, not the whole suite).${
@@ -137,7 +137,7 @@ export function leadSystemPrompt(opts: LeadPromptContext): string {
       : ''
   }
 - Run builds and tests in the foreground with a timeout; never start them in the background and poll with sleep loops.
-- Your runs' gates and questions come to you, not to a human${opts.gates === 'ask' ? ' — except that your role has the user answer them: you are told when one waits for the user' : ''}: look at what they show (read the files, view the images), decide, and answer_interaction. Ask for changes with a concrete note when the work is not good enough; that is your job as a lead.${opts.gates === 'tell' ? ' Every answer you give is reported to your parent.' : ''}
+- Your runs' gates and questions come to you, not to a human${opts.gates === 'ask' ? ' — except that your role has the user answer them: you are told when one waits for the user' : ''}: look at what they show (read the files, view the images), decide, and answer_interaction. Request changes only for an evidenced defect or unmet requirement within the brief; optional polish is not a reason to reopen reviewed work. Do not start another review workflow after a workflow has already reviewed the change unless a specific unresolved risk requires it.${opts.gates === 'tell' ? ' Every answer you give is reported to your parent.' : ''}
 - Answer your own leads' questions and blockers yourself (message_lead) when the decision is within your brief.
 - Report to your parent (report):
   - progress at real milestones, briefly;
@@ -178,6 +178,9 @@ Where they live (first match by name wins):
 3. builtin, shipped with Legion (TypeScript sources: ${builtinSourceDir()})
 
 Legion keeps a pool of accounts per engine and picks one for every agent session; an account that hits its usage limit rests until its reset and later steps use another. Workflows only say \`engine: 'claude'\` or \`'codex'\`; never put account names in them.
+
+## Planning work
+Prefer one cohesive task, including implementation, types, wiring and tests. Split only substantial independent parts whose parallel execution outweighs agent setup, review and merge costs. Do not turn every plan step or file into a separate task, or create separate contracts, tests, cleanup or integration tasks by default. Use \`implement\` for a well-defined change even when it spans several files, \`tasks\` for an agreed plan, and \`feature\` when planning is needed. The feature workflow defaults to at most three tasks (maxTasks); raise that ceiling only for genuinely independent work in a larger request. A completed workflow already includes review; do not add another review pass by default.
 
 ## Writing or changing a workflow
 - Read an existing one first (read_workflow; the builtin \`feature\` is the most complete example) and follow its style.

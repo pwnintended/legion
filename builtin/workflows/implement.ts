@@ -3,6 +3,7 @@
  * fix rounds until it approves, then a draft PR (or a local merge) after the human signs off.
  */
 import { agent, ask, gate, git, loop, sh, WorkflowCancelled, type Worktree, workflow, z } from 'legion';
+import { approves, blockingFindings, type Finding, formatFindings, RE_REVIEW, REVIEWER, Review } from './_review.ts';
 
 const Input = z.object({
   task: z.string().min(1).describe('The change to make, with enough context to do it without asking.'),
@@ -16,25 +17,6 @@ const Report = z.object({
   summary: z.string().describe('What you changed and why'),
   commitMessage: z.string().describe('Conventional one-line subject, optional body'),
 });
-
-const Finding = z.object({
-  severity: z.enum(['blocker', 'major', 'minor', 'nit']),
-  file: z.string().nullable(),
-  line: z.number().int().nullable(),
-  title: z.string(),
-  body: z.string(),
-  suggestedFix: z.string().nullable(),
-});
-type Finding = z.infer<typeof Finding>;
-
-const Review = z.object({
-  verdict: z.enum(['approve', 'request_changes']),
-  findings: z.array(Finding),
-  summary: z.string(),
-});
-type Review = z.infer<typeof Review>;
-
-const REVIEWER = `You are an independent code reviewer; you did not write this code. Approve only when the change does what was asked, is correct, is tested where it matters, and leaves the code no messier than before. Severities: blocker (wrong behavior, broken build/tests, security), major (a real bug in an edge case that matters, a missing test, a clear structural regression), minor, nit. Back every finding with evidence (file and line, or command output) and a concrete suggestedFix. You are read-only: never change files or git state; running tests and linters is fine.`;
 
 export default workflow(
   {
@@ -53,7 +35,7 @@ export default workflow(
     const reviewer = input.coder === 'claude' ? 'codex' : 'claude';
     const wt = await git.worktree('work');
 
-    const report = await agent('code', {
+    let report = await agent('code', {
       engine: input.coder,
       cwd: wt.path,
       output: Report,
@@ -79,6 +61,7 @@ Follow the repository's conventions, write or update tests, and make ${input.ver
         system: REVIEWER,
         output: Review,
         label: `review${round > 1 ? ` (round ${round})` : ''}`,
+        ...(round > 1 ? { resume: `review/${round - 1}/review` } : {}),
         prompt: `Review the change in the working directory: \`git diff ${wt.baseSha}\` shows it (uncommitted changes included).
 
 ## What was asked
@@ -89,18 +72,19 @@ ${report.summary}
 
 ## Checks
 ${checks.map((c) => `- \`${c.command}\`: ${c.ok ? 'passed' : `FAILED\n${c.output}`}`).join('\n') || '(none configured)'}
-${round > 1 ? `\n## Re-review\nThe coder was asked to fix these; drop the fixed ones, repeat the rest, add new ones only for real problems:\n${formatFindings(findings)}` : ''}`,
+${round > 1 ? `\n## Re-review\n${RE_REVIEW}\n${formatFindings(blockingFindings(findings))}` : ''}`,
       });
       findings = review.findings;
       if (approves(review) && checks.every((c) => c.ok)) return { done: true };
       if (round > input.maxFixRounds) return;
-      await agent('fix', {
+      report = await agent('fix', {
+        output: Report,
         engine: input.coder,
         cwd: wt.path,
         resume: lastSession,
         allow: input.verify,
         label: `fix round ${round}`,
-        prompt: `A reviewer looked at your work. Fix every blocker and major finding (minor ones where cheap) and make the checks pass. Do not commit.\n\n${review.summary}\n\n${formatFindings(review.findings)}${
+        prompt: `A reviewer looked at your work. Address the blocking findings below and make the checks pass. Keep fixes focused; leave optional suggestions for follow-up. If a finding is incorrect, explain the evidence instead of making an unnecessary change. Do not commit. Finish with an updated summary of the whole change, what you fixed or disputed, and a commit message.\n\n${review.summary}\n\n${formatFindings(blockingFindings(review.findings))}${
           checks.some((c) => !c.ok)
             ? `\n\nFailing checks:\n${checks
                 .filter((c) => !c.ok)
@@ -162,22 +146,6 @@ async function verify(commands: readonly string[], wt: Worktree): Promise<Check[
     out.push({ command, ok: r.code === 0, output: clip(`${r.stdout}\n${r.stderr}`.trim(), 4000) });
   }
   return out;
-}
-
-function approves(review: Review): boolean {
-  return (
-    review.verdict === 'approve' && !review.findings.some((f) => f.severity === 'blocker' || f.severity === 'major')
-  );
-}
-
-function formatFindings(findings: Finding[]): string {
-  if (findings.length === 0) return '(no findings)';
-  return findings
-    .map(
-      (f) =>
-        `- [${f.severity}] ${f.title}${f.file ? ` (${f.file}${f.line ? `:${f.line}` : ''})` : ''}\n  ${f.body}${f.suggestedFix ? `\n  Fix: ${f.suggestedFix}` : ''}`,
-    )
-    .join('\n');
 }
 
 function clip(text: string, max: number): string {
