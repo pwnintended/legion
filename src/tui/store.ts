@@ -214,6 +214,7 @@ export class UiStore {
   /** The feed line of each tool call of the assistant or a lead still running, so a failure names what failed. */
   private readonly toolLines = new Map<string, string>();
   private scheduled: NodeJS.Timeout | null = null;
+  private flushQueued = false;
   /** The tool calls and file changes since the last reply, pushed as one `tools` item before the next. */
   private calls: (ToolCallView & { id: string })[] = [];
   private files = new Map<string, FileChangeView>();
@@ -251,7 +252,7 @@ export class UiStore {
   update(patch: Partial<UiState> | ((s: UiState) => Partial<UiState>), urgent = true): void {
     const next = typeof patch === 'function' ? patch(this.state) : patch;
     this.state = { ...this.state, ...next };
-    if (urgent) this.flush();
+    if (urgent) this.queueFlush();
     else this.schedule();
   }
 
@@ -478,22 +479,27 @@ export class UiStore {
         return;
       }
       case 'step': {
-        this.updateRun(event.runId, (run) => {
-          const steps = run.steps.filter((s) => s.key !== event.key);
-          const prev = run.steps.find((s) => s.key === event.key);
-          steps.push({
-            key: event.key,
-            label: event.label,
-            kind: event.kind,
-            status: event.status,
-            detail: event.detail ?? null,
-            activity: event.status === 'started' ? (prev?.activity ?? null) : null,
-            engine: event.engine ?? prev?.engine ?? null,
-            startedAt: prev?.startedAt ?? Date.now(),
-            endedAt: event.status === 'started' ? null : Date.now(),
-          });
-          return { ...run, steps };
-        });
+        // Resuming replays many cached steps in one turn; notify the UI at the normal rendering cadence.
+        this.updateRun(
+          event.runId,
+          (run) => {
+            const steps = run.steps.filter((s) => s.key !== event.key);
+            const prev = run.steps.find((s) => s.key === event.key);
+            steps.push({
+              key: event.key,
+              label: event.label,
+              kind: event.kind,
+              status: event.status,
+              detail: event.detail ?? null,
+              activity: event.status === 'started' ? (prev?.activity ?? null) : null,
+              engine: event.engine ?? prev?.engine ?? null,
+              startedAt: prev?.startedAt ?? Date.now(),
+              endedAt: event.status === 'started' ? null : Date.now(),
+            });
+            return { ...run, steps };
+          },
+          event.status !== 'cached',
+        );
         if (event.status === 'failed' && event.detail && !/cancelled|aborted/i.test(event.detail)) {
           this.error(`${event.label}: ${clipLines(event.detail, 8)}`);
         }
@@ -542,7 +548,16 @@ export class UiStore {
     }, 33);
   }
 
+  /** Urgent updates still render at the end of the current task, once: Ink renders synchronously, so a render per
+   * update in a burst (a resumed run's events, all in one tick) overruns React's limit on nested updates. */
+  private queueFlush(): void {
+    if (this.flushQueued) return;
+    this.flushQueued = true;
+    queueMicrotask(() => this.flush());
+  }
+
   private flush(): void {
+    this.flushQueued = false;
     if (this.scheduled) {
       clearTimeout(this.scheduled);
       this.scheduled = null;
