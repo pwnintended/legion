@@ -623,22 +623,27 @@ export class UiStore {
         return;
       }
       case 'step': {
-        this.updateRun(event.runId, (run) => {
-          const steps = run.steps.filter((s) => s.key !== event.key);
-          const prev = run.steps.find((s) => s.key === event.key);
-          steps.push({
-            key: event.key,
-            label: event.label,
-            kind: event.kind,
-            status: event.status,
-            detail: event.detail ?? null,
-            activity: event.status === 'started' ? (prev?.activity ?? null) : null,
-            engine: event.engine ?? prev?.engine ?? null,
-            startedAt: prev?.startedAt ?? Date.now(),
-            endedAt: event.status === 'started' ? null : Date.now(),
-          });
-          return { ...run, steps };
-        });
+        // Cached replay updates state immediately, but batches notifications at the rendering cadence.
+        this.updateRun(
+          event.runId,
+          (run) => {
+            const steps = run.steps.filter((s) => s.key !== event.key);
+            const prev = run.steps.find((s) => s.key === event.key);
+            steps.push({
+              key: event.key,
+              label: event.label,
+              kind: event.kind,
+              status: event.status,
+              detail: event.detail ?? null,
+              activity: event.status === 'started' ? (prev?.activity ?? null) : null,
+              engine: event.engine ?? prev?.engine ?? null,
+              startedAt: prev?.startedAt ?? Date.now(),
+              endedAt: event.status === 'started' ? null : Date.now(),
+            });
+            return { ...run, steps };
+          },
+          event.status !== 'cached',
+        );
         if (event.status === 'failed' && event.detail && !/cancelled|aborted/i.test(event.detail)) {
           this.error(`${event.label}: ${clipLines(event.detail, 8)}`);
         }

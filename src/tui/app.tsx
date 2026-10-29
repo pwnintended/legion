@@ -6,10 +6,11 @@
  */
 import { homedir } from 'node:os';
 import { Box, type DOMElement, Text, useApp, useBoxMetrics, useInput, useWindowSize } from 'ink';
-import { memo, type ReactNode, useEffect, useRef, useState, useSyncExternalStore } from 'react';
+import { memo, type ReactNode, useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from 'react';
 import type { QuestionAnswers, UserQuestion } from '../engine/types.ts';
 import type { Presentation } from '../team/team.ts';
 import { type AgentOwner, agentKey, type SubagentView, subagentLabel } from './agents.ts';
+import { AgentsMenu } from './agents-menu.tsx';
 import { ConfigMenu } from './config-menu.tsx';
 import { COMMANDS, type Controller } from './controller.ts';
 import { hyperlink, imageProtocol, linkTarget } from './images.ts';
@@ -97,11 +98,16 @@ export function App({
   const body = useBoxMetrics(content);
   const [back, setBack] = useState(0);
   const bodyHeight = useRef(0);
-  useEffect(() => {
+  // Apply the scroll anchor correction before another input can use the new layout with the old offset.
+  useLayoutEffect(() => {
     const grew = body.height - bodyHeight.current;
     bodyHeight.current = body.height;
     if (grew > 0) setBack((b) => (b > 0 ? b + grew : 0));
   }, [body.height]);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: switching transcripts resets scroll, live updates retain it.
+  useLayoutEffect(() => {
+    setBack(0);
+  }, [state.view?.ref]);
   const maxBack = Math.max(0, body.height - view.height);
   const shownBack = Math.min(back, maxBack);
   const scroll = (rowsBy: number) => setBack((b) => Math.max(0, Math.min(Math.min(b, maxBack) + rowsBy, maxBack)));
@@ -109,6 +115,7 @@ export function App({
   useInput((input, key) => {
     if (key.pageUp) scroll(page);
     else if (key.pageDown) scroll(-page);
+    else if (key.ctrl && input === 't' && !state.menu) controller.openAgents();
     else if (key.ctrl && input === 'o') store.update((s) => ({ showTools: !s.showTools }));
   });
   const wheel = useRef(scroll);
@@ -148,7 +155,7 @@ export function App({
   const ask = head?.source === 'run' && head.pending.interaction.kind === 'ask' ? head.pending.interaction : null;
   const questions = head ? questionsOf(head) : null;
   const question = questions?.[qIndex] ?? null;
-  const typing = answering && (ask !== null || question !== null || mode === 'note');
+  const typing = !state.view && answering && (ask !== null || question !== null || mode === 'note');
   const choices = question ? question.options.map((o) => o.label) : (ask?.options ?? []);
 
   /** One question answered (typed text, option numbers, or the highlighted/toggled options); the last sends all. */
@@ -178,6 +185,11 @@ export function App({
     setArmedExit(false);
     setShortcuts(false);
     setBack(0);
+    if (state.view) {
+      if (value.trimStart().startsWith('/')) void controller.submit(value);
+      else setNotice('Read-only transcript · Esc goes back');
+      return;
+    }
     if (head && typing && question) {
       answerQuestion(value);
       return;
@@ -196,7 +208,7 @@ export function App({
       setShortcuts((on) => !on);
       return true;
     }
-    if (!head || !answering) return false;
+    if (state.view || !head || !answering) return false;
     if (question) {
       // Space toggles the highlighted option of a multi-select question.
       if (!question.multiSelect || key !== ' ') return false;
@@ -220,12 +232,12 @@ export function App({
         contentOffsetY={maxBack - shownBack}
       >
         <Box ref={content} flexDirection="column" flexShrink={0}>
-          {state.items.slice(-ITEMS_SHOWN).map((item) => (
+          {(state.view?.items ?? state.items).slice(-ITEMS_SHOWN).map((item) => (
             <ItemView key={item.id} item={item} width={width} showTools={state.showTools} kitty={kitty} />
           ))}
-          {state.streaming ? (
+          {(state.view?.streaming ?? state.streaming) ? (
             <Bullet mark={glyph.assistant} markColor="white" marginTop={1}>
-              <Markdown text={state.streaming} width={width - 2} />
+              <Markdown text={state.view?.streaming ?? state.streaming} width={width - 2} />
             </Bullet>
           ) : null}
         </Box>
@@ -233,6 +245,7 @@ export function App({
       {/* A menu takes the room it needs (the conversation keeps the rest), clipped when the window is too short. */}
       {state.menu ? (
         <Box flexDirection="column" flexShrink={1} overflow="hidden">
+          {state.menu === 'agents' ? <AgentsMenu controller={controller} width={width} /> : null}
           {state.menu === 'config' ? <ConfigMenu controller={controller} width={width} /> : null}
           {state.menu === 'workflows' ? <WorkflowsMenu controller={controller} width={width} /> : null}
         </Box>
@@ -267,17 +280,27 @@ export function App({
           marginTop={head || state.busy || shortcuts || state.attachments.length > 0 ? 0 : 1}
         >
           <PromptInput
-            prompt={typing ? glyph.ask : state.target === 'orchestrator' ? glyph.user : `${state.target} ${glyph.user}`}
+            prompt={
+              state.view
+                ? `read-only · ${state.view.title}`
+                : typing
+                  ? glyph.ask
+                  : state.target === 'orchestrator'
+                    ? glyph.user
+                    : `${state.target} ${glyph.user}`
+            }
             mask={typing && question?.secret === true}
             tone={tone}
             placeholder={
-              typing && question
-                ? question.multiSelect
-                  ? 'Space toggles, Enter confirms · or type numbers or your own answer'
-                  : choices.length > 0
-                    ? 'Pick with ↑↓ and Enter · or type a number or your own answer'
-                    : 'Type your answer'
-                : placeholder(head, mode, ask !== null, state.target)
+              state.view
+                ? 'Read-only transcript · Esc goes back · / for commands'
+                : typing && question
+                  ? question.multiSelect
+                    ? 'Space toggles, Enter confirms · or type numbers or your own answer'
+                    : choices.length > 0
+                      ? 'Pick with ↑↓ and Enter · or type a number or your own answer'
+                      : 'Type your answer'
+                  : placeholder(head, mode, ask !== null, state.target)
             }
             commands={typing ? [] : COMMANDS}
             isActive={!state.menu}
@@ -285,7 +308,7 @@ export function App({
             onSubmit={submit}
             onEmptyKey={hotkey}
             onNavigate={(dir) => {
-              if ((!ask && !question) || !answering || choices.length === 0) return false;
+              if (state.view || (!ask && !question) || !answering || choices.length === 0) return false;
               setOption((n) => (n + dir + choices.length) % choices.length);
               return true;
             }}
@@ -302,6 +325,7 @@ export function App({
             onPasteFiles={typing ? undefined : (paths) => void controller.attachImages(paths)}
             onEmptyBackspace={() => controller.detachLast()}
             onEscape={() => {
+              if (state.view) return controller.closeView();
               if (shortcuts) return setShortcuts(false);
               // Esc declines an agent's questions (it is told the user would not answer).
               if (head && question && mode !== 'chat') controller.answerQuestions(head, null);
@@ -328,7 +352,9 @@ export function App({
             state.menu
               ? state.menu === 'config'
                 ? 'settings'
-                : 'workflows'
+                : state.menu === 'agents'
+                  ? 'agents'
+                  : 'workflows'
               : armedExit
                 ? 'Press Ctrl+C again to exit'
                 : (notice ??
@@ -517,6 +543,7 @@ function Shortcuts({ width }: { width: number }) {
       ['esc', 'interrupt'],
       ['ctrl+c', 'clear, ×2 quits'],
       ['ctrl+o', 'show tool calls'],
+      ['ctrl+t', 'every agent'],
       ['pgup/pgdn', 'scroll'],
     ],
     [

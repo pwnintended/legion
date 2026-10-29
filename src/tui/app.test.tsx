@@ -65,6 +65,92 @@ afterEach(async () => {
 });
 
 describe('App', () => {
+  it('opens a fake sub agent from Ctrl+T and returns to the conversation', async () => {
+    const engine = session.engine('claude') as FakeEngine;
+    engine.script = (call, turn) => ({
+      ...defaultScript(call, turn),
+      subagents: [{ type: 'Explore', description: 'Find the entry point', text: 'The entry point is main.ts' }],
+    });
+    const controller = new Controller(session);
+    const ui = render(<App controller={controller} />);
+    await tick();
+    ui.stdin.write('explore');
+    await tick();
+    ui.stdin.write('\r');
+    await until(() => controller.store.get().subagents.some((s) => s.status === 'done'));
+    ui.stdin.write('\u0014');
+    await until(() => ui.lastFrame()?.includes('Agents') ?? false);
+    expect(ui.lastFrame()).toContain('sub agent · Explore · Find the entry point');
+    expect(ui.lastFrame()).toContain('talk');
+    ui.stdin.write('\u001B[B');
+    await tick();
+    ui.stdin.write('\r');
+    await until(() => ui.lastFrame()?.includes('read-only · sub agent') ?? false);
+    expect(ui.lastFrame()).toContain('The entry point is main.ts');
+    const calls = engine.calls.length;
+    ui.stdin.write('cannot send');
+    await tick();
+    ui.stdin.write('\r');
+    await tick();
+    expect(engine.calls).toHaveLength(calls);
+    expect(ui.lastFrame()).toContain('Read-only transcript · Esc goes back');
+    ui.stdin.write('\u001B');
+    await until(() => controller.store.get().view === null);
+    await tick();
+    expect(ui.lastFrame()).toContain('› explore');
+    expect(ui.lastFrame()).not.toContain('read-only ·');
+    ui.stdin.write('?');
+    await tick();
+    expect(ui.lastFrame()).toContain('ctrl+t');
+    expect(ui.lastFrame()).toContain('every agent');
+    ui.unmount();
+  });
+
+  it('talks to a lead selected through /agents', async () => {
+    const controller = new Controller(session);
+    session.team.spawn(ROOT, { role: 'team-lead', name: 'assets', brief: 'Make the assets.' });
+    const ui = render(<App controller={controller} />);
+    await until(() => controller.agentTree().some((n) => n.label === 'assets'));
+    await tick();
+    ui.stdin.write('/agents');
+    await tick();
+    ui.stdin.write('\r');
+    await until(() => controller.store.get().menu === 'agents');
+    ui.stdin.write('\u001B[B');
+    await tick();
+    ui.stdin.write('\r');
+    await until(() => ui.lastFrame()?.includes('Talking to assets') ?? false);
+    ui.unmount();
+  });
+
+  it('skips run headers and opens a workflow step transcript', async () => {
+    const controller = new Controller(session);
+    controller.store.update({ runs: [{ id: 'picker-run', workflow: 'hello', steps: [], startedAt: 0 }] });
+    controller.store.runEvent(
+      { type: 'step', runId: 'picker-run', key: 'greet', label: 'Greeting step', kind: 'agent', status: 'started' },
+      () => null,
+    );
+    controller.store.runEvent(
+      {
+        type: 'agent',
+        runId: 'picker-run',
+        key: 'greet',
+        event: { type: 'message', text: 'Hello from the workflow step' },
+      },
+      () => null,
+    );
+    const ui = render(<App controller={controller} />);
+    await tick();
+    ui.stdin.write('\u0014');
+    await until(() => controller.store.get().menu === 'agents');
+    ui.stdin.write('\u001B[B');
+    await tick();
+    ui.stdin.write('\r');
+    await until(() => ui.lastFrame()?.includes('read-only · Greeting step') ?? false);
+    expect(ui.lastFrame()).toContain('Hello from the workflow step');
+    ui.unmount();
+  });
+
   it('shows indented sub agents for the orchestrator, leads and run steps', async () => {
     const controller = new Controller(session);
     const store = controller.store;

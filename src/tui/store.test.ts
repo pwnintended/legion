@@ -1,8 +1,32 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { buildAgentTree } from './agents.ts';
 import { UiStore } from './store.ts';
 
 describe('UiStore', () => {
+  it('batches cached step notifications while retaining all replayed steps', () => {
+    vi.useFakeTimers();
+    try {
+      const store = new UiStore({
+        runs: [{ id: 'resume', workflow: 'feature', steps: [], startedAt: 0 }],
+      });
+      const changed = vi.fn();
+      store.subscribe(changed);
+      for (let n = 0; n < 150; n++) {
+        store.runEvent(
+          { type: 'step', runId: 'resume', key: `step-${n}`, kind: 'agent', status: 'cached', label: `Step ${n}` },
+          () => null,
+        );
+      }
+      expect(store.get().runs[0]?.steps).toHaveLength(150);
+      expect(changed).not.toHaveBeenCalled();
+      vi.runAllTimers();
+      expect(changed).toHaveBeenCalledTimes(1);
+      expect(store.get().runs[0]?.steps.every((s) => s.status === 'cached')).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('folds the tool calls between two replies into one item, before the next reply', () => {
     const store = new UiStore();
     store.assistantEvent({ type: 'text_delta', text: 'Looking.' });
