@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { buildAgentTree } from './agents.ts';
 import { UiStore } from './store.ts';
 
 describe('UiStore', () => {
@@ -43,4 +44,83 @@ describe('UiStore', () => {
     expect(tokens && tokens.output - tokens.outputAtTurnStart).toBe(240);
     expect(costUsd).toBe(0.01);
   });
+});
+
+it('removes retained snapshots on resume and retains each run ID only once', () => {
+  const store = new UiStore();
+  const lookup = () => null;
+  const unique = () => {
+    const nodes = buildAgentTree(store.get());
+    expect(new Set(nodes.map((n) => n.key)).size).toBe(nodes.length);
+    return nodes;
+  };
+  for (let attempt = 0; attempt < 3; attempt++) {
+    store.runEvent({ type: 'run', runId: 'r', status: 'running' }, lookup);
+    store.runEvent({ type: 'step', runId: 'r', key: 'a', label: 'Agent', kind: 'agent', status: 'started' }, lookup);
+    expect(store.get().finishedRuns).toEqual([]);
+    expect(
+      unique()
+        .filter((n) => n.kind === 'run' || n.kind === 'step')
+        .map((n) => n.status),
+    ).toEqual(['working', 'working']);
+    const final = attempt === 2;
+    store.runEvent(
+      { type: 'step', runId: 'r', key: 'a', label: 'Agent', kind: 'agent', status: final ? 'done' : 'failed' },
+      lookup,
+    );
+    store.runEvent({ type: 'run', runId: 'r', status: final ? 'done' : 'failed' }, lookup);
+    expect(store.get().finishedRuns).toHaveLength(1);
+    expect(
+      unique()
+        .filter((n) => n.kind === 'run' || n.kind === 'step')
+        .map((n) => n.status),
+    ).toEqual(final ? ['done', 'done'] : ['failed', 'failed']);
+  }
+  // Defensive retention also replaces an existing snapshot of the same ID.
+  store.update({ runs: [...store.get().finishedRuns] });
+  store.runEvent({ type: 'run', runId: 'r', status: 'done' }, lookup);
+  expect(store.get().finishedRuns).toHaveLength(1);
+  expect(store.get().runs).toEqual([]);
+  unique();
+});
+
+it('isolates subagent transcripts, updates the view and bounds finished children', () => {
+  const store = new UiStore();
+  const owner = { kind: 'orchestrator' } as const;
+  for (let i = 0; i < 35; i++) {
+    const id = String(i);
+    store.subagentEvent(owner, {
+      type: 'subagent_started',
+      id,
+      parent: null,
+      agentType: 'Explore',
+      description: id,
+      prompt: null,
+    });
+    store.openView({ kind: 'sub', owner, id }, 'child');
+    store.subagentEvent(owner, { type: 'subagent_event', id, event: { type: 'text_delta', text: 'hello' } });
+    expect(store.get().view?.streaming).toBe('hello');
+    expect(store.get().subagents.at(-1)?.activity).toBe('writing');
+    store.subagentEvent(owner, { type: 'subagent_done', id, ok: false, result: 'failed' });
+    expect(store.get().view?.items.some((i) => i.type === 'assistant' && i.text === 'hello')).toBe(true);
+  }
+  expect(store.get().items).toEqual([]);
+  expect(store.get().subagents).toHaveLength(30);
+  expect(store.get().subagents[0]?.id).toBe('5');
+  expect(store.get().feed.at(-1)?.kind).toBe('error');
+  store.closeView();
+  expect(store.get().view).toBeNull();
+});
+
+it('feeds steps independently and bounds transcript storage', () => {
+  const store = new UiStore();
+  for (let i = 0; i < 70; i++) {
+    const key = String(i);
+    const ref = { kind: 'step', runId: 'r', key } as const;
+    store.openView(ref, key);
+    store.runEvent({ type: 'agent', runId: 'r', key, event: { type: 'message', text: key } }, () => null);
+    expect(store.get().view?.items).toEqual([{ id: 1, type: 'assistant', text: key }]);
+  }
+  expect(store.transcriptOf({ kind: 'step', runId: 'r', key: '0' })).toBeNull();
+  expect(store.transcriptOf({ kind: 'step', runId: 'r', key: '69' })).not.toBeNull();
 });
