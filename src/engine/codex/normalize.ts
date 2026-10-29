@@ -51,6 +51,9 @@ export class CodexNormalizer {
   private finalMessage: string | null = null;
   private lastMessage: string | null = null;
   private turnErrorEmitted = false;
+  private limitEmitted = false;
+  /** Latest rate-limit snapshot: the reset time of its exhausted windows goes on `limit_reached`. */
+  private lastSnapshot: RateLimitSnapshot | null = null;
   private readonly options: NormalizerOptions;
 
   constructor(options: NormalizerOptions) {
@@ -67,6 +70,7 @@ export class CodexNormalizer {
         this.finalMessage = null;
         this.lastMessage = null;
         this.turnErrorEmitted = false;
+        this.limitEmitted = false;
         return [];
       case 'item/agentMessage/delta':
         return notification.params.delta ? [{ type: 'text_delta', text: notification.params.delta }] : [];
@@ -92,6 +96,7 @@ export class CodexNormalizer {
       case 'error':
         this.turnErrorEmitted = true;
         return [
+          ...(notification.params.willRetry ? [] : this.limitEvents(notification.params.error)),
           {
             type: 'error',
             message: errorMessage(notification.params.error),
@@ -219,6 +224,7 @@ export class CodexNormalizer {
     const events = this.closeOpenCalls(status === 'failed' ? 'failed' : 'turn ended');
     if (status === 'failed') {
       const message = error ? errorMessage(error) : 'turn failed';
+      if (error) events.push(...this.limitEvents(error));
       if (!this.turnErrorEmitted) {
         events.push({ type: 'error', message, retryable: isRetryable(error?.codexErrorInfo ?? null) });
       }
@@ -253,7 +259,31 @@ export class CodexNormalizer {
     return events;
   }
 
+  private limitEvents(error: TurnError): AgentEvent[] {
+    if (this.limitEmitted) return [];
+    const info = error.codexErrorInfo;
+    const kind = info === 'usageLimitExceeded' ? 'usage' : info === 'rateLimitExceeded' ? 'rate' : null;
+    if (kind === null) return [];
+    const snapshot = this.lastSnapshot;
+    const windows = (snapshot ? [snapshot.primary, snapshot.secondary] : []).flatMap((w) =>
+      w && w.resetsAt !== null ? [w] : [],
+    );
+    const exhausted = windows.filter((w) => w.usedPercent >= 100);
+    this.limitEmitted = true;
+    const resets = exhausted.map((w) => (w.resetsAt ?? 0) * 1000);
+    return [
+      {
+        type: 'limit_reached',
+        engine: 'codex',
+        kind,
+        resetsAt: resets.length > 0 ? Math.max(...resets) : null,
+        message: errorMessage(error),
+      },
+    ];
+  }
+
   private rateLimitEvents(snapshot: RateLimitSnapshot): AgentEvent[] {
+    this.lastSnapshot = snapshot;
     const events: AgentEvent[] = [];
     const windows: [string, RateLimitWindow | null][] = [
       ['primary', snapshot.primary],

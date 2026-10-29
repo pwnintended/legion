@@ -152,6 +152,11 @@ export type AgentEvent =
   /** Cumulative for the session when the engine reports it: take the latest, never sum. */
   | { type: 'usage'; inputTokens: number; outputTokens: number; costUsd: number | null }
   | { type: 'rate_limit'; engine: EngineKind; window: string; usedPct: number; resetsAt: number | null }
+  /**
+   * The account is out of quota (not a transient 429 the CLI retries itself). Emitted just before the failing
+   * `error` / `turn_complete`. `resetsAt` is epoch ms when the CLI reported one.
+   */
+  | { type: 'limit_reached'; engine: EngineKind; kind: 'usage' | 'rate'; resetsAt: number | null; message: string }
   | { type: 'turn_complete'; structuredOutput: unknown; isError: boolean; reason: string | null }
   | { type: 'error'; message: string; retryable: boolean }
   /** Always the last event of a session's stream. */

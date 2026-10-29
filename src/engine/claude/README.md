@@ -25,6 +25,9 @@ the control-protocol shapes follow the published `@anthropic-ai/claude-agent-sdk
   `api_error_<status>`, or `process_exited` (crash mid-turn). Errors come with an `error{retryable}` event first;
   schema failures and 408/429/5xx/529 are retryable. `system/api_retry` → `error{retryable: true}` (informational,
   the CLI retries by itself).
+- **Limits**: a failing `result` for an account out of quota (a `rate_limit_event` with `status: "rejected"` and not
+  `isUsingOverage`, `api_error_status` 429, or text like `usage limit` / `Claude AI usage limit reached|<epoch s>`)
+  emits `limit_reached{kind, resetsAt (ms), message}` just before the `error`. `api_retry` 429 does not.
 - **Usage is cumulative**: `usage` events carry running session totals (tokens incl. cache reads/creation, and
   `costUsd`), including the spend of earlier processes of a resumed session. Take the latest; never sum.
   Interrupted turns may report zeros; those are not emitted. Cost is the CLI's estimate.

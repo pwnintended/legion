@@ -85,6 +85,9 @@ as a warning). A human takeover via `codex resume <threadId>` must use `CODEX_HO
   treat as "latest value", don't sum. `costUsd` is always null.
 - `rate_limit`: primary/secondary windows (`300` min → `5h`, `10080` → `weekly`), `resetsAt` converted from
   seconds to ms, duplicates dropped.
+- `limit_reached`: a final `error` (willRetry false) or failed turn with `codexErrorInfo` `usageLimitExceeded` (usage)
+  or `rateLimitExceeded` (rate), emitted before the `error`. `resetsAt` (ms) = max reset of the windows at ≥100% in
+  the latest `account/rateLimits/updated`, else null. Once per turn, also when only a `willRetry` notice came first.
 - `file_change` comes from apply_patch (`fileChange` items) only; files written by shell commands appear as
   `tool_call` kind `command`. Paths inside cwd are relative.
 - `turn_complete.structuredOutput` = the turn's final agent message parsed as JSON when the session has an
