@@ -65,6 +65,106 @@ afterEach(async () => {
 });
 
 describe('App', () => {
+  it('shows indented sub agents for the orchestrator, leads and run steps', async () => {
+    const controller = new Controller(session);
+    const store = controller.store;
+    const ui = render(<App controller={controller} />);
+    store.subagentEvent(
+      { kind: 'orchestrator' },
+      {
+        type: 'subagent_started',
+        id: 'o',
+        parent: null,
+        agentType: 'research',
+        description: 'Find context',
+        prompt: null,
+      },
+    );
+    await tick();
+    expect(ui.lastFrame()).toContain('orchestrator');
+    store.update({
+      team: [
+        {
+          name: 'alice',
+          role: 'builder',
+          depth: 1,
+          status: 'working',
+          doing: null,
+          progress: null,
+          runs: 0,
+          waiting: 0,
+          inbox: 0,
+          costUsd: 0,
+        },
+      ],
+    });
+    store.subagentEvent(
+      { kind: 'lead', name: 'alice' },
+      {
+        type: 'subagent_started',
+        id: 'l',
+        parent: null,
+        agentType: 'review',
+        description: 'Check changes',
+        prompt: null,
+      },
+    );
+    store.subagentEvent({ kind: 'orchestrator' }, { type: 'subagent_done', id: 'o', ok: true, result: null });
+    store.update({ busy: false });
+    await until(() => ui.lastFrame()?.includes('sub agent · review · Check changes') ?? false);
+    expect(store.get().busy).toBe(false);
+    expect(store.get().runs).toHaveLength(0);
+    const leadSpinner = () => ui.lastFrame()?.match(/(\S) sub agent · review · Check changes/)?.[1];
+    const initialSpinner = leadSpinner();
+    expect(initialSpinner).toBeDefined();
+    await until(() => leadSpinner() !== initialSpinner);
+    store.subagentEvent(
+      { kind: 'lead', name: 'alice' },
+      { type: 'subagent_done', id: 'l', ok: false, result: 'failed' },
+    );
+    store.runEvent({ type: 'run', runId: 'test-run', status: 'running' }, () => null);
+    store.runEvent(
+      { type: 'step', runId: 'test-run', key: 'build', kind: 'agent', status: 'started', label: 'Build' },
+      () => null,
+    );
+    store.runEvent(
+      {
+        type: 'agent',
+        runId: 'test-run',
+        key: 'build',
+        event: {
+          type: 'subagent_started',
+          id: 's',
+          parent: null,
+          agentType: 'explore',
+          description: 'Inspect source',
+          prompt: null,
+        },
+      },
+      () => null,
+    );
+    store.runEvent(
+      {
+        type: 'agent',
+        runId: 'test-run',
+        key: 'build',
+        event: {
+          type: 'subagent_event',
+          id: 's',
+          event: { type: 'tool_call', id: 'read', name: 'Read', input: { file_path: 'source.ts' }, kind: 'read' },
+        },
+      },
+      () => null,
+    );
+    await tick();
+    const frame = ui.lastFrame() ?? '';
+    expect(frame).toContain('  ✓ sub agent · research · Find context');
+    expect(frame).toContain('    ✗ sub agent · review · Check changes');
+    expect(frame).toMatch(/ {2}\S sub agent · explore · Inspect source · .*source.ts/);
+    expect(frame).toContain('/agents for every agent');
+    ui.unmount();
+  });
+
   it('chats with the assistant and runs a workflow through its gates', async () => {
     const controller = new Controller(session);
     const ui = render(<App controller={controller} />);

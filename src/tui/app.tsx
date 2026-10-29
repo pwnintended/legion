@@ -9,6 +9,7 @@ import { Box, type DOMElement, Text, useApp, useBoxMetrics, useInput, useWindowS
 import { memo, type ReactNode, useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import type { QuestionAnswers, UserQuestion } from '../engine/types.ts';
 import type { Presentation } from '../team/team.ts';
+import { type AgentOwner, agentKey, type SubagentView, subagentLabel } from './agents.ts';
 import { ConfigMenu } from './config-menu.tsx';
 import { COMMANDS, type Controller } from './controller.ts';
 import { hyperlink, imageProtocol, linkTarget } from './images.ts';
@@ -69,7 +70,7 @@ export function App({
   // The keyboard shortcuts, over the prompt (`?` on an empty prompt).
   const [shortcuts, setShortcuts] = useState(false);
   const head = state.interactions[0] ?? null;
-  const animating = state.busy || state.runs.length > 0;
+  const animating = state.busy || state.runs.length > 0 || state.subagents.some((s) => s.status === 'working');
   const width = Math.max(40, columns || 80);
   const welcome = state.items.some((i) => i.type === 'banner');
 
@@ -358,13 +359,16 @@ export function App({
             <RunPanel
               key={run.id}
               run={run}
+              subagents={state.subagents}
               frame={frame}
               waiting={state.interactions.some((i) => i.source === 'run' && i.pending.interaction.runId === run.id)}
               // Leads' runs are one line each, except those of the lead the user is talking to.
               compact={run.owner !== undefined && run.owner !== state.target}
             />
           ))}
-          {state.team.length > 0 ? <TeamPanel rows={state.team} target={state.target} frame={frame} /> : null}
+          {state.team.length > 0 || state.subagents.some((s) => s.owner.kind === 'orchestrator') ? (
+            <TeamPanel rows={state.team} subagents={state.subagents} target={state.target} frame={frame} />
+          ) : null}
           <Feed entries={state.feed} />
         </Box>
       )}
@@ -735,7 +739,13 @@ function ToolInput({ input }: { input: unknown }) {
 
 const SHOW_FINISHED = 4;
 
-function RunPanel(props: { run: RunView; frame: number; waiting: boolean; compact: boolean }) {
+function RunPanel(props: {
+  run: RunView;
+  frame: number;
+  waiting: boolean;
+  compact: boolean;
+  subagents: SubagentView[];
+}) {
   const { run, frame, waiting } = props;
   const steps = run.steps.filter((s) => s.kind !== 'loop');
   const active = steps.filter((s) => s.status === 'started');
@@ -745,6 +755,9 @@ function RunPanel(props: { run: RunView; frame: number; waiting: boolean; compac
   const failed = finished.filter((s) => s.status === 'failed').length;
   if (props.compact) {
     const now = active.at(-1);
+    const workingSubs = props.subagents.filter(
+      (s) => s.owner.kind === 'step' && s.owner.runId === run.id && s.status === 'working',
+    ).length;
     return (
       <Box paddingLeft={2}>
         <Text wrap="truncate-end">
@@ -756,6 +769,7 @@ function RunPanel(props: { run: RunView; frame: number; waiting: boolean; compac
           </Text>
           {failed ? <Text color={theme.error}> · {failed} failed</Text> : null}
           {now ? <Text dimColor> · {now.label}</Text> : null}
+          {workingSubs ? <Text dimColor> · {workingSubs} sub agents</Text> : null}
         </Text>
       </Box>
     );
@@ -784,10 +798,30 @@ function RunPanel(props: { run: RunView; frame: number; waiting: boolean; compac
       </Box>
       {hidden > 0 ? <Text dimColor>{`  … ${hidden} earlier step${hidden > 1 ? 's' : ''}`}</Text> : null}
       {shown.map((s) => (
-        <StepLine key={s.key} step={s} frame={frame} />
+        <Box key={s.key} flexDirection="column">
+          <StepLine step={s} frame={frame} />
+          {s.kind === 'agent' ? (
+            <SubagentRows
+              subagents={props.subagents}
+              owner={{ kind: 'step', runId: run.id, key: s.key }}
+              depth={1}
+              frame={frame}
+            />
+          ) : null}
+        </Box>
       ))}
       {active.map((s) => (
-        <StepLine key={s.key} step={s} frame={frame} />
+        <Box key={s.key} flexDirection="column">
+          <StepLine step={s} frame={frame} />
+          {s.kind === 'agent' ? (
+            <SubagentRows
+              subagents={props.subagents}
+              owner={{ kind: 'step', runId: run.id, key: s.key }}
+              depth={1}
+              frame={frame}
+            />
+          ) : null}
+        </Box>
       ))}
       {steps.length === 0 ? <Text dimColor>starting…</Text> : null}
     </Box>
@@ -878,10 +912,64 @@ function Feed({ entries }: { entries: FeedEntry[] }) {
   );
 }
 
+/** Keep each owner's busiest agents visible, followed by its latest completions. */
+function SubagentRows({
+  subagents,
+  owner,
+  depth,
+  frame,
+}: {
+  subagents: SubagentView[];
+  owner: AgentOwner;
+  depth: number;
+  frame: number;
+}) {
+  const entries = subagents
+    .filter((s) => agentKey(s.owner) === agentKey(owner))
+    .sort(
+      (a, b) =>
+        Number(b.status === 'working') - Number(a.status === 'working') ||
+        (b.endedAt ?? b.startedAt) - (a.endedAt ?? a.startedAt),
+    );
+  return (
+    <>
+      {entries.slice(0, 3).map((s) => (
+        <Text key={s.id} wrap="truncate-end">
+          {'  '.repeat(depth)}
+          <Text color={s.status === 'working' ? theme.warn : s.status === 'failed' ? theme.error : theme.ok}>
+            {s.status === 'working'
+              ? (SPINNER[frame % SPINNER.length] ?? '·')
+              : s.status === 'failed'
+                ? glyph.fail
+                : glyph.ok}
+          </Text>{' '}
+          {subagentLabel(s)}
+          {s.status === 'working' && s.activity ? <Text dimColor> · {oneLine(s.activity, 70)}</Text> : null}
+        </Text>
+      ))}
+      {entries.length > 3 ? (
+        <Text dimColor wrap="truncate-end">
+          {'  '.repeat(depth)}… {entries.length - 3} more (/agents)
+        </Text>
+      ) : null}
+    </>
+  );
+}
+
 const TEAM_ROWS = 10;
 
 /** The leads that are not stopped, as a tree: what each is on, its runs and what waits for it. */
-function TeamPanel({ rows, target, frame }: { rows: TeamRow[]; target: string; frame: number }) {
+function TeamPanel({
+  rows,
+  subagents,
+  target,
+  frame,
+}: {
+  rows: TeamRow[];
+  subagents: SubagentView[];
+  target: string;
+  frame: number;
+}) {
   const shown = rows.slice(0, TEAM_ROWS);
   const working = rows.filter((r) => r.status === 'working').length;
   return (
@@ -891,8 +979,14 @@ function TeamPanel({ rows, target, frame }: { rows: TeamRow[]; target: string; f
           team
         </Text>{' '}
         {rows.length} lead{rows.length > 1 ? 's' : ''}
-        {working ? ` · ${working} working` : ''} · /lead to talk to one
+        {working ? ` · ${working} working` : ''} · /lead to talk to one · /agents for every agent
       </Text>
+      {subagents.some((s) => s.owner.kind === 'orchestrator') ? (
+        <Box flexDirection="column">
+          <Text wrap="truncate-end">orchestrator</Text>
+          <SubagentRows subagents={subagents} owner={{ kind: 'orchestrator' }} depth={1} frame={frame} />
+        </Box>
+      ) : null}
       {shown.map((r) => {
         const mark =
           r.status === 'working' || r.status === 'starting'
@@ -902,24 +996,32 @@ function TeamPanel({ rows, target, frame }: { rows: TeamRow[]; target: string; f
               : '○';
         const tone = r.status === 'done' ? theme.ok : r.status === 'idle' ? theme.muted : theme.accent;
         return (
-          <Text key={r.name} wrap="truncate-end">
-            {'  '.repeat(r.depth)}
-            <Text color={tone}>{mark} </Text>
-            <Text bold color={r.name === target ? theme.accent : undefined}>
-              {r.name}
-            </Text>
-            <Text dimColor> {r.role}</Text>
-            {r.progress ? <Text dimColor> {`${r.progress.done}/${r.progress.total}`}</Text> : null}
-            {r.doing ? <Text> · {r.doing}</Text> : null}
-            {r.runs ? (
-              <Text dimColor>
-                {' '}
-                · {r.runs} run{r.runs > 1 ? 's' : ''}
+          <Box key={r.name} flexDirection="column">
+            <Text wrap="truncate-end">
+              {'  '.repeat(r.depth)}
+              <Text color={tone}>{mark} </Text>
+              <Text bold color={r.name === target ? theme.accent : undefined}>
+                {r.name}
               </Text>
-            ) : null}
-            {r.waiting ? <Text color={theme.warn}> · {r.waiting} waiting</Text> : null}
-            {r.inbox ? <Text dimColor> · {r.inbox} unread</Text> : null}
-          </Text>
+              <Text dimColor> {r.role}</Text>
+              {r.progress ? <Text dimColor> {`${r.progress.done}/${r.progress.total}`}</Text> : null}
+              {r.doing ? <Text> · {r.doing}</Text> : null}
+              {r.runs ? (
+                <Text dimColor>
+                  {' '}
+                  · {r.runs} run{r.runs > 1 ? 's' : ''}
+                </Text>
+              ) : null}
+              {r.waiting ? <Text color={theme.warn}> · {r.waiting} waiting</Text> : null}
+              {r.inbox ? <Text dimColor> · {r.inbox} unread</Text> : null}
+            </Text>
+            <SubagentRows
+              subagents={subagents}
+              owner={{ kind: 'lead', name: r.name }}
+              depth={r.depth + 1}
+              frame={frame}
+            />
+          </Box>
         );
       })}
       {rows.length > shown.length ? <Text dimColor>{`  … ${rows.length - shown.length} more (/team)`}</Text> : null}
