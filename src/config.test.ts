@@ -4,11 +4,13 @@ import { join } from 'node:path';
 import { parse } from 'smol-toml';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
+  ConfigError,
   ConfigSchema,
   configLayers,
   defaultProjectConfig,
   ensureProjectConfig,
   loadConfig,
+  migrateProfiles,
   providerEngine,
   resolveAgentModel,
   resolveTier,
@@ -241,5 +243,92 @@ describe('tiers', () => {
       effort: 'high',
     });
     expect(providerEngine(codex, 'fake')).toBe('fake');
+  });
+});
+
+describe('engine profiles are gone', () => {
+  const profiles = {
+    claude: {
+      default: 'claude-1',
+      profiles: {
+        'claude-1': { setup: 'claude-share check', command: 'claude', env: { CLAUDE_CONFIG_DIR: '~/.claude-1' } },
+        work: { env: { CLAUDE_CONFIG_DIR: '~/.claude-w', FOO: 'bar' } },
+      },
+    },
+    codex: { profiles: { default: { env: { CODEX_HOME: '~/.codex-x' } } } },
+  };
+
+  it('migrateProfiles converts profiles, default and setup, with notes', () => {
+    const { doc, notes } = migrateProfiles(structuredClone(profiles));
+    expect(doc.accounts).toEqual({
+      claude: { 'claude-1': { dir: '~/.claude-1' }, work: { dir: '~/.claude-w', env: { FOO: 'bar' } } },
+      codex: { default: { dir: '~/.codex-x' } },
+    });
+    expect(doc.claude).toEqual({ command: 'claude' });
+    expect(doc.codex).toEqual({});
+    expect(notes.join('\n')).toMatch(/setup was dropped/);
+    expect(notes.join('\n')).toMatch(/default "claude-1" was dropped/);
+  });
+
+  it('leaves a document without profiles alone', () => {
+    const input = { claude: { models: ['x'] }, workflows: { maxAgents: 2 } };
+    expect(migrateProfiles(input)).toEqual({ doc: input, notes: [] });
+  });
+
+  it('loadConfig throws a ConfigError showing the equivalent accounts', () => {
+    write(
+      join(root, 'xdg', 'legion', 'config.toml'),
+      '[claude]\ndefault = "w"\n[claude.profiles.w]\nenv = { CLAUDE_CONFIG_DIR = "~/.claude-w" }\n',
+    );
+    const run = () => loadConfig(join(root, 'repo'));
+    expect(run).toThrow(ConfigError);
+    expect(run).toThrow(/\[accounts\.claude\.w\]/);
+    expect(run).toThrow(/dir = "~\/\.claude-w"/);
+    expect(run).toThrow(/legion accounts migrate/);
+  });
+
+  it('never shows env values, and drops forbidden keys with guidance', () => {
+    const doc = {
+      claude: {
+        profiles: {
+          w: {
+            env: {
+              CLAUDE_CODE_OAUTH_TOKEN: 'FAKE_TOKEN_SENTINEL',
+              ANTHROPIC_BASE_URL: 'http://x',
+              API_KEY: 'OTHER_SENTINEL',
+            },
+          },
+        },
+      },
+    };
+    const { doc: out, notes } = migrateProfiles(doc);
+    expect(JSON.stringify(out)).not.toContain('FAKE_TOKEN_SENTINEL');
+    expect(JSON.stringify(out)).not.toContain('http://x');
+    expect(notes.join('\n')).toMatch(/tokenEnv or tokenFile/);
+    write(
+      join(root, 'xdg', 'legion', 'config.toml'),
+      '[claude.profiles.w]\nenv = { CLAUDE_CODE_OAUTH_TOKEN = "FAKE_TOKEN_SENTINEL", API_KEY = "OTHER_SENTINEL" }\n',
+    );
+    let message = '';
+    try {
+      loadConfig(join(root, 'repo'));
+    } catch (err) {
+      message = (err as Error).message;
+    }
+    expect(message).toMatch(/tokenEnv or tokenFile/);
+    expect(message).not.toContain('FAKE_TOKEN_SENTINEL');
+    expect(message).not.toContain('OTHER_SENTINEL');
+  });
+
+  it('parses [accounts] and rejects forbidden env', () => {
+    const config = ConfigSchema.parse({
+      claude: { command: 'cl', args: ['--x'] },
+      accounts: { cooldownMinutes: 5, claude: { work: { dir: '~/w', tokenEnv: 'T' } } },
+    });
+    expect(config.claude.command).toBe('cl');
+    expect(config.accounts.cooldownMinutes).toBe(5);
+    expect(config.accounts.claude.work?.enabled).toBe(true);
+    expect(ConfigSchema.parse({}).accounts.cooldownMinutes).toBe(60);
+    expect(() => ConfigSchema.parse({ accounts: { codex: { a: { env: { OPENAI_BASE_URL: 'x' } } } } })).toThrow();
   });
 });

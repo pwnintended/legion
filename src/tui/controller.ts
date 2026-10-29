@@ -7,6 +7,16 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join, relative } from 'node:path';
 import { z } from 'zod';
+import type { AccountKind } from '../accounts/index.ts';
+import {
+  describeAccount,
+  isAccountKind,
+  loginSpec,
+  nextAccountName,
+  prepareLoginDir,
+  probeAccount,
+  tokenHint,
+} from '../accounts/login.ts';
 import { describeWorkflows } from '../assistant/mcp.ts';
 import {
   type ConfigLayer,
@@ -71,6 +81,18 @@ export const COMMANDS: readonly Command[] = [
   { group: 'Runs', name: 'resume', args: '[run]', description: 'continue a stopped run' },
   { group: 'Runs', name: 'cancel', args: '[run]', description: 'stop an active run' },
   { group: 'Runs', name: 'takeover', args: '<run> <step>', description: "steer an agent's session in its own CLI" },
+  {
+    group: 'Session',
+    name: 'accounts',
+    args: '[reset [kind[/name]]]',
+    description: 'the account pool: login status, cooldowns, last use',
+  },
+  {
+    group: 'Session',
+    name: 'login',
+    args: '<claude|codex> [name] [--token]',
+    description: 'log an account in with the official CLI',
+  },
   { group: 'Session', name: 'config', args: '', description: 'settings: change them in a menu' },
   {
     group: 'Session',
@@ -78,8 +100,6 @@ export const COMMANDS: readonly Command[] = [
     args: '[claude|openai|mixed]',
     description: 'run everything on one provider, or mixed; shows the tiers (saved in config.local.toml)',
   },
-  { group: 'Session', name: 'claude', args: '[profile]', description: 'show or switch the Claude account' },
-  { group: 'Session', name: 'codex', args: '[profile]', description: 'show or switch the Codex account' },
   {
     group: 'Session',
     name: 'remote',
@@ -134,7 +154,7 @@ export type SaveScope = 'project' | 'local' | 'user';
 export const SAVE_SCOPES: readonly SaveScope[] = ['project', 'local', 'user'];
 
 export interface SettingRow {
-  /** `assistant.model`, `profile.claude`, or `open` (the file in $EDITOR). */
+  /** `assistant.model` or `open` (the file in $EDITOR). */
   id: string;
   group: string;
   label: string;
@@ -391,7 +411,7 @@ export class Controller {
 
   constructor(session: Session) {
     this.session = session;
-    this.store = new UiStore({ profiles: session.profileNames() });
+    this.store = new UiStore({ accounts: session.accountSummary() });
     this.store.push({ type: 'banner', banner: this.banner() });
     const { assistant, runs } = session;
     // The prompt talks to the orchestrator or to one lead (`/lead`): that one's conversation streams; the
@@ -804,12 +824,14 @@ export class Controller {
           this.store.info(formatReport(await validateWorkflow(found.file, { repo: this.session.repo })));
           return;
         }
+        case 'accounts':
+          await this.accountsCommand(rest[0], rest[1]);
+          return;
+        case 'login':
+          await this.login(rest);
+          return;
         case 'config':
           await this.config(rest[0], rest[1]);
-          return;
-        case 'claude':
-        case 'codex':
-          await this.profile(cmd, rest[0]);
           return;
         case 'remote':
           this.remote(rest[0]);
@@ -826,6 +848,60 @@ export class Controller {
     } catch (err) {
       this.store.error(err instanceof Error ? err.message : String(err));
     }
+  }
+
+  private async accountsCommand(sub: string | undefined, target: string | undefined): Promise<void> {
+    if (sub === 'reset') {
+      const [kind, name] = (target ?? '').split('/');
+      if (kind && !isAccountKind(kind)) throw new Error('Usage: /accounts reset [claude|codex][/name]');
+      for (const k of kind ? [kind as AccountKind] : (['claude', 'codex'] as const))
+        this.session.accounts.clear(k, name || undefined);
+      this.store.update({ accounts: this.session.accountSummary() });
+      this.store.info('Cooldowns cleared.');
+      return;
+    }
+    if (sub) throw new Error('Usage: /accounts [reset [kind[/name]]]');
+    const lines: string[] = [];
+    for (const kind of ['claude', 'codex'] as const) {
+      for (const row of this.session.accounts.status(kind)) {
+        const info = await probeAccount(() => this.session.engine(kind, row.account.name).probe());
+        lines.push(describeAccount({ ...row, ...info }));
+      }
+    }
+    this.store.info(lines.join('\n'));
+  }
+
+  /** `/login <claude|codex> [name] [--token]`: the official CLI's login in the terminal, like takeover. */
+  private async login(rest: string[]): Promise<void> {
+    const token = rest.includes('--token');
+    const [kind, given] = rest.filter((a) => a !== '--token');
+    if (!isAccountKind(kind)) throw new Error('Usage: /login <claude|codex> [name] [--token]');
+    const name =
+      given ??
+      nextAccountName(
+        kind,
+        this.session.listAccounts(kind).map((a) => a.name),
+      );
+    const spec = loginSpec(this.session.config, kind, name, {
+      existing: this.session.listAccounts(kind).find((a) => a.name === name),
+      token,
+      legionHome: this.session.legionHome,
+    });
+    prepareLoginDir(spec);
+    this.herdr?.pause();
+    let failure: string | null = null;
+    try {
+      await this.hooks?.suspend(() => {
+        const r = spawnSync(spec.command, spec.args, { stdio: 'inherit', env: spec.env });
+        if (r.error) failure = `Could not run ${spec.command}: ${r.error.message}`;
+        else if (r.status !== 0) failure = `${spec.command} exited with ${r.status}`;
+      });
+    } finally {
+      this.herdr?.resume();
+    }
+    this.store.update({ accounts: this.session.accountSummary() });
+    if (failure) throw new Error(failure);
+    this.store.info(token ? tokenHint(spec) : `${kind} account "${name}" is ready.`);
   }
 
   /** `/remote [on|off|default]`: shows or switches remote mode for this session, from the next step on. */
@@ -907,29 +983,6 @@ export class Controller {
     throw new Error(matches.length ? `"${arg}" matches several runs` : `No run "${arg}"`);
   }
 
-  private async profile(kind: RealKind, name: string | undefined): Promise<void> {
-    if (!name) {
-      const current = this.session.profile(kind).name;
-      this.store.panel(
-        `${kind} profiles`,
-        this.session
-          .availableProfiles(kind)
-          .map((p) => [
-            p === current ? seg('● ', { color: kind }) : dim('○ '),
-            seg(p, { bold: p === current }),
-            ...(p === current ? [dim('  in use')] : []),
-          ]),
-      );
-      return;
-    }
-    const { setupOutput } = await this.session.switchProfile(kind, name);
-    this.store.update({ profiles: this.session.profileNames() });
-    this.store.info(
-      `${kind} now uses profile "${name}" for new agents${setupOutput ? `\n${setupOutput}` : ''}` +
-        (this.session.assistantModel().engine === kind ? '\nThe assistant starts a new conversation on it.' : ''),
-    );
-  }
-
   private banner() {
     const { session } = this;
     let version = '';
@@ -945,7 +998,7 @@ export class Controller {
       cwd: tildify(session.cwd, homedir()),
       branch,
       isGitRepo: session.isGitRepo,
-      profiles: session.profileNames(),
+      accounts: session.accountSummary(),
       assistant: `${engine}${model ? ` · ${model}` : ''}`,
       workflows: listWorkflowFiles(session.repo).length,
       createdConfig: session.createdConfig
@@ -1003,17 +1056,6 @@ export class Controller {
       const value = getPath(effective, def.id);
       return { ...def, value: value === undefined ? null : (value as TomlScalar), ...origin(def.id.split('.')) };
     });
-    for (const kind of ['claude', 'codex'] as const) {
-      rows.push({
-        id: `profile.${kind}`,
-        group: 'This session',
-        label: kind,
-        kind: 'choice',
-        choices: this.session.availableProfiles(kind),
-        value: this.session.profile(kind).name,
-        hint: 'the account new agents use',
-      });
-    }
     rows.push({ id: 'open', group: 'Files', label: 'Open the file in $EDITOR', kind: 'action', value: null, hint: '' });
     return rows;
   }
@@ -1072,11 +1114,10 @@ export class Controller {
     return layer ? this.showPath(layer.path) : scope;
   }
 
-  /** Saves the menu's changes: config values into the chosen file (one write, one reload), then profile switches. */
+  /** Saves the menu's changes: config values into the chosen file (one write, one reload). */
   async applySettings(changes: ReadonlyMap<string, TomlScalar | null>, scope: SaveScope): Promise<void> {
     const before = new Map(this.settings(scope).map((r) => [r.id, r.value]));
-    const config = [...changes].filter(([id]) => !id.startsWith('profile.'));
-    const profiles = [...changes].filter(([id]) => id.startsWith('profile.'));
+    const config = [...changes];
     const lines: Line[] = [];
     const show = (v: TomlScalar | null | undefined) => (v === null || v === undefined ? 'default' : String(v));
     const change = (label: string, id: string, value: TomlScalar | null): Line => [
@@ -1098,15 +1139,7 @@ export class Controller {
       for (const [id, value] of config) lines.push(change(id, id, value));
       for (const n of notes) lines.push([seg('• ', { color: 'accent' }), seg(n)]);
     }
-    for (const [id, value] of profiles) {
-      const kind = id.slice('profile.'.length) as RealKind;
-      const { setupOutput } = await this.session.switchProfile(kind, String(value));
-      lines.push(change(`${kind} profile`, id, value));
-      if (setupOutput) lines.push([dim(`  ${setupOutput}`)]);
-      if (this.session.assistantModel().engine === kind)
-        lines.push([seg('• ', { color: 'accent' }), seg('the assistant starts a new conversation on it')]);
-    }
-    this.store.update({ profiles: this.session.profileNames() });
+    this.store.update({ accounts: this.session.accountSummary() });
     if (lines.length > 0) this.store.panel('Settings changed', lines);
   }
 
@@ -1173,7 +1206,7 @@ export class Controller {
   }
 
   /**
-   * The models an engine's picker offers: Codex asks its CLI (`model/list`, cached per profile), Claude has a built-in
+   * The models an engine's picker offers: Codex asks its CLI (`model/list`, cached per account), Claude has a built-in
    * list; both add `[claude|codex] models` from the config. `error` says why the CLI's list is missing.
    */
   async modelChoices(engine: RealKind): Promise<{ models: ModelChoice[]; error: string | null }> {
@@ -1183,10 +1216,13 @@ export class Controller {
       return [...base, ...extra.filter((m) => !seen.has(m.id))];
     };
     if (engine === 'claude') return { models: merge(CLAUDE_MODELS), error: null };
-    const key = `codex:${this.session.profile('codex').name}`;
+    const codexAccounts = this.session.listAccounts('codex');
+    const account = codexAccounts.find((a) => a.enabled) ?? codexAccounts[0];
+    if (!account) return { models: merge([]), error: 'no Codex account' };
+    const key = `codex:${account.name}`;
     let listed = this.modelCache.get(key);
     if (!listed) {
-      const impl = this.session.engine('codex');
+      const impl = this.session.engine('codex', account.name);
       listed =
         impl instanceof CodexEngine
           ? impl
@@ -1387,7 +1423,7 @@ export class Controller {
 
   private async reload(): Promise<void> {
     const notes = await this.session.reloadConfig();
-    this.store.update({ profiles: this.session.profileNames() });
+    this.store.update({ accounts: this.session.accountSummary() });
     this.store.panel('Configuration reloaded', [
       ...notes.map((n) => [seg('• ', { color: 'accent' }), seg(n)]),
       [dim('New runs use the new workflow settings; running ones keep theirs.')],
@@ -1443,20 +1479,9 @@ export class Controller {
       ...this.tierLines(),
     );
     for (const kind of ['claude', 'codex'] as const) {
-      const current = this.session.profile(kind);
-      lines.push([], [seg(`${kind} profiles`, { bold: true })]);
-      for (const name of this.session.availableProfiles(kind)) {
-        const on = name === current.name;
-        const raw = config[kind].profiles[name];
-        const env = Object.keys(raw?.env ?? {});
-        lines.push([
-          on ? seg('  ● ', { color: kind }) : dim('  ○ '),
-          seg(name.padEnd(12), { bold: on }),
-          dim(`${raw?.command ?? kind}${raw?.args.length ? ` ${raw.args.join(' ')}` : ''}`),
-          ...(env.length ? [dim(` · env ${env.join(', ')}`)] : []),
-          ...(raw?.setup ? [dim(` · setup: ${raw.setup}`)] : []),
-          ...(on ? [seg('  in use', { color: kind })] : []),
-        ]);
+      lines.push([], [seg(`${kind} accounts`, { bold: true })]);
+      for (const account of this.session.listAccounts(kind)) {
+        lines.push([dim('  ○ '), seg(account.name.padEnd(12)), dim(account.dir ?? 'the CLI login')]);
       }
     }
     lines.push([], [dim('/config edit [user|project|local] opens a file in $EDITOR · /config reload re-reads them')]);
@@ -1499,30 +1524,28 @@ export class Controller {
     const { entry } = this.stepEntry(runId, step);
     const sessionId = entry.meta?.sessionId;
     const engine = entry.meta?.engine;
-    const profileName = entry.meta?.profile;
+    // Runs from before the account pool journaled the account's name as `profile`.
+    const accountName = String(entry.meta?.account ?? entry.meta?.profile ?? 'default');
     if (typeof sessionId !== 'string' || (engine !== 'claude' && engine !== 'codex'))
       throw new Error(`${entry.key} has no resumable session`);
-    const profile = this.session.profile(engine);
-    if (profile.name !== profileName) {
-      throw new Error(
-        `${entry.key} ran on ${engine} profile "${String(profileName)}"; switch with /${engine} ${String(profileName)} first`,
-      );
-    }
+    const found = this.session.listAccounts(engine).find((a) => a.name === accountName);
+    if (!found) throw new Error(`${entry.key} ran on ${engine} account "${accountName}", which no longer exists`);
+    const account = this.session.engineAccount(found);
     if (this.session.runs.isActive(runId) && entry.status === 'started') {
       throw new Error(`${entry.key} is still running; cancel the run first (/cancel ${runId})`);
     }
     const args =
-      engine === 'claude' ? [...profile.args, '--resume', sessionId] : [...profile.args, 'resume', sessionId];
+      engine === 'claude' ? [...account.args, '--resume', sessionId] : [...account.args, 'resume', sessionId];
     // Claude finds sessions by working directory: resume where the agent ran.
     const cwd = typeof entry.meta?.cwd === 'string' ? entry.meta.cwd : this.session.repo;
-    const env: Record<string, string | undefined> = { ...process.env, ...profile.env };
-    const engineImpl = this.session.engine(engine);
+    const env: Record<string, string | undefined> = { ...process.env, ...account.env };
+    const engineImpl = this.session.engine(engine, accountName);
     if (engineImpl instanceof CodexEngine) env.CODEX_HOME = await engineImpl.codexHome();
     // The agent CLI owns the pane meanwhile: Herdr tracks it through its own integration.
     this.herdr?.pause();
     try {
       await this.hooks?.suspend(() => {
-        spawnSync(profile.command, args, { stdio: 'inherit', cwd, env });
+        spawnSync(account.command, args, { stdio: 'inherit', cwd, env });
       });
     } finally {
       this.herdr?.resume();

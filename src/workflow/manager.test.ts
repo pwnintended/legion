@@ -1,6 +1,7 @@
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { AccountPool } from '../accounts/index.ts';
 import { FakeEngine, type FakeScript } from '../engine/fake/index.ts';
 import { tmp } from '../git/test-helpers.ts';
 import type { GitOps } from './host.ts';
@@ -41,7 +42,12 @@ function manager(extra: Partial<ConstructorParameters<typeof RunManager>[0]> = {
   return new RunManager({
     repo: dir.path,
     engine: () => engine,
-    profiles: () => ({ claude: 'claude-1' }),
+    accounts: new AccountPool({
+      file: join(dir.path, 'pool.json'),
+      accounts: (kind) => [
+        { kind, name: 'claude-1', dir: null, token: null, env: {}, remote: false, enabled: true, source: 'config' },
+      ],
+    }),
     git: {} as GitOps,
     approvals: 'auto',
     ...extra,

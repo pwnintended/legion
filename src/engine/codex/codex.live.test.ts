@@ -67,7 +67,7 @@ describe.skipIf(!LIVE)('codex adapter (live)', () => {
 
   it('probe reports version and login', async () => {
     const info = await engine.probe();
-    expect(info).toMatchObject({ kind: 'codex', profile: 'codex-live', installed: true, loggedIn: true, error: null });
+    expect(info).toMatchObject({ kind: 'codex', account: 'codex-live', installed: true, loggedIn: true, error: null });
     expect(info.version).toMatch(/^\d+\.\d+\.\d+/);
   });
 

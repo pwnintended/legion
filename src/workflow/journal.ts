@@ -1,10 +1,10 @@
 /**
  * A run's durable state, as plain files under `.legion/runs/<runId>/`:
- * - `run.json`: what was run (workflow, input, profiles) and how it ended. Rewritten atomically.
+ * - `run.json`: what was run (workflow, input) and how it ended. Rewritten atomically.
  * - `journal.jsonl`: append-only step log. A step is `started` and then `done` or `failed`; on resume the runtime
  *   replays the workflow from the top and every step with a `done` entry returns its recorded output instead of
  *   running again (step memoization). `started` entries carry what is needed to pick an interrupted step up
- *   (an agent's session id and the profile it ran on).
+ *   (an agent's session id and the account it ran on).
  * - `agents/<step>.jsonl`: every `AgentEvent` of that step's sessions, for transcripts.
  */
 import {
@@ -29,8 +29,6 @@ export interface RunRecord {
   file: string;
   input: unknown;
   status: RunStatus;
-  /** Engine profile per kind at start, e.g. `{ claude: 'claude-1', codex: 'default' }`. */
-  profiles: Record<string, string>;
   /** Repository root the run works on. */
   repo: string;
   startedAt: number;
@@ -61,7 +59,7 @@ export interface JournalEntry {
   label?: string;
   output?: unknown;
   error?: string;
-  /** Kind-specific facts: `sessionId`, `profile`, `engine`, `costUsd` for agents. */
+  /** Kind-specific facts: `sessionId`, `account`, `where`, `engine`, `costUsd` for agents. */
   meta?: Record<string, unknown>;
 }
 

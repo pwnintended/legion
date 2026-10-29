@@ -58,6 +58,9 @@ const IGNORED_TYPES = new Set([
 
 const RETRYABLE_HTTP = new Set([408, 429, 500, 502, 503, 504, 529]);
 
+/** Result text of a CLI that is out of quota (older CLIs: `Claude AI usage limit reached|<epoch seconds>`). */
+const LIMIT_TEXT = /usage limit|rate limit|limit reached|out of (extra )?usage/i;
+
 const WINDOW_NAMES: Record<string, string> = { five_hour: '5h', seven_day: 'weekly' };
 
 export function classifyTool(name: string): ToolKind {
@@ -115,6 +118,8 @@ export class ClaudeStreamParser {
   private block: StreamingBlock | null = null;
   private readonly tasks = new Map<string, TodoItem>();
   private interruptRequested = false;
+  /** The latest `rate_limit_event` with `status: "rejected"` (not served by overage): the reset to report. */
+  private rejected: { resetsAt: number | null } | null = null;
   private startedSessionId: string | null = null;
   private readonly roots: string[];
   private readonly opts: ParserOptions;
@@ -375,6 +380,25 @@ export class ClaudeStreamParser {
       retryable = true;
       message = 'The turn ended without structured output';
     }
+    const rejected = this.rejected;
+    this.rejected = null;
+    if (isError && !interrupted && message !== null) {
+      const status = num(msg.api_error_status);
+      const text = [message, str(msg.result)].filter(Boolean).join(' ');
+      if (rejected || status === 429 || LIMIT_TEXT.test(text)) {
+        const epoch = /limit reached\|(\d{9,13})/i.exec(text)?.[1];
+        const parsed = epoch === undefined ? null : toMs(Number(epoch));
+        out.push(
+          ev({
+            type: 'limit_reached',
+            engine: 'claude',
+            kind: /rate limit/i.test(text) && !/usage limit/i.test(text) && !rejected ? 'rate' : 'usage',
+            resetsAt: rejected?.resetsAt ?? parsed,
+            message,
+          }),
+        );
+      }
+    }
     if (message !== null) out.push(ev({ type: 'error', message, retryable }));
     out.push(ev({ type: 'turn_complete', structuredOutput: isError ? null : structured, isError, reason }));
     return out;
@@ -392,6 +416,10 @@ export class ClaudeStreamParser {
       out.push(rateLimitEvent(key, utilization, num(value.resetsAt)));
     }
     const type = str(info.rateLimitType);
+    if (info.status === 'rejected' && info.isUsingOverage !== true) {
+      const resetsAt = num(info.resetsAt);
+      this.rejected = { resetsAt: resetsAt === null ? null : toMs(resetsAt) };
+    }
     if (out.length === 0 && type && num(info.utilization) !== null) {
       out.push(rateLimitEvent(type, num(info.utilization) ?? 0, num(info.resetsAt)));
     }
@@ -432,6 +460,11 @@ export class ClaudeStreamParser {
       { kind: 'control_response', requestId, ok, response: response.response ?? null, error: str(response.error) },
     ];
   }
+}
+
+/** Epoch seconds (or already ms) → ms. */
+function toMs(epoch: number): number {
+  return epoch < 1e12 ? Math.round(epoch * 1000) : epoch;
 }
 
 function ev(event: AgentEvent): ParserOutput {

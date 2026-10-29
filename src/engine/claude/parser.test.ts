@@ -372,3 +372,53 @@ describe('LineBuffer', () => {
     expect(buffer.flush()).toEqual([]);
   });
 });
+
+describe('ClaudeStreamParser limit_reached', () => {
+  const run = (name: string) => eventsOf(parseFixture(name));
+
+  it('rejected rate_limit_event + failing result → limit_reached before error and turn_complete', () => {
+    const events = run('usage-limit.jsonl');
+    expect(of(events, 'limit_reached')).toEqual([
+      { type: 'limit_reached', engine: 'claude', kind: 'usage', resetsAt: 1791324600_000, message: expect.any(String) },
+    ]);
+    const types = events.map((e) => e.type);
+    expect(types.indexOf('limit_reached')).toBeLessThan(types.indexOf('error'));
+    expect(types.indexOf('error')).toBeLessThan(types.indexOf('turn_complete'));
+  });
+
+  it('parses the epoch of "Claude AI usage limit reached|<epoch>"', () => {
+    expect(of(run('usage-limit-legacy.jsonl'), 'limit_reached')).toMatchObject([
+      { kind: 'usage', resetsAt: 1791324600_000 },
+    ]);
+  });
+
+  it('api_retry 429 stays a retryable error without limit_reached', () => {
+    const events = run('retry-429.jsonl');
+    expect(of(events, 'limit_reached')).toEqual([]);
+    expect(of(events, 'error')).toMatchObject([{ retryable: true }]);
+  });
+
+  it('a rejected event served by overage is not a limit', () => {
+    const parser = new ClaudeStreamParser({ cwd: CWD, structuredOutput: false });
+    parser.handle({
+      type: 'rate_limit_event',
+      rate_limit_info: { status: 'rejected', isUsingOverage: true, resetsAt: 1 },
+    });
+    const events = eventsOf(parser.handle({ type: 'result', subtype: 'success', is_error: false, result: 'ok' }));
+    expect(of(events, 'limit_reached')).toEqual([]);
+  });
+
+  it('a 429 result without a reset time reports resetsAt null', () => {
+    const parser = new ClaudeStreamParser({ cwd: CWD, structuredOutput: false });
+    const events = eventsOf(
+      parser.handle({
+        type: 'result',
+        subtype: 'success',
+        is_error: true,
+        api_error_status: 429,
+        result: 'Rate limit hit',
+      }),
+    );
+    expect(of(events, 'limit_reached')).toMatchObject([{ kind: 'rate', resetsAt: null }]);
+  });
+});

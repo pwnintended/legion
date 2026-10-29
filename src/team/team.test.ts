@@ -78,6 +78,7 @@ export default workflow({ name: 'critique', description: 'Make and judge', input
   });
 `,
   );
+  process.env.XDG_CONFIG_HOME = join(repo.path, '.xdg');
   session = await Session.open({ cwd: repo.path, fake: true });
 });
 

@@ -15,6 +15,8 @@
  * | mcp        | Legion MCP over streamable HTTP + bearer token env var, report_progress tool call   |
  * | remember   | first turn of a thread ("remember zebra")                                           |
  * | resume     | thread/resume of `remember` in a new process, answers "zebra"                       |
+ * | usage-limit| hand-built from the protocol types: usageLimitExceeded error + failed turn           |
+ * | rate-limit | hand-built: rateLimitExceeded, a willRetry notice first, then the final error       |
  */
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -34,6 +36,8 @@ export const FIXTURES = [
   'mcp',
   'remember',
   'resume',
+  'usage-limit',
+  'rate-limit',
 ] as const;
 export type FixtureName = (typeof FIXTURES)[number];
 

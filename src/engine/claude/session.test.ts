@@ -15,7 +15,7 @@ import { ClaudeSession, HELD_RESULT_MS, type SessionTiming } from './session.ts'
 import {
   CLARIFY_JSON_SCHEMA,
   ClarifyOutputSchema,
-  claudeProfile,
+  claudeAccount,
   FakeChild,
   type FixtureLine,
   fixtureSessionId,
@@ -38,7 +38,7 @@ function options(permission: PermissionProfile, overrides: Partial<SessionOption
 function fakeEngine(timing: Partial<SessionTiming> = FAST, baseEnv: Record<string, string> = { PATH: '/bin' }) {
   const spawned: { child: FakeChild; args: readonly string[]; env: Record<string, string> }[] = [];
   // Any executable; never run.
-  const engine = new ClaudeEngine(claudeProfile({ command: process.execPath }), {
+  const engine = new ClaudeEngine(claudeAccount({ command: process.execPath }), {
     baseEnv,
     log: silentLogger,
     timing,
@@ -313,10 +313,10 @@ describe('ClaudeSession (fixture replay)', () => {
     expect(spawned[0]?.env).toEqual({ PATH: '/bin', HOME: '/h' });
   });
 
-  it('lays the profile env over the process env and puts the profile args first', async () => {
+  it('lays the account env over the process env and puts the account args first', async () => {
     const spawned: { command: string; args: readonly string[]; env: Record<string, string> }[] = [];
     const engine = new ClaudeEngine(
-      claudeProfile({
+      claudeAccount({
         command: process.execPath,
         args: ['--debug-file', '/tmp/x'],
         env: { CLAUDE_CONFIG_DIR: '/h/.claude-1', HOME: '/p' },

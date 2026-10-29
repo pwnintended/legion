@@ -63,9 +63,9 @@ legion eject feature           # copy a builtin into .legion/workflows to edit i
   Esc saves and closes, `d` discards. The first row picks the file to save to: `project`, `local` (this
   machine only) or `user` (every project). Each setting shows the file it comes from, and warns when a later
   file overrides the one you are saving to. Changes are written into the TOML in place, keeping your comments,
-  and apply right away. *This session* switches the Claude and Codex profiles. *Open the file in $EDITOR* is
+  and apply right away. *Open the file in $EDITOR* is
   there for anything else. `/config show`, `/config edit [user|project|local]` and `/config reload` also work.
-- `/claude [profile]` and `/codex [profile]` show or switch the account used for new agents.
+- `/login <claude|codex> [name]` logs in a new account. `/accounts` lists accounts with login status, cooldowns and last use; `/accounts reset [kind[/name]]` clears cooldowns.
 - `/remote [on|off|default]` shows or switches remote mode (Upstash Boxes) for this session, from the next step on.
 - `/takeover <run> <step>` opens that agent's session in its own CLI (`claude --resume …` / `codex resume …`)
   so you can steer it by hand. Legion's UI comes back when you exit.

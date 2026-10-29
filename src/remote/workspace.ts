@@ -28,14 +28,21 @@ const BOX_CLI_BIN = '$HOME/.legion/cli/bin';
  */
 export const LAUNCHER = `w="$1"; shift
 export PATH="${BOX_CLI_BIN}:$PATH"
-export CODEX_HOME="$HOME/.legion/codex-home"
+# Codex's home is the account's own (LEGION_CODEX_ACCOUNT, a plain name); without one, the box's single home.
+a="\${LEGION_CODEX_ACCOUNT:-}"
+case "$a" in
+  ""|.|..|*[!A-Za-z0-9._-]*)
+    if [ -n "$a" ]; then echo "legion: invalid Codex account name" >&2; exit 2; fi
+    export CODEX_HOME="$HOME/.legion/codex-home" ;;
+  *) export CODEX_HOME="$HOME/.legion/codex-home/$a" ;;
+esac
 mkdir -p "$CODEX_HOME"; chmod 700 "$CODEX_HOME"
-# Codex's ChatGPT login, seeded once per box from the account's environment; the CLI keeps its refreshed tokens.
+# Codex's ChatGPT login, seeded once per account and box from the step's environment; the CLI keeps its refreshed tokens.
 if [ ! -f "$CODEX_HOME/auth.json" ] && [ -n "\${CODEX_AUTH_GZIP_B64:-}" ]; then
   (umask 077; printf %s "$CODEX_AUTH_GZIP_B64" | base64 -d | gunzip > "$CODEX_HOME/auth.json.tmp" &&
     mv "$CODEX_HOME/auth.json.tmp" "$CODEX_HOME/auth.json") || echo "legion: could not seed Codex's login" >&2
 fi
-unset CODEX_AUTH_GZIP_B64
+unset CODEX_AUTH_GZIP_B64 LEGION_CODEX_ACCOUNT a
 # The box image's environment (.legion/box/env.sh, installed by the box agent), then the project's prelude.
 if [ -f "$HOME/.legion/env.sh" ]; then . "$HOME/.legion/env.sh" >&2; fi
 if [ -n "\${LEGION_PRELUDE:-}" ]; then
