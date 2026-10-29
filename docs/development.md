@@ -44,3 +44,14 @@ Per project, Legion writes only under `.legion/`. It creates a `.legion/.gitigno
 `session/`, `team/` and `*.local.*`, so the only things to commit are `workflows/` and `roles/` (and `config.toml`
 if you want one).
 Worktrees live outside the repository in `~/.legion/worktrees/`. Branches are named `legion/<run-id>/<name>`.
+
+## Subagent events and transcripts
+
+The engines emit `subagent_started`, `subagent_event` and `subagent_done` as `AgentEvent`s. Child output travels
+in a `{ type: 'subagent_event', id, event }` envelope so it cannot become the parent's text, structured output
+or turn completion. On `subagent_started`, `parent` is the spawning subagent's id, or `null` for the session's
+main agent. Claude uses the Task/Agent tool-use id; Codex uses the child thread id.
+
+The UI tracks sub agents under their orchestrator, lead or workflow step. Step events are journaled in
+`.legion/runs/<run>/agents/<step>.jsonl`; the transcript view replays that file when its bounded in-memory
+history is unavailable. Subagent histories for the orchestrator and leads live only in memory for this session.

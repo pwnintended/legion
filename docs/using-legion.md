@@ -28,6 +28,8 @@ legion eject feature           # copy a builtin into .legion/workflows to edit i
   conversation; it follows new output again when you scroll back to the end or send something. Since Legion
   reports the mouse, hold Shift (Option in iTerm2) to select text.
 - **Esc** interrupts the assistant. **Ctrl+C** twice exits. **?** on an empty prompt shows every shortcut.
+- **Ctrl+T** opens **Agents**, the tree of every agent and sub agent; `/agents` opens it too.
+  **↑↓** moves, **Enter** opens the selected agent, and **Esc** closes the picker. Run headers are skipped.
 - The tool calls between two replies fold into one line (`Read ×3 · Bash · 2 files +14 −3`); **Ctrl+O** shows
   each call, and folds them again. Slash commands match loosely: `/wf` finds `/workflows`, `/account` finds
   `/claude` and `/codex`.
@@ -42,6 +44,9 @@ legion eject feature           # copy a builtin into .legion/workflows to edit i
   results. Under the prompt you see the active runs, the team and an **activity feed**: lead reports and messages,
   runs starting, workflow logs, leads' runs finishing. The busy line shows the tool the assistant is running.
   `/activity [n]` prints the last n feed lines in full, tool calls included.
+- **Sub agents** are helpers spawned by an agent. The team and run panels show them indented under that agent
+  as `sub agent · <type> · <description>` (type and description appear when available). Their output stays in
+  their own transcripts.
 - **Shift+Enter** inserts a newline in terminals that speak the kitty keyboard protocol (Ghostty, kitty, WezTerm,
   iTerm2 with CSI u reporting). Elsewhere, end the line with `\` and press Enter, or use Alt+Enter.
 - **Images.** **Ctrl+V** attaches the image on the clipboard (a screenshot: Cmd+Ctrl+Shift+4 on macOS); pasting
@@ -52,6 +57,14 @@ legion eject feature           # copy a builtin into .legion/workflows to edit i
   1600 px, with `sips` on macOS), and the message names that path so the assistant can hand it on. Reading the
   clipboard needs `osascript` (macOS) or `wl-paste`/`xclip` (Linux). `LEGION_IMAGES=off` turns the thumbnails off.
 - Type `/` for the command menu: ↑↓ picks, Tab completes, Enter runs. `/help` lists everything.
+- `/agents` lists the orchestrator, leads, workflow step agents and sub agents in a tree. Rows marked `talk`
+  open a conversation: the orchestrator opens the main chat, and a lead opens as with `/lead`. Rows marked
+  `read-only` open a step agent's or sub agent's transcript in the main view, with a `read-only` prompt.
+  **Esc** goes back; you cannot send messages to these agents from the transcript.
+  Step transcripts, including their sub agents, are rebuilt from
+  `.legion/runs/<run>/agents/<step>.jsonl` when no longer in memory. The main session's and leads' sub agent
+  histories are bounded and kept for this session only; restarting loses them. The picker shows runs from
+  this session; use `/runs` and `/log` for earlier runs.
 - `/workflows` opens the workflow browser. Enter opens a workflow: its description, its input fields, and its
   agent steps, which a dry run finds along with their engines. There you set the **tier** (`hard`, `medium`,
   `easy`) for all of the workflow's agents, or for a single step, and, rarely needed, a step's own engine, model and
