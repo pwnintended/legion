@@ -6,7 +6,7 @@ import { spawn } from 'node:child_process';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { type Logger, silentLogger } from '../../util/log.ts';
-import type { AgentEngine, AgentSession, EngineInfo, EngineProfile, SessionOptions } from '../types.ts';
+import type { AgentEngine, AgentSession, EngineAccount, EngineInfo, SessionOptions } from '../types.ts';
 import { appServerArgs, childEnv, mergeEnv, prepareCodexHome, resolveBinary } from './config.ts';
 import { JsonRpcPeer, LineSplitter } from './json-rpc.ts';
 import type { ClientMethod, ClientMethods } from './methods.ts';
@@ -18,7 +18,7 @@ export { type CodexChild, type CodexProcessSpec, CodexSession, type CodexSpawn, 
 export interface CodexEngineOptions {
   log?: Logger;
   /**
-   * Legion-owned CODEX_HOME (default `~/.legion/codex-home/<profile.name>`): only the user's `auth.json` is
+   * Legion-owned CODEX_HOME (default `~/.legion/codex-home/<account.name>`): only the user's `auth.json` is
    * linked into it, so user config, hooks, rules and AGENTS.md don't leak into Legion runs. Threads are stored
    * there, so keep it stable across restarts (resume needs it).
    */
@@ -26,7 +26,7 @@ export interface CodexEngineOptions {
   /** Reported as `clientInfo.version` to the app-server. */
   clientVersion?: string;
   /**
-   * Run the app-server on another machine (an Upstash Box, `remote/`): `spawn` starts it there. The profile's
+   * Run the app-server on another machine (an Upstash Box, `remote/`): `spawn` starts it there. The account's
    * command is used as is, CODEX_HOME is the box's own (its launcher sets it), and the child gets only the
    * session's env.
    */
@@ -37,7 +37,7 @@ const PROBE_TIMEOUT_MS = 20_000;
 
 export class CodexEngine implements AgentEngine {
   readonly kind = 'codex' as const;
-  readonly profile: EngineProfile;
+  readonly account: EngineAccount;
   private readonly log: Logger;
   private readonly home: string;
   private readonly clientVersion: string;
@@ -45,10 +45,10 @@ export class CodexEngine implements AgentEngine {
   /** Told the user once that Codex runs in their own CODEX_HOME. */
   private reportedFallback = false;
 
-  constructor(profile: EngineProfile, opts: CodexEngineOptions = {}) {
-    this.profile = profile;
+  constructor(account: EngineAccount, opts: CodexEngineOptions = {}) {
+    this.account = account;
     this.log = opts.log ?? silentLogger;
-    this.home = opts.home ?? join(homedir(), '.legion', 'codex-home', profile.name);
+    this.home = opts.home ?? join(homedir(), '.legion', 'codex-home', account.name);
     this.clientVersion = opts.clientVersion ?? '0.0.0';
     this.remote = opts.remote;
   }
@@ -63,16 +63,16 @@ export class CodexEngine implements AgentEngine {
 
   /** The CODEX_HOME sessions run in (where their threads are stored): needed to resume one in the plain CLI. */
   async codexHome(): Promise<string> {
-    return (await prepareCodexHome(this.home, mergeEnv(process.env, this.profile.env))).path;
+    return (await prepareCodexHome(this.home, mergeEnv(process.env, this.account.env))).path;
   }
 
   private async open(opts: SessionOptions, mode: OpenMode): Promise<AgentSession> {
     if (this.remote) {
-      const env = childEnv(mergeEnv(this.profile.env, opts.env), opts.mcp, '');
+      const env = childEnv(mergeEnv(this.account.env, opts.env), opts.mcp, '');
       delete env.CODEX_HOME;
       return CodexSession.open(opts, mode, {
-        command: this.profile.command,
-        args: appServerArgs(this.profile.args),
+        command: this.account.command,
+        args: appServerArgs(this.account.args),
         env,
         clientVersion: this.clientVersion,
         log: this.log,
@@ -81,9 +81,9 @@ export class CodexEngine implements AgentEngine {
         sandboxed: false,
       });
     }
-    const env = mergeEnv(process.env, this.profile.env, opts.env);
-    const command = resolveBinary(this.profile.command, env);
-    if (!command) throw new Error(`${this.profile.command} not found on PATH`);
+    const env = mergeEnv(process.env, this.account.env, opts.env);
+    const command = resolveBinary(this.account.command, env);
+    if (!command) throw new Error(`${this.account.command} not found on PATH`);
     const home = await prepareCodexHome(this.home, env);
     if (!home.isolated && !this.reportedFallback) {
       this.reportedFallback = true;
@@ -91,7 +91,7 @@ export class CodexEngine implements AgentEngine {
     }
     return CodexSession.open(opts, mode, {
       command,
-      args: appServerArgs(this.profile.args),
+      args: appServerArgs(this.account.args),
       env: childEnv(env, opts.mcp, home.path),
       clientVersion: this.clientVersion,
       log: this.log,
@@ -103,24 +103,24 @@ export class CodexEngine implements AgentEngine {
    * no network). Never starts a turn.
    */
   async probe(): Promise<EngineInfo> {
-    const env = mergeEnv(process.env, this.profile.env);
+    const env = mergeEnv(process.env, this.account.env);
     const base: EngineInfo = {
       kind: 'codex',
-      profile: this.profile.name,
+      account: this.account.name,
       installed: false,
       path: null,
       version: null,
       loggedIn: null,
       error: null,
     };
-    const path = resolveBinary(this.profile.command, env);
-    if (!path) return { ...base, error: `${this.profile.command} not found on PATH` };
+    const path = resolveBinary(this.account.command, env);
+    if (!path) return { ...base, error: `${this.account.command} not found on PATH` };
     const info: EngineInfo = { ...base, installed: true, path };
     try {
       const home = await prepareCodexHome(this.home, env);
       const result = await withAppServer(
         path,
-        appServerArgs(this.profile.args),
+        appServerArgs(this.account.args),
         childEnv(env, null, home.path),
         this.clientVersion,
         this.log,
@@ -139,13 +139,13 @@ export class CodexEngine implements AgentEngine {
 
   /** The models this Codex offers in its picker (`model/list`), from a short-lived app-server. */
   async listModels(): Promise<{ id: string; name: string; description: string; isDefault: boolean }[]> {
-    const env = mergeEnv(process.env, this.profile.env);
-    const path = resolveBinary(this.profile.command, env);
-    if (!path) throw new Error(`${this.profile.command} not found on PATH`);
+    const env = mergeEnv(process.env, this.account.env);
+    const path = resolveBinary(this.account.command, env);
+    if (!path) throw new Error(`${this.account.command} not found on PATH`);
     const home = await prepareCodexHome(this.home, env);
     return withAppServer(
       path,
-      appServerArgs(this.profile.args),
+      appServerArgs(this.account.args),
       childEnv(env, null, home.path),
       this.clientVersion,
       this.log,

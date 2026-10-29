@@ -46,13 +46,13 @@ export const DISABLED_FEATURES = [
   'image_generation',
 ] as const;
 
-/** `codex app-server` arguments, after the profile's own `args`. */
-export function appServerArgs(profileArgs: readonly string[] = []): string[] {
+/** `codex app-server` arguments, after the account's own `args`. */
+export function appServerArgs(accountArgs: readonly string[] = []): string[] {
   const features = DISABLED_FEATURES.flatMap((feature) => ['-c', `features.${feature}=false`]);
-  return [...profileArgs, 'app-server', ...features];
+  return [...accountArgs, 'app-server', ...features];
 }
 
-/** Process env, then the profile's env, then the session's: the env a Codex child starts from. */
+/** Process env, then the account's env, then the session's: the env a Codex child starts from. */
 export function mergeEnv(...layers: (Env | undefined)[]): Record<string, string> {
   const out: Record<string, string> = {};
   for (const layer of layers) {
@@ -143,7 +143,7 @@ function bearerToken(headers: Readonly<Record<string, string>>): { key: string; 
 }
 
 /**
- * Child environment: `base` (process + profile + session env) plus CODEX_HOME and the MCP bearer tokens.
+ * Child environment: `base` (process + account + session env) plus CODEX_HOME and the MCP bearer tokens.
  * Token vars inherited from elsewhere are dropped so a stale one can't reach a server, and Herdr's pane vars so
  * the worker's own Herdr hook can't claim Legion's pane.
  */

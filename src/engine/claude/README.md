@@ -1,19 +1,19 @@
 # engine/claude
 
-Claude Code CLI adapter: implements `AgentEngine` (`../types.ts`) by spawning the profile's binary
-(`EngineProfile.command` resolved on the merged env's `PATH`, no shell, `profile.args` first; verified against
+Claude Code CLI adapter: implements `AgentEngine` (`../types.ts`) by spawning the account's binary
+(`EngineAccount.command` resolved on the merged env's `PATH`, no shell, `account.args` first; verified against
 2.1.289–2.1.310) with
 `-p --input-format stream-json --output-format stream-json --verbose --include-partial-messages` and
 translating stream-json + control-protocol frames into normalized `AgentEvent`s. No Agent SDK;
 the control-protocol shapes follow the published `@anthropic-ai/claude-agent-sdk` 0.3.292 sources.
 
-- `args.ts`: pure flag builder: model/effort/system prompt/`--json-schema`, permission profile → flags, MCP config, config isolation, child env (process → profile → session, parent-session vars stripped)
+- `args.ts`: pure flag builder: model/effort/system prompt/`--json-schema`, permission mode → flags, MCP config, config isolation, child env (process → account → session, parent-session vars stripped)
 - `parser.ts`: pure stream-json → `AgentEvent` normalizer (+ control frames as `ParserOutput`)
 - `protocol.ts`: stdin messages: user turns, interrupt, `can_use_tool` answers
 - `read-only-policy.ts`: host-side answers for read-only sessions' `can_use_tool` requests: read tools, version/help probes and plain reads pass (chains parsed strictly), the rest is denied with a message; no human involved. `READ_ONLY_GUIDE` states the rules in the system prompt
 - `session.ts`: one process = one `AgentSession`: stdin open for the session's lifetime, delta coalescing, interrupt/close escalation
-- `engine.ts`: `ClaudeEngine(profile)`: binary resolution, `probe()` (`--version` + `auth status --json` under the profile env, so `CLAUDE_CONFIG_DIR` picks the account), `start`/`resume`
-- `testing.ts`: test-only: `FakeChild`, fixture replay, recording spawn, profile/schema helpers
+- `engine.ts`: `ClaudeEngine(account)`: binary resolution, `probe()` (`--version` + `auth status --json` under the account env, so `CLAUDE_CONFIG_DIR` picks the account), `start`/`resume`
+- `testing.ts`: test-only: `FakeChild`, fixture replay, recording spawn, account/schema helpers
 - `fixtures/*.jsonl`: sanitized live transcripts (`{dir: in/out/exit}` lines), replayed by the unit tests
 
 ## Behaviour callers rely on
@@ -25,6 +25,9 @@ the control-protocol shapes follow the published `@anthropic-ai/claude-agent-sdk
   `api_error_<status>`, or `process_exited` (crash mid-turn). Errors come with an `error{retryable}` event first;
   schema failures and 408/429/5xx/529 are retryable. `system/api_retry` → `error{retryable: true}` (informational,
   the CLI retries by itself).
+- **Limits**: a failing `result` for an account out of quota (a `rate_limit_event` with `status: "rejected"` and not
+  `isUsingOverage`, `api_error_status` 429, or text like `usage limit` / `Claude AI usage limit reached|<epoch s>`)
+  emits `limit_reached{kind, resetsAt (ms), message}` just before the `error`. `api_retry` 429 does not.
 - **Usage is cumulative**: `usage` events carry running session totals (tokens incl. cache reads/creation, and
   `costUsd`), including the spend of earlier processes of a resumed session. Take the latest; never sum.
   Interrupted turns may report zeros; those are not emitted. Cost is the CLI's estimate.

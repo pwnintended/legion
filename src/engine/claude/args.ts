@@ -32,7 +32,7 @@ export const LEGION_FLAG_SETTINGS = { autoMemoryEnabled: false } as const;
 export const EDIT_TOOLS: readonly string[] = ['Edit', 'Write', 'MultiEdit', 'NotebookEdit'];
 
 /**
- * Never allowed, whatever the profile: Legion owns commits, remotes and worktrees, and an agent must not
+ * Never allowed, whatever the permission profile: Legion owns commits, remotes and worktrees, and an agent must not
  * leave anything running or scheduled behind (these tools ship with the CLI and some need no permission).
  */
 /** Denied unless the profile allows `git` (see {@link PermissionProfile.git}). */
@@ -137,7 +137,7 @@ export interface BuildArgsInput {
   tempDirs?: readonly string[];
 }
 
-/** The adapter's own arguments (the profile's `args` go before them). */
+/** The adapter's own arguments (the account's `args` go before them). */
 export function buildClaudeArgs({
   opts,
   sessionId,
@@ -229,7 +229,7 @@ export const HOST_SESSION_ENV_VARS: readonly string[] = [
 export type EnvLayer = Readonly<Record<string, string | undefined>> | null | undefined;
 
 /**
- * The child's environment: `layers` laid over each other in order (typically `process.env`, the profile's env,
+ * The child's environment: `layers` laid over each other in order (typically `process.env`, the account's env,
  * the session's env), with the parent Claude Code session and Herdr pane variables removed from every layer (a
  * caller may have built its layer from `process.env`).
  */

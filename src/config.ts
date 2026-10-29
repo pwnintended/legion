@@ -5,15 +5,18 @@
  *
  * ```toml
  * [claude]
- * default = "claude-1"          # profile used when the session starts (override: legion --claude claude-2)
+ * command = "claude"            # the binary and extra arguments of every account
+ * args    = []
  *
- * [claude.profiles.claude-1]
- * setup   = "claude-share check" # runs once, through your shell, when the session starts
- * command = "claude"
- * env     = { CLAUDE_CONFIG_DIR = "~/.claude-1" }
+ * [accounts]
+ * cooldownMinutes = 60          # cooldown after a limit when the CLI gave no reset time
  *
- * [codex.profiles.default]
- * command = "codex"
+ * [accounts.claude.work]        # also found: every directory ~/.legion/accounts/<kind>/<name>
+ * dir      = "~/.claude-work"   # CLAUDE_CONFIG_DIR; omitted: the CLI's own login
+ * tokenEnv = "CLAUDE_WORK_TOKEN" # a `claude setup-token` token (tokenFile = "…" reads a file instead)
+ *
+ * [accounts.codex.personal]
+ * dir = "~/.codex-personal"     # CODEX_HOME holding auth.json
  *
  * [assistant]
  * engine = "claude"             # the engine you talk to (in mixed mode)
@@ -34,29 +37,56 @@
  * clone = ["target", "game/.godot"]   # build caches cloned into new worktrees (default: found automatically)
  * ```
  *
- * Without any profile for a kind, there is one called `default` that runs the plain binary (`claude`, `codex`).
+ * Without any account for a kind, there is one called `default` that runs the plain binary (`claude`, `codex`)
+ * with the user's own login. Legion picks an account for each agent session from the pool (`accounts/`).
  */
-import { spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
-import { parse } from 'smol-toml';
+import { parse, stringify } from 'smol-toml';
 import { z } from 'zod';
-import type { EngineProfile, McpServer } from './engine/types.ts';
+import type { McpServer } from './engine/types.ts';
 import { configHome } from './workflow/loader.ts';
 
-const ProfileSchema = z.object({
-  command: z.string().min(1).optional(),
-  args: z.array(z.string()).default([]),
-  env: z.record(z.string(), z.string()).default({}),
-  setup: z.string().optional(),
+/** Env an account must not set: they would route the CLI around its own login (proxy, or a token Legion manages). */
+export const FORBIDDEN_ACCOUNT_ENV = ['ANTHROPIC_BASE_URL', 'OPENAI_BASE_URL', 'CLAUDE_CODE_OAUTH_TOKEN'] as const;
+
+/** One `[accounts.<kind>.<name>]` table. Every field is optional: it overrides a discovered account field by field. */
+const AccountSchema = z.object({
+  /** CLAUDE_CONFIG_DIR / CODEX_HOME. Omitted: the CLI's default login. */
+  dir: z.string().min(1).optional(),
+  /** Env var holding a `claude setup-token` token (becomes CLAUDE_CODE_OAUTH_TOKEN for that account's CLI). */
+  tokenEnv: z.string().min(1).optional(),
+  /** File whose first line is such a token: the alternative to `tokenEnv`. */
+  tokenFile: z.string().min(1).optional(),
+  enabled: z.boolean().default(true),
+  /** Usable in boxes. Default: claude when it has a token, codex never. */
+  remote: z.boolean().optional(),
+  env: z
+    .record(z.string(), z.string())
+    .default({})
+    .superRefine((env, ctx) => {
+      for (const key of FORBIDDEN_ACCOUNT_ENV) {
+        if (key in env) ctx.addIssue({ code: 'custom', message: `${key} may not be set here` });
+      }
+    }),
+});
+export type AccountConfig = z.infer<typeof AccountSchema>;
+
+const AccountsSchema = z.object({
+  /** How long an account rests after hitting a limit when the CLI named no reset time. */
+  cooldownMinutes: z.number().min(1).default(60),
+  claude: z.record(z.string(), AccountSchema).default({}),
+  codex: z.record(z.string(), AccountSchema).default({}),
 });
 
 const KindSchema = z.object({
-  default: z.string().optional(),
+  /** The binary of every account of this kind (default: the kind's name). */
+  command: z.string().min(1).optional(),
+  /** Extra arguments for every account's CLI. */
+  args: z.array(z.string()).default([]),
   /** Extra model names for the pickers (Codex lists its own; Claude's list is built in). */
   models: z.array(z.string().min(1)).default([]),
-  profiles: z.record(z.string(), ProfileSchema).default({}),
 });
 
 const EffortSchema = z.enum(['low', 'medium', 'high', 'xhigh', 'max']);
@@ -181,8 +211,9 @@ const RemoteSchema = z.object({
 export type RemoteConfig = z.infer<typeof RemoteSchema>;
 
 export const ConfigSchema = z.object({
-  claude: KindSchema.default({ profiles: {}, models: [] }),
-  codex: KindSchema.default({ profiles: {}, models: [] }),
+  claude: KindSchema.prefault({}),
+  codex: KindSchema.prefault({}),
+  accounts: AccountsSchema.prefault({}),
   assistant: z
     .object({
       engine: z.enum(['claude', 'codex']).default('claude'),
@@ -240,14 +271,115 @@ export const ConfigSchema = z.object({
 export type Config = z.infer<typeof ConfigSchema>;
 export type RealKind = 'claude' | 'codex';
 
-export interface ResolvedProfile extends EngineProfile {
-  setup: string | null;
-}
-
 export class ConfigError extends Error {}
 
 export function userConfigPath(): string {
   return join(configHome(), 'config.toml');
+}
+
+/**
+ * Engine profiles were replaced by the account pool. Converts a parsed config document: each `[<kind>.profiles.<name>]`
+ * becomes `[accounts.<kind>.<name>]` (same name, so old run journals map onto it) with `dir` from its env
+ * CLAUDE_CONFIG_DIR / CODEX_HOME and the other env kept; `command` and `args` move to `[<kind>]`; `default` and
+ * `setup` are dropped. `notes` is empty when the document has no profiles (nothing changed).
+ */
+export function migrateProfiles(doc: Record<string, unknown>): { doc: Record<string, unknown>; notes: string[] } {
+  const out = structuredClone(doc);
+  const notes: string[] = [];
+  const accounts: Record<string, unknown> = isPlainObject(out.accounts) ? out.accounts : {};
+  for (const kind of ['claude', 'codex'] as const) {
+    const section = out[kind];
+    if (!isPlainObject(section) || !('profiles' in section || 'default' in section)) continue;
+    const before = notes.length;
+    const { profiles, default: chosen, ...rest } = section;
+    const dirVar = kind === 'claude' ? 'CLAUDE_CONFIG_DIR' : 'CODEX_HOME';
+    const table: Record<string, unknown> = isPlainObject(accounts[kind]) ? accounts[kind] : {};
+    let command: unknown;
+    let args: unknown;
+    for (const [name, raw] of Object.entries(isPlainObject(profiles) ? profiles : {})) {
+      const profile = isPlainObject(raw) ? raw : {};
+      const { [dirVar]: dir, ...allEnv } = isPlainObject(profile.env) ? profile.env : {};
+      // These keys are refused in an account's env; their values (a token, say) are never copied or shown.
+      const env = Object.fromEntries(
+        Object.entries(allEnv).filter(([k]) => !FORBIDDEN_ACCOUNT_ENV.some((f) => f === k)),
+      );
+      for (const key of FORBIDDEN_ACCOUNT_ENV.filter((f) => f in allEnv)) {
+        notes.push(
+          key === 'CLAUDE_CODE_OAUTH_TOKEN'
+            ? `${kind} profile "${name}": its ${key} was dropped; keep the token in an environment variable or a file (mode 600) and set tokenEnv or tokenFile on the account`
+            : `${kind} profile "${name}": its ${key} was dropped (accounts may not redirect the CLI)`,
+        );
+      }
+      table[name] = {
+        ...(typeof dir === 'string' ? { dir } : {}),
+        ...(Object.keys(env).length > 0 ? { env } : {}),
+      };
+      notes.push(`${kind} profile "${name}" → [accounts.${kind}.${name}]`);
+      if (profile.command !== undefined || (Array.isArray(profile.args) && profile.args.length > 0)) {
+        if (command === undefined && args === undefined) {
+          command = profile.command;
+          args = profile.args;
+          notes.push(`${kind} profile "${name}": command and args → [${kind}] (shared by all ${kind} accounts)`);
+        } else {
+          notes.push(`${kind} profile "${name}": its command/args differ from another profile's and were dropped`);
+        }
+      }
+      if (profile.setup !== undefined) {
+        notes.push(`${kind} profile "${name}": setup was dropped (accounts have no setup command)`);
+      }
+    }
+    if (chosen !== undefined) {
+      notes.push(`${kind} default "${String(chosen)}" was dropped (Legion picks an account for every session)`);
+    }
+    if (Object.keys(table).length > 0) accounts[kind] = table;
+    out[kind] = {
+      ...rest,
+      ...(command !== undefined ? { command } : {}),
+      ...(args !== undefined ? { args } : {}),
+    };
+    if (notes.length === before) notes.push(`${kind}: removed an empty profile setting`);
+  }
+  if (notes.length > 0) out.accounts = accounts;
+  return { doc: out, notes };
+}
+
+/** Env values may be secrets: the message shows their names only. */
+function redactEnv(accounts: unknown): unknown {
+  if (!isPlainObject(accounts)) return accounts;
+  return Object.fromEntries(
+    Object.entries(accounts).map(([kind, table]) => [
+      kind,
+      isPlainObject(table)
+        ? Object.fromEntries(
+            Object.entries(table).map(([name, a]) => [
+              name,
+              isPlainObject(a) && isPlainObject(a.env)
+                ? { ...a, env: Object.fromEntries(Object.keys(a.env).map((k) => [k, '<kept>'])) }
+                : a,
+            ]),
+          )
+        : table,
+    ]),
+  );
+}
+
+function profilesRemovedMessage(path: string, migrated: Record<string, unknown>, notes: string[]): string {
+  const shown: Record<string, unknown> = { accounts: redactEnv(migrated.accounts) };
+  for (const kind of ['claude', 'codex']) {
+    const section = migrated[kind];
+    if (isPlainObject(section) && ('command' in section || 'args' in section)) {
+      shown[kind] = { command: section.command, args: section.args };
+    }
+  }
+  return [
+    `${path}: engine profiles ([claude.profiles.*], [codex.profiles.*], default, setup) are gone: Legion keeps a pool of accounts and picks one for every agent.`,
+    ...notes.map((n) => `  - ${n}`),
+    'The equivalent configuration:',
+    '',
+    stringify(JSON.parse(JSON.stringify(shown))).trimEnd(),
+    '',
+    '`legion accounts migrate` rewrites your user config this way (keeping a .bak).',
+  ].join('\n');
 }
 
 export function readToml(path: string): Record<string, unknown> {
@@ -329,6 +461,10 @@ export function loadConfig(repo: string, cwd: string = repo): Config {
       );
     }
   }
+  for (const { layer, doc } of docs) {
+    const { notes, doc: migrated } = migrateProfiles(doc);
+    if (notes.length > 0) throw new ConfigError(profilesRemovedMessage(layer.path, migrated, notes));
+  }
   const merged = docs.reduce<Record<string, unknown>>((acc, { doc }) => mergeLayers(acc, doc), {});
   const parsed = ConfigSchema.safeParse(merged);
   if (!parsed.success) {
@@ -342,7 +478,7 @@ export function loadConfig(repo: string, cwd: string = repo): Config {
 /**
  * Writes a commented `.legion/config.toml` at the project root when no project config exists in `cwd` or any
  * directory above it. The active values are the ones in effect now (from the user config or the defaults), so
- * creating the file changes nothing; profiles stay in the user config, since they are per machine.
+ * creating the file changes nothing; accounts stay in the user config, since they are per machine.
  * Returns the path written, or null.
  */
 export function ensureProjectConfig(repo: string, cwd: string, config: Config): string | null {
@@ -425,19 +561,16 @@ export function defaultProjectConfig(config: Config): string {
     '# command = "uvx"',
     '# args    = ["blender-mcp"]',
     '',
-    '# Engine profiles say which account or binary "claude" and "codex" mean. They are per machine, so they',
-    '# usually live in the user config; pick one per session with /claude <profile> or legion --claude <profile>.',
+    '# Accounts: Legion picks one from a pool for every agent session and moves on when one hits its limit.',
+    '# Log in with `legion login claude|codex [name]` (or /login): that creates ~/.legion/accounts/<kind>/<name>.',
+    '# Accounts of your own (per machine, so usually in the user config):',
     '#',
-    '# [claude]',
-    '# default = "claude-1"',
+    '# [accounts.claude.work]',
+    '# dir      = "~/.claude-work"          # CLAUDE_CONFIG_DIR',
+    '# tokenEnv = "CLAUDE_WORK_TOKEN"       # optional: a `claude setup-token` token, for boxes',
     '#',
-    '# [claude.profiles.claude-1]',
-    '# setup   = "claude-share check"     # runs once per session, through your shell',
-    '# command = "claude"',
-    '# env     = { CLAUDE_CONFIG_DIR = "~/.claude-1" }',
-    '#',
-    '# [codex.profiles.default]',
-    '# command = "codex"                  # env = { CODEX_HOME = "..." } for another account',
+    '# [accounts.codex.personal]',
+    '# dir = "~/.codex-personal"            # CODEX_HOME holding auth.json',
     '',
   ].join('\n');
 }
@@ -556,44 +689,6 @@ export function mcpServers(config: Config): Record<string, McpServer> {
   return out;
 }
 
-function expandHome(value: string): string {
+export function expandHome(value: string): string {
   return value === '~' ? homedir() : value.startsWith('~/') ? join(homedir(), value.slice(2)) : value;
-}
-
-export function profileNames(config: Config, kind: RealKind): string[] {
-  const names = Object.keys(config[kind].profiles);
-  return names.length > 0 ? names : ['default'];
-}
-
-export function resolveProfile(config: Config, kind: RealKind, name?: string): ResolvedProfile {
-  const section = config[kind];
-  const names = profileNames(config, kind);
-  const chosen = name ?? section.default ?? names[0] ?? 'default';
-  const raw = section.profiles[chosen];
-  if (!raw && !(chosen === 'default' && Object.keys(section.profiles).length === 0)) {
-    throw new ConfigError(`No ${kind} profile "${chosen}" (configured: ${names.join(', ')})`);
-  }
-  const env = Object.fromEntries(Object.entries(raw?.env ?? {}).map(([k, v]) => [k, expandHome(v)]));
-  return {
-    name: chosen,
-    kind,
-    command: expandHome(raw?.command ?? kind),
-    args: raw?.args ?? [],
-    env,
-    setup: raw?.setup ?? null,
-  };
-}
-
-/**
- * Runs a profile's `setup` command through the user's login shell, with the terminal attached (it may print or
- * prompt). Called once per session per profile, before the UI takes over the terminal.
- */
-export function runSetup(profile: ResolvedProfile): { ok: boolean; code: number | null } {
-  if (!profile.setup) return { ok: true, code: 0 };
-  const shell = process.env.SHELL || '/bin/sh';
-  const result = spawnSync(shell, ['-lc', profile.setup], {
-    stdio: 'inherit',
-    env: { ...process.env, ...profile.env },
-  });
-  return { ok: result.status === 0, code: result.status };
 }

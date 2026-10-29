@@ -238,7 +238,7 @@ describe('thread parameters', () => {
     });
   });
 
-  it('layers env: process, then profile, then session', () => {
+  it('layers env: process, then account, then session', () => {
     expect(mergeEnv({ A: '1', B: '1', U: undefined }, { B: '2', C: '2' }, { C: '3' })).toEqual({
       A: '1',
       B: '2',
@@ -246,7 +246,7 @@ describe('thread parameters', () => {
     });
   });
 
-  it('puts the profile args first and disables user hooks and connectors', () => {
+  it('puts the account args first and disables user hooks and connectors', () => {
     const args = appServerArgs(['--profile-flag']);
     expect(args.slice(0, 2)).toEqual(['--profile-flag', 'app-server']);
     expect(args).toContain('features.hooks=false');

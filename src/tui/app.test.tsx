@@ -56,6 +56,7 @@ export default workflow({ name: 'hello', description: 'Says hello', input: z.obj
   });
 `,
   );
+  process.env.XDG_CONFIG_HOME = join(repo.path, '.xdg');
   session = await Session.open({ cwd: repo.path, fake: true });
 });
 

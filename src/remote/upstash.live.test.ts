@@ -64,7 +64,7 @@ describe.skipIf(!LIVE)('Upstash Boxes (live)', () => {
   });
 
   it.skipIf(process.env.LEGION_LIVE_REMOTE_AGENT !== '1')('runs a Claude turn in the box', async () => {
-    const session = await host.engine('claude').start({
+    const session = await host.engine('claude', 'default').start({
       cwd: wt,
       prompt: 'Create the file hello.txt containing exactly the word hi, then reply with just: OK',
       model: 'haiku',

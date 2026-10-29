@@ -185,6 +185,7 @@ describe('synthetic notifications', () => {
     const error = { message: 'Rate limited', codexErrorInfo: 'rateLimitExceeded', additionalDetails: null };
     expect(normalizer.handle(n('turn/started', { threadId: 't', turn: { id: 'u' } }))).toEqual([]);
     expect(normalizer.handle(n('error', { error, willRetry: false, threadId: 't', turnId: 'u' }))).toEqual([
+      { type: 'limit_reached', engine: 'codex', kind: 'rate', resetsAt: null, message: 'Rate limited' },
       { type: 'error', message: 'Rate limited', retryable: true },
     ]);
     expect(
@@ -402,5 +403,61 @@ describe('helpers', () => {
     expect(unwrapShell('ls -la')).toBe('ls -la');
     expect(displayCommand('/bin/zsh -lc ls', [{ type: 'listFiles', command: 'ls', path: null }])).toBe('ls');
     expect(displayCommand("/bin/zsh -lc 'cd a && ls'", [])).toBe('cd a && ls');
+  });
+});
+
+describe('limit_reached', () => {
+  it('usageLimitExceeded: reset = latest exhausted window, before error and turn_complete', () => {
+    const events = replay('usage-limit');
+    expect(events.filter((e) => e.type === 'limit_reached')).toEqual([
+      { type: 'limit_reached', engine: 'codex', kind: 'usage', resetsAt: 1791752611_000, message: expect.any(String) },
+    ]);
+    expect(types(events).filter((t) => t !== 'rate_limit')).toEqual(['limit_reached', 'error', 'turn_complete']);
+  });
+
+  it('rateLimitExceeded: a willRetry notice emits none, the final error does (no exhausted window → null)', () => {
+    const events = replay('rate-limit');
+    expect(events.filter((e) => e.type === 'limit_reached')).toMatchObject([{ kind: 'rate', resetsAt: null }]);
+    expect(events.filter((e) => e.type === 'error')).toHaveLength(2);
+  });
+
+  it('a failed turn without a prior error notification also reports it', () => {
+    const normalizer = new CodexNormalizer({ cwd: FIXTURE_CWD, structuredOutput: false });
+    const error = { message: 'nope', codexErrorInfo: 'usageLimitExceeded', additionalDetails: null };
+    const events = normalizer.handle(
+      n('turn/completed', { threadId: 't', turn: { id: 'u', items: [], status: 'failed', error } }),
+    );
+    expect(types(events)).toEqual(['limit_reached', 'error', 'turn_complete']);
+  });
+
+  it('a willRetry notice followed by a failed turn still reports the limit', () => {
+    const normalizer = new CodexNormalizer({ cwd: FIXTURE_CWD, structuredOutput: false });
+    const error = { message: 'nope', codexErrorInfo: 'rateLimitExceeded', additionalDetails: null };
+    normalizer.handle(n('turn/started', { threadId: 't', turn: { id: 'u' } }));
+    expect(types(normalizer.handle(n('error', { error, willRetry: true, threadId: 't', turnId: 'u' })))).toEqual([
+      'error',
+    ]);
+    const events = normalizer.handle(
+      n('turn/completed', { threadId: 't', turn: { id: 'u', items: [], status: 'failed', error } }),
+    );
+    expect(types(events)).toEqual(['limit_reached', 'turn_complete']);
+  });
+
+  it('credits depletion with an unexhausted window gives resetsAt null', () => {
+    const normalizer = new CodexNormalizer({ cwd: FIXTURE_CWD, structuredOutput: false });
+    const window = { usedPercent: 40, windowDurationMins: 300, resetsAt: 1791324600 };
+    normalizer.handle(
+      n('account/rateLimits/updated', {
+        rateLimits: {
+          limitId: 'codex',
+          primary: window,
+          secondary: null,
+          rateLimitReachedType: 'workspace_owner_credits_depleted',
+        },
+      }),
+    );
+    const error = { message: 'out', codexErrorInfo: 'usageLimitExceeded', additionalDetails: null };
+    const events = normalizer.handle(n('error', { error, willRetry: false, threadId: 't', turnId: 'u' }));
+    expect(events[0]).toMatchObject({ type: 'limit_reached', resetsAt: null });
   });
 });

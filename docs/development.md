@@ -7,7 +7,7 @@ Requirements: Node ≥ 24 (26 recommended), git ≥ 2.38, `claude` and/or `codex
 ```sh
 pnpm install && pnpm build
 pnpm link --global      # puts `legion` on your PATH
-legion doctor           # checks engines, profiles, config
+legion doctor           # checks engines, accounts, config
 ```
 
 ## Run and test
@@ -25,8 +25,8 @@ pnpm test:live src/engine/codex # just one adapter
 ```
 src/
   cli.tsx               entry: interactive session, headless run/resume, subcommands
-  session.ts            config + profiles + engines + run manager + assistant for one directory
-  config.ts             TOML config, profiles, per-session setup
+  session.ts            config + account pool + engines + run manager + assistant for one directory
+  config.ts             TOML config, account settings, per-session setup
   assistant/            the conversational agent, its MCP tools (workflows, runs, team), the system prompts
   team/                 roles, and the team manager: leads, inboxes, plans, persistence
   engine/               AgentEngine adapters: claude (stream-json), codex (app-server), fake

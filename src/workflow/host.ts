@@ -3,6 +3,7 @@
  * the TUI's interaction queue, git); `validate.ts` provides a dry one (fake engines, auto-approved gates, simulated
  * git and shell) so a freshly written workflow can be exercised without spending tokens or touching the repo.
  */
+import type { Account, AccountKind } from '../accounts/index.ts';
 import type {
   AgentEngine,
   AgentEvent,
@@ -142,8 +143,21 @@ export interface AgentModelRequest {
 export interface RunHost {
   readonly repo: string;
   readonly dryRun: boolean;
-  /** The session's engine for a kind (bound to the session profile; fake in dry runs). */
-  engine(kind: EngineKind): AgentEngine;
+  /** The engine of a kind on one of the pool's accounts (fake in dry runs). */
+  engine(kind: EngineKind, account: string): AgentEngine;
+  /** The account the next agent session of a kind uses: the pool's round-robin, `prefer` winning when it is free. */
+  account(
+    kind: AccountKind,
+    req: { what: string; prefer?: string | null; avoid?: readonly string[]; where?: 'local' | 'box' },
+  ): { account: Account } | { exhausted: true; earliestReset: number | null };
+  /** An account hit its limit: no session uses it until `until` (ms). */
+  cooldown(kind: AccountKind, name: string, until: number, reason: string): void;
+  /** When the first cooling account of a kind is free again (null: none is cooling). */
+  earliestReset?(kind: AccountKind, where: 'local' | 'box'): number | null;
+  /** Minutes an account rests after a limit when the CLI named no reset time (`[accounts] cooldownMinutes`). Default 60. */
+  readonly cooldownMinutes?: number;
+  /** Where a step with this working directory runs: on this machine or in a box (remote mode). Default: local. */
+  where?(cwd: string): 'local' | 'box';
   /** Resolves when the human (or the dry host) answers. */
   interact<I extends Interaction>(interaction: I): Promise<InteractionAnswer<I>>;
   emit(event: RunEvent): void;

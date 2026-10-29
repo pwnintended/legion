@@ -33,8 +33,16 @@ export interface AssistantQuestion {
 
 export interface AssistantOptions {
   cwd: string;
-  /** The engine to talk to right now (a profile switch changes it). */
+  /**
+   * The engine to talk to right now: the caller keeps the same account across calls (affinity) until it hits a limit.
+   * A conversation only continues on the account it started on.
+   */
   engine: () => AgentEngine;
+  /**
+   * The account hit its limit during a turn. Cools it down and returns what to tell the user; the next
+   * `engine()` should then be another account, and the next message starts a new conversation on it.
+   */
+  onLimit?: (engine: AgentEngine, event: Extract<AgentEvent, { type: 'limit_reached' }>) => string | null;
   systemPrompt: () => string;
   mcp: Readonly<Record<string, McpServer>>;
   /** Read at every session start, so a config reload applies to the next conversation. */
@@ -42,8 +50,9 @@ export interface AssistantOptions {
   effort?: () => Effort | null;
   /** Who answers its tool approvals (read at every session start). Default: allowed (`auto`). */
   approvals?: 'ask' | 'auto' | (() => 'ask' | 'auto');
-  /** Resume this session (`legion --continue`). */
+  /** Resume this session (`legion --continue`), which belongs to this account. */
   sessionId?: string | null;
+  sessionAccount?: { kind: string; name: string } | null;
   log?: Logger;
 }
 
@@ -53,7 +62,7 @@ export interface AssistantEvents {
   question: [AssistantQuestion];
   resolved: [string];
   busy: [boolean];
-  session: [{ id: string; profile: string }];
+  session: [{ id: string; account: string }];
 }
 
 export class Assistant extends EventEmitter<AssistantEvents> {
@@ -62,18 +71,20 @@ export class Assistant extends EventEmitter<AssistantEvents> {
   private session: AgentSession | null = null;
   private opening: Promise<AgentSession> | null = null;
   private sessionId: string | null;
-  /** Engine and profile the session id belongs to: another engine or profile cannot resume it. */
-  private sessionProfile: { kind: string; name: string } | null = null;
+  /** Engine and account the session id belongs to: another engine or account cannot resume it. */
+  private sessionAccount: { kind: string; name: string } | null = null;
   private readonly pending = new Map<string, AssistantApproval>();
   private readonly questions = new Map<string, AssistantQuestion>();
   private busyState = false;
+  /** Counts the sessions opened: a pump whose session is no longer the latest leaves the state alone. */
+  private generation = 0;
 
   constructor(opts: AssistantOptions) {
     super();
     this.opts = opts;
     this.log = opts.log ?? silentLogger;
     this.sessionId = opts.sessionId ?? null;
-    if (this.sessionId) this.sessionProfile = profileOf(opts.engine());
+    if (this.sessionId && opts.sessionAccount) this.sessionAccount = opts.sessionAccount;
   }
 
   get busy(): boolean {
@@ -134,14 +145,20 @@ export class Assistant extends EventEmitter<AssistantEvents> {
     return [...this.questions.values()];
   }
 
-  /** Ends the process (the session stays resumable). A different engine profile starts a fresh conversation. */
+  /** Ends the process (the session stays resumable). A different engine account starts a fresh conversation. */
   async restart(): Promise<void> {
     const session = this.session;
     this.session = null;
     await session?.close();
-    if (!sameProfile(this.sessionProfile, this.opts.engine())) {
+    let same = false;
+    try {
+      same = sameAccount(this.sessionAccount, this.opts.engine());
+    } catch {
+      // Nothing free: the next message reports it.
+    }
+    if (!same) {
       this.sessionId = null;
-      this.sessionProfile = null;
+      this.sessionAccount = null;
     }
   }
 
@@ -164,7 +181,7 @@ export class Assistant extends EventEmitter<AssistantEvents> {
       });
     }
     const engine = this.opts.engine();
-    const canResume = this.sessionId !== null && sameProfile(this.sessionProfile, engine);
+    const canResume = this.sessionId !== null && sameAccount(this.sessionAccount, engine);
     const opts = {
       cwd: this.opts.cwd,
       prompt,
@@ -177,11 +194,13 @@ export class Assistant extends EventEmitter<AssistantEvents> {
       mcp: this.opts.mcp,
       userSettings: true,
     };
+    // Counted when opening starts, so the session it replaces stands down at once.
+    const generation = ++this.generation;
     this.opening = (canResume && this.sessionId ? engine.resume(this.sessionId, opts) : engine.start(opts))
       .then((session) => {
         this.session = session;
-        this.sessionProfile = profileOf(engine);
-        void this.pump(session);
+        this.sessionAccount = accountOf(engine);
+        void this.pump(session, engine, generation);
         return session;
       })
       .finally(() => {
@@ -190,13 +209,18 @@ export class Assistant extends EventEmitter<AssistantEvents> {
     return this.opening;
   }
 
-  private async pump(session: AgentSession): Promise<void> {
+  private async pump(session: AgentSession, engine: AgentEngine, generation: number): Promise<void> {
+    let limited = false;
+    // Once another session took over (after a limit or a restart), what is left of this one's stream while its
+    // process ends must not touch the conversation, the approvals or the busy state: they are the new one's.
+    const replaced = () => this.generation !== generation;
     try {
       for await (const event of session.events) {
+        if (replaced()) continue;
         switch (event.type) {
           case 'session_started':
             this.sessionId = event.sessionId;
-            this.emit('session', { id: event.sessionId, profile: this.sessionProfile?.name ?? '' });
+            this.emit('session', { id: event.sessionId, account: this.sessionAccount?.name ?? '' });
             break;
           case 'approval_request': {
             const approval = { id: event.requestId, tool: event.tool, input: event.input, reason: event.reason };
@@ -210,7 +234,15 @@ export class Assistant extends EventEmitter<AssistantEvents> {
             this.emit('question', question);
             break;
           }
+          case 'limit_reached': {
+            // This conversation cannot go on with this account: the next message starts a new one elsewhere.
+            limited = true;
+            const note = this.opts.onLimit?.(engine, event) ?? null;
+            if (note) this.emit('event', { type: 'error', message: note, retryable: false });
+            break;
+          }
           case 'turn_complete':
+            if (limited) this.retire(session);
             this.dropApprovals();
             this.setBusy(false);
             break;
@@ -221,16 +253,28 @@ export class Assistant extends EventEmitter<AssistantEvents> {
       }
     } catch (err) {
       this.log.error('assistant session failed', err);
+      if (replaced()) return;
       this.emit('event', {
         type: 'error',
         message: err instanceof Error ? err.message : String(err),
         retryable: false,
       });
     } finally {
-      if (this.session === session) this.session = null;
-      this.dropApprovals();
-      this.setBusy(false);
+      if (!replaced()) {
+        if (limited) this.retire(session);
+        if (this.session === session) this.session = null;
+        this.dropApprovals();
+        this.setBusy(false);
+      }
     }
+  }
+
+  /** Forgets a conversation whose account hit its limit; the process ends. */
+  private retire(session: AgentSession): void {
+    if (this.session === session) this.session = null;
+    this.sessionId = null;
+    this.sessionAccount = null;
+    void session.close().catch(() => undefined);
   }
 
   /** Approvals do not outlive their turn (the CLI withdraws them). */
@@ -247,11 +291,11 @@ export class Assistant extends EventEmitter<AssistantEvents> {
   }
 }
 
-function profileOf(engine: AgentEngine): { kind: string; name: string } {
-  return { kind: engine.profile.kind, name: engine.profile.name };
+function accountOf(engine: AgentEngine): { kind: string; name: string } {
+  return { kind: engine.account.kind, name: engine.account.name };
 }
 
-/** Profiles of different engines can share a name (`default`), so the kind counts too. */
-function sameProfile(saved: { kind: string; name: string } | null, engine: AgentEngine): boolean {
-  return saved !== null && saved.kind === engine.profile.kind && saved.name === engine.profile.name;
+/** Accounts of different engines can share a name (`default`), so the kind counts too. */
+function sameAccount(saved: { kind: string; name: string } | null, engine: AgentEngine): boolean {
+  return saved !== null && saved.kind === engine.account.kind && saved.name === engine.account.name;
 }

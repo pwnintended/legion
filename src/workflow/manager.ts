@@ -6,6 +6,7 @@
 
 import { EventEmitter } from 'node:events';
 import { join } from 'node:path';
+import type { AccountPool } from '../accounts/index.ts';
 import { type Config, DEFAULT_MODELS, resolveAgentModel } from '../config.ts';
 import type { AgentEngine, AgentSession, EngineKind, McpServer } from '../engine/types.ts';
 import type { Logger } from '../util/log.ts';
@@ -34,10 +35,12 @@ export interface PendingInteraction {
 
 export interface RunManagerOptions {
   repo: string;
-  /** The session's engine for a kind; asked at every agent start, so a profile switch applies to new steps. */
-  engine: (kind: EngineKind) => AgentEngine;
-  /** Profile name per kind right now (recorded on runs). */
-  profiles: () => Record<string, string>;
+  /** The session's engine of a kind on one of its accounts; asked at every agent start. */
+  engine: (kind: EngineKind, account: string) => AgentEngine;
+  /** Which account each agent step runs on, and which are out of quota. */
+  accounts: AccountPool;
+  /** `[accounts] cooldownMinutes`: how long an account rests after a limit with no reset time. Default 60. */
+  cooldownMinutes?: () => number;
   git: GitOps;
   maxAgents?: number;
   /** Agent sessions alive at once across all runs. Default: no limit beyond each run's own. */
@@ -123,7 +126,6 @@ export class RunManager extends EventEmitter<RunManagerEvents> {
       ...(opts.base ? { base: opts.base } : {}),
       ...(opts.cwd ? { cwd: opts.cwd } : {}),
       status: 'running',
-      profiles: this.opts.profiles(),
       repo: this.opts.repo,
       startedAt: Date.now(),
       endedAt: null,
@@ -173,16 +175,6 @@ export class RunManager extends EventEmitter<RunManagerEvents> {
     } else if (record.status === 'done') throw new Error(`Run ${runId} already finished (rewind a step to redo it)`);
     if (opts.notes) this.notes.set(runId, { step: opts.step ?? null, text: opts.notes });
     const def = await loadWorkflow(record.file);
-    const now = this.opts.profiles();
-    for (const [kind, profile] of Object.entries(record.profiles)) {
-      if (now[kind] && now[kind] !== profile) {
-        this.emit('event', {
-          type: 'log',
-          runId,
-          message: `Run started on ${kind} profile "${profile}", this session uses "${now[kind]}": interrupted ${kind} steps restart instead of resuming their sessions.`,
-        });
-      }
-    }
     this.launch({ ...record, status: 'running', endedAt: null, error: null, result: null }, def.run);
     return runId;
   }
@@ -349,7 +341,11 @@ export class RunManager extends EventEmitter<RunManagerEvents> {
           }
         : {}),
       git: record.base ? withDefaultBase(opts.git, record.base) : opts.git,
-      engine: (kind) => opts.engine(kind),
+      engine: (kind, account) => opts.engine(kind, account),
+      account: (kind, req) => opts.accounts.acquire(kind, req),
+      cooldown: (kind, name, until, reason) => opts.accounts.cooldown(kind, name, until, reason),
+      earliestReset: (kind, where) => opts.accounts.earliestReset(kind, where),
+      ...(opts.cooldownMinutes ? { cooldownMinutes: opts.cooldownMinutes() } : {}),
       agentSession: (step, session) => {
         let live = manager.sessions.get(record.id);
         if (!live) {

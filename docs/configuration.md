@@ -1,11 +1,11 @@
 # Configuration
 
-How Legion is configured: which files it reads, accounts (profiles), approvals, worktrees, models, and MCP servers.
+How Legion is configured: which files it reads, accounts, approvals, worktrees, models, and MCP servers.
 `/config` in a session changes most of this from a menu; this page is the reference.
 
 Layers, later ones win:
 
-1. `~/.config/legion/config.toml`, the user config. Profiles usually go here.
+1. `~/.config/legion/config.toml`, the user config. Accounts usually go here.
 2. Every `.legion/config.toml` from the outermost parent directory down to where you start `legion`. A parent
    folder can hold settings for all the repositories under it.
 3. The project's `.legion/config.local.toml`, which is gitignored and holds machine-specific overrides.
@@ -16,20 +16,18 @@ nothing. Every key is optional.
 
 ```toml
 [claude]
-default = "claude-1"                     # the session's profile unless --claude says otherwise
+command = "claude"                       # binary and extra args of every Claude account
+args    = []
 
-[claude.profiles.claude-1]
-setup   = "claude-share check"           # run once per session, through your shell, before the UI starts
-command = "claude"
-env     = { CLAUDE_CONFIG_DIR = "~/.claude-1" }
+[accounts]
+cooldownMinutes = 60                     # cooldown when a limit is hit and the CLI gave no reset time
 
-[claude.profiles.claude-2]
-setup   = "claude-share check"
-command = "claude"
-env     = { CLAUDE_CONFIG_DIR = "~/.claude-2" }
+[accounts.claude.work]
+dir       = "~/.claude-work"             # CLAUDE_CONFIG_DIR; omitted: the CLI's own login
+tokenEnv  = "CLAUDE_WORK_TOKEN"          # optional: env var with a `claude setup-token` token
 
-[codex.profiles.default]
-command = "codex"                        # env = { CODEX_HOME = "…" } for another account
+[accounts.codex.personal]
+dir = "~/.codex-personal"                # CODEX_HOME holding auth.json
 
 [assistant]
 engine = "claude"                        # which engine you talk to (in mixed mode)
@@ -120,17 +118,62 @@ they apply only while the step runs on it, and the tier's apply on the other. `[
 Your own CLI settings do not apply to agents: Claude agents load only project settings, and Codex
 runs in its own `CODEX_HOME`. The model each step ran with is recorded in the run's journal.
 
-A profile spawns `command` directly with `env` applied, with no shell per agent. That is why
-`CLAUDE_CONFIG_DIR` goes in `env` rather than in a shell alias. Workflows only ever say `engine: 'claude'` or
-`'codex'`, and the session decides which profile that means. Without any profiles, `claude` and `codex` run as
-the plain binaries.
+## Accounts
 
-A run records the profile it started on. Claude keeps sessions under `CLAUDE_CONFIG_DIR`, so if you resume a
-run on another profile, interrupted Claude steps restart instead of continuing their old session. Finished steps
-are still replayed from the journal.
+Legion keeps a pool of accounts per engine and picks one for every agent session and workflow step. Workflows only
+say `engine: 'claude'` or `'codex'`. Agents spawn `command` directly, with no shell per agent.
 
-Codex runs with a Legion-owned `CODEX_HOME` (`~/.legion/codex-home/<profile>`). It links only your `auth.json`,
-so your Codex config, hooks and `AGENTS.md` do not leak into runs.
+**Adding accounts.** `legion login claude work` (or `/login claude work` in a session) creates
+`~/.legion/accounts/claude/work` and runs `claude auth login` there, with `CLAUDE_CONFIG_DIR` pointing at it.
+`legion login codex` runs `codex login` with `CODEX_HOME` the same way. Without a name you get the next free
+`claude-N` / `codex-N`. For a Claude token, use `legion login claude work --token`: it runs `claude setup-token`.
+Legion never reads its output; save the token in `~/.legion/accounts/claude/work/oauth-token` (mode 600) yourself.
+
+**Discovery.** Every directory `~/.legion/accounts/{claude,codex}/<name>/` is an account `<name>`, with `dir` set to
+that directory. Claude accounts use `<dir>/oauth-token` as the token file when it exists. `[accounts.<kind>.<name>]`
+entries in the config override discovered ones field by field, or add accounts elsewhere on disk.
+
+| Key | Meaning |
+| --- | --- |
+| `dir` | `CLAUDE_CONFIG_DIR` / `CODEX_HOME`. Omitted: the CLI's own login (for Codex, `~/.codex` or `$CODEX_HOME`). |
+| `tokenEnv` | Claude: name of an env var holding a `claude setup-token` token, passed as `CLAUDE_CODE_OAUTH_TOKEN`. |
+| `tokenFile` | Claude: a file whose first line is the token. Alternative to `tokenEnv`. |
+| `enabled` | `false` takes the account out of the pool. Default `true`. |
+| `remote` | Usable in [remote boxes](remote.md). Default: true for Claude accounts with a token, false for Codex. |
+| `env` | Extra environment for the CLI. `ANTHROPIC_BASE_URL`, `OPENAI_BASE_URL` and `CLAUDE_CODE_OAUTH_TOKEN` here are a config error. |
+
+**No accounts.** With none of a kind, there is one implicit account named `default`: the plain CLI with your own
+login, as before. Codex keeps using `~/.legion/codex-home/default`, so old threads still resume.
+
+**The pool.** State lives in `~/.legion/accounts/pool.json`, shared by every Legion process.
+
+- *Round-robin.* Each step takes the next enabled account that is not cooling down.
+- *Cooldowns.* When an account hits its usage or rate limit, it rests until the reset time the CLI reported, or for
+  `cooldownMinutes`. `legion accounts reset [kind[/name]]` clears cooldowns.
+- *Affinity.* A resumed step prefers its old account, since a Claude session lives in one config dir and cannot move.
+  The assistant and leads keep one account until it hits a limit.
+- *Failover.* The step starts over on the next free account, once per account, up to four times. The prompt tells
+  the agent an earlier attempt was stopped by a limit and the worktree may hold partial work.
+- *Exhaustion.* When every account is at its limit, the step fails and you are told when the earliest one resets.
+  Resume the run then.
+
+`/accounts` (or `legion accounts`) lists each account with its login status, cooldown and last use.
+
+**Migrating from profiles.** `[claude.profiles.*]`, `[codex.profiles.*]`, `default` and `setup` no longer exist.
+A config that still has them fails to load with the equivalent `[accounts.*]` entries shown.
+`legion accounts migrate` rewrites your user config (keeping a `.bak`). Profile names become account names;
+`setup` is dropped.
+
+**Terms of use.** Legion only chooses which config dir or token an unmodified `claude` / `codex` starts with. It has
+no proxy and no OAuth client, never sets a base URL, and never reads or refreshes your credentials. Accounts move
+between steps, never in the middle of a request.
+
+A run records the account each step used. Claude keeps sessions under `CLAUDE_CONFIG_DIR`, so an interrupted
+Claude step resumes its session only on the same account; otherwise it restarts. Finished steps are replayed from
+the journal.
+
+Codex runs with a Legion-owned `CODEX_HOME` (`~/.legion/codex-home/<account>`). It links only the account's
+`auth.json`, so your Codex config, hooks and `AGENTS.md` do not leak into runs.
 
 ## MCP servers and limits
 

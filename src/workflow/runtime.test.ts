@@ -2,13 +2,14 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { type Account, AccountPool } from '../accounts/index.ts';
 import { FakeEngine, type FakeScript } from '../engine/fake/index.ts';
 import type { EngineKind } from '../engine/types.ts';
 import { agent, gate, group, loop, parallel, sh, step, z } from '../sdk/index.ts';
 import { Semaphore } from '../util/semaphore.ts';
 import type { GateAnswer, Interaction, RunEvent, RunHost } from './host.ts';
 import { Journal } from './journal.ts';
-import { executeInRun, isModelRejected, WorkflowCancelled } from './runtime.ts';
+import { AccountsExhausted, executeInRun, isModelRejected, WorkflowCancelled } from './runtime.ts';
 
 let dir: string;
 
@@ -23,14 +24,37 @@ afterEach(() => {
 interface TestHost extends RunHost {
   events: RunEvent[];
   interactions: Interaction[];
+  /** The first engine made per kind. */
   engines: Map<EngineKind, FakeEngine>;
+  /** Every engine made, by `<kind>/<account>`. */
+  accountEngines: Map<string, FakeEngine>;
+  pool: AccountPool;
+  /** Cooldowns the runtime asked for. */
+  cooled: { kind: string; name: string; until: number; reason: string }[];
   shCalls: string[];
 }
 
+const account = (kind: 'claude' | 'codex', name: string): Account => ({
+  kind,
+  name,
+  dir: null,
+  token: null,
+  env: {},
+  remote: false,
+  enabled: true,
+  source: 'config',
+});
+
 function testHost(
-  opts: { script?: FakeScript; gate?: (i: Interaction) => GateAnswer; profile?: string } = {},
+  opts: { script?: FakeScript; gate?: (i: Interaction) => GateAnswer; accounts?: string[] } = {},
 ): TestHost {
   const engines = new Map<EngineKind, FakeEngine>();
+  const accountEngines = new Map<string, FakeEngine>();
+  const names = (kind: string) => opts.accounts ?? [`${kind}-1`];
+  const pool = new AccountPool({
+    file: join(dir, 'pool.json'),
+    accounts: (kind) => names(kind).map((n) => account(kind, n)),
+  });
   const host: TestHost = {
     repo: dir,
     dryRun: false,
@@ -39,15 +63,25 @@ function testHost(
     events: [],
     interactions: [],
     engines,
+    accountEngines,
+    pool,
+    cooled: [],
     shCalls: [],
-    engine(kind) {
-      let engine = engines.get(kind);
+    engine(kind, name) {
+      let engine = accountEngines.get(`${kind}/${name}`);
       if (!engine) {
-        engine = new FakeEngine(kind, opts.script, opts.profile ?? `${kind}-1`);
-        engines.set(kind, engine);
+        engine = new FakeEngine(kind, opts.script, name);
+        accountEngines.set(`${kind}/${name}`, engine);
+        if (!engines.has(kind)) engines.set(kind, engine);
       }
       return engine;
     },
+    account: (kind, req) => pool.acquire(kind, req),
+    cooldown(kind, name, until, reason) {
+      host.cooled.push({ kind, name, until, reason });
+      pool.cooldown(kind, name, until, reason);
+    },
+    earliestReset: (kind, where) => pool.earliestReset(kind, where),
     emit(event) {
       host.events.push(event);
     },
@@ -154,35 +188,178 @@ describe('runtime', () => {
     expect(host2.shCalls).toEqual(['ok now']);
   });
 
-  it('resumes an interrupted agent session on the same profile', async () => {
-    const journal = new Journal(dir);
-    journal.append({
+  it('resumes an interrupted agent session on its own account, and records the account', async () => {
+    new Journal(dir).append({
       key: 'code',
       kind: 'agent',
       status: 'started',
       ts: 1,
-      meta: { sessionId: 's-123', profile: 'claude-1', engine: 'claude' },
+      meta: { sessionId: 's-123', account: 'claude-2', engine: 'claude' },
     });
-    const host = testHost();
+    // Another account would be next in the rotation: the interrupted step's own wins.
+    const host = testHost({ accounts: ['claude-1', 'claude-2'] });
     await exec(host, () => agent('code', { prompt: 'build it' }));
-    const call = host.engines.get('claude')?.calls[0];
+    const call = host.accountEngines.get('claude/claude-2')?.calls[0];
     expect(call?.resumed).toBe(true);
     expect(call?.sessionId).toBe('s-123');
     expect(call?.prompts[0]).toContain('You were interrupted');
+    expect(host.accountEngines.has('claude/claude-1')).toBe(false);
+    expect(new Journal(dir).get('code')?.meta).toMatchObject({ account: 'claude-2', where: 'local' });
   });
 
-  it('restarts an interrupted agent when the profile changed', async () => {
-    const journal = new Journal(dir);
-    journal.append({
+  it('still resumes journals that recorded the account as `profile`', async () => {
+    new Journal(dir).append({
       key: 'code',
       kind: 'agent',
       status: 'started',
       ts: 1,
-      meta: { sessionId: 's-123', profile: 'claude-1', engine: 'claude' },
+      meta: { sessionId: 's-9', profile: 'claude-2', engine: 'claude' },
     });
-    const host = testHost({ profile: 'claude-2' });
+    const host = testHost({ accounts: ['claude-1', 'claude-2'] });
+    await exec(host, () => agent('code', { prompt: 'build it' }));
+    expect(host.accountEngines.get('claude/claude-2')?.calls[0]).toMatchObject({ resumed: true, sessionId: 's-9' });
+  });
+
+  it('restarts an interrupted agent when its account is not the one chosen', async () => {
+    new Journal(dir).append({
+      key: 'code',
+      kind: 'agent',
+      status: 'started',
+      ts: 1,
+      meta: { sessionId: 's-123', account: 'claude-1', engine: 'claude' },
+    });
+    const host = testHost({ accounts: ['claude-2'] });
     await exec(host, () => agent('code', { prompt: 'build it' }));
     expect(host.engines.get('claude')?.calls[0]?.resumed).toBe(false);
+    expect(host.engines.get('claude')?.calls[0]?.prompts[0]).toBe('build it');
+  });
+
+  it('restarts an interrupted agent that started in a box when it now runs locally', async () => {
+    new Journal(dir).append({
+      key: 'code',
+      kind: 'agent',
+      status: 'started',
+      ts: 1,
+      meta: { sessionId: 's-1', account: 'claude-1', where: 'box', engine: 'claude' },
+    });
+    const host = testHost();
+    await exec(host, () => agent('code', { prompt: 'build it' }));
+    expect(host.engines.get('claude')?.calls[0]?.resumed).toBe(false);
+  });
+
+  it("keeps the earlier step's output when `resume` cannot continue its session", async () => {
+    const host = testHost({ accounts: ['a', 'b'] });
+    // The earlier step ran on b; b is cooling, so the follow-up starts over on a.
+    host.pool.cooldown('claude', 'b', Date.now() + 3_600_000, 'usage limit');
+    new Journal(dir).append({
+      key: 'review',
+      kind: 'agent',
+      status: 'done',
+      ts: 1,
+      output: 'issue-7 in foo.ts',
+      meta: { sessionId: 's-1', account: 'b', where: 'local', engine: 'claude' },
+    });
+    await exec(host, () => agent('fix', { prompt: 'fix the issues you found', resume: 'review' }));
+    const call = host.accountEngines.get('claude/a')?.calls[0];
+    expect(call?.resumed).toBe(false);
+    expect(call?.prompts[0]).toContain('issue-7 in foo.ts');
+    // A different place also starts over, with the output.
+    const box = testHost({ accounts: ['c'] });
+    new Journal(dir).append({
+      key: 'review2',
+      kind: 'agent',
+      status: 'done',
+      ts: 2,
+      output: 'box findings',
+      meta: { sessionId: 's-2', account: 'c', where: 'box', engine: 'claude' },
+    });
+    await exec(box, () => agent('fix2', { prompt: 'fix', resume: 'review2' }));
+    expect(box.engines.get('claude')?.calls[0]).toMatchObject({ resumed: false });
+    expect(box.engines.get('claude')?.calls[0]?.prompts[0]).toContain('box findings');
+  });
+
+  describe('account limits', () => {
+    const limited =
+      (resetsAt: number | null = null): FakeScript =>
+      (call) =>
+        call.account === 'a' ? { limit: { resetsAt } } : { text: `done on ${call.account}` };
+
+    it('cools the account down and finishes the step on the next one', async () => {
+      const reset = Date.now() + 3_600_000;
+      const host = testHost({ accounts: ['a', 'b'], script: limited(reset) });
+      const out = await exec(host, () => agent('s', { prompt: 'work' }));
+      expect(out).toBe('done on b');
+      expect(host.cooled).toEqual([{ kind: 'claude', name: 'a', until: reset, reason: 'usage limit' }]);
+      const retry = host.accountEngines.get('claude/b')?.calls[0];
+      expect(retry?.resumed).toBe(false);
+      expect(retry?.prompts[0]).toContain('stopped by a usage limit');
+      expect(new Journal(dir).get('s')?.meta).toMatchObject({ account: 'b' });
+      expect(
+        host.events.some(
+          (e) => e.type === 'log' && /account "a" hit its usage limit until \d\d:\d\d; retrying on "b"/.test(e.message),
+        ),
+      ).toBe(true);
+      // The next step does not touch the cooling account.
+      await exec(host, () => agent('t', { prompt: 'more' }));
+      expect(host.accountEngines.get('claude/a')?.calls).toHaveLength(1);
+    });
+
+    it('rests an account for the configured time when the CLI gave no reset', async () => {
+      const host = testHost({ accounts: ['a', 'b'], script: limited(null) });
+      Object.assign(host, { cooldownMinutes: 5 });
+      const before = Date.now();
+      await exec(host, () => agent('s', { prompt: 'work' }));
+      const until = host.cooled[0]?.until ?? 0;
+      expect(until).toBeGreaterThanOrEqual(before + 5 * 60_000);
+      expect(until).toBeLessThan(before + 6 * 60_000);
+    });
+
+    it('fails with AccountsExhausted naming the earliest reset when every account is at its limit', async () => {
+      const t1 = Date.now() + 2 * 3_600_000;
+      const t2 = Date.now() + 3_600_000;
+      const host = testHost({
+        accounts: ['a', 'b'],
+        script: (call) => ({ limit: { resetsAt: call.account === 'a' ? t1 : t2 } }),
+      });
+      const err = await exec(host, () => agent('s', { prompt: 'work' })).catch((e: unknown) => e);
+      expect(err).toBeInstanceOf(AccountsExhausted);
+      const clock = new Date(t2);
+      const hm = `${String(clock.getHours()).padStart(2, '0')}:${String(clock.getMinutes()).padStart(2, '0')}`;
+      expect((err as Error).message).toContain('all claude accounts are at their limits');
+      expect((err as Error).message).toContain(hm);
+      expect((err as Error).message).toContain('resume_run');
+      expect(host.accountEngines.get('claude/a')?.calls).toHaveLength(1);
+      expect(host.accountEngines.get('claude/b')?.calls).toHaveLength(1);
+    });
+
+    it('stops after one try per account, at most four attempts', async () => {
+      const names = ['a', 'b', 'c', 'd', 'e', 'f', 'g'];
+      const host = testHost({ accounts: names, script: () => ({ limit: { resetsAt: Date.now() + 60_000 } }) });
+      const err = await exec(host, () => agent('s', { prompt: 'work' })).catch((e: unknown) => e);
+      expect(err).toBeInstanceOf(AccountsExhausted);
+      const tries = [...host.accountEngines.values()].map((e) => e.calls.length);
+      expect(tries.every((n) => n === 1)).toBe(true);
+      expect(tries.length).toBe(4);
+    });
+
+    it('at the attempt cap, names an account that was already cooling and resets sooner', async () => {
+      const soon = Date.now() + 5 * 60_000;
+      const host = testHost({
+        accounts: ['a', 'b', 'c', 'd', 'e'],
+        script: () => ({ limit: { resetsAt: Date.now() + 3_600_000 } }),
+      });
+      host.pool.cooldown('claude', 'e', soon, 'usage limit');
+      const err = await exec(host, () => agent('s', { prompt: 'work' })).catch((e: unknown) => e);
+      expect(err).toBeInstanceOf(AccountsExhausted);
+      expect((err as AccountsExhausted).earliestReset).toBe(soon);
+      expect(host.accountEngines.has('claude/e')).toBe(false);
+    });
+
+    it('does not move on for a failure that is not a limit', async () => {
+      const host = testHost({ accounts: ['a', 'b'], script: () => ({ error: 'boom' }) });
+      await expect(exec(host, () => agent('s', { prompt: 'work' }))).rejects.toThrow('boom');
+      expect(host.cooled).toEqual([]);
+    });
   });
 
   it("continues an earlier step's session with `resume`", async () => {

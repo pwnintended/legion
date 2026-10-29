@@ -5,6 +5,7 @@
 import { existsSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { AccountPool } from '../../src/accounts/index.ts';
 import { FakeEngine, type FakeScript } from '../../src/engine/fake/index.ts';
 import type { EngineKind } from '../../src/engine/types.ts';
 import { FakePrHost } from '../../src/git/index.ts';
@@ -66,6 +67,12 @@ function manager(gates: GateAnswer[], prHost: FakePrHost) {
   return createGitOps({ repo: repo.path, worktreeRoot: worktrees.path, prHost }).then((gitOps) => {
     const runs = new RunManager({
       repo: repo.path,
+      accounts: new AccountPool({
+        file: join(tmp('legion-pool-').path, 'pool.json'),
+        accounts: (kind) => [
+          { kind, name: `${kind}-1`, dir: null, token: null, env: {}, remote: false, enabled: true, source: 'config' },
+        ],
+      }),
       engine: (kind) => {
         let e = engines.get(kind);
         if (!e) {
@@ -74,7 +81,6 @@ function manager(gates: GateAnswer[], prHost: FakePrHost) {
         }
         return e;
       },
-      profiles: () => ({ claude: 'claude-1', codex: 'codex-1' }),
       git: gitOps,
     });
     runs.on('interaction', ({ id, interaction }) => {

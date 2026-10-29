@@ -13,7 +13,7 @@ process.env.GIT_COMMITTER_EMAIL = 'test@example.com';
 
 export function tmp(prefix = 'legion-git-'): { path: string; cleanup: () => void } {
   const path = realpathSync(mkdtempSync(join(tmpdir(), prefix)));
-  return { path, cleanup: () => rmSync(path, { recursive: true, force: true }) };
+  return { path, cleanup: () => rmSync(path, { recursive: true, force: true, maxRetries: 5 }) };
 }
 
 export function writeFiles(root: string, files: Record<string, string | Buffer>): void {

@@ -344,7 +344,7 @@ export function App({
                             : '/ for commands · ? for shortcuts'))
           }
           urgent={armedExit || notice !== null || shownBack > 0}
-          profiles={state.profiles}
+          accounts={state.accounts}
           costUsd={state.costUsd}
           runs={state.runs.length}
           waiting={state.interactions.length}
@@ -416,12 +416,12 @@ function StatusBar(props: {
   width: number;
   hint: string;
   urgent: boolean;
-  profiles: Record<string, string>;
+  accounts: Record<string, string>;
   costUsd: number | null;
   runs: number;
   waiting: number;
 }) {
-  const parts: { text: string; color?: string }[] = Object.entries(props.profiles).map(([k, v]) => ({
+  const parts: { text: string; color?: string }[] = Object.entries(props.accounts).map(([k, v]) => ({
     text: k === v ? k : `${k} ${v}`,
     color: engineColor(k),
   }));
@@ -1176,7 +1176,7 @@ function BannerView({ banner, width }: { banner: Banner; width: number }) {
   }, []);
   // Ease out: quick at first, settling at the end.
   const art = splash(width - 2, size, 1 - (1 - reveal) ** 3);
-  const profiles = Object.entries(banner.profiles);
+  const accounts = Object.entries(banner.accounts);
   const card = Math.min(width, 76);
   return (
     <Box flexDirection="column" alignItems="center" width={width} marginTop={1}>
@@ -1205,7 +1205,7 @@ function BannerView({ banner, width }: { banner: Banner; width: number }) {
         </Text>
         <Text wrap="truncate-end">
           <Text dimColor>{'accounts   '}</Text>
-          {profiles.map(([kind, name], i) => (
+          {accounts.map(([kind, name], i) => (
             <Text key={kind}>
               {i > 0 ? <Text dimColor> · </Text> : null}
               <Text color={engineColor(kind)}>{kind}</Text>

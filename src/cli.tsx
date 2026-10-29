@@ -2,12 +2,26 @@
  * `legion` — a single-session terminal agent for writing and running multi-agent workflows in the current
  * directory, over the Claude Code and Codex CLIs you already have.
  */
+
+import { spawnSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { createInterface } from 'node:readline/promises';
 import { parseArgs } from 'node:util';
 import { render } from 'ink';
+import type { AccountKind } from './accounts/index.ts';
+import {
+  describeAccount,
+  isAccountKind,
+  type LoginSpec,
+  loginSpec,
+  migrateConfigFile,
+  nextAccountName,
+  prepareLoginDir,
+  probeAccount,
+  tokenHint,
+} from './accounts/login.ts';
 import { describeWorkflows } from './assistant/mcp.ts';
-import { ConfigError, type RealKind, runSetup, userConfigPath } from './config.ts';
+import { ConfigError, userConfigPath } from './config.ts';
 import { Session } from './session.ts';
 import { App } from './tui/app.tsx';
 import { Controller } from './tui/controller.ts';
@@ -28,11 +42,11 @@ const USAGE = `Usage:
   legion runs                     list recent runs
   legion validate <workflow>      type-check and dry-run a workflow
   legion eject <workflow> [--as <name>]    copy a workflow into .legion/workflows to edit it
-  legion doctor                   check engines, profiles and configuration
+  legion login <claude|codex> [name] [--token]   log an account in with the official CLI (claude: --token for setup-token)
+  legion accounts [reset [kind[/name]]|migrate]   list accounts and cooldowns; clear cooldowns; convert old profiles
+  legion doctor                   check engines, accounts and configuration
 
 Options:
-  --claude <profile>   Claude Code profile (account) for this session
-  --codex <profile>    Codex profile for this session
   --remote, --local    run workflow steps on Upstash Boxes, or on this machine (over [remote] enabled)
   -h, --help
 
@@ -42,13 +56,12 @@ async function main(): Promise<number> {
   const { values, positionals } = parseArgs({
     allowPositionals: true,
     options: {
-      claude: { type: 'string' },
-      codex: { type: 'string' },
       continue: { type: 'boolean', short: 'c' },
       remote: { type: 'boolean' },
       local: { type: 'boolean' },
       input: { type: 'string' },
       as: { type: 'string' },
+      token: { type: 'boolean' },
       help: { type: 'boolean', short: 'h' },
     },
   });
@@ -58,15 +71,10 @@ async function main(): Promise<number> {
   }
   if (values.remote && values.local) throw new UsageError('--remote and --local exclude each other');
   installSdkResolution();
-  const profiles: Partial<Record<RealKind, string>> = {
-    ...(values.claude ? { claude: values.claude } : {}),
-    ...(values.codex ? { codex: values.codex } : {}),
-  };
   const [command, ...args] = positionals;
   const open = () =>
     Session.open({
       cwd: process.cwd(),
-      profiles,
       continueLast: values.continue ?? false,
       fake: process.env.LEGION_FAKE_ENGINES === '1',
       ...(values.remote ? { remote: true } : values.local ? { remote: false } : {}),
@@ -112,12 +120,79 @@ async function main(): Promise<number> {
       }
       return 0;
     }
+    case 'login': {
+      const kind = args[0];
+      if (!isAccountKind(kind)) throw new UsageError('legion login <claude|codex> [name] [--token]');
+      const session = await open();
+      try {
+        const name =
+          args[1] ??
+          nextAccountName(
+            kind,
+            session.listAccounts(kind).map((a) => a.name),
+          );
+        let spec: LoginSpec;
+        try {
+          spec = loginSpec(session.config, kind, name, {
+            existing: session.listAccounts(kind).find((a) => a.name === name),
+            token: values.token ?? false,
+            legionHome: session.legionHome,
+          });
+        } catch (err) {
+          throw new UsageError(err instanceof Error ? err.message : String(err));
+        }
+        prepareLoginDir(spec);
+        console.log(`Logging in ${kind} account "${name}" (${spec.dir}): ${spec.command} ${spec.args.join(' ')}`);
+        const r = spawnSync(spec.command, spec.args, { stdio: 'inherit', env: spec.env });
+        if (r.error || r.status !== 0) {
+          console.error(
+            r.error ? `Could not run ${spec.command}: ${r.error.message}` : `${spec.command} exited with ${r.status}`,
+          );
+          return 1;
+        }
+        console.log(values.token ? tokenHint(spec) : `Account "${name}" is ready; Legion picks it up automatically.`);
+        return 0;
+      } finally {
+        await session.close();
+      }
+    }
+    case 'accounts': {
+      if (args[0] === 'migrate') {
+        const { changed, notes } = migrateConfigFile(userConfigPath());
+        console.log(
+          changed
+            ? `Rewrote ${userConfigPath()} (backup: ${userConfigPath()}.bak)\n${notes.join('\n')}`
+            : 'Nothing to migrate.',
+        );
+        return 0;
+      }
+      const session = await open();
+      try {
+        if (args[0] === 'reset') {
+          const [kind, name] = (args[1] ?? '').split('/');
+          if (kind && !isAccountKind(kind)) throw new UsageError('legion accounts reset [claude|codex][/name]');
+          for (const k of kind ? [kind as AccountKind] : (['claude', 'codex'] as const))
+            session.accounts.clear(k, name || undefined);
+          console.log('Cooldowns cleared.');
+          return 0;
+        }
+        if (args[0]) throw new UsageError('legion accounts [reset [kind[/name]]|migrate]');
+        for (const kind of ['claude', 'codex'] as const) {
+          for (const row of session.accounts.status(kind)) {
+            const info = await probeAccount(() => session.engine(kind, row.account.name).probe());
+            console.log(describeAccount({ ...row, ...info }));
+          }
+        }
+        return 0;
+      } finally {
+        await session.close();
+      }
+    }
     case 'doctor':
       return doctor(await open());
     case 'run':
     case 'resume': {
       const session = await open();
-      setup(session);
       const target = args[0];
       if (!target) throw new UsageError(`legion ${command} <${command === 'run' ? 'workflow' : 'run-id'}>`);
       return headless(
@@ -129,23 +204,12 @@ async function main(): Promise<number> {
     }
     default: {
       const session = await open();
-      setup(session);
       return interactive(session, positionals.join(' '));
     }
   }
 }
 
 class UsageError extends Error {}
-
-/** Runs the session profiles' setup commands while Legion still has a plain terminal. */
-function setup(session: Session): void {
-  for (const kind of ['claude', 'codex'] as const) {
-    const profile = session.profile(kind);
-    if (!profile.setup) continue;
-    const result = runSetup(profile);
-    if (!result.ok) console.error(`warning: setup of ${kind} profile "${profile.name}" exited with ${result.code}`);
-  }
-}
 
 async function interactive(session: Session, initial: string): Promise<number> {
   const started = Date.now();
@@ -315,16 +379,14 @@ async function doctor(session: Session): Promise<number> {
   console.log(`repo      ${session.repo}${session.isGitRepo ? '' : ' (not a git repository)'}`);
   console.log(`config    ${userConfigPath()}${existsSync(userConfigPath()) ? '' : ' (not present: defaults)'}`);
   for (const kind of ['claude', 'codex'] as const) {
-    const profile = session.profile(kind);
-    const info = await session.engine(kind).probe();
-    const status = !info.installed ? '✗ not installed' : info.loggedIn === false ? '✗ not logged in' : '✓';
-    if (status !== '✓') ok = false;
-    const env = Object.entries(profile.env)
-      .map(([k, v]) => `${k}=${v}`)
-      .join(' ');
-    console.log(
-      `${kind.padEnd(9)} ${status} profile "${profile.name}" (${session.availableProfiles(kind).join(', ')}) · ${info.path ?? profile.command} ${info.version ?? ''}${env ? ` · ${env}` : ''}${profile.setup ? ` · setup: ${profile.setup}` : ''}${info.error ? `\n          ${info.error}` : ''}`,
-    );
+    for (const account of session.listAccounts(kind)) {
+      const info = await session.engine(kind, account.name).probe();
+      const status = !info.installed ? '✗ not installed' : info.loggedIn === false ? '✗ not logged in' : '✓';
+      if (status !== '✓') ok = false;
+      console.log(
+        `${kind.padEnd(9)} ${status} account "${account.name}"${account.dir ? ` (${account.dir})` : ''} · ${info.path ?? kind} ${info.version ?? ''}${info.error ? `\n          ${info.error}` : ''}`,
+      );
+    }
   }
   const remote = session.config.remote;
   const problem = session.remoteProblem();

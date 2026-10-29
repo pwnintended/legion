@@ -12,7 +12,7 @@ import { appendFileSync, readFileSync, writeFileSync } from 'node:fs';
 import { PassThrough } from 'node:stream';
 import { z } from 'zod';
 import { toStrictJsonSchema } from '../../util/json-schema.ts';
-import type { EngineProfile } from '../types.ts';
+import type { EngineAccount } from '../types.ts';
 import type { SpawnFn } from './engine.ts';
 import { LineBuffer } from './parser.ts';
 import type { ChildProcessLike } from './session.ts';
@@ -31,8 +31,8 @@ export const ClarifyOutputSchema = z.object({
 });
 export const CLARIFY_JSON_SCHEMA = toStrictJsonSchema(ClarifyOutputSchema);
 
-/** A `claude` profile with the given overrides. */
-export function claudeProfile(overrides: Partial<EngineProfile> = {}): EngineProfile {
+/** A `claude` account with the given overrides. */
+export function claudeAccount(overrides: Partial<EngineAccount> = {}): EngineAccount {
   return { name: 'claude', kind: 'claude', command: 'claude', args: [], env: {}, ...overrides };
 }
 

@@ -29,10 +29,15 @@ runtime  = "node"                      # a fresh box's image, without a snapshot
   bundle, built here) and your uncommitted state (a patch). After it, what changed in the box comes back as a patch.
   The workflow's git steps (commit, merge, diff, PR) run here as always, and the box never needs GitHub access.
   Ignored files are not synced either way, so build caches stay on their side.
-- **Logins live in the Upstash account,** as account-level environment variables every box gets: Claude Code reads
-  `CLAUDE_CODE_OAUTH_TOKEN` (from `claude setup-token`) or `ANTHROPIC_API_KEY`. For Codex, `CODEX_AUTH_GZIP_B64`
-  (a gzipped, base64 `auth.json` of a ChatGPT login) seeds the box's own Codex home once, and the CLI keeps its
-  refreshed tokens there. Legion never reads or passes them.
+- **One account per box step.** Legion picks it from the account pool like a local step, among the accounts that can
+  go to a box: a Claude account with a token (`tokenEnv` / `tokenFile` / `<dir>/oauth-token`, from `claude
+  setup-token`) is passed as `CLAUDE_CODE_OAUTH_TOKEN`, and a Codex account with `remote = true` passes its
+  `auth.json` (`CODEX_AUTH_GZIP_B64`, with `LEGION_CODEX_ACCOUNT`), which seeds `~/.legion/codex-home/<account>` in the
+  box once. Codex is opt-in because a box refreshing a copied `auth.json` may log the local copy out. When no account
+  qualifies, the step uses the implicit `box` account: the login in the Upstash account's environment variables
+  (`CLAUDE_CODE_OAUTH_TOKEN` or `ANTHROPIC_API_KEY`; `CODEX_AUTH_GZIP_B64`), which Legion never reads or passes. A
+  limit moves the next attempt to another account, as locally. Tokens go only into the box session's environment,
+  never into logs or the run journal.
 - **The CLIs:** a box without `claude` or `codex` gets it installed with npm on first use. A snapshot that already
   has them starts faster.
 - **Boxes never outlive their TTL.** Legion deletes a run's boxes when it ends (done, failed or cancelled). An
@@ -41,8 +46,8 @@ runtime  = "node"                      # a fresh box's image, without a snapshot
   when its boxes expire fails its next remote step (a resume gets new boxes).
 - **The box is the sandbox.** Codex's own sandbox (bubblewrap) cannot run in a box, so Codex runs there without it,
   with the same approvals. Read-only steps (reviews) are read-only by their instructions there, not enforced.
-- **Sessions resume within their box.** A step resumed after its box is gone (the run ended, or the box expired)
-  starts a new session.
+- **Sessions resume within their box, on their account.** A step resumed on another account, or after its box is gone
+  (the run ended, or the box expired), starts a new session.
 - **MCP servers** on this machine's loopback (`http://127.0.0.1:…`) are out of a box's reach and left out. Stdio
   servers start in the box, so the snapshot needs them.
 - **Talking to the assistant and leads** works as it does locally: the CLI's stdio protocol (stream-json for Claude,
