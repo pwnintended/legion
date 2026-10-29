@@ -1,6 +1,6 @@
 /**
- * The UI's state, fed by the session's events and independent of React: `items` is the append-only scrollback
- * (printed once, then owned by the terminal) and holds the conversation only — what the user said, the replies,
+ * The UI's state, fed by the session's events and independent of React: `items` is the append-only conversation
+ * (shown in the scrollable view that fills the screen above the prompt) and holds the conversation only — what the user said, the replies,
  * gates, answers, errors and the user's own runs finishing. Everything else is the live region: streaming
  * assistant text, the queue of things waiting for the user (gates, questions, tool approvals from the assistant or
  * from workflow agents), and under the prompt the active runs, the team and the activity `feed` (tool calls, lead
@@ -53,7 +53,9 @@ export type Item =
       detail: string | null;
       durationMs: number | null;
     }
-  | { id: number; type: 'gate'; runId: string; workflow: string; title: string; body: string | null };
+  | { id: number; type: 'gate'; runId: string; workflow: string; title: string; body: string | null }
+  /** Something the orchestrator shows the user (`present`): a link to each item. */
+  | { id: number; type: 'presentation'; presentation: Presentation };
 
 /** One line of the activity feed under the prompt; `/activity` prints the recent ones in full. */
 export interface FeedEntry {
@@ -178,8 +180,6 @@ export interface UiState {
   target: string;
   team: TeamRow[];
   feed: FeedEntry[];
-  /** Things to show the user (`present`), waiting to be written into the scrollback (images need raw output). */
-  presentations: { id: number; presentation: Presentation }[];
 }
 
 export class UiStore {
@@ -206,7 +206,6 @@ export class UiStore {
       target: 'orchestrator',
       team: [],
       feed: [],
-      presentations: [],
       ...initial,
     };
   }
@@ -243,15 +242,10 @@ export class UiStore {
   }
 
   present(presentation: Presentation): void {
-    const id = this.nextId++;
-    this.update((s) => ({ presentations: [...s.presentations, { id, presentation }] }));
+    this.push({ type: 'presentation', presentation });
   }
 
-  presented(id: number): void {
-    this.update((s) => ({ presentations: s.presentations.filter((p) => p.id !== id) }), false);
-  }
-
-  /** A line in the activity feed (not the scrollback). */
+  /** A line in the activity feed (not the conversation). */
   note(entry: Omit<FeedEntry, 'id' | 'at' | 'tag' | 'files'> & { tag?: string | null; files?: string[] }): void {
     const full: FeedEntry = { tag: null, files: [], ...entry, id: this.nextId++, at: Date.now() };
     this.update((s) => ({ feed: [...s.feed.slice(-(FEED_KEPT - 1)), full] }), false);

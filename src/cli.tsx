@@ -11,6 +11,7 @@ import { ConfigError, type RealKind, runSetup, userConfigPath } from './config.t
 import { Session } from './session.ts';
 import { App } from './tui/app.tsx';
 import { Controller } from './tui/controller.ts';
+import { Terminal } from './tui/terminal.ts';
 import type { Interaction, RunEvent } from './workflow/host.ts';
 import { ejectWorkflow, findWorkflow, installSdkResolution } from './workflow/loader.ts';
 import type { PendingInteraction } from './workflow/manager.ts';
@@ -146,15 +147,23 @@ function setup(session: Session): void {
 
 async function interactive(session: Session, initial: string): Promise<number> {
   const controller = new Controller(session);
-  const instance = render(<App controller={controller} />, {
+  // Mouse reporting brings the wheel to the conversation view; Shift (Option in iTerm2) still selects text.
+  const terminal = new Terminal();
+  process.once('exit', () => terminal.leave());
+  const instance = render(<App controller={controller} terminal={terminal} />, {
+    stdin: terminal.stdin,
     exitOnCtrlC: false,
     maxFps: 30,
+    // The whole window, like vim or less: redrawn in place, and the shell's screen comes back on exit.
+    alternateScreen: true,
     // Terminals that speak the kitty keyboard protocol (Ghostty, kitty, WezTerm, iTerm2, …) report Shift+Enter
     // apart from Enter, so it can insert a newline. Ink asks the terminal first; others are left as they are.
     kittyKeyboard: { mode: 'auto', flags: ['disambiguateEscapeCodes'] },
   });
+  terminal.enter();
   if (initial.trim()) void controller.submit(initial);
   await instance.waitUntilExit();
+  terminal.leave();
   const active = session.runs.activeRuns();
   await session.close();
   if (active.length > 0) {

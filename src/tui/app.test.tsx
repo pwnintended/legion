@@ -1,5 +1,6 @@
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { Text } from 'ink';
 import { render } from 'ink-testing-library';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { defaultScript, type FakeEngine } from '../engine/fake/index.ts';
@@ -8,6 +9,14 @@ import { Session } from '../session.ts';
 import { ROOT } from '../team/team.ts';
 import { App } from './app.tsx';
 import { Controller } from './controller.ts';
+
+// The testing library's terminal has no height, which Ink takes as 24 rows; the UI fills the window, so give it a
+// roomier one.
+{
+  const probe = render(<Text />);
+  Object.defineProperty(Object.getPrototypeOf(probe.stdout), 'rows', { get: () => 60 });
+  probe.unmount();
+}
 
 let repo: FixtureRepo;
 let session: Session;
@@ -423,7 +432,7 @@ describe('App', () => {
     ui.unmount();
   });
 
-  it('writes what the orchestrator presents into the scrollback, with links', async () => {
+  it('shows what the orchestrator presents in the conversation, with links', async () => {
     const ui = render(<App controller={new Controller(session)} />);
     await tick();
     session.team.present({
@@ -434,6 +443,48 @@ describe('App', () => {
     const out = ui.frames.join('');
     expect(out).toContain('The live page');
     expect(out).toContain('\u001B]8;;http://localhost:5173/');
+    ui.unmount();
+  });
+
+  it('fills the window and scrolls the conversation with PgUp/PgDn and the mouse wheel', async () => {
+    const controller = new Controller(session);
+    let wheel: (direction: -1 | 1) => void = () => {};
+    const terminal = {
+      enter() {},
+      leave() {},
+      onWheel: (listener: typeof wheel) => {
+        wheel = listener;
+        return () => {};
+      },
+    };
+    const ui = render(<App controller={controller} terminal={terminal} />);
+    await tick();
+    for (let n = 1; n <= 80; n++) controller.store.info(`line ${n} of the conversation`);
+    await until(() => ui.lastFrame()?.includes('line 80 ') ?? false);
+    expect(ui.lastFrame()?.split('\n')).toHaveLength(60);
+    /** The first and last conversation lines on screen. */
+    const shown = () => {
+      const n = [...(ui.lastFrame() ?? '').matchAll(/line (\d+) of/g)].map((m) => Number(m[1]));
+      return [n[0], n.at(-1)];
+    };
+    const [top] = shown();
+    expect(top).toBeGreaterThan(40);
+    ui.stdin.write('\u001B[5~');
+    await until(() => (shown()[1] ?? 80) < 80);
+    expect(shown()[0]).toBeLessThan(top as number);
+    expect(ui.lastFrame()).toMatch(/\d+ more lines below · PgDn/);
+    // While scrolled back, new output does not move the view.
+    const before = shown();
+    controller.store.info('line 81 of the conversation');
+    await tick();
+    expect(shown()).toEqual(before);
+    wheel(-1);
+    await until(() => (shown()[1] ?? 0) < (before[1] as number));
+    ui.stdin.write('\u001B[6~');
+    await tick();
+    ui.stdin.write('\u001B[6~');
+    await until(() => shown()[1] === 81);
+    expect(ui.lastFrame()).not.toContain('more lines below');
     ui.unmount();
   });
 

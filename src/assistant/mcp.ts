@@ -469,7 +469,7 @@ function registerTeamTools(server: McpServer, ctx: Caller): void {
       'present',
       {
         description:
-          "Show the user something to look at: screenshots, renders, concept art, a web page, a document. Images appear inline in their terminal when it can draw them; every item also gets a link they can click to open it. Use it when you bring the user a lead's review, or whenever seeing beats describing. Then say in your reply what to look at and what you want to know.",
+          "Show the user something to look at: screenshots, renders, concept art, a web page, a document. Every item appears as a link they can click to open it. Use it when you bring the user a lead's review, or whenever seeing beats describing. Then say in your reply what to look at and what you want to know.",
         inputSchema: {
           title: z.string().describe('One line: what this is, e.g. "Body B blockout: front, side, back".'),
           items: z
@@ -494,7 +494,7 @@ function registerTeamTools(server: McpServer, ctx: Caller): void {
         team.present({ title, items: presented });
         return {
           shown: presented.map((p) => `${p.kind}: ${p.target}`),
-          note: 'Shown to the user (inline where their terminal draws images, as links otherwise).',
+          note: 'Shown to the user as links.',
         };
       }),
     );

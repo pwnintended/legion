@@ -50,6 +50,10 @@ legion eject feature           # copy a builtin into .legion/workflows to edit i
 In the session:
 
 - Type to talk to the assistant. Ask it to *create*, *change* or *run* workflows.
+- Legion fills the terminal window (the alternate screen, like vim or less) and redraws in place when it is
+  resized; your shell's screen comes back when it exits. **PgUp/PgDn** or the **mouse wheel** scroll the
+  conversation; it follows new output again when you scroll back to the end or send something. Since Legion
+  reports the mouse, hold Shift (Option in iTerm2) to select text.
 - **Esc** interrupts the assistant. **Ctrl+C** twice exits.
 - **Gates, questions and tool approvals** appear above the prompt. Gates: `y` approve, `c` request changes
   (then type a note), `x` abort the run. Approvals: `y` once, `s` for the session, `n` deny. Questions: type an
@@ -339,10 +343,7 @@ In the session:
   gates and questions join your queue, so you can answer them in its place (it is told you did). `/lead` alone
   goes back to the orchestrator.
 - When the orchestrator wants you to look at something (a lead's review, a screenshot, a page), it uses `present`:
-  images appear inline in terminals that can draw them (kitty graphics in Ghostty and kitty, the iTerm2 protocol
-  in iTerm2 and WezTerm), and every item gets a clickable link (file or URL). In tmux, or a terminal without
-  image support, you get the links. Non-PNG images and huge PNGs are converted with `sips` on macOS.
-  `LEGION_IMAGES=kitty|iterm|off` overrides the detection.
+  every item appears in the conversation as a clickable link (file or URL).
 - `/team` prints the tree with plans and last reports. `/stop <lead>` stops a lead, its sub-leads and their runs.
 
 Leads and the orchestrator can also steer runs. `message_agent` sends a running agent a correction mid-turn.

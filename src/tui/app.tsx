@@ -1,15 +1,17 @@
 /**
- * The terminal UI: finished conversation items go to `<Static>` (printed once, scrollable in the terminal); the
- * live region below shows the streaming reply, the assistant's progress, active runs, the interaction waiting for
- * the user, the prompt and a status bar.
+ * The terminal UI fills the window (the alternate screen): the conversation and the streaming reply scroll in the
+ * view at the top (PgUp/PgDn or the mouse wheel; it follows new output unless scrolled back); below it the
+ * assistant's progress, the interaction waiting for the user, the prompt and a status bar; under those the active
+ * runs, the team and the activity feed.
  */
 import { homedir } from 'node:os';
-import { Box, Static, Text, useApp, useStdout, useWindowSize } from 'ink';
-import { type ReactNode, useEffect, useRef, useState, useSyncExternalStore } from 'react';
+import { Box, type DOMElement, Text, useApp, useBoxMetrics, useInput, useWindowSize } from 'ink';
+import { memo, type ReactNode, useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import type { QuestionAnswers, UserQuestion } from '../engine/types.ts';
+import type { Presentation } from '../team/team.ts';
 import { ConfigMenu } from './config-menu.tsx';
 import { COMMANDS, type Controller } from './controller.ts';
-import { imageProtocol, renderPresentation } from './images.ts';
+import { hyperlink, linkTarget } from './images.ts';
 import { PromptInput } from './input.tsx';
 import { Markdown } from './markdown.tsx';
 import {
@@ -27,16 +29,20 @@ import {
   type TeamRow,
   type UiInteraction,
 } from './store.ts';
+import type { TerminalModes } from './terminal.ts';
 import { BUSY_FRAMES, color, engineColor, formatDuration, glyph, SPINNER, theme, tildify } from './theme.ts';
 import { WorkflowsMenu } from './workflows-menu.tsx';
 
 type Mode = 'hotkeys' | 'note' | 'chat';
 
-export function App({ controller }: { controller: Controller }) {
+/** Conversation items kept in the view; older ones scroll out of reach (`/activity` and the journal keep the rest). */
+const ITEMS_SHOWN = 500;
+
+export function App({ controller, terminal }: { controller: Controller; terminal?: TerminalModes }) {
   const { store } = controller;
   const state = useSyncExternalStore(store.subscribe, store.get);
   const app = useApp();
-  const { columns } = useWindowSize();
+  const { columns, rows } = useWindowSize();
   const [frame, setFrame] = useState(0);
   const [mode, setMode] = useState<Mode>('hotkeys');
   const [option, setOption] = useState(0);
@@ -49,40 +55,45 @@ export function App({ controller }: { controller: Controller }) {
   const animating = state.busy || state.runs.length > 0;
   const width = Math.max(40, columns || 80);
 
-  // Presentations (`present`) go straight into the scrollback: inline images are raw escape sequences Ink cannot
-  // lay out. One at a time, in order.
-  const { write } = useStdout();
-  const presenting = useRef(false);
-  const nextPresentation = state.presentations[0];
-  useEffect(() => {
-    if (!nextPresentation || presenting.current) return;
-    presenting.current = true;
-    void (async () => {
-      // Let what was said before it reach the scrollback first (Ink writes its output a frame later).
-      await new Promise((r) => setTimeout(r, 80));
-      try {
-        write(
-          await renderPresentation(nextPresentation.presentation, {
-            protocol: imageProtocol(),
-            columns: width,
-            show: (path) => tildify(path, homedir()),
-          }),
-        );
-      } catch (err) {
-        write(`\nCould not show ${nextPresentation.presentation.title}: ${err instanceof Error ? err.message : err}\n`);
-      } finally {
-        presenting.current = false;
-        store.presented(nextPresentation.id);
-      }
-    })();
-  }, [nextPresentation, write, width, store]);
-
   useEffect(() => {
     controller.attach({
       exit: () => app.exit(),
-      suspend: (run) => app.suspendTerminal(run),
+      suspend: (run) =>
+        app.suspendTerminal(() => {
+          terminal?.leave();
+          try {
+            run();
+          } finally {
+            terminal?.enter();
+          }
+        }),
     });
-  }, [controller, app]);
+  }, [controller, app, terminal]);
+
+  // How far the conversation is scrolled back from its end, in rows (0: it follows new output). While scrolled
+  // back, rows added at the end push it further back, so what is on screen stays put.
+  const viewport = useRef<DOMElement>(null);
+  const content = useRef<DOMElement>(null);
+  const view = useBoxMetrics(viewport);
+  const body = useBoxMetrics(content);
+  const [back, setBack] = useState(0);
+  const bodyHeight = useRef(0);
+  useEffect(() => {
+    const grew = body.height - bodyHeight.current;
+    bodyHeight.current = body.height;
+    if (grew > 0) setBack((b) => (b > 0 ? b + grew : 0));
+  }, [body.height]);
+  const maxBack = Math.max(0, body.height - view.height);
+  const shownBack = Math.min(back, maxBack);
+  const scroll = (rowsBy: number) => setBack((b) => Math.max(0, Math.min(Math.min(b, maxBack) + rowsBy, maxBack)));
+  const page = Math.max(1, view.height - 2);
+  useInput((_, key) => {
+    if (key.pageUp) scroll(page);
+    else if (key.pageDown) scroll(-page);
+  });
+  const wheel = useRef(scroll);
+  wheel.current = scroll;
+  useEffect(() => terminal?.onWheel((direction) => wheel.current(direction * -3)), [terminal]);
 
   useEffect(() => {
     if (!animating) return;
@@ -139,6 +150,7 @@ export function App({ controller }: { controller: Controller }) {
 
   const submit = (value: string) => {
     setArmedExit(false);
+    setBack(0);
     if (head && typing && question) {
       answerQuestion(value);
       return;
@@ -167,17 +179,35 @@ export function App({ controller }: { controller: Controller }) {
   const tone = !head || mode === 'chat' ? undefined : ask && mode !== 'note' ? theme.info : theme.warn;
 
   return (
-    <>
-      <Static items={state.items}>{(item) => <ItemView key={item.id} item={item} width={width} />}</Static>
-      <Box flexDirection="column">
-        {state.streaming ? (
-          <Bullet mark={glyph.assistant} markColor="white" marginTop={1}>
-            <Markdown text={tail(state.streaming, 40)} width={width - 2} />
-          </Bullet>
-        ) : null}
+    <Box flexDirection="column" width={width} height={Math.max(10, rows || 24)}>
+      <Box
+        ref={viewport}
+        flexDirection="column"
+        flexGrow={1}
+        flexBasis={0}
+        overflow="hidden"
+        contentOffsetY={maxBack - shownBack}
+      >
+        <Box ref={content} flexDirection="column" flexShrink={0}>
+          {state.items.slice(-ITEMS_SHOWN).map((item) => (
+            <ItemView key={item.id} item={item} width={width} />
+          ))}
+          {state.streaming ? (
+            <Bullet mark={glyph.assistant} markColor="white" marginTop={1}>
+              <Markdown text={state.streaming} width={width - 2} />
+            </Bullet>
+          ) : null}
+        </Box>
+      </Box>
+      {/* A menu takes the room it needs (the conversation keeps the rest), clipped when the window is too short. */}
+      {state.menu ? (
+        <Box flexDirection="column" flexShrink={1} overflow="hidden">
+          {state.menu === 'config' ? <ConfigMenu controller={controller} width={width} /> : null}
+          {state.menu === 'workflows' ? <WorkflowsMenu controller={controller} width={width} /> : null}
+        </Box>
+      ) : null}
+      <Box flexDirection="column" flexShrink={0}>
         {state.busy ? <Busy frame={frame} since={state.busySince} activity={state.activity} /> : null}
-        {state.menu === 'config' ? <ConfigMenu controller={controller} width={width} /> : null}
-        {state.menu === 'workflows' ? <WorkflowsMenu controller={controller} width={width} /> : null}
         {head && !state.menu ? (
           <InteractionView
             item={head}
@@ -237,11 +267,13 @@ export function App({ controller }: { controller: Controller }) {
                 : 'workflows'
               : armedExit
                 ? 'Press Ctrl+C again to exit'
-                : state.busy
-                  ? 'esc to interrupt'
-                  : head && mode === 'chat'
-                    ? 'tab: back to the question'
-                    : '/ for commands'
+                : shownBack > 0
+                  ? `${shownBack} more line${shownBack === 1 ? '' : 's'} below · PgDn`
+                  : state.busy
+                    ? 'esc to interrupt'
+                    : head && mode === 'chat'
+                      ? 'tab: back to the question'
+                      : '/ for commands'
           }
           urgent={armedExit}
           profiles={state.profiles}
@@ -249,25 +281,26 @@ export function App({ controller }: { controller: Controller }) {
           runs={state.runs.length}
           waiting={state.interactions.length}
         />
-        {/* Under the prompt: what changes now and then (runs, the team, activity), so the chat stays a conversation. */}
-        {state.menu ? null : (
-          <>
-            {state.runs.map((run) => (
-              <RunPanel
-                key={run.id}
-                run={run}
-                frame={frame}
-                waiting={state.interactions.some((i) => i.source === 'run' && i.pending.interaction.runId === run.id)}
-                // Leads' runs are one line each, except those of the lead the user is talking to.
-                compact={run.owner !== undefined && run.owner !== state.target}
-              />
-            ))}
-            {state.team.length > 0 ? <TeamPanel rows={state.team} target={state.target} frame={frame} /> : null}
-            <Feed entries={state.feed} />
-          </>
-        )}
       </Box>
-    </>
+      {/* Under the prompt: what changes now and then (runs, the team, activity), so the chat stays a conversation.
+          It gives way first when the window is short, and never takes more than half of it. */}
+      {state.menu ? null : (
+        <Box flexDirection="column" flexShrink={1} overflow="hidden" maxHeight={Math.max(6, Math.floor(rows / 2))}>
+          {state.runs.map((run) => (
+            <RunPanel
+              key={run.id}
+              run={run}
+              frame={frame}
+              waiting={state.interactions.some((i) => i.source === 'run' && i.pending.interaction.runId === run.id)}
+              // Leads' runs are one line each, except those of the lead the user is talking to.
+              compact={run.owner !== undefined && run.owner !== state.target}
+            />
+          ))}
+          {state.team.length > 0 ? <TeamPanel rows={state.team} target={state.target} frame={frame} /> : null}
+          <Feed entries={state.feed} />
+        </Box>
+      )}
+    </Box>
   );
 }
 
@@ -653,7 +686,7 @@ function StepLine({ step, frame }: { step: StepView; frame: number }) {
   );
 }
 
-// ---- scrollback ----------------------------------------------------------------------------------
+// ---- conversation -------------------------------------------------------------------------------
 
 function Bullet(props: { mark: string; markColor?: string; marginTop?: number; children: ReactNode }) {
   return (
@@ -751,7 +784,8 @@ function TeamPanel({ rows, target, frame }: { rows: TeamRow[]; target: string; f
   );
 }
 
-function ItemView({ item, width }: { item: Item; width: number }) {
+// Items never change once pushed: only new ones (or a new width) render.
+const ItemView = memo(function ItemView({ item, width }: { item: Item; width: number }) {
   switch (item.type) {
     case 'banner':
       return <BannerView banner={item.banner} width={width} />;
@@ -812,7 +846,31 @@ function ItemView({ item, width }: { item: Item; width: number }) {
         </Box>
       );
     }
+    case 'presentation':
+      return <PresentationView presentation={item.presentation} />;
   }
+});
+
+function PresentationView({ presentation }: { presentation: Presentation }) {
+  return (
+    <Box flexDirection="column" marginTop={1}>
+      <Text>
+        <Text color={theme.accent}>{glyph.brand} </Text>
+        <Text bold>{presentation.title}</Text>
+      </Text>
+      {presentation.items.map((item) => (
+        <Box key={item.target} flexDirection="column" paddingLeft={2}>
+          {item.caption ? <Text>{item.caption}</Text> : null}
+          <Text>
+            <Text dimColor>{glyph.result} </Text>
+            <Text color={theme.info} underline>
+              {hyperlink(linkTarget(item), item.kind === 'url' ? item.target : tildify(item.target, homedir()))}
+            </Text>
+          </Text>
+        </Box>
+      ))}
+    </Box>
+  );
 }
 
 function RunItem({ item }: { item: Extract<Item, { type: 'run' }> }) {
@@ -937,9 +995,4 @@ function BannerView({ banner, width }: { banner: Banner; width: number }) {
 
 function capitalize(s: string): string {
   return s.charAt(0).toUpperCase() + s.slice(1);
-}
-
-function tail(text: string, lines: number): string {
-  const all = text.split('\n');
-  return all.length > lines ? all.slice(-lines).join('\n') : text;
 }
