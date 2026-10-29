@@ -203,6 +203,8 @@ runtime  = "node"                      # a fresh box's image, without a snapshot
   interrupted run keeps them for a resume, and a crash leaves them, but every box is ephemeral: Upstash deletes it
   `ttlHours` after it was made, whatever happens to Legion. Keep it above your longest runs: a run still going
   when its boxes expire fails its next remote step (a resume gets new boxes).
+- **The box is the sandbox.** Codex's own sandbox (bubblewrap) cannot run in a box, so Codex runs there without it,
+  with the same approvals. Read-only steps (reviews) are read-only by their instructions there, not enforced.
 - **Sessions resume within their box.** A step resumed after its box is gone (the run ended, or the box expired)
   starts a new session.
 - **MCP servers** on this machine's loopback (`http://127.0.0.1:…`) are out of a box's reach and left out. Stdio

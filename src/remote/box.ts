@@ -167,17 +167,30 @@ export class UpstashBoxes implements BoxProvider {
   }
 }
 
+const START_ATTEMPTS = 3;
+
 function wrap(box: Box | EphemeralBox): RemoteBox {
   return {
     id: box.id,
     async start(argv, opts) {
-      const handle = await box.exec.session({
-        argv: [...argv],
-        ...(opts.cwd ? { cwd: opts.cwd } : {}),
-        env: Object.entries(opts.env ?? {}).map(([k, v]) => `${k}=${v}`),
-        onStdout: opts.onStdout,
-        onStderr: opts.onStderr,
-      });
+      const open = () =>
+        box.exec.session({
+          argv: [...argv],
+          ...(opts.cwd ? { cwd: opts.cwd } : {}),
+          env: Object.entries(opts.env ?? {}).map(([k, v]) => `${k}=${v}`),
+          onStdout: opts.onStdout,
+          onStderr: opts.onStderr,
+        });
+      // Upstash now and then refuses a session before it starts ("could not determine session pid"): try again.
+      let handle: Awaited<ReturnType<typeof open>> | undefined;
+      for (let attempt = 1; !handle; attempt++) {
+        try {
+          handle = await open();
+        } catch (err) {
+          if (attempt >= START_ATTEMPTS || !/exec-session error/.test((err as Error).message)) throw err;
+          await new Promise((r) => setTimeout(r, 500 * attempt));
+        }
+      }
       return {
         write: (data) => handle.write(data),
         endStdin: () => handle.endStdin(),

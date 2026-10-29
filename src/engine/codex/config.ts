@@ -199,33 +199,43 @@ type PolicyParams = Pick<ThreadStartParams, 'sandbox' | 'approvalPolicy' | 'appr
 /**
  * read_only → read-only + never. workspace_write → workspace-write + on-request when the human answers (`ask`);
  * with `auto`, everything is allowed: no sandbox, no approvals (`--dangerously-bypass-approvals-and-sandbox`).
+ * `sandboxed: false` (a remote box, where codex's bubblewrap sandbox cannot make namespaces and the box is the
+ * sandbox): full access with the same approvals.
  */
-export function policyFor(permission: PermissionProfile): PolicyParams {
+export function policyFor(permission: PermissionProfile, sandboxed = true): PolicyParams {
   if (permission.mode === 'read_only') {
-    return { sandbox: 'read-only', approvalPolicy: 'never', approvalsReviewer: 'user' };
+    return {
+      sandbox: sandboxed ? 'read-only' : 'danger-full-access',
+      approvalPolicy: 'never',
+      approvalsReviewer: 'user',
+    };
   }
   if (permission.approvals === 'auto') {
     return { sandbox: 'danger-full-access', approvalPolicy: 'never', approvalsReviewer: 'user' };
   }
-  return { sandbox: 'workspace-write', approvalPolicy: 'on-request', approvalsReviewer: 'user' };
+  return {
+    sandbox: sandboxed ? 'workspace-write' : 'danger-full-access',
+    approvalPolicy: 'on-request',
+    approvalsReviewer: 'user',
+  };
 }
 
-export function threadStartParams(opts: SessionOptions): ThreadStartParams {
+export function threadStartParams(opts: SessionOptions, sandboxed = true): ThreadStartParams {
   return {
     cwd: opts.cwd,
     model: opts.model ?? null,
-    ...policyFor(opts.permission),
+    ...policyFor(opts.permission, sandboxed),
     config: threadConfig(opts),
     developerInstructions: opts.systemPrompt ?? null,
   };
 }
 
-export function threadResumeParams(threadId: string, opts: SessionOptions): ThreadResumeParams {
+export function threadResumeParams(threadId: string, opts: SessionOptions, sandboxed = true): ThreadResumeParams {
   return {
     threadId,
     cwd: opts.cwd,
     model: opts.model ?? null,
-    ...policyFor(opts.permission),
+    ...policyFor(opts.permission, sandboxed),
     config: threadConfig(opts),
     developerInstructions: opts.systemPrompt ?? null,
     excludeTurns: true,

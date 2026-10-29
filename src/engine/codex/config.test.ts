@@ -66,6 +66,17 @@ describe('permissions', () => {
     });
   });
 
+  it('leaves the sandbox out in a box, keeping the approvals', () => {
+    expect(policyFor(permissionProfile('read_only'), false)).toMatchObject({
+      sandbox: 'danger-full-access',
+      approvalPolicy: 'never',
+    });
+    expect(policyFor(permissionProfile('workspace_write'), false)).toMatchObject({
+      sandbox: 'danger-full-access',
+      approvalPolicy: 'on-request',
+    });
+  });
+
   it('pre-approves exact commands and their plain-argument extensions only', () => {
     const cmd = (command: string) => ({ kind: 'command' as const, command });
     const zsh = (script: string) => cmd(`/bin/zsh -lc '${script}'`);

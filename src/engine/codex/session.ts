@@ -44,6 +44,8 @@ export interface CodexProcessSpec {
   log?: Logger;
   /** Starts the process somewhere else (default: a local child). */
   spawn?: CodexSpawn;
+  /** false: no codex sandbox (it runs in a remote box, which is one). */
+  sandboxed?: boolean;
 }
 
 export type OpenMode = { kind: 'start' } | { kind: 'resume'; threadId: string };
@@ -143,8 +145,10 @@ export class CodexSession implements AgentSession {
     this.rpc.notify('initialized');
     const opened =
       mode.kind === 'start'
-        ? await this.call('thread/start', threadStartParams(this.opts), { timeoutMs: THREAD_TIMEOUT_MS })
-        : await this.call('thread/resume', threadResumeParams(mode.threadId, this.opts), {
+        ? await this.call('thread/start', threadStartParams(this.opts, this.spec.sandboxed ?? true), {
+            timeoutMs: THREAD_TIMEOUT_MS,
+          })
+        : await this.call('thread/resume', threadResumeParams(mode.threadId, this.opts, this.spec.sandboxed ?? true), {
             timeoutMs: THREAD_TIMEOUT_MS,
           });
     this.threadId = opened.thread.id;

@@ -77,6 +77,8 @@ export class CodexEngine implements AgentEngine {
         clientVersion: this.clientVersion,
         log: this.log,
         spawn: this.remote.spawn,
+        // Its bubblewrap sandbox cannot make namespaces in a box; the box is the sandbox.
+        sandboxed: false,
       });
     }
     const env = mergeEnv(process.env, this.profile.env, opts.env);
