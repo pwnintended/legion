@@ -7,7 +7,7 @@ import { lstat, mkdir, readlink, rm, symlink } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { delimiter, join, resolve } from 'node:path';
 import { isAllowedCommand } from '../../util/shell.ts';
-import type { McpServer, PermissionProfile, SessionOptions } from '../types.ts';
+import { HERDR_ENV_PREFIX, type McpServer, type PermissionProfile, type SessionOptions } from '../types.ts';
 import type { JsonValue } from './protocol/serde_json/JsonValue.ts';
 import type {
   CommandExecutionRequestApprovalParams,
@@ -144,7 +144,8 @@ function bearerToken(headers: Readonly<Record<string, string>>): { key: string; 
 
 /**
  * Child environment: `base` (process + profile + session env) plus CODEX_HOME and the MCP bearer tokens.
- * Token vars inherited from elsewhere are dropped so a stale one can't reach a server.
+ * Token vars inherited from elsewhere are dropped so a stale one can't reach a server, and Herdr's pane vars so
+ * the worker's own Herdr hook can't claim Legion's pane.
  */
 export function childEnv(
   base: Readonly<Record<string, string>>,
@@ -152,7 +153,9 @@ export function childEnv(
   codexHome: string,
 ): Record<string, string> {
   const env: Record<string, string> = {};
-  for (const [key, value] of Object.entries(base)) if (!key.startsWith(MCP_TOKEN_ENV_PREFIX)) env[key] = value;
+  for (const [key, value] of Object.entries(base)) {
+    if (!key.startsWith(MCP_TOKEN_ENV_PREFIX) && !key.startsWith(HERDR_ENV_PREFIX)) env[key] = value;
+  }
   env.CODEX_HOME = codexHome;
   for (const [name, server] of Object.entries(mcp ?? {})) {
     const bearer = server.type === 'http' ? bearerToken(server.headers) : null;

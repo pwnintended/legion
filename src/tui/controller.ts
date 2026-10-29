@@ -38,6 +38,7 @@ import {
 } from '../workflow/loader.ts';
 import type { PendingInteraction } from '../workflow/manager.ts';
 import { formatReport, validateWorkflow } from '../workflow/validate.ts';
+import type { HerdrReporter } from './herdr.ts';
 import type { CommandSpec } from './input.tsx';
 import { clock, feedMark, feedTone, type Line, type Seg, type TeamRow, type UiInteraction, UiStore } from './store.ts';
 import { glyph, tildify } from './theme.ts';
@@ -380,6 +381,8 @@ export class Controller {
   readonly store: UiStore;
   private readonly session: Session;
   private hooks: ControllerHooks | null = null;
+  /** Reports Legion's state to Herdr when it runs in a Herdr pane (set by the CLI). */
+  herdr: HerdrReporter | null = null;
   private readonly modelCache = new Map<string, Promise<{ models: ModelChoice[]; error: string | null }>>();
 
   constructor(session: Session) {
@@ -1509,9 +1512,15 @@ export class Controller {
     const env: Record<string, string | undefined> = { ...process.env, ...profile.env };
     const engineImpl = this.session.engine(engine);
     if (engineImpl instanceof CodexEngine) env.CODEX_HOME = await engineImpl.codexHome();
-    await this.hooks?.suspend(() => {
-      spawnSync(profile.command, args, { stdio: 'inherit', cwd, env });
-    });
+    // The agent CLI owns the pane meanwhile: Herdr tracks it through its own integration.
+    this.herdr?.pause();
+    try {
+      await this.hooks?.suspend(() => {
+        spawnSync(profile.command, args, { stdio: 'inherit', cwd, env });
+      });
+    } finally {
+      this.herdr?.resume();
+    }
     this.store.info(`Back from ${entry.key}.`);
   }
 }

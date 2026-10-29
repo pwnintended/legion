@@ -207,3 +207,9 @@ export interface AgentEngine {
   /** Resume an existing engine-native session with a new prompt. */
   resume(sessionId: string, opts: SessionOptions): Promise<AgentSession>;
 }
+
+/**
+ * Herdr's pane variables: with them, a worker's own Herdr hook would report its session as the pane's agent
+ * (Legion reports the pane itself, see tui/herdr.ts).
+ */
+export const HERDR_ENV_PREFIX = 'HERDR_';

@@ -7,7 +7,7 @@
 import { existsSync, realpathSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { hasShellMeta } from '../../util/shell.ts';
-import type { McpServer, PermissionProfile, SessionOptions } from '../types.ts';
+import { HERDR_ENV_PREFIX, type McpServer, type PermissionProfile, type SessionOptions } from '../types.ts';
 import { READ_ONLY_GUIDE } from './read-only-policy.ts';
 
 /** Base flags: headless, stream-json both ways, partial messages for live text. */
@@ -230,8 +230,8 @@ export type EnvLayer = Readonly<Record<string, string | undefined>> | null | und
 
 /**
  * The child's environment: `layers` laid over each other in order (typically `process.env`, the profile's env,
- * the session's env), with the parent Claude Code session variables removed from every layer (a caller may
- * have built its layer from `process.env`).
+ * the session's env), with the parent Claude Code session and Herdr pane variables removed from every layer (a
+ * caller may have built its layer from `process.env`).
  */
 export function childEnv(...layers: EnvLayer[]): Record<string, string> {
   const out: Record<string, string> = {};
@@ -239,5 +239,6 @@ export function childEnv(...layers: EnvLayer[]): Record<string, string> {
     for (const [name, value] of Object.entries(layer ?? {})) if (value !== undefined) out[name] = value;
   }
   for (const name of HOST_SESSION_ENV_VARS) delete out[name];
+  for (const name of Object.keys(out)) if (name.startsWith(HERDR_ENV_PREFIX)) delete out[name];
   return out;
 }

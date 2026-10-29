@@ -11,6 +11,7 @@ import { ConfigError, type RealKind, runSetup, userConfigPath } from './config.t
 import { Session } from './session.ts';
 import { App } from './tui/app.tsx';
 import { Controller } from './tui/controller.ts';
+import { attention, HerdrReporter } from './tui/herdr.ts';
 import { Terminal } from './tui/terminal.ts';
 import { formatDuration } from './tui/theme.ts';
 import type { Interaction, RunEvent } from './workflow/host.ts';
@@ -149,6 +150,15 @@ function setup(session: Session): void {
 async function interactive(session: Session, initial: string): Promise<number> {
   const started = Date.now();
   const controller = new Controller(session);
+  const herdr = HerdrReporter.fromEnv(() =>
+    attention(controller.store.get(), session.assistant.busy, session.runs.activeRuns().length),
+  );
+  if (herdr) {
+    controller.herdr = herdr;
+    controller.store.subscribe(herdr.changed);
+    session.assistant.on('busy', herdr.changed);
+    herdr.changed();
+  }
   // Mouse reporting brings the wheel to the conversation view; Shift (Option in iTerm2) still selects text.
   const terminal = new Terminal();
   process.once('exit', () => terminal.leave());
@@ -170,6 +180,7 @@ async function interactive(session: Session, initial: string): Promise<number> {
   await instance.waitUntilExit();
   terminal.leave();
   const active = session.runs.activeRuns();
+  await herdr?.close();
   await session.close();
   console.log(
     farewell(
