@@ -27,8 +27,8 @@ export function engineColor(engine: string | null | undefined): string {
   return engine === 'codex' ? theme.codex : engine === 'claude' ? theme.claude : theme.muted;
 }
 
-/** Claude Code's "thinking" glyphs, ping-ponged. */
-export const BUSY_FRAMES = ['·', '✢', '✳', '✶', '✻', '✽', '✻', '✶', '✳', '✢'];
+/** The busy mark: a block that dithers up to solid and back, like the startup art. */
+export const BUSY_FRAMES = ['░', '░', '▒', '▓', '█', '█', '▓', '▒'];
 export const SPINNER = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
 
 export const glyph = {

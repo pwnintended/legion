@@ -14,6 +14,7 @@ import { COMMANDS, type Controller } from './controller.ts';
 import { hyperlink, linkTarget } from './images.ts';
 import { PromptInput } from './input.tsx';
 import { Markdown } from './markdown.tsx';
+import { splash, splashSize } from './splash.ts';
 import {
   type Banner,
   clipLines,
@@ -51,6 +52,8 @@ export function App({ controller, terminal }: { controller: Controller; terminal
   const [collected, setCollected] = useState<QuestionAnswers>({});
   const [picked, setPicked] = useState<number[]>([]);
   const [armedExit, setArmedExit] = useState(false);
+  // Which of the welcome card's starters Tab fills in next.
+  const starter = useRef(0);
   const head = state.interactions[0] ?? null;
   const animating = state.busy || state.runs.length > 0;
   const width = Math.max(40, columns || 80);
@@ -247,7 +250,10 @@ export function App({ controller, terminal }: { controller: Controller; terminal
               else if (mode !== 'hotkeys') setMode('hotkeys');
               else void controller.interrupt();
             }}
-            onTab={() => head && setMode((m) => (m === 'chat' ? 'hotkeys' : 'chat'))}
+            onTab={(empty) => {
+              if (head) setMode((m) => (m === 'chat' ? 'hotkeys' : 'chat'));
+              else if (empty) controller.seed(TRY[starter.current++ % TRY.length] ?? '');
+            }}
             onCtrlC={() => {
               if (state.busy) {
                 void controller.interrupt();
@@ -268,14 +274,16 @@ export function App({ controller, terminal }: { controller: Controller; terminal
               : armedExit
                 ? 'Press Ctrl+C again to exit'
                 : shownBack > 0
-                  ? `${shownBack} more line${shownBack === 1 ? '' : 's'} below · PgDn`
+                  ? `↓ ${shownBack} more line${shownBack === 1 ? '' : 's'} below · PgDn, or send to jump back`
                   : state.busy
                     ? 'esc to interrupt'
                     : head && mode === 'chat'
                       ? 'tab: back to the question'
-                      : '/ for commands'
+                      : state.items.length <= 1
+                        ? 'tab fills in an idea · / for commands'
+                        : '/ for commands'
           }
-          urgent={armedExit}
+          urgent={armedExit || shownBack > 0}
           profiles={state.profiles}
           costUsd={state.costUsd}
           runs={state.runs.length}
@@ -307,17 +315,30 @@ export function App({ controller, terminal }: { controller: Controller; terminal
 // ---- live region ---------------------------------------------------------------------------------
 
 function Busy({ frame, since, activity }: { frame: number; since: number | null; activity: string | null }) {
-  const mark = BUSY_FRAMES[frame % BUSY_FRAMES.length] ?? '·';
+  const mark = BUSY_FRAMES[frame % BUSY_FRAMES.length] ?? '░';
   const elapsed = since ? formatDuration(Date.now() - since) : '';
+  const text = `${activity ? oneLine(capitalize(activity), 90) : 'Working'}…`;
+  // A highlight sweeps across the text, then rests a moment before the next pass.
+  const at = (frame % (text.length + SHIMMER * 3)) - SHIMMER;
+  const from = Math.max(0, at);
+  const to = Math.max(0, at + SHIMMER);
   return (
     <Box marginTop={1}>
+      <Text color={theme.accent}>{mark} </Text>
       <Text color={theme.accent}>
-        {mark} {activity ? oneLine(capitalize(activity), 90) : 'Working'}…
+        {text.slice(0, from)}
+        <Text color="white" bold>
+          {text.slice(from, to)}
+        </Text>
+        {text.slice(to)}
       </Text>
       <Text dimColor> ({elapsed ? `${elapsed} · ` : ''}esc to interrupt)</Text>
     </Box>
   );
 }
+
+/** How many characters the busy line's highlight spans. */
+const SHIMMER = 5;
 
 function StatusBar(props: {
   width: number;
@@ -930,34 +951,56 @@ function PanelView({ title, lines }: { title: string; lines: Line[] }) {
   );
 }
 
+/** How long the art takes to dissolve in. */
+const REVEAL_MS = 900;
+
+/** The splash art dissolving in, then the session at a glance and a few things to try. */
 function BannerView({ banner, width }: { banner: Banner; width: number }) {
+  const { rows } = useWindowSize();
+  const size = splashSize(width - 2, rows || 24);
+  const [reveal, setReveal] = useState(size === 'none' ? 1 : 0);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: the art dissolves in once, when it first shows.
+  useEffect(() => {
+    if (reveal >= 1) return;
+    const started = Date.now();
+    const timer = setInterval(() => {
+      const t = Math.min(1, (Date.now() - started) / REVEAL_MS);
+      setReveal(t);
+      if (t >= 1) clearInterval(timer);
+    }, 33);
+    return () => clearInterval(timer);
+  }, []);
+  // Ease out: quick at first, settling at the end.
+  const art = splash(width - 2, size, 1 - (1 - reveal) ** 3);
   const profiles = Object.entries(banner.profiles);
+  const card = Math.min(width, 76);
   return (
-    <Box flexDirection="column">
-      <Box
-        flexDirection="column"
-        borderStyle="round"
-        borderColor={theme.accent}
-        paddingX={2}
-        width={Math.min(width, 72)}
-      >
-        <Text>
-          <Text color={theme.accent} bold>
-            {glyph.brand} legion
-          </Text>
-          <Text dimColor>
-            {banner.version ? ` v${banner.version}` : ''} · multi-agent workflows on claude and codex
-          </Text>
+    <Box flexDirection="column" alignItems="center" width={width} marginTop={1}>
+      {art.length > 0 ? (
+        <Box flexDirection="column" flexShrink={0}>
+          {art.map((line, n) => (
+            // biome-ignore lint/suspicious/noArrayIndexKey: art rows are positional.
+            <Text key={n}>{line || ' '}</Text>
+          ))}
+        </Box>
+      ) : (
+        <Text bold>{`${glyph.brand} L E G I O N`}</Text>
+      )}
+      <Box marginTop={1}>
+        <Text dimColor>
+          multi-agent workflows on <Text color={theme.claude}>claude</Text> and <Text color={theme.codex}>codex</Text>
+          {banner.version ? ` · v${banner.version}` : ''}
         </Text>
-        <Text> </Text>
+      </Box>
+      <Box flexDirection="column" borderStyle="round" borderColor={theme.muted} paddingX={2} marginTop={1} width={card}>
         <Text wrap="truncate-middle">
-          <Text dimColor>{'dir       '}</Text>
-          {banner.cwd}
+          <Text dimColor>{'dir        '}</Text>
+          <Text bold>{banner.cwd}</Text>
           {banner.branch ? <Text color={theme.ok}> ⎇ {banner.branch}</Text> : null}
           {banner.isGitRepo ? null : <Text color={theme.warn}> · not a git repository</Text>}
         </Text>
-        <Text>
-          <Text dimColor>{'profiles  '}</Text>
+        <Text wrap="truncate-end">
+          <Text dimColor>{'accounts   '}</Text>
           {profiles.map(([kind, name], i) => (
             <Text key={kind}>
               {i > 0 ? <Text dimColor> · </Text> : null}
@@ -966,32 +1009,56 @@ function BannerView({ banner, width }: { banner: Banner; width: number }) {
             </Text>
           ))}
         </Text>
-        <Text>
-          <Text dimColor>{'assistant '}</Text>
+        <Text wrap="truncate-end">
+          <Text dimColor>{'assistant  '}</Text>
           {banner.assistant}
           <Text dimColor>
             {' · '}
-            {banner.workflows} workflow{banner.workflows === 1 ? '' : 's'}
+            {banner.workflows} workflow{banner.workflows === 1 ? '' : 's'} ready
           </Text>
         </Text>
+        <Box marginTop={1} flexDirection="column">
+          <Text dimColor>
+            Try · <Text color={theme.accent}>tab</Text> fills one in
+          </Text>
+          {TRY.map((t) => (
+            <Text key={t} wrap="truncate-end">
+              <Text color={theme.accent}>{`  ${glyph.user} `}</Text>
+              {t}
+            </Text>
+          ))}
+        </Box>
       </Box>
       {banner.createdConfig ? (
-        <Text>
-          <Text color={theme.ok}>{`  ${glyph.ok} `}</Text>
-          <Text dimColor>Created </Text>
-          {banner.createdConfig}
-          <Text dimColor> with the settings in effect · /config to see or edit them</Text>
-        </Text>
+        <Box width={card} paddingX={1}>
+          <Text wrap="truncate-end">
+            <Text color={theme.ok}>{`${glyph.ok} `}</Text>
+            <Text dimColor>Created </Text>
+            {banner.createdConfig}
+            <Text dimColor> with the settings in effect · /config to see or edit them</Text>
+          </Text>
+        </Box>
       ) : null}
-      <Text dimColor>
-        {'  Ask it to write, change or run a workflow · '}
-        <Text color={theme.accent}>/</Text>
-        {' for commands · '}
-        <Text color={theme.accent}>/help</Text>
-      </Text>
+      <Box width={card} paddingX={1}>
+        <Keys
+          keys={[
+            ['/', 'commands'],
+            ['/help', 'keys'],
+            ['esc', 'interrupt'],
+            ['ctrl+c ×2', 'quit'],
+          ]}
+        />
+      </Box>
     </Box>
   );
 }
+
+/** Starters on the welcome card: one of each thing the assistant does. */
+const TRY = [
+  'review my branch with both engines and fix what they agree on',
+  'write a workflow: plan, build in parallel worktrees, open a PR',
+  'what workflows do I have, and what does each one do?',
+];
 
 function capitalize(s: string): string {
   return s.charAt(0).toUpperCase() + s.slice(1);

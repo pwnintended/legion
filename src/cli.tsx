@@ -12,6 +12,7 @@ import { Session } from './session.ts';
 import { App } from './tui/app.tsx';
 import { Controller } from './tui/controller.ts';
 import { Terminal } from './tui/terminal.ts';
+import { formatDuration } from './tui/theme.ts';
 import type { Interaction, RunEvent } from './workflow/host.ts';
 import { ejectWorkflow, findWorkflow, installSdkResolution } from './workflow/loader.ts';
 import type { PendingInteraction } from './workflow/manager.ts';
@@ -146,6 +147,7 @@ function setup(session: Session): void {
 }
 
 async function interactive(session: Session, initial: string): Promise<number> {
+  const started = Date.now();
   const controller = new Controller(session);
   // Mouse reporting brings the wheel to the conversation view; Shift (Option in iTerm2) still selects text.
   const terminal = new Terminal();
@@ -169,12 +171,29 @@ async function interactive(session: Session, initial: string): Promise<number> {
   terminal.leave();
   const active = session.runs.activeRuns();
   await session.close();
-  if (active.length > 0) {
-    console.log(
-      `Stopped ${active.length} active run(s). Pick them up with: ${active.map((r) => `legion resume ${r.id}`).join(' · ')}`,
-    );
-  }
+  console.log(
+    farewell(
+      Date.now() - started,
+      controller.store.get().costUsd,
+      active.map((r) => r.id),
+    ),
+  );
   return 0;
+}
+
+/** What the shell shows once the window closes: how long it ran, what it cost, how to pick it up again. */
+function farewell(ms: number, costUsd: number | null, stopped: string[]): string {
+  const tty = process.stdout.isTTY && !process.env.NO_COLOR;
+  const dim = (s: string) => (tty ? `\u001B[2m${s}\u001B[22m` : s);
+  const bold = (s: string) => (tty ? `\u001B[1m${s}\u001B[22m` : s);
+  const facts = [formatDuration(ms), ...(costUsd !== null ? [`$${costUsd.toFixed(2)}`] : [])];
+  const lines = [`${bold('▓▒░ legion')} ${dim(`· ${facts.join(' · ')}`)}`];
+  lines.push(dim(`  Continue this conversation:  legion -c`));
+  if (stopped.length > 0) {
+    lines.push(`  Stopped ${stopped.length} active run${stopped.length > 1 ? 's' : ''}. Pick them up with:`);
+    for (const id of stopped) lines.push(`    legion resume ${id}`);
+  }
+  return lines.join('\n');
 }
 
 /** A workflow run on a plain terminal: progress as lines, interactions as prompts. */

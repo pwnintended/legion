@@ -49,7 +49,8 @@ legion eject feature           # copy a builtin into .legion/workflows to edit i
 
 In the session:
 
-- Type to talk to the assistant. Ask it to *create*, *change* or *run* workflows.
+- Type to talk to the assistant. Ask it to *create*, *change* or *run* workflows. On an empty prompt, **Tab** fills
+  in one of the starters from the welcome card.
 - Legion fills the terminal window (the alternate screen, like vim or less) and redraws in place when it is
   resized; your shell's screen comes back when it exits. **PgUp/PgDn** or the **mouse wheel** scroll the
   conversation; it follows new output again when you scroll back to the end or send something. Since Legion

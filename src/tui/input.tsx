@@ -30,7 +30,8 @@ export interface PromptInputProps {
   onNavigate?(direction: -1 | 1): boolean;
   onEscape?(): void;
   onCtrlC?(): void;
-  onTab?(): void;
+  /** Tab with no command to complete; `empty`: nothing is typed. */
+  onTab?(empty: boolean): void;
 }
 
 const MENU_SIZE = 7;
@@ -95,7 +96,7 @@ export function PromptInput(props: PromptInputProps) {
       }
       if (key.tab) {
         if (choice) set(`/${choice.name}${choice.args ? ' ' : ''}`);
-        else props.onTab?.();
+        else props.onTab?.(value === '');
         return;
       }
       if (key.return) {
