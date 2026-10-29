@@ -111,8 +111,13 @@ Want to say something to the assistant instead? Press **Tab** to switch to the c
 | **Ctrl+V** | Attach the screenshot on your clipboard (or paste or drop image files) |
 | **Ctrl+O** | Show or hide the details of what the agents did |
 | **Ctrl+T** | Open Agents: every agent and sub agent |
-| **PgUp / PgDn** or the mouse wheel | Scroll back through the conversation |
+| **PgUp / PgDn** | Scroll back through the conversation |
 | **Ctrl+C** twice | Quit |
+
+Drag to select text, then copy with your terminal's usual shortcut. Chat links are clickable in terminals that
+support hyperlinks (usually Cmd-click on macOS or Ctrl-click on Linux).
+To enable mouse-wheel scrolling, start with `LEGION_MOUSE=1 legion`; hold Shift while selecting text
+(Option in iTerm2) to bypass mouse capture.
 
 A few commands you'll use often: `/workflows` to browse what Legion can do, `/runs` to see what's been running,
 `/agents` to open any agent's chat or read-only transcript, `/config` for settings, and `/help` for everything else.

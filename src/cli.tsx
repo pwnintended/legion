@@ -223,7 +223,7 @@ async function interactive(session: Session, initial: string): Promise<number> {
     session.assistant.on('busy', herdr.changed);
     herdr.changed();
   }
-  // Mouse reporting brings the wheel to the conversation view; Shift (Option in iTerm2) still selects text.
+  // Leave selection and link clicks to the terminal; LEGION_MOUSE=1 opts into wheel reporting.
   const terminal = new Terminal();
   process.once('exit', () => terminal.leave());
   // Raw mode before Ink starts: it asks the terminal about the kitty keyboard protocol right away, and with echo

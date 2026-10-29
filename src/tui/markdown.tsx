@@ -2,8 +2,10 @@
  * Markdown for a terminal: headings, emphasis, inline code, links, lists, quotes, rules, fenced code with a
  * gutter, and pipe tables laid out in columns. Anything else prints as written.
  */
+import { pathToFileURL } from 'node:url';
 import { Box, Text } from 'ink';
 import type { ReactNode } from 'react';
+import { hyperlink } from './images.ts';
 import { theme } from './theme.ts';
 
 type Block =
@@ -55,7 +57,7 @@ export function parseBlocks(text: string): Block[] {
 
 type Style = { bold?: boolean; italic?: boolean; underline?: boolean; dim?: boolean; color?: string };
 /** A run of text in one style. */
-export type Seg = Style & { text: string };
+export type Seg = Style & { text: string; href?: string };
 
 /** `**bold**`, `*em*`/`_em_`, `` `code` ``, `[text](url)` and bare URLs, as styled runs. */
 export function segments(text: string): Seg[] {
@@ -67,9 +69,12 @@ export function segments(text: string): Seg[] {
     if (m.index > last) segs.push({ text: text.slice(last, m.index) });
     if (m[2] ?? m[3]) segs.push({ text: m[2] ?? m[3] ?? '', bold: true });
     else if (m[4] !== undefined) segs.push({ text: m[4], color: theme.code });
-    else if (m[5] !== undefined) segs.push({ text: m[5], underline: true }, { text: ` (${m[6]})`, dim: true });
-    else if (m[7] ?? m[8]) segs.push({ text: m[7] ?? m[8] ?? '', italic: true });
-    else segs.push({ text: m[0], color: theme.info, underline: true });
+    else if (m[5] !== undefined) {
+      const target = m[6] ?? '';
+      const href = target.startsWith('/') ? pathToFileURL(target).href : target;
+      segs.push({ text: m[5], underline: true, href }, { text: ` (${target})`, dim: true, href });
+    } else if (m[7] ?? m[8]) segs.push({ text: m[7] ?? m[8] ?? '', italic: true });
+    else segs.push({ text: m[0], color: theme.info, underline: true, href: m[0] });
     last = m.index + m[0].length;
   }
   if (last < text.length) segs.push({ text: text.slice(last) });
@@ -135,7 +140,7 @@ function SegsView({ segs }: { segs: Seg[] }) {
       {segs.map((s, n) => (
         // biome-ignore lint/suspicious/noArrayIndexKey: runs are positional.
         <Text key={n} bold={s.bold} italic={s.italic} underline={s.underline} dimColor={s.dim} color={s.color}>
-          {s.text}
+          {s.href ? hyperlink(s.href, s.text) : s.text}
         </Text>
       ))}
     </Text>
