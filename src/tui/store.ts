@@ -186,6 +186,8 @@ export class UiStore {
   private state: UiState;
   private readonly listeners = new Set<() => void>();
   private nextId = 1;
+  /** The feed line of each tool call of the assistant or a lead still running, so a failure names what failed. */
+  private readonly toolLines = new Map<string, string>();
   private scheduled: NodeJS.Timeout | null = null;
 
   constructor(initial: Partial<UiState> = {}) {
@@ -275,11 +277,23 @@ export class UiStore {
         const line = toolLine(event.name, event.input);
         this.update({ streaming: '', activity: line }, false);
         this.note({ who, kind: 'tool', text: line });
+        this.toolLines.set(event.id, line);
         break;
       }
-      case 'tool_result':
-        if (!event.ok && event.output) this.note({ who, kind: 'error', text: event.output.trim() });
+      case 'tool_result': {
+        // A failed tool call (a command that exited non-zero, often harmless), not the agent failing: a tool line for
+        // /activity, so the feed does not read as if the agent stopped while the busy line still spins.
+        const line = this.toolLines.get(event.id);
+        this.toolLines.delete(event.id);
+        if (!event.ok && event.output)
+          this.note({
+            who,
+            kind: 'tool',
+            tag: 'failed',
+            text: line ? `${line} · ${event.output.trim()}` : event.output.trim(),
+          });
         break;
+      }
       case 'activity':
         this.update(
           { activity: event.activity === 'tool_input' ? `writing ${toolName(event.tool ?? 'tool')}` : event.activity },

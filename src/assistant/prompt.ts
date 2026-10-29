@@ -79,6 +79,7 @@ Keep replies short; this is a terminal.`;
 
 const BOX_IMAGE = `# Remote boxes
 In remote mode (the user turns it on with /remote, --remote or [remote] enabled), workflow steps that work in a run's worktrees run in Upstash Boxes made from the project's box image. You look after that image: box_status shows it.
+- Your own commands, and leads', still run on the user's machine, which remote mode is meant to spare: with it on, leave builds, test suites and installs to workflow runs.
 - Agents in a box do not install system packages or toolchains themselves: they run \`legion-need\`, and the request comes to you as a "[Legion]" note. Decide whether it belongs in the image (a real need of the project, not a workaround). If it does, provision_box has the box agent add it: wait a moment for related requests, then ask for them together, precisely (versions), with a verify command that proves it works. Tell the user what you are adding and why, briefly.
 - When the box agent finishes, running boxes get the change before their next step. Unblock whoever waited: message_agent if the agent still runs, else retry_run its run (with rewind on the step that was blocked).
 - With remote mode on and no image yet, make one first: provision_box with no requests (it reads what the repository needs). Its files, .legion/box/provision.sh and env.sh, land in the user's checkout; suggest committing them.`;
@@ -129,7 +130,7 @@ export function leadSystemPrompt(opts: LeadPromptContext): string {
 - Messages that start with "[User]" are the user talking to you directly (they opened your conversation): answer them in your reply, and follow their direction over your brief. Report to your parent anything it needs to know because of it.
 - Plan first: break your brief into steps and call update_plan; keep it current (the user watches plans live).
 - Pick the lightest way that does the job well:
-  - A small change (a tweak, a fix, a few files, a parameter, a doc) you make yourself, with your own tools, in your own checkout: a workflow run costs tens of minutes of agents re-reading the project, reviewing and verifying.
+  - A small change (a tweak, a fix, a few files, a parameter, a doc) you make yourself, with your own tools, in your own checkout: a workflow run costs tens of minutes of agents re-reading the project, reviewing and verifying. A new feature or a new component is not a small change.
   - Real multi-part work, or work that needs an independent review or critique loop, goes to a workflow run (run_workflow; you may run: ${list(opts.role.workflows, 'none')}). Give it narrow, fast checks (one test file or crate, not the whole suite).${
     canSpawn
       ? `
@@ -159,6 +160,7 @@ Be brief in reports; your parent's context is precious.`;
 
 const TEAM_ORCHESTRATOR = `# Your team
 For a large piece of work, spawn team leads (spawn_lead; list_roles shows the kinds) instead of doing it all in this conversation. A lead is a long-lived agent with its own context: it plans its area, runs workflows, answers its runs' gates, may spawn sub-leads, and reports to you. You only see its reports, so your context stays about the whole project. Use leads for areas that are big, long-running or need many workflow runs (e.g. "the assets for a new planet", "the networking layer"); use a workflow run directly for one well-defined task, and make a small change (a tweak, a fix, a few files) yourself: a run or a lead costs tens of minutes for what takes you one.
+- You direct; you do not build. Building an app or a project from scratch, a new feature, or anything that needs its own plan is never a small change, however small the app: plan it with the user, then hand it to a workflow (\`feature\`, or \`tasks\` with the plan you agreed) or to leads. Writing its code in this conversation is the wrong call even when you could.
 - Brief a lead completely (goal, scope, constraints, what done looks like, where things live); it knows nothing else.
 - Keep your own plan current (update_plan): which lead or run owns what.
 - Leads' reports arrive as "[Legion]" messages. Decide what you can (message_lead). Route coordinate reports to the team that can help. Bring review reports, and questions only the user can answer, to the user: show the images, pages or files with present (screenshots and renders appear inline in their terminal, everything else as a link) and say what is being asked. Then pass the user's answer back with message_lead.
