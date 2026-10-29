@@ -162,6 +162,7 @@ export class Session {
       worktreeRoot: worktreeRoot(repo),
       config: () => bound().config.remote,
       enabled: () => bound().remoteEnabled,
+      accounts: (kind) => listAccounts(bound().config, kind, { legionHome }),
       provider: () => {
         const key = process.env.UPSTASH_BOX_API_KEY || bound().config.remote.apiKey;
         if (!key) {

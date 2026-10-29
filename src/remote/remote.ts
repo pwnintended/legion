@@ -12,6 +12,7 @@
 import { createHash } from 'node:crypto';
 import { realpathSync } from 'node:fs';
 import { join, relative, sep } from 'node:path';
+import { type Account, type AccountKind, boxAccounts, boxEnv, implicitBoxAccount } from '../accounts/index.ts';
 import type { RemoteConfig } from '../config.ts';
 import { ClaudeEngine } from '../engine/claude/index.ts';
 import { CodexEngine } from '../engine/codex/index.ts';
@@ -49,6 +50,8 @@ export interface RemoteOptions {
   config: () => RemoteConfig;
   /** Remote mode is on (read at every step). */
   enabled: () => boolean;
+  /** The pool's accounts of a kind; the ones marked `remote` can be used in a box. Absent: only the `box` account. */
+  accounts?: (kind: AccountKind) => Account[];
   /** The boxes; throws when there is no API key. Called only when a box is needed. */
   provider: () => BoxProvider;
   /** An agent asked for a tool or dependency (`legion-need`). */
@@ -94,11 +97,11 @@ export class Remote {
     return {
       ...host,
       engine: (kind, account) => {
-        const local = host.engine(kind, account);
-        return kind === 'fake' || !on() ? local : this.engine(local, kind, run.id, boxRun);
+        if (kind === 'fake' || !on()) return host.engine(kind, account);
+        return this.engine(() => host.engine(kind, account), kind, account, run.id, boxRun);
       },
-      // Until boxes have accounts of their own, a step in a box takes its account from the same pool.
-      account: (kind, req) => host.account(kind, { ...req, where: 'local' }),
+      // A step in a box uses an account whose login can travel there; with none, the pool offers the implicit `box` one.
+      account: (kind, req) => host.account(kind, req),
       where: (cwd) => (on() && this.owns(run.id, cwd) ? 'box' : 'local'),
       sh: (command, opts) =>
         on() && this.owns(run.id, opts.cwd) ? this.sh(run.id, command, opts) : host.sh(command, opts),
@@ -150,14 +153,35 @@ export class Remote {
     return inside(cwd, dir) || inside(realpath(cwd), realpath(dir));
   }
 
-  private engine(local: AgentEngine, kind: 'claude' | 'codex', runId: string, boxRun: boolean): AgentEngine {
-    const account: EngineAccount = local.account;
+  private accountsOf(kind: AccountKind): Account[] {
+    return this.opts.accounts?.(kind) ?? [];
+  }
+
+  /** The pool's account a box step named, or the implicit `box` one. */
+  private boxAccountOf(kind: AccountKind, name: string): Account {
+    return boxAccounts(this.accountsOf(kind)).find((a) => a.name === name) ?? implicitBoxAccount(kind);
+  }
+
+  private engine(
+    getLocal: () => AgentEngine,
+    kind: 'claude' | 'codex',
+    name: string,
+    runId: string,
+    boxRun: boolean,
+  ): AgentEngine {
+    // The local engine is only needed for what does not run in a box (the implicit `box` account has none).
+    let cached: AgentEngine | undefined;
+    const local = (): AgentEngine => {
+      cached ??= getLocal();
+      return cached;
+    };
+    const account: EngineAccount = { name, kind, command: kind, args: [], env: {} };
     const open = async (opts: SessionOptions, resumeId: string | null): Promise<AgentSession> => {
       const { ws, cwd } = await this.workspace(runId, opts.cwd);
       await this.upToDate(ws);
       await ws.push();
       await ws.ensureCli(kind);
-      const engine = this.boxEngine(ws, kind, account.name);
+      const engine = this.boxEngine(ws, kind, this.boxAccountOf(kind, name));
       const boxOpts: SessionOptions = {
         ...opts,
         cwd,
@@ -177,9 +201,9 @@ export class Remote {
     return {
       kind,
       account,
-      probe: () => local.probe(),
-      start: (opts) => (this.owns(runId, opts.cwd) ? open(opts, null) : local.start(opts)),
-      resume: (id, opts) => (this.owns(runId, opts.cwd) ? open(opts, id) : local.resume(id, opts)),
+      probe: () => local().probe(),
+      start: (opts) => (this.owns(runId, opts.cwd) ? open(opts, null) : local().start(opts)),
+      resume: (id, opts) => (this.owns(runId, opts.cwd) ? open(opts, id) : local().resume(id, opts)),
     };
   }
 
@@ -257,8 +281,15 @@ export class Remote {
   }
 
   /** An engine whose processes run in `ws`'s box, on the CLI installed there. */
-  private boxEngine(ws: Workspace, kind: 'claude' | 'codex', name: string): AgentEngine {
-    const account: EngineAccount = { name, kind, command: kind, args: [], env: {} };
+  private boxEngine(ws: Workspace, kind: 'claude' | 'codex', picked: Account): AgentEngine {
+    const account: EngineAccount = {
+      name: picked.name,
+      kind,
+      command: kind,
+      args: [],
+      // The login travels in this env only (read now, at the start of the step); it is never logged.
+      env: boxEnv(picked),
+    };
     const spawn = (command: string, args: readonly string[], o: { cwd: string; env: Record<string, string> }) =>
       new RemoteChild((io) => ws.start([command, ...args], { cwd: o.cwd, env: o.env, ...io }));
     return kind === 'claude'

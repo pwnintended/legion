@@ -1,15 +1,21 @@
 import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { gunzipSync, gzipSync } from 'node:zlib';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { type Account, AccountPool, boxEnv } from '../accounts/index.ts';
 import type { RemoteConfig } from '../config.ts';
 import { FakeEngine } from '../engine/fake/index.ts';
 import { type AgentEvent, permissionProfile } from '../engine/types.ts';
 import { type FixtureRepo, makeRepo, writeFiles } from '../git/test-helpers.ts';
 import type { RunHost } from '../workflow/host.ts';
+import { Journal } from '../workflow/journal.ts';
+import { agent, executeInRun } from '../workflow/runtime.ts';
 import { runShell } from '../workflow/shell.ts';
+import { exec } from './box.ts';
 import { readImage } from './image.ts';
 import { boxName, type Need, Remote, runLabel } from './remote.ts';
 import { type LocalBox, LocalBoxes } from './testing.ts';
+import { LAUNCHER } from './workspace.ts';
 
 const RUN = '20261029-0007-ab12';
 
@@ -192,6 +198,281 @@ describe('remote mode', () => {
   });
 });
 
+describe('accounts in boxes', () => {
+  const SECRET = 'sk-ant-oat01-SECRET-SENTINEL';
+  const acct = (over: Partial<Account>): Account => ({
+    kind: 'claude',
+    name: 'work',
+    dir: null,
+    token: null,
+    env: {},
+    remote: true,
+    enabled: true,
+    source: 'config',
+    ...over,
+  });
+  let logs: string[];
+  let picked: { kind: string; req: unknown }[];
+
+  function withAccounts(list: Account[]): RunHost {
+    logs = [];
+    picked = [];
+    const log = {
+      info: (m: string) => logs.push(m),
+      warn: (m: string) => logs.push(m),
+      error: (m: string) => logs.push(m),
+    };
+    const r = new Remote({
+      repo: repo.path,
+      worktreeRoot: root,
+      config: () => config,
+      enabled: () => enabled,
+      provider: () => boxes,
+      accounts: (kind) => list.filter((a) => a.kind === kind),
+      log,
+    });
+    return r.host(
+      {
+        ...base,
+        account: (kind: string, req: unknown) => {
+          picked.push({ kind, req });
+          const a = list.find((x) => x.kind === kind && x.enabled && x.remote);
+          return a ? { account: a } : { exhausted: true, earliestReset: null };
+        },
+      } as unknown as RunHost,
+      { id: RUN, workflow: 'test' },
+    );
+  }
+
+  async function runClaude(h: RunHost, account: string, box: LocalBox): Promise<void> {
+    installFakeClaude(box);
+    const session = await h.engine('claude', account).start({
+      cwd: wt,
+      prompt: 'go',
+      permission: permissionProfile('workspace_write', { approvals: 'ask' }),
+    });
+    for await (const event of session.events) if (event.type === 'turn_complete') break;
+    await session.close();
+  }
+
+  it("starts a Claude token account's box session with its token, which no log shows", async () => {
+    const tokenFile = join(repo.scratch, 'oauth-token');
+    writeFileSync(tokenFile, `${SECRET}\n`);
+    const h = withAccounts([acct({ token: { file: tokenFile } })]);
+    const box = (await boxes.open(boxName(RUN, wt), ['legion', runLabel(RUN)], null)).box;
+
+    const got = h.account('claude', { what: 's', where: 'box' });
+    expect(got).toMatchObject({ account: { name: 'work' } });
+    await runClaude(h, 'work', box);
+
+    expect(read(join(box.home, 'seen-token'))).toBe(SECRET);
+    expect(logs.join('\n')).not.toContain(SECRET);
+    expect(JSON.stringify(box.started.map((a) => a))).not.toContain(SECRET);
+  });
+
+  it('uses the implicit `box` account, with no auth env, when no account can go to a box', async () => {
+    const h = withAccounts([acct({ remote: false })]);
+    const box = (await boxes.open(boxName(RUN, wt), ['legion', runLabel(RUN)], null)).box;
+
+    await runClaude(h, 'box', box);
+
+    expect(read(join(box.home, 'seen-token'))).toBe('none');
+    expect(host.engine('claude', 'box').account.name).toBe('box');
+  });
+
+  it('leaves steps outside boxes to the pool', () => {
+    const h = withAccounts([acct({ remote: false })]);
+    h.account('claude', { what: 's', where: 'local' });
+    expect(picked).toHaveLength(1);
+  });
+
+  it("passes a Codex remote account's auth.json and name, never its local home", () => {
+    const dir = join(repo.scratch, 'codex-p');
+    mkdirSync(dir);
+    writeFileSync(join(dir, 'auth.json'), '{"tokens":"X"}');
+    const env = boxEnv(acct({ kind: 'codex', name: 'personal', dir }));
+
+    expect(env.LEGION_CODEX_ACCOUNT).toBe('personal');
+    expect(gunzipSync(Buffer.from(env.CODEX_AUTH_GZIP_B64 as string, 'base64')).toString()).toBe('{"tokens":"X"}');
+    expect(env.CODEX_HOME).toBeUndefined();
+    expect(() => boxEnv(acct({ kind: 'codex', name: '../x', dir }))).toThrow(/cannot be used in a box/);
+  });
+
+  describe('workflow steps through Remote', () => {
+    const TOKEN = 'sk-ant-oat01-FLOW-SENTINEL';
+    const AUTH = 'AUTH-JSON-SENTINEL';
+    let jdir: string;
+    let events: unknown[];
+    let clock: number;
+    let pool: AccountPool;
+    let h: RunHost;
+    let list: Account[];
+    let box: LocalBox;
+
+    async function setup(accounts: Account[]): Promise<void> {
+      list = accounts;
+      jdir = join(repo.scratch, 'journal');
+      mkdirSync(jdir, { recursive: true });
+      events = [];
+      clock = 1_000_000;
+      pool = new AccountPool({
+        file: join(repo.scratch, 'pool.json'),
+        accounts: (kind) => list.filter((a) => a.kind === kind),
+        now: () => clock,
+      });
+      const r = new Remote({
+        repo: repo.path,
+        worktreeRoot: root,
+        config: () => config,
+        enabled: () => enabled,
+        provider: () => boxes,
+        accounts: (kind) => list.filter((a) => a.kind === kind),
+        log: {
+          info: (m: string) => events.push(m),
+          warn: (m: string) => events.push(m),
+          error: (m: string) => events.push(m),
+        },
+      });
+      h = r.host(
+        {
+          ...base,
+          maxAgents: 2,
+          approvals: 'ask',
+          emit: (e: unknown) => events.push(e),
+          account: (kind: 'claude' | 'codex', req: Parameters<AccountPool['acquire']>[1]) => pool.acquire(kind, req),
+          cooldown: (kind: 'claude' | 'codex', name: string, until: number, reason: string) =>
+            pool.cooldown(kind, name, until, reason),
+        } as unknown as RunHost,
+        { id: RUN, workflow: 'test' },
+      );
+      box = (await boxes.open(boxName(RUN, wt), ['legion', runLabel(RUN)], null)).box;
+      installFakeClaude(box);
+    }
+
+    const step = (key: string, extra: Record<string, unknown> = {}) =>
+      executeInRun({ runId: 'r1', host: h, journal: new Journal(jdir), signal: new AbortController().signal }, () =>
+        agent(key, { prompt: 'go', cwd: wt, ...extra }),
+      );
+    const argvLog = (): string[][] =>
+      read(join(box.home, 'claude-argv.log'))
+        .trim()
+        .split('\n')
+        .map((l) => JSON.parse(l));
+    const everything = () => JSON.stringify(events) + read(join(jdir, 'journal.jsonl'));
+    const tokenAccount = (name: string): Account => {
+      const file = join(repo.scratch, `${name}-token`);
+      writeFileSync(file, `${TOKEN}-${name}\n`);
+      return acct({ name, token: { file } });
+    };
+
+    it('journals the account and place, never the token, and resumes only on the same account in the box', async () => {
+      await setup([tokenAccount('work'), tokenAccount('other')]);
+
+      await step('a');
+      const meta = new Journal(jdir).get('a')?.meta as Record<string, unknown>;
+      expect(meta).toMatchObject({ engine: 'claude', account: 'work', where: 'box' });
+      expect(read(join(box.home, 'seen-token'))).toBe(`${TOKEN}-work`);
+      expect(everything()).not.toContain(TOKEN);
+      const id = String(meta.sessionId);
+      const seed = (key: string, over: Record<string, unknown>) =>
+        new Journal(jdir).append({
+          key,
+          kind: 'agent',
+          status: 'started',
+          ts: 1,
+          meta: { sessionId: id, engine: 'claude', account: 'work', where: 'box', ...over },
+        });
+
+      seed('same', {});
+      await step('same');
+      const last = () => argvLog().at(-1) as string[];
+      expect(last()).toContain('--resume');
+      expect(last()).toContain(id);
+
+      seed('moved-account', { account: 'gone' });
+      await step('moved-account');
+      expect(last()).not.toContain('--resume');
+
+      seed('moved-place', { where: 'local' });
+      await step('moved-place');
+      expect(last()).not.toContain('--resume');
+      expect(everything()).not.toContain(TOKEN);
+    });
+
+    it('starts a Codex remote account with its auth.json in a per-account home, and journals none of it', async () => {
+      const dir = join(repo.scratch, 'codex-home');
+      mkdirSync(dir);
+      writeFileSync(join(dir, 'auth.json'), AUTH);
+      await setup([acct({ kind: 'codex', name: 'personal', dir })]);
+      const bin = join(box.home, '.legion', 'cli', 'bin', 'codex');
+      writeFileSync(
+        bin,
+        `#!/usr/bin/env node
+const fs = require('node:fs');
+const home = process.env.CODEX_HOME;
+fs.writeFileSync(process.env.HOME + '/codex-seen', JSON.stringify({ home, auth: fs.readFileSync(home + '/auth.json', 'utf8'), b64: process.env.CODEX_AUTH_GZIP_B64 || null, name: process.env.LEGION_CODEX_ACCOUNT || null }));
+process.exit(1);
+`,
+      );
+      chmodSync(bin, 0o755);
+
+      await step('c', { engine: 'codex' }).catch(() => undefined);
+
+      const seen = JSON.parse(read(join(box.home, 'codex-seen')));
+      expect(seen).toEqual({ home: `${box.home}/.legion/codex-home/personal`, auth: AUTH, b64: null, name: null });
+      expect(everything()).not.toContain(AUTH);
+      expect(everything()).not.toContain(gzipSync(AUTH).toString('base64'));
+    }, 30_000);
+
+    it('treats the implicit `box` account like any other: a limited one is not picked again until it recovers', async () => {
+      await setup([acct({ remote: false })]);
+      const ask = () => h.account('claude', { what: 's', where: 'box' });
+
+      expect(ask()).toMatchObject({ account: { name: 'box' } });
+      h.cooldown('claude', 'box', clock + 60_000, 'usage limit');
+      expect(ask()).toEqual({ exhausted: true, earliestReset: clock + 60_000 });
+      expect(h.account('claude', { what: 's', where: 'box', prefer: 'box' })).toMatchObject({ exhausted: true });
+      clock += 61_000;
+      expect(ask()).toMatchObject({ account: { name: 'box' } });
+      expect(h.account('claude', { what: 's', where: 'box', avoid: ['box'] })).toMatchObject({ exhausted: true });
+    });
+  });
+
+  describe('the launcher', () => {
+    const launch = async (env: Record<string, string>, script: string) => {
+      const box = (await boxes.open('launcher-box', ['legion'], null)).box;
+      const r = await exec(box, ['bash', '-c', LAUNCHER, 'legion', repo.path, 'sh', '-c', script], { env });
+      return { box, r };
+    };
+    const payload = (text: string) => gzipSync(text).toString('base64');
+
+    it('gives each account its own CODEX_HOME, seeded once, and unsets the variables', async () => {
+      const show = [
+        'echo "$CODEX_HOME"',
+        'cat "$CODEX_HOME/auth.json"',
+        'echo "[$CODEX_AUTH_GZIP_B64$LEGION_CODEX_ACCOUNT]"',
+      ].join('; ');
+      const a = await launch({ CODEX_AUTH_GZIP_B64: payload('A'), LEGION_CODEX_ACCOUNT: 'acc-1' }, show);
+      expect(a.r.stdout).toBe(`${a.box.home}/.legion/codex-home/acc-1\nA[]\n`);
+      const b = await launch({ CODEX_AUTH_GZIP_B64: payload('B'), LEGION_CODEX_ACCOUNT: 'acc-2' }, show);
+      expect(b.r.stdout).toContain('/codex-home/acc-2\nB[]');
+      // Seeded once: the CLI's refreshed file is not overwritten.
+      const again = await launch({ CODEX_AUTH_GZIP_B64: payload('NEW'), LEGION_CODEX_ACCOUNT: 'acc-1' }, show);
+      expect(again.r.stdout).toContain('acc-1\nA[]');
+    });
+
+    it('keeps the box-wide home without an account, and refuses a bad name', async () => {
+      const plain = await launch({}, 'echo "$CODEX_HOME"');
+      expect(plain.r.stdout).toBe(`${plain.box.home}/.legion/codex-home\n`);
+      const bad = await launch({ LEGION_CODEX_ACCOUNT: '../evil' }, 'echo ran');
+      expect(bad.r.code).toBe(2);
+      expect(bad.r.stdout).toBe('');
+      const dots = await launch({ LEGION_CODEX_ACCOUNT: '..' }, 'echo ran');
+      expect(dots.r.code).toBe(2);
+    });
+  });
+});
+
 describe('the box image', () => {
   const BOX_RUN = '20261029-0100-box1';
   let boxWt: string;
@@ -272,6 +553,8 @@ process.stdin.on('data', () => {
   if (started) return;
   started = true;
   fs.writeFileSync('agent.txt', 'from the box\\n');
+  fs.appendFileSync(process.env.HOME + '/claude-argv.log', JSON.stringify(process.argv.slice(2)) + '\\n');
+  fs.writeFileSync(process.env.HOME + '/seen-token', process.env.CLAUDE_CODE_OAUTH_TOKEN || 'none');
   require('node:child_process').execFileSync('legion-need', ['ffmpeg 7', 'capture videos']);
   for (const line of lines) if (line.dir === 'out') process.stdout.write(JSON.stringify(line.msg) + '\\n');
 });

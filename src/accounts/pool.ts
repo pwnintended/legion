@@ -3,6 +3,7 @@
  * be seen by all); each read-modify-write holds a lock file and replaces the file atomically.
  */
 import { readFileSync, renameSync, writeFileSync } from 'node:fs';
+import { implicitBoxAccount } from './box.ts';
 import type { Account, AccountKind } from './index.ts';
 import { acquireLock } from './lock.ts';
 
@@ -45,7 +46,9 @@ export class AccountPool {
     kind: AccountKind,
     req: { what: string; prefer?: string | null; avoid?: readonly string[]; where?: 'local' | 'box' },
   ): { account: Account } | { exhausted: true; earliestReset: number | null } {
-    const list = this.accounts(kind).filter((a) => a.enabled && (req.where !== 'box' || a.remote));
+    let list = this.accounts(kind).filter((a) => a.enabled && (req.where !== 'box' || a.remote));
+    // No account can go to a box: the box's own login is one implicit account, with cooldowns like any other.
+    if (req.where === 'box' && list.length === 0) list = [implicitBoxAccount(kind)];
     return this.update((state) => {
       const now = this.now();
       const avoid = new Set(req.avoid ?? []);
