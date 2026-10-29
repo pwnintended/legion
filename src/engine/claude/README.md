@@ -14,7 +14,7 @@ the control-protocol shapes follow the published `@anthropic-ai/claude-agent-sdk
 - `session.ts`: one process = one `AgentSession`: stdin open for the session's lifetime, delta coalescing, interrupt/close escalation
 - `engine.ts`: `ClaudeEngine(profile)`: binary resolution, `probe()` (`--version` + `auth status --json` under the profile env, so `CLAUDE_CONFIG_DIR` picks the account), `start`/`resume`
 - `testing.ts`: test-only: `FakeChild`, fixture replay, recording spawn, profile/schema helpers
-- `fixtures/*.jsonl`: sanitized live transcripts (`{dir: in/out/exit}` lines), replayed by the unit tests
+- `fixtures/*.jsonl`: sanitized live transcripts (plus a hand-written subagent fixture) (`{dir: in/out/exit}` lines), replayed by the unit tests
 
 ## Behaviour callers rely on
 
@@ -48,7 +48,7 @@ the control-protocol shapes follow the published `@anthropic-ai/claude-agent-sdk
 - **interrupt()**: `interrupt` control request → wait 5 s for the turn to end → SIGINT → wait 5 s → kill. The
   transcript stays resumable with `resume(session.id)`.
 - **close()**: end stdin; idle sessions get 2 s to exit, busy ones are SIGTERMed at once; SIGKILL after 3 s.
-- The internal `StructuredOutput` tool is hidden. Subagent text is dropped; subagent tool calls are kept.
+- The main agent’s internal `StructuredOutput` tool is hidden. Task/Agent calls emit `subagent_started`; child activity travels in `subagent_event` envelopes. Foreground results emit `subagent_done`; background agents wait for terminal `system/task_notification` events. Child todo tools never modify the parent todo list.
 - Unknown message types are logged once and ignored; unsupported CLI → host control requests are declined.
 
 Live tests: `claude.live.test.ts` (haiku, ~$0.25 per run), gated on `LEGION_LIVE=1` and excluded from the default

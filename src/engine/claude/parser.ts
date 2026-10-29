@@ -3,7 +3,7 @@
  *
  * One parser per session. It is stateful only in what the protocol requires: tool_use ids → names (to
  * pair results, derive file changes and hide the internal `StructuredOutput` tool), the Task* todo list,
- * and whether an interrupt was requested. Control-protocol frames are returned as `ParserOutput`s for the
+ * tool ownership and subagent lifecycles, per-agent streaming blocks, and whether an interrupt was requested. Control-protocol frames are returned as `ParserOutput`s for the
  * session to act on; everything else becomes `AgentEvent`s.
  */
 import { isAbsolute, relative } from 'node:path';
@@ -113,6 +113,36 @@ interface StreamingBlock {
 export class ClaudeStreamParser {
   private readonly tools = new Map<string, { name: string; input: unknown }>();
   private block: StreamingBlock | null = null;
+  private readonly subagentBlocks = new Map<string, StreamingBlock | null>();
+  private readonly toolOwners = new Map<string, string>();
+  private readonly subagents = new Map<string, { background: boolean }>();
+
+  private route(owner: string | null, outputs: ParserOutput[]): ParserOutput[] {
+    if (!owner) return outputs;
+    return outputs.map((output) => {
+      if (output.kind !== 'event') return output;
+      const event = output.event;
+      switch (event.type) {
+        case 'text_delta':
+        case 'message':
+        case 'reasoning':
+        case 'activity':
+        case 'tool_call':
+        case 'tool_result':
+        case 'file_change':
+        case 'todo':
+          return ev({ type: 'subagent_event', id: owner, event });
+        default:
+          return output;
+      }
+    });
+  }
+
+  private finishSubagent(id: string, ok: boolean, result: string | null): ParserOutput[] {
+    if (!this.subagents.delete(id)) return [];
+    this.subagentBlocks.delete(id);
+    return [ev({ type: 'subagent_done', id, ok, result })];
+  }
   private readonly tasks = new Map<string, TodoItem>();
   private interruptRequested = false;
   private startedSessionId: string | null = null;
@@ -182,6 +212,17 @@ export class ClaudeStreamParser {
           ev({ type: 'session_started', sessionId, model: str(msg.model), version: str(msg.claude_code_version) }),
         ];
       }
+      case 'task_notification': {
+        const notification = isObj(msg.task_notification) ? msg.task_notification : msg;
+        const id = str(notification.tool_use_id);
+        const status = str(notification.status);
+        if (!id || !status || !['completed', 'failed', 'stopped'].includes(status)) return [];
+        return this.finishSubagent(
+          id,
+          status === 'completed',
+          str(notification.summary) ?? str(notification.output) ?? str(notification.result),
+        );
+      }
       case 'api_retry': {
         const status = num(msg.error_status);
         const detail = typeof msg.error === 'string' ? msg.error : status !== null ? `HTTP ${status}` : 'connection';
@@ -200,9 +241,19 @@ export class ClaudeStreamParser {
   }
 
   private streamEvent(msg: Obj): ParserOutput[] {
-    if (msg.parent_tool_use_id) return [];
+    const owner = str(msg.parent_tool_use_id);
+    if (!owner) return this.mainStreamEvent(msg);
+    const mainBlock = this.block;
+    this.block = this.subagentBlocks.get(owner) ?? null;
+    const out = this.mainStreamEvent(msg, false);
+    this.subagentBlocks.set(owner, this.block);
+    this.block = mainBlock;
+    return this.route(owner, out);
+  }
+
+  private mainStreamEvent(msg: Obj, main = true): ParserOutput[] {
     const event = isObj(msg.event) ? msg.event : null;
-    if (event?.type === 'content_block_start') return this.blockStart(event);
+    if (event?.type === 'content_block_start') return this.blockStart(event, main);
     if (event?.type === 'content_block_stop') {
       this.block = null;
       return [];
@@ -221,7 +272,7 @@ export class ClaudeStreamParser {
     return [this.activityEvent(this.block)];
   }
 
-  private blockStart(event: Obj): ParserOutput[] {
+  private blockStart(event: Obj, main: boolean): ParserOutput[] {
     const block = isObj(event.content_block) ? event.content_block : null;
     this.block = null;
     if (block?.type === 'thinking' || block?.type === 'redacted_thinking') {
@@ -229,7 +280,7 @@ export class ClaudeStreamParser {
     } else if (block?.type === 'tool_use') {
       const name = str(block.name) ?? 'unknown';
       this.block =
-        name === STRUCTURED_OUTPUT_TOOL
+        main && name === STRUCTURED_OUTPUT_TOOL
           ? { activity: 'output', tool: null, chars: 0, reported: 0 }
           : { activity: 'tool_input', tool: name, chars: 0, reported: 0 };
     }
@@ -242,30 +293,46 @@ export class ClaudeStreamParser {
 
   private assistant(msg: Obj): ParserOutput[] {
     const message = isObj(msg.message) ? msg.message : {};
-    const main = !msg.parent_tool_use_id;
+    const owner = str(msg.parent_tool_use_id);
     const out: ParserOutput[] = [];
     for (const block of arr(message.content)) {
       if (!isObj(block)) continue;
-      if (block.type === 'text' && main) {
+      if (block.type === 'text') {
         const text = str(block.text);
         if (text) out.push(ev({ type: 'message', text }));
-      } else if (block.type === 'thinking' && main) {
+      } else if (block.type === 'thinking') {
         const text = str(block.thinking);
         if (text) out.push(ev({ type: 'reasoning', text }));
       } else if (block.type === 'tool_use') {
-        out.push(...this.toolUse(block));
+        out.push(...this.toolUse(block, owner));
       }
     }
-    return out;
+    return this.route(owner, out);
   }
 
-  private toolUse(block: Obj): ParserOutput[] {
+  private toolUse(block: Obj, owner: string | null): ParserOutput[] {
     const id = str(block.id) ?? '';
     const name = str(block.name) ?? 'unknown';
     const input = block.input ?? {};
     this.tools.set(id, { name, input });
-    if (name === STRUCTURED_OUTPUT_TOOL) return [];
+    if (owner) this.toolOwners.set(id, owner);
+    if (!owner && name === STRUCTURED_OUTPUT_TOOL) return [];
     const out: ParserOutput[] = [ev({ type: 'tool_call', id, name, input, kind: classifyTool(name) })];
+    if (name === 'Task' || name === 'Agent') {
+      const details = isObj(input) ? input : {};
+      this.subagents.set(id, { background: details.run_in_background === true });
+      out.push(
+        ev({
+          type: 'subagent_started',
+          id,
+          parent: owner,
+          agentType: str(details.subagent_type),
+          description: str(details.description),
+          prompt: str(details.prompt),
+        }),
+      );
+    }
+    if (owner) return out;
     if (name === 'TodoWrite' && isObj(input)) {
       const items = arr(input.todos).flatMap((todo) => {
         if (!isObj(todo)) return [];
@@ -296,11 +363,17 @@ export class ClaudeStreamParser {
     for (const block of results) {
       const id = str(block.tool_use_id) ?? '';
       const tool = this.tools.get(id);
-      if (tool?.name === STRUCTURED_OUTPUT_TOOL) continue;
+      const owner = this.toolOwners.get(id) ?? str(msg.parent_tool_use_id);
+      if (!owner && tool?.name === STRUCTURED_OUTPUT_TOOL) continue;
       const ok = block.is_error !== true;
-      out.push(ev({ type: 'tool_result', id, ok, output: toolOutput(block.content) }));
+      out.push(...this.route(owner, [ev({ type: 'tool_result', id, ok, output: toolOutput(block.content) })]));
       // `tool_use_result` (the tool's structured output) belongs to the message's single tool_result.
-      if (ok && tool && results.length === 1) out.push(...this.toolSideEffects(tool, msg.tool_use_result));
+      if (ok && tool && results.length === 1 && (!owner || EDIT_TOOLS.has(tool.name))) {
+        out.push(...this.route(owner, this.toolSideEffects(tool, msg.tool_use_result)));
+      }
+      if (this.subagents.get(id)?.background === false) {
+        out.push(...this.finishSubagent(id, ok, toolOutput(block.content)));
+      }
     }
     return out;
   }
