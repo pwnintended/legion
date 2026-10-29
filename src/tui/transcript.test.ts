@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { AgentEvent } from '../engine/types.ts';
+import { UiStore } from './store.ts';
 import { TRANSCRIPT_ITEMS, Transcript, transcriptFromJournal } from './transcript.ts';
 
 const complete: AgentEvent = { type: 'turn_complete', structuredOutput: null, isError: false, reason: null };
@@ -111,4 +112,29 @@ describe('Transcript', () => {
     ]);
     expect(transcriptFromJournal(text, 'missing').items).toEqual([]);
   });
+});
+
+it('replays a failed step child completion with trailing tools just like the live store', () => {
+  const store = new UiStore();
+  const owner = { kind: 'step', runId: 'run', key: 'step' } as const;
+  const ref = { kind: 'sub', owner, id: 'child' } as const;
+  const events: AgentEvent[] = [
+    { type: 'subagent_started', id: 'child', parent: null, agentType: null, description: null, prompt: null },
+    { type: 'subagent_event', id: 'child', event: call },
+    { type: 'subagent_event', id: 'child', event: { type: 'tool_result', id: 'a', ok: false, output: 'denied' } },
+    { type: 'subagent_done', id: 'other', ok: false, result: 'unrelated' },
+    { type: 'subagent_done', id: 'child', ok: false, result: 'failed' },
+  ];
+  for (const event of events) store.subagentEvent(owner, event);
+  const live = store.transcriptOf(ref);
+  if (!live) throw new Error('Missing live transcript');
+  const replay = transcriptFromJournal(events.map(journal).join('\n'), 'child');
+  expect(contents(replay)).toEqual([
+    { type: 'error', text: 'Turn failed: failed' },
+    { type: 'tools', calls: [{ tool: 'Read', line: 'Read x.ts', ok: false, error: 'denied' }], files: [] },
+  ]);
+  expect(replay.items).toEqual(live.items);
+  expect(replay.streaming).toBe(live.streaming);
+  expect(replay.activity).toBeNull();
+  expect(replay.activity).toBe(live.activity);
 });

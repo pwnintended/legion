@@ -148,3 +148,42 @@ it('feeds steps independently and bounds transcript storage', () => {
   expect(store.transcriptOf({ kind: 'step', runId: 'r', key: '0' })).toBeNull();
   expect(store.transcriptOf({ kind: 'step', runId: 'r', key: '69' })).not.toBeNull();
 });
+
+it.each([true, false])('merges Codex metadata with discovery first: %s', (discoveryFirst) => {
+  const store = new UiStore();
+  const owner = { kind: 'orchestrator' } as const;
+  const ref = { kind: 'sub', owner, id: 'child' } as const;
+  const discovery = {
+    type: 'subagent_started',
+    id: 'child',
+    parent: null,
+    agentType: null,
+    description: null,
+    prompt: null,
+  } as const;
+  const spawn = { ...discovery, parent: 'root', agentType: 'explorer', description: 'Inspect files' };
+  store.subagentEvent(owner, discoveryFirst ? discovery : spawn);
+  store.subagentEvent(owner, {
+    type: 'subagent_event',
+    id: 'child',
+    event: { type: 'message', text: 'Working' },
+  });
+  store.subagentEvent(owner, {
+    type: 'subagent_event',
+    id: 'child',
+    event: { type: 'tool_call', id: 'tool', name: 'Read', input: { file_path: 'x.ts' }, kind: 'read' },
+  });
+  const before = store.get().subagents[0];
+  const transcript = store.transcriptOf(ref);
+  store.subagentEvent(owner, discoveryFirst ? spawn : discovery);
+  expect(store.get().subagents).toEqual([
+    { ...before, parent: 'root', agentType: 'explorer', description: 'Inspect files' },
+  ]);
+  expect(store.transcriptOf(ref)).toBe(transcript);
+  expect(transcript?.items).toEqual([{ id: 1, type: 'assistant', text: 'Working' }]);
+  store.subagentEvent(owner, { type: 'subagent_done', id: 'child', ok: false, result: 'failed' });
+  const finished = store.get().subagents[0];
+  store.subagentEvent(owner, { ...spawn, description: 'Updated description' });
+  expect(store.get().subagents).toEqual([{ ...finished, description: 'Updated description' }]);
+  expect(store.transcriptOf(ref)).toBe(transcript);
+});

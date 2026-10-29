@@ -154,12 +154,26 @@ export function transcriptFromJournal(text: string, subagent?: string): Transcri
     try {
       const record = JSON.parse(line);
       if (!record || typeof record.ts !== 'number') continue;
-      const event =
+      let event =
         subagent === undefined
           ? record.event
           : record.event?.type === 'subagent_event' && record.event.id === subagent
             ? record.event.event
             : null;
+      if (
+        subagent !== undefined &&
+        record.event?.type === 'subagent_done' &&
+        record.event.id === subagent &&
+        typeof record.event.ok === 'boolean' &&
+        (record.event.result === null || typeof record.event.result === 'string')
+      ) {
+        event = {
+          type: 'turn_complete',
+          isError: !record.event.ok,
+          reason: record.event.ok ? null : record.event.result,
+          structuredOutput: null,
+        };
+      }
       if (displayEvent(event)) transcript.push(event);
     } catch {
       // A torn final line or an invalid record does not prevent replaying the rest.

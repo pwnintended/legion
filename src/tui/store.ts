@@ -369,7 +369,24 @@ export class UiStore {
     const matches = (s: SubagentView) => agentKey(s.owner) === agentKey(owner) && s.id === event.id;
     const who = owner.kind === 'orchestrator' ? 'orchestrator' : owner.kind === 'lead' ? owner.name : owner.key;
     if (event.type === 'subagent_started') {
-      if (this.state.subagents.some(matches)) return;
+      if (this.state.subagents.some(matches)) {
+        this.update(
+          {
+            subagents: this.state.subagents.map((s) =>
+              matches(s)
+                ? {
+                    ...s,
+                    parent: event.parent ?? s.parent,
+                    agentType: event.agentType ?? s.agentType,
+                    description: event.description ?? s.description,
+                  }
+                : s,
+            ),
+          },
+          false,
+        );
+        return;
+      }
       const sub: SubagentView = {
         owner,
         id: event.id,
