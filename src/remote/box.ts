@@ -2,7 +2,7 @@
  * The little Legion needs from a remote machine: start a process (stdin, streamed output, signals, exit code) and
  * move files in and out. `UpstashBoxes` provides it over the Upstash Box SDK; tests use a local fake.
  */
-import { Box, BoxError } from '@upstash/box';
+import { Box, BoxError, EphemeralBox } from '@upstash/box';
 import type { RemoteConfig } from '../config.ts';
 
 export interface RemoteProcess {
@@ -137,11 +137,13 @@ export class UpstashBoxes implements BoxProvider {
       name,
       labels: [...labels],
       size: settings.size,
+      ttl: settings.ttlHours * 3600,
       enableTelemetry: false,
     };
+    // Ephemeral: Upstash deletes it after the TTL even when Legion never does.
     const box = from
-      ? await Box.fromSnapshot(from, config)
-      : await Box.create({ ...config, runtime: settings.runtime });
+      ? await EphemeralBox.fromSnapshot(from, config)
+      : await EphemeralBox.create({ ...config, runtime: settings.runtime });
     return { box: wrap(box), created: true };
   }
 
@@ -165,7 +167,7 @@ export class UpstashBoxes implements BoxProvider {
   }
 }
 
-function wrap(box: Box): RemoteBox {
+function wrap(box: Box | EphemeralBox): RemoteBox {
   return {
     id: box.id,
     async start(argv, opts) {

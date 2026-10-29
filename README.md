@@ -184,6 +184,7 @@ clone    = "/workspace/home/repo"      # where that image's warm clone is: it be
 prelude  = "source tools/box/env.sh"   # run before every command in a box, in the worktree root
 setup    = ["pnpm install --offline"]  # run once in each new box
 size     = "medium"                    # small | medium | large: 2, 4 or 8 CPUs
+ttlHours = 24                         # Upstash deletes a box after this, even one Legion left behind (max 72)
 runtime  = "node"                      # a fresh box's image, without a snapshot
 ```
 
@@ -198,6 +199,10 @@ runtime  = "node"                      # a fresh box's image, without a snapshot
   refreshed tokens there. Legion never reads or passes them.
 - **The CLIs:** a box without `claude` or `codex` gets it installed with npm on first use. A snapshot that already
   has them starts faster.
+- **Boxes never outlive their TTL.** Legion deletes a run's boxes when it ends (done, failed or cancelled). An
+  interrupted run keeps them for a resume, and a crash leaves them, but every box is ephemeral: Upstash deletes it
+  `ttlHours` after it was made, whatever happens to Legion. Keep it above your longest runs: a run still going
+  when its boxes expire fails its next remote step (a resume gets new boxes).
 - **Sessions resume within their box.** A step resumed after its box is gone (the run ended, or the box expired)
   starts a new session.
 - **MCP servers** on this machine's loopback (`http://127.0.0.1:…`) are out of a box's reach and left out. Stdio

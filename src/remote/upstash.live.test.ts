@@ -29,7 +29,7 @@ describe.skipIf(!LIVE)('Upstash Boxes (live)', () => {
     const user = loadConfig(process.cwd()).remote;
     const key = process.env.UPSTASH_BOX_API_KEY || user.apiKey;
     if (!key) throw new Error('no Upstash Box API key (UPSTASH_BOX_API_KEY or [remote] apiKey in the user config)');
-    const config: RemoteConfig = { enabled: true, size: 'small', runtime: 'node', setup: [] };
+    const config: RemoteConfig = { enabled: true, size: 'small', ttlHours: 1, runtime: 'node', setup: [] };
     repo = await makeRepo({ 'a.txt': 'a\n', '.gitignore': 'target/\n' });
     const root = join(repo.scratch, 'worktrees');
     wt = join(root, RUN, 'task');

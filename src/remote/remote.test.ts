@@ -33,7 +33,7 @@ beforeEach(async () => {
   await repo.git('worktree', 'add', '-q', '-b', 'task', wt);
   boxes = new LocalBoxes(join(repo.scratch, 'boxes'), [root]);
   enabled = true;
-  config = { enabled: true, size: 'medium', runtime: 'node', setup: [] };
+  config = { enabled: true, size: 'medium', ttlHours: 24, runtime: 'node', setup: [] };
   needs = [];
   notes = [];
   remote = new Remote({

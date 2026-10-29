@@ -161,6 +161,11 @@ const RemoteSchema = z.object({
   /** Where the snapshot's warm clone of this repository is: it becomes the box's worktree, build caches included. */
   clone: z.string().min(1).optional(),
   size: z.enum(['small', 'medium', 'large']).default('medium'),
+  /**
+   * Hours until Upstash deletes a box by itself (at most 72), so boxes are never left behind: by a run that was
+   * interrupted and never resumed, or a crash. Legion deletes a run's boxes when it ends, well before that.
+   */
+  ttlHours: z.number().int().min(1).max(72).default(24),
   /** Runtime of a fresh box (no snapshot). */
   runtime: z
     .enum(['node', 'python', 'golang', 'ruby', 'rust', 'node-alpine', 'python-alpine', 'golang-alpine', 'ruby-alpine'])
@@ -229,7 +234,7 @@ export const ConfigSchema = z.object({
       maxLeads: z.number().int().min(1).max(64).default(12),
     })
     .default({ maxDepth: 3, maxLeads: 12, gates: 'ask' }),
-  remote: RemoteSchema.default({ enabled: false, size: 'medium', runtime: 'node', setup: [] }),
+  remote: RemoteSchema.default({ enabled: false, size: 'medium', ttlHours: 24, runtime: 'node', setup: [] }),
 });
 
 export type Config = z.infer<typeof ConfigSchema>;
@@ -412,6 +417,7 @@ export function defaultProjectConfig(config: Config): string {
     '# clone    = "/workspace/home/repo"    # where that warm clone is in the snapshot',
     '# prelude  = "source tools/box/env.sh" # before every command in a box (PATH and the like)',
     '# size     = "medium"                  # small | medium | large: 2, 4 or 8 CPUs',
+    '# ttlHours = 24                        # Upstash deletes a box after this, even one Legion left behind (max 72)',
     '',
     "# MCP servers for workflow agents and leads (they do not load your own CLI's), e.g.:",
     '#',

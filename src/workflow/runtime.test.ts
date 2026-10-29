@@ -128,6 +128,10 @@ describe('runtime', () => {
     expect(host.engines.get('claude')?.calls ?? []).toHaveLength(0);
     expect(host.engines.get('codex')?.calls).toHaveLength(1);
     expect(new Journal(dir).get('a')?.meta).toMatchObject({ engine: 'codex' });
+    // Shown on it from the start, not on the one the code names.
+    expect(host.events).toContainEqual(
+      expect.objectContaining({ type: 'step', key: 'a', status: 'started', engine: 'codex' }),
+    );
   });
 
   it('replays finished steps from the journal on resume', async () => {

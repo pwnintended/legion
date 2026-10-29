@@ -97,13 +97,14 @@ async function memo<T>(
   key: string,
   label: string | undefined,
   fn: (full: string, previous: JournalEntry | undefined) => Promise<{ output: T; meta?: Record<string, unknown> }>,
-  tags: { engine?: EngineKind } = {},
+  tagsOf: (full: string) => { engine?: EngineKind } = () => ({}),
 ): Promise<T> {
   const scope = current();
   const { run } = scope;
   checkCancelled(run);
   const full = claim(scope, key);
   const shown = label ?? full;
+  const tags = tagsOf(full);
   const previous = run.journal.get(full);
   if (previous?.status === 'done') {
     run.host.emit({ type: 'step', runId: run.runId, key: full, kind, status: 'cached', label: shown, ...tags });
@@ -207,18 +208,24 @@ export function agent<S extends z.ZodType | undefined = undefined>(
 ): Promise<AgentResult<S>> {
   const scope = current();
   const { run } = scope;
+  const code = {
+    engine: opts.engine ?? 'claude',
+    tier: opts.tier ?? null,
+    model: opts.model ?? null,
+    effort: opts.effort ?? null,
+  };
+  // The user's settings and the provider pick the engine, so the step shows the one it runs on.
+  let picked: { full: string; chosen: ReturnType<NonNullable<RunHost['agentModel']>> } | null = null;
+  const choose = (full: string) => {
+    if (picked?.full !== full) picked = { full, chosen: run.host.agentModel?.({ key, step: full, ...code }) ?? code };
+    return picked.chosen;
+  };
   return memo(
     'agent',
     key,
     opts.label,
     async (full, previous) => {
-      const code = {
-        engine: opts.engine ?? 'claude',
-        tier: opts.tier ?? null,
-        model: opts.model ?? null,
-        effort: opts.effort ?? null,
-      };
-      const chosen = run.host.agentModel?.({ key, step: full, ...code }) ?? code;
+      const chosen = choose(full);
       const kind: EngineKind = chosen.engine ?? code.engine;
       const engine = run.host.engine(kind);
       const sessionOpts: SessionOptions = {
@@ -304,7 +311,7 @@ export function agent<S extends z.ZodType | undefined = undefined>(
         release();
       }
     },
-    { engine: opts.engine ?? 'claude' },
+    (full) => ({ engine: choose(full).engine ?? code.engine }),
   );
 }
 
