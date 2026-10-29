@@ -67,6 +67,9 @@ export class CodexSession implements AgentSession {
   private readonly child: CodexChild;
   private readonly rpc: JsonRpcPeer;
   private readonly normalizer: CodexNormalizer;
+  private readonly children = new Map<string, CodexNormalizer>();
+  private readonly childMetadata = new Map<string, Extract<AgentEvent, { type: 'subagent_started' }>>();
+  private readonly doneChildren = new Set<string>();
   private readonly approvals = new Map<string, { request: ServerRequest; resolve(result: unknown): void }>();
   private readonly stderrTail: string[] = [];
   private readonly opts: SessionOptions;
@@ -278,8 +281,33 @@ export class CodexSession implements AgentSession {
 
   private onNotification(notification: ServerNotification): void {
     const params = notification.params as { threadId?: unknown } | undefined;
-    // Sub-agent threads stream on the same connection; only our thread drives the session.
-    if (this.threadId && typeof params?.threadId === 'string' && params.threadId !== this.threadId) return;
+    if (notification.method === 'thread/started') {
+      const thread = notification.params.thread;
+      // Older app-servers used a structured source instead of parentThreadId.
+      const source = thread.source as unknown as {
+        subagent?: { thread_spawn?: { parent_thread_id?: string } };
+      };
+      const parent = thread.parentThreadId ?? source?.subagent?.thread_spawn?.parent_thread_id;
+      if (parent && (parent === this.threadId || this.children.has(parent))) {
+        this.routeAgentEvents([
+          {
+            type: 'subagent_started',
+            id: thread.id,
+            parent: parent === this.threadId ? null : parent,
+            agentType: thread.agentRole ?? thread.agentNickname ?? null,
+            description: null,
+            prompt: null,
+          },
+        ]);
+      }
+      return;
+    }
+    if (this.threadId && typeof params?.threadId === 'string' && params.threadId !== this.threadId) {
+      const child = this.children.get(params.threadId);
+      if (!child) return;
+      this.routeAgentEvents(child.handle(notification), params.threadId);
+      return;
+    }
     switch (notification.method) {
       case 'turn/started':
         if (!this.completedTurns.has(notification.params.turn.id)) this.activeTurnId = notification.params.turn.id;
@@ -295,8 +323,64 @@ export class CodexSession implements AgentSession {
       default:
         break;
     }
-    this.emit(this.normalizer.handle(notification));
+    this.routeAgentEvents(this.normalizer.handle(notification));
     if (notification.method === 'turn/completed' && this.activeTurnId === null) this.turnDone.resolve();
+  }
+
+  private routeAgentEvents(events: readonly AgentEvent[], childId?: string): void {
+    for (const event of events) {
+      if (event.type === 'subagent_started') {
+        if (event.id === this.threadId) continue;
+        if (!this.children.has(event.id)) {
+          this.children.set(
+            event.id,
+            new CodexNormalizer({
+              cwd: this.opts.cwd,
+              structuredOutput: false,
+              parent: event.id,
+            }),
+          );
+        }
+        const previous = this.childMetadata.get(event.id);
+        const merged = {
+          ...event,
+          agentType: previous?.agentType ?? event.agentType,
+          description: previous?.description ?? event.description,
+          prompt: previous?.prompt ?? event.prompt,
+        };
+        if (
+          previous &&
+          previous.agentType === merged.agentType &&
+          previous.description === merged.description &&
+          previous.prompt === merged.prompt
+        )
+          continue;
+        // Re-emit enriched metadata without resetting the child's ongoing tool/turn state.
+        this.childMetadata.set(event.id, merged);
+        this.emit([merged]);
+      } else if (event.type === 'subagent_done') {
+        if (!this.children.has(event.id) || this.doneChildren.has(event.id)) continue;
+        this.doneChildren.add(event.id);
+        this.emit([event]);
+      } else if (!childId) {
+        this.emit([event]);
+      } else {
+        switch (event.type) {
+          case 'text_delta':
+          case 'message':
+          case 'reasoning':
+          case 'tool_call':
+          case 'tool_result':
+          case 'file_change':
+          case 'todo':
+            // Wrapped deltas bypass the parent's text buffer.
+            this.events.push({ type: 'subagent_event', id: childId, event });
+            break;
+          default:
+            break;
+        }
+      }
+    }
   }
 
   private onServerRequest(request: ServerRequest): unknown {

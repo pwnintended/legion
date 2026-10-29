@@ -24,6 +24,8 @@ export interface NormalizerOptions {
   cwd: string;
   /** Parse the turn's final agent message as JSON for `turn_complete.structuredOutput`. */
   structuredOutput: boolean;
+  /** Null for the session root; the thread id for a child normalizer. */
+  parent?: string | null;
 }
 
 /** Max characters of command / MCP output kept in `tool_result.output` (the tail). */
@@ -44,6 +46,8 @@ type ToolItem = Extract<
 >;
 
 export class CodexNormalizer {
+  private readonly startedAgents = new Set<string>();
+  private readonly doneAgents = new Set<string>();
   private readonly openCalls = new Set<string>();
   /** Inputs of started items, so approval requests (which only carry an itemId) can show them. */
   private readonly itemInputs = new Map<string, unknown>();
@@ -71,9 +75,9 @@ export class CodexNormalizer {
       case 'item/agentMessage/delta':
         return notification.params.delta ? [{ type: 'text_delta', text: notification.params.delta }] : [];
       case 'item/started':
-        return this.itemStarted(notification.params.item);
+        return [...this.agentEvents(notification.params.item), ...this.itemStarted(notification.params.item)];
       case 'item/completed':
-        return this.itemCompleted(notification.params.item);
+        return [...this.agentEvents(notification.params.item), ...this.itemCompleted(notification.params.item)];
       case 'turn/plan/updated':
         return [
           {
@@ -181,6 +185,40 @@ export class CodexNormalizer {
       default:
         return null;
     }
+  }
+
+  private agentEvents(item: ThreadItem): AgentEvent[] {
+    const events: AgentEvent[] = [];
+    if (item.type === 'collabAgentToolCall') {
+      if (item.tool === 'spawnAgent') {
+        for (const id of item.receiverThreadIds) {
+          if (this.startedAgents.has(id)) continue;
+          this.startedAgents.add(id);
+          events.push({
+            type: 'subagent_started',
+            id,
+            parent: this.options.parent ?? null,
+            agentType: item.model ?? null,
+            description: item.prompt,
+            prompt: item.prompt,
+          });
+        }
+      }
+      for (const [id, state] of Object.entries(item.agentsStates)) {
+        if (state && state.status !== 'running' && state.status !== 'pendingInit') {
+          events.push(...this.agentDone(id, state.status === 'completed', state.message));
+        }
+      }
+    } else if (item.type === 'subAgentActivity' && (item.kind === 'completed' || item.kind === 'interrupted')) {
+      events.push(...this.agentDone(item.agentThreadId, item.kind === 'completed', null));
+    }
+    return events;
+  }
+
+  private agentDone(id: string, ok: boolean, result: string | null): AgentEvent[] {
+    if (this.doneAgents.has(id)) return [];
+    this.doneAgents.add(id);
+    return [{ type: 'subagent_done', id, ok, result }];
   }
 
   private itemStarted(item: ThreadItem): AgentEvent[] {

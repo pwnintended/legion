@@ -345,3 +345,140 @@ describe('CodexSession (synthetic transcripts)', () => {
     expect(stream.events.at(-1)?.type).toBe('exited');
   });
 });
+
+it('routes child threads without affecting parent structured output or turns', async () => {
+  const notify = (method: string, params: unknown) => ({ dir: 'in', msg: { method, params } });
+  const item = {
+    type: 'collabAgentToolCall',
+    id: 'spawn',
+    tool: 'spawnAgent',
+    status: 'completed',
+    senderThreadId: 't1',
+    receiverThreadIds: ['child'],
+    prompt: 'inspect',
+    model: 'small',
+    agentsStates: { child: { status: 'running', message: null } },
+  };
+  const path = await synthetic('children', [
+    ...handshake(),
+    notify('item/completed', { threadId: 't1', item }),
+    notify('thread/started', { thread: { id: 'child', parentThreadId: 't1', agentRole: 'worker' } }),
+    notify('thread/started', {
+      thread: {
+        id: 'nested',
+        source: { subagent: { thread_spawn: { parent_thread_id: 'child' } } },
+        agentNickname: 'helper',
+      },
+    }),
+    notify('item/agentMessage/delta', { threadId: 't1', delta: 'parent' }),
+    notify('item/agentMessage/delta', { threadId: 'child', delta: 'child text' }),
+    notify('item/completed', { threadId: 'child', item: { type: 'agentMessage', id: 'c', text: 'child text' } }),
+    notify('item/completed', {
+      threadId: 'nested',
+      item: { type: 'reasoning', id: 'r', summary: ['thinking'], content: [] },
+    }),
+    notify('item/agentMessage/delta', { threadId: 'unknown', delta: 'ignored' }),
+    completed('child', 'child-turn'),
+    notify('item/completed', {
+      threadId: 't1',
+      item: { ...item, agentsStates: { child: { status: 'completed', message: 'done' } } },
+    }),
+    notify('item/completed', {
+      threadId: 't1',
+      item: { type: 'subAgentActivity', id: 'a', agentThreadId: 'child', kind: 'completed' },
+    }),
+    notify('item/completed', {
+      threadId: 't1',
+      item: { type: 'agentMessage', id: 'p', text: '{"ok":true}', phase: 'final_answer' },
+    }),
+    completed(),
+  ]);
+  const { session, stream } = await open(path, { outputSchema: { type: 'object' } });
+  expect(await stream.next('turn_complete')).toMatchObject({ isError: false, structuredOutput: { ok: true } });
+  await session.close();
+  await stream.done;
+  expect(stream.events.filter((e) => e.type === 'turn_complete')).toHaveLength(1);
+  expect(stream.events.filter((e) => e.type === 'subagent_started')).toHaveLength(2);
+  expect(stream.events).toContainEqual(
+    expect.objectContaining({ type: 'subagent_started', id: 'nested', parent: 'child', agentType: 'helper' }),
+  );
+  expect(stream.events).toContainEqual({
+    type: 'subagent_event',
+    id: 'child',
+    event: { type: 'text_delta', text: 'child text' },
+  });
+  expect(stream.events).toContainEqual({
+    type: 'subagent_event',
+    id: 'nested',
+    event: { type: 'reasoning', text: 'thinking' },
+  });
+  expect(stream.events.filter((e) => e.type === 'subagent_done')).toEqual([
+    { type: 'subagent_done', id: 'child', ok: true, result: 'done' },
+  ]);
+  expect(stream.events.filter((e) => e.type === 'text_delta')).toEqual([{ type: 'text_delta', text: 'parent' }]);
+});
+
+it.each(['discovery-first', 'spawn-first'])('enriches child metadata: %s', async (order) => {
+  const notify = (method: string, params: unknown) => ({ dir: 'in', msg: { method, params } });
+  const discovery = notify('thread/started', {
+    thread: { id: 'child', parentThreadId: 't1', agentRole: 'worker' },
+  });
+  const spawn = notify('item/completed', {
+    threadId: 't1',
+    item: {
+      type: 'collabAgentToolCall',
+      id: 'spawn',
+      tool: 'spawnAgent',
+      status: 'completed',
+      senderThreadId: 't1',
+      receiverThreadIds: ['child'],
+      model: null,
+      prompt: 'Inspect the code',
+      agentsStates: {},
+    },
+  });
+  const command = {
+    type: 'commandExecution',
+    id: 'cmd',
+    command: 'pwd',
+    commandActions: [],
+    cwd: dir,
+    status: 'inProgress',
+    aggregatedOutput: null,
+    exitCode: null,
+  };
+  const [first, second] = order === 'discovery-first' ? [discovery, spawn] : [spawn, discovery];
+  const path = await synthetic(order, [
+    ...handshake(),
+    first,
+    notify('item/started', { threadId: 'child', item: command }),
+    second,
+    second,
+    notify('item/completed', {
+      threadId: 'child',
+      item: { ...command, status: 'completed', exitCode: 0 },
+    }),
+    completed(),
+  ]);
+  const { session, stream } = await open(path);
+  await stream.next('turn_complete');
+  await session.close();
+  await stream.done;
+  const metadata = stream.events.filter((e) => e.type === 'subagent_started');
+  expect(metadata).toHaveLength(2);
+  expect(metadata.at(-1)).toEqual({
+    type: 'subagent_started',
+    id: 'child',
+    parent: null,
+    agentType: 'worker',
+    description: 'Inspect the code',
+    prompt: 'Inspect the code',
+  });
+  // Enriching metadata preserves the normalizer's open tool call.
+  expect(stream.events.filter((e) => e.type === 'subagent_event' && e.event.type === 'tool_call')).toHaveLength(1);
+  expect(stream.events).toContainEqual({
+    type: 'subagent_event',
+    id: 'child',
+    event: { type: 'tool_result', id: 'cmd', ok: true, output: 'exit 0' },
+  });
+});

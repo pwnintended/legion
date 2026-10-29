@@ -89,7 +89,8 @@ as a warning). A human takeover via `codex resume <threadId>` must use `CODEX_HO
   `tool_call` kind `command`. Paths inside cwd are relative.
 - `turn_complete.structuredOutput` = the turn's final agent message parsed as JSON when the session has an
   `outputSchema`; unparsable → `error{retryable:true}` + `turn_complete{isError:true}`.
-- Notifications from other threads (sub-agents) are ignored.
+- Known child threads use separate normalizers and emit subagent lifecycle events and wrapped output.
+  Child turns, usage, errors and structured output never drive the parent session; unknown threads are ignored.
 - `send(text)` steers the active turn (`next`), or interrupts it first (`now`); when idle it starts a new turn.
 
 ## Protocol drift 0.160.0 → 0.164.0

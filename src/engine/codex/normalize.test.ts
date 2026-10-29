@@ -404,3 +404,45 @@ describe('helpers', () => {
     expect(displayCommand("/bin/zsh -lc 'cd a && ls'", [])).toBe('cd a && ls');
   });
 });
+
+describe('subagents', () => {
+  it('keeps spawn tools and emits lifecycle once, including failed states', () => {
+    const normalizer = new CodexNormalizer({ cwd: '/', structuredOutput: false, parent: 'child' });
+    const item = {
+      type: 'collabAgentToolCall',
+      id: 'spawn',
+      tool: 'spawnAgent',
+      status: 'completed',
+      senderThreadId: 'child',
+      receiverThreadIds: ['grandchild'],
+      prompt: 'inspect',
+      model: 'small',
+      agentsStates: { grandchild: { status: 'running', message: null } },
+    };
+    const started = normalizer.handle(n('item/started', { item }));
+    expect(started).toContainEqual({
+      type: 'subagent_started',
+      id: 'grandchild',
+      parent: 'child',
+      agentType: 'small',
+      description: 'inspect',
+      prompt: 'inspect',
+    });
+    expect(started).toContainEqual(expect.objectContaining({ type: 'tool_call', name: 'agent_spawnAgent' }));
+    const finished = normalizer.handle(
+      n('item/completed', {
+        item: { ...item, agentsStates: { grandchild: { status: 'errored', message: 'failed' } } },
+      }),
+    );
+    expect(finished).toContainEqual({ type: 'subagent_done', id: 'grandchild', ok: false, result: 'failed' });
+    expect(finished).toContainEqual(expect.objectContaining({ type: 'tool_result' }));
+    expect(finished.filter((e) => e.type === 'subagent_started')).toEqual([]);
+    expect(
+      normalizer.handle(
+        n('item/completed', {
+          item: { type: 'subAgentActivity', id: 'activity', agentThreadId: 'grandchild', kind: 'completed' },
+        }),
+      ),
+    ).toEqual([]);
+  });
+});
