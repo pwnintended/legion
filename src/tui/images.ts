@@ -59,11 +59,14 @@ const MAX_SIDE = 1600;
 
 /**
  * The image as PNG bytes small enough to send: PNGs as they are, anything else (or a huge PNG) converted and
- * scaled down with macOS `sips`. Null when that is not possible (the link still shows).
+ * scaled down with macOS `sips`. `scale`: a PNG goes through `sips` too, so no side is over 1600 px. Null when that
+ * is not possible (the link still shows).
  */
-export async function loadPng(path: string): Promise<Buffer | null> {
+export async function loadPng(path: string, opts: { scale?: boolean } = {}): Promise<Buffer | null> {
   try {
-    if (extname(path).toLowerCase() === '.png' && statSync(path).size <= MAX_PNG_BYTES) return readFileSync(path);
+    if (!opts.scale && extname(path).toLowerCase() === '.png' && statSync(path).size <= MAX_PNG_BYTES) {
+      return readFileSync(path);
+    }
   } catch {
     return null;
   }
@@ -108,6 +111,45 @@ export function imageSequence(protocol: ImageProtocol, png: Buffer, cells: { col
       return `${ESC}_G${head};${chunk}${ESC}\\`;
     })
     .join('');
+}
+
+/**
+ * Kitty images that Ink can lay out: the image is sent once and placed virtually (`U=1`); it shows wherever its
+ * placeholder cells are drawn (U+10EEEE, the image id in the foreground colour, the row and column in diacritics).
+ * The cells are ordinary text, so they move, clip and redraw with the frame. Kitty and Ghostty draw them.
+ */
+const PLACEHOLDER = String.fromCodePoint(0x10eeee);
+// The first of the kitty protocol's row/column diacritics (rowcolumn-diacritics.txt): row or column 0, 1, 2, ….
+const DIACRITICS = [
+  0x0305, 0x030d, 0x030e, 0x0310, 0x0312, 0x033d, 0x033e, 0x033f, 0x0346, 0x034a, 0x034b, 0x034c, 0x0350, 0x0351,
+  0x0352, 0x0357,
+].map((c) => String.fromCodePoint(c));
+/** The tallest a placed image can be, in rows. */
+export const MAX_PLACED_ROWS = DIACRITICS.length;
+
+/** Sends `png` as kitty image `id` and places it virtually, `cells` big. Quiet: the terminal does not reply. */
+export function kittyPlace(id: number, png: Buffer, cells: { columns: number; rows: number }): string {
+  const data = png.toString('base64');
+  const chunks: string[] = [];
+  for (let i = 0; i < data.length; i += 4096) chunks.push(data.slice(i, i + 4096));
+  const send = chunks.map((chunk, i) => {
+    const more = i < chunks.length - 1 ? 1 : 0;
+    return `${ESC}_G${i === 0 ? `a=t,f=100,i=${id},q=2,` : ''}m=${more};${chunk}${ESC}\\`;
+  });
+  return `${send.join('')}${ESC}_Ga=p,U=1,i=${id},c=${cells.columns},r=${Math.min(cells.rows, MAX_PLACED_ROWS)},q=2${ESC}\\`;
+}
+
+/** The text that shows image `id` (placed with {@link kittyPlace}): one string per row. `id` < 2^24. */
+export function kittyPlaceholder(id: number, cells: { columns: number; rows: number }): string[] {
+  const colour = `${ESC}[38;2;${(id >> 16) & 255};${(id >> 8) & 255};${id & 255}m`;
+  const rows: string[] = [];
+  for (let r = 0; r < Math.min(cells.rows, MAX_PLACED_ROWS); r++) {
+    // The first cell says its row and column; the rest of the row follows on from it.
+    rows.push(
+      `${colour}${PLACEHOLDER}${DIACRITICS[r]}${DIACRITICS[0]}${PLACEHOLDER.repeat(cells.columns - 1)}${ESC}[39m`,
+    );
+  }
+  return rows;
 }
 
 /** A clickable link (OSC 8); terminals without them show the text. */

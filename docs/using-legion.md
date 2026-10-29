@@ -44,6 +44,13 @@ legion eject feature           # copy a builtin into .legion/workflows to edit i
   `/activity [n]` prints the last n feed lines in full, tool calls included.
 - **Shift+Enter** inserts a newline in terminals that speak the kitty keyboard protocol (Ghostty, kitty, WezTerm,
   iTerm2 with CSI u reporting). Elsewhere, end the line with `\` and press Enter, or use Alt+Enter.
+- **Images.** **Ctrl+V** attaches the image on the clipboard (a screenshot: Cmd+Ctrl+Shift+4 on macOS); pasting
+  or dropping image files onto the prompt attaches them too. They show as thumbnails above the prompt (drawn in
+  terminals with kitty graphics, Ghostty and kitty; a link to the file elsewhere), and **Backspace** on an empty
+  prompt takes the last one off. They go with your next message, to the assistant or the lead you are talking to,
+  as images both engines see. Each is kept as a PNG in `.legion/session/attachments/` (scaled down to at most
+  1600 px, with `sips` on macOS), and the message names that path so the assistant can hand it on. Reading the
+  clipboard needs `osascript` (macOS) or `wl-paste`/`xclip` (Linux). `LEGION_IMAGES=off` turns the thumbnails off.
 - Type `/` for the command menu: ↑↓ picks, Tab completes, Enter runs. `/help` lists everything.
 - `/workflows` opens the workflow browser. Enter opens a workflow: its description, its input fields, and its
   agent steps, which a dry run finds along with their engines. There you set the **tier** (`hard`, `medium`,

@@ -11,7 +11,7 @@ import type { QuestionAnswers, UserQuestion } from '../engine/types.ts';
 import type { Presentation } from '../team/team.ts';
 import { ConfigMenu } from './config-menu.tsx';
 import { COMMANDS, type Controller } from './controller.ts';
-import { hyperlink, linkTarget } from './images.ts';
+import { hyperlink, imageProtocol, linkTarget } from './images.ts';
 import { PromptInput } from './input.tsx';
 import { Markdown } from './markdown.tsx';
 import { splash, splashSize } from './splash.ts';
@@ -32,6 +32,7 @@ import {
 } from './store.ts';
 import type { TerminalModes } from './terminal.ts';
 import { BUSY_FRAMES, color, engineColor, formatDuration, glyph, SPINNER, theme, tildify } from './theme.ts';
+import { Thumbnails } from './thumbnails.tsx';
 import { WorkflowsMenu } from './workflows-menu.tsx';
 
 type Mode = 'hotkeys' | 'note' | 'chat';
@@ -39,7 +40,16 @@ type Mode = 'hotkeys' | 'note' | 'chat';
 /** Conversation items kept in the view; older ones scroll out of reach (`/activity` and the journal keep the rest). */
 const ITEMS_SHOWN = 500;
 
-export function App({ controller, terminal }: { controller: Controller; terminal?: TerminalModes }) {
+export function App({
+  controller,
+  terminal,
+  kitty = imageProtocol() === 'kitty',
+}: {
+  controller: Controller;
+  terminal?: TerminalModes;
+  /** Draw images (kitty graphics); otherwise they show as links. */
+  kitty?: boolean;
+}) {
   const { store } = controller;
   const state = useSyncExternalStore(store.subscribe, store.get);
   const app = useApp();
@@ -52,6 +62,8 @@ export function App({ controller, terminal }: { controller: Controller; terminal
   const [collected, setCollected] = useState<QuestionAnswers>({});
   const [picked, setPicked] = useState<number[]>([]);
   const [armedExit, setArmedExit] = useState(false);
+  // A word in the status bar for a moment (no image on the clipboard).
+  const [notice, setNotice] = useState<string | null>(null);
   // Which of the welcome card's starters Tab fills in next.
   const starter = useRef(0);
   // The keyboard shortcuts, over the prompt (`?` on an empty prompt).
@@ -107,6 +119,12 @@ export function App({ controller, terminal }: { controller: Controller; terminal
     const timer = setInterval(() => setFrame((f) => f + 1), 100);
     return () => clearInterval(timer);
   }, [animating]);
+
+  useEffect(() => {
+    if (!notice) return;
+    const timer = setTimeout(() => setNotice(null), 3000);
+    return () => clearTimeout(timer);
+  }, [notice]);
 
   useEffect(() => {
     if (!armedExit) return;
@@ -202,7 +220,7 @@ export function App({ controller, terminal }: { controller: Controller; terminal
       >
         <Box ref={content} flexDirection="column" flexShrink={0}>
           {state.items.slice(-ITEMS_SHOWN).map((item) => (
-            <ItemView key={item.id} item={item} width={width} showTools={state.showTools} />
+            <ItemView key={item.id} item={item} width={width} showTools={state.showTools} kitty={kitty} />
           ))}
           {state.streaming ? (
             <Bullet mark={glyph.assistant} markColor="white" marginTop={1}>
@@ -237,10 +255,15 @@ export function App({ controller, terminal }: { controller: Controller; terminal
           />
         ) : null}
         {shortcuts && !head && !state.menu ? <Shortcuts width={width} /> : null}
+        {state.attachments.length > 0 && !state.menu ? (
+          <Box marginTop={1} paddingX={1}>
+            <Thumbnails attachments={state.attachments} kitty={kitty} />
+          </Box>
+        ) : null}
         <Box
           display={state.menu ? 'none' : 'flex'}
           flexDirection="column"
-          marginTop={head || state.busy || shortcuts ? 0 : 1}
+          marginTop={head || state.busy || shortcuts || state.attachments.length > 0 ? 0 : 1}
         >
           <PromptInput
             prompt={typing ? glyph.ask : state.target === 'orchestrator' ? glyph.user : `${state.target} ${glyph.user}`}
@@ -266,6 +289,17 @@ export function App({ controller, terminal }: { controller: Controller; terminal
               return true;
             }}
             onChange={() => setShortcuts(false)}
+            // Images go with messages, not with answers to a question.
+            onPasteImage={
+              typing
+                ? undefined
+                : () =>
+                    void controller.pasteImage().then((ok) => {
+                      if (!ok) setNotice('No image on the clipboard (copy a screenshot, then Ctrl+V)');
+                    })
+            }
+            onPasteFiles={typing ? undefined : (paths) => void controller.attachImages(paths)}
+            onEmptyBackspace={() => controller.detachLast()}
             onEscape={() => {
               if (shortcuts) return setShortcuts(false);
               // Esc declines an agent's questions (it is told the user would not answer).
@@ -296,17 +330,20 @@ export function App({ controller, terminal }: { controller: Controller; terminal
                 : 'workflows'
               : armedExit
                 ? 'Press Ctrl+C again to exit'
-                : shownBack > 0
-                  ? `↓ ${shownBack} more line${shownBack === 1 ? '' : 's'} below · PgDn, or send to jump back`
-                  : state.busy
-                    ? 'esc to interrupt'
-                    : head && mode === 'chat'
-                      ? 'tab: back to the question'
-                      : welcome
-                        ? 'tab fills in an idea · / for commands · ? for shortcuts'
-                        : '/ for commands · ? for shortcuts'
+                : (notice ??
+                  (shownBack > 0
+                    ? `↓ ${shownBack} more line${shownBack === 1 ? '' : 's'} below · PgDn, or send to jump back`
+                    : state.busy
+                      ? 'esc to interrupt'
+                      : head && mode === 'chat'
+                        ? 'tab: back to the question'
+                        : state.attachments.length > 0
+                          ? 'backspace on an empty prompt takes the last image off'
+                          : welcome
+                            ? 'tab fills in an idea · / for commands · ? for shortcuts'
+                            : '/ for commands · ? for shortcuts'))
           }
-          urgent={armedExit || shownBack > 0}
+          urgent={armedExit || notice !== null || shownBack > 0}
           accounts={state.accounts}
           costUsd={state.costUsd}
           runs={state.runs.length}
@@ -482,6 +519,7 @@ function Shortcuts({ width }: { width: number }) {
       ['ctrl+a/e', 'start/end of line'],
       ['ctrl+w', 'delete a word'],
       ['ctrl+u/k', 'delete to start/end'],
+      ['ctrl+v', 'paste a screenshot'],
     ],
     [
       ['/', 'commands'],
@@ -890,7 +928,17 @@ function TeamPanel({ rows, target, frame }: { rows: TeamRow[]; target: string; f
 }
 
 // Items never change once pushed: only new ones (or a new width) render.
-const ItemView = memo(function ItemView({ item, width, showTools }: { item: Item; width: number; showTools: boolean }) {
+const ItemView = memo(function ItemView({
+  item,
+  width,
+  showTools,
+  kitty,
+}: {
+  item: Item;
+  width: number;
+  showTools: boolean;
+  kitty: boolean;
+}) {
   switch (item.type) {
     case 'tools':
       return <ToolsView item={item} open={showTools} />;
@@ -907,6 +955,7 @@ const ItemView = memo(function ItemView({ item, width, showTools }: { item: Item
           borderBottom={false}
           borderColor={theme.user}
           paddingLeft={1}
+          flexDirection="column"
         >
           <Text>
             {item.to ? <Text dimColor>to {item.to} </Text> : null}
@@ -915,6 +964,7 @@ const ItemView = memo(function ItemView({ item, width, showTools }: { item: Item
             </Text>
             {item.text}
           </Text>
+          {item.images ? <Thumbnails attachments={item.images} kitty={kitty} /> : null}
         </Box>
       );
     case 'assistant':

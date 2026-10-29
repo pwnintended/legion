@@ -12,6 +12,7 @@ import type { Presentation } from '../team/team.ts';
 import type { RunEvent } from '../workflow/host.ts';
 import type { RunRecord, StepKind } from '../workflow/journal.ts';
 import type { PendingInteraction } from '../workflow/manager.ts';
+import type { Attachment } from './attachments.ts';
 import { glyph, type ThemeColor } from './theme.ts';
 
 /** A styled piece of a line in a panel. Colors are theme names (see theme.ts) or Ink colors. */
@@ -37,7 +38,7 @@ export interface Banner {
 export type Item =
   | { id: number; type: 'banner'; banner: Banner }
   /** `to`: the lead the user was talking to (absent: the orchestrator). */
-  | { id: number; type: 'user'; text: string; to?: string }
+  | { id: number; type: 'user'; text: string; to?: string; images?: Attachment[] }
   /** `speaker`: a lead, or the orchestrator while the user talks to a lead (absent: the agent being talked to). */
   | { id: number; type: 'assistant'; text: string; speaker?: string }
   | { id: number; type: 'info'; text: string }
@@ -202,6 +203,8 @@ export interface UiState {
   target: string;
   team: TeamRow[];
   feed: FeedEntry[];
+  /** Images attached to the message being written (Ctrl+V, or files pasted onto the prompt). */
+  attachments: Attachment[];
 }
 
 export class UiStore {
@@ -233,6 +236,7 @@ export class UiStore {
       target: 'orchestrator',
       team: [],
       feed: [],
+      attachments: [],
       ...initial,
     };
   }

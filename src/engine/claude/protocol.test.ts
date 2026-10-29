@@ -1,3 +1,6 @@
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
   askUserAnswerInput,
@@ -5,7 +8,26 @@ import {
   type PendingPermission,
   permissionResponse,
   sessionPermissions,
+  userMessage,
 } from './protocol.ts';
+
+describe('user messages', () => {
+  it('are plain text, or image blocks then the text', () => {
+    expect(userMessage('hi')).toMatchObject({ type: 'user', message: { role: 'user', content: 'hi' } });
+    const dir = mkdtempSync(join(tmpdir(), 'legion-claude-'));
+    try {
+      writeFileSync(join(dir, 'a.png'), 'PNG');
+      const image = { type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'UE5H' } };
+      expect(userMessage('look', 'next', [join(dir, 'a.png')]).message).toEqual({
+        role: 'user',
+        content: [image, { type: 'text', text: 'look' }],
+      });
+      expect(userMessage('', 'next', [join(dir, 'a.png')]).message).toEqual({ role: 'user', content: [image] });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
 
 const pending = (toolName: string, input: unknown, suggestions: PendingPermission['suggestions'] = []) => ({
   requestId: 'r1',

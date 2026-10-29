@@ -43,6 +43,8 @@ export interface FakeCall {
   opts: SessionOptions;
   /** Messages sent into the session: the prompt, then follow-ups. */
   prompts: string[];
+  /** Images sent with each message, in the order of `prompts`. */
+  images: (readonly string[])[];
   /** Answers to the session's questions, in order (null: declined). */
   answers: (QuestionAnswers | null)[];
 }
@@ -94,6 +96,7 @@ export class FakeEngine implements AgentEngine {
       resumed,
       opts,
       prompts: [opts.prompt],
+      images: [opts.images ?? []],
       answers: [],
     };
     this.calls.push(call);
@@ -182,8 +185,9 @@ class FakeSession implements AgentSession {
     this.queue.push({ type: 'turn_complete', structuredOutput: turn.output ?? null, isError: false, reason: null });
   }
 
-  async send(text: string): Promise<void> {
+  async send(text: string, _priority?: 'now' | 'next', images: readonly string[] = []): Promise<void> {
     this.call.prompts.push(text);
+    this.call.images.push(images);
     void this.runTurn();
   }
 

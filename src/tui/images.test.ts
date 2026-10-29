@@ -2,7 +2,15 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { fitCells, imageProtocol, imageSequence, pngSize, renderPresentation } from './images.ts';
+import {
+  fitCells,
+  imageProtocol,
+  imageSequence,
+  kittyPlace,
+  kittyPlaceholder,
+  pngSize,
+  renderPresentation,
+} from './images.ts';
 
 // A 1×1 PNG.
 const PIXEL = Buffer.from(
@@ -48,6 +56,19 @@ describe('images', () => {
     expect(
       iterm.startsWith(`\u001B]1337;File=inline=1;size=${PIXEL.length};width=10;height=5;preserveAspectRatio=1:`),
     ).toBe(true);
+  });
+
+  it('places kitty images virtually and draws them with placeholder cells', () => {
+    const place = kittyPlace(0x4c0102, Buffer.alloc(5000, 1), { columns: 3, rows: 2 });
+    expect(place.startsWith('\u001B_Ga=t,f=100,i=4980994,q=2,m=1;')).toBe(true);
+    expect(place).toContain('\u001B_Gm=0;');
+    expect(place.endsWith('\u001B_Ga=p,U=1,i=4980994,c=3,r=2,q=2\u001B\\')).toBe(true);
+    const P = String.fromCodePoint(0x10eeee);
+    // The id in the colour (0x4c, 0x01, 0x02); row then column in the first cell's diacritics.
+    expect(kittyPlaceholder(0x4c0102, { columns: 3, rows: 2 })).toEqual([
+      `\u001B[38;2;76;1;2m${P}\u0305\u0305${P}${P}\u001B[39m`,
+      `\u001B[38;2;76;1;2m${P}\u030D\u0305${P}${P}\u001B[39m`,
+    ]);
   });
 
   it('renders images inline when it can, and a link to every item', async () => {

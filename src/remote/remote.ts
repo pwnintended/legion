@@ -233,7 +233,7 @@ export class Remote {
           yield event;
         }
       })(),
-      send: (text, priority) => session.send(text, priority),
+      send: (text, priority, images) => session.send(text, priority, images),
       interrupt: () => session.interrupt(),
       respond: (id, decision) => session.respond(id, decision),
       answer: (id, answers) => session.answer(id, answers),

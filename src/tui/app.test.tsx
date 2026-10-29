@@ -509,4 +509,44 @@ describe('App', () => {
     expect(sent).toBe('first line\nsecond line');
     ui.unmount();
   });
+
+  it('attaches pasted image files above the prompt and sends them with the message', async () => {
+    const shot = join(repo.path, 'my shot.png');
+    writeFileSync(
+      shot,
+      Buffer.from(
+        'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==',
+        'base64',
+      ),
+    );
+    const ui = render(<App controller={new Controller(session)} kitty />);
+    await tick();
+    // A dropped file arrives as a bracketed paste of its (escaped) path.
+    ui.stdin.write(`\u001B[200~${shot.replace(/ /g, '\\ ')}\u001B[201~`);
+    await until(() => ui.lastFrame()?.includes('Image #1') ?? false);
+    const kept = join(repo.path, '.legion', 'session', 'attachments', '1.png');
+    expect(readFileSync(kept).length).toBeGreaterThan(0);
+    // Drawn with kitty placeholder cells, and the path did not go into the prompt.
+    expect(ui.lastFrame()).toContain(String.fromCodePoint(0x10eeee));
+    expect(ui.lastFrame()).not.toContain('my\\ shot');
+    expect(ui.lastFrame()).toContain('takes the last image off');
+
+    // Backspace on the empty prompt takes it off; paste it again and send it with a line of text.
+    ui.stdin.write('\u007F');
+    await until(() => !(ui.lastFrame()?.includes('Image #1') ?? true));
+    ui.stdin.write(`\u001B[200~${shot.replace(/ /g, '\\ ')}\u001B[201~`);
+    await until(() => ui.lastFrame()?.includes('Image #2') ?? false);
+    ui.stdin.write('what is wrong here?');
+    await tick();
+    ui.stdin.write('\r');
+    await until(() => ui.lastFrame()?.includes('(fake claude reply)') ?? false);
+    const call = (session.engine('claude') as FakeEngine).calls[0];
+    const second = join(repo.path, '.legion', 'session', 'attachments', '2.png');
+    expect(call?.prompts[0]).toBe(`what is wrong here?\n\n[Image #2: ${second}]`);
+    expect(call?.images[0]).toEqual([second]);
+    // The message shows the text and the image; the prompt has none left.
+    expect(ui.lastFrame()).toContain('› what is wrong here?');
+    expect(ui.lastFrame()?.match(/Image #2/g)).toHaveLength(1);
+    ui.unmount();
+  });
 });

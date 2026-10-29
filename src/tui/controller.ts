@@ -48,6 +48,7 @@ import {
 } from '../workflow/loader.ts';
 import type { PendingInteraction } from '../workflow/manager.ts';
 import { formatReport, validateWorkflow } from '../workflow/validate.ts';
+import { attachmentNote, clipboardImage, saveAttachment } from './attachments.ts';
 import type { HerdrReporter } from './herdr.ts';
 import type { CommandSpec } from './input.tsx';
 import { clock, feedMark, feedTone, type Line, type Seg, type TeamRow, type UiInteraction, UiStore } from './store.ts';
@@ -408,6 +409,8 @@ export class Controller {
   /** Reports Legion's state to Herdr when it runs in a Herdr pane (set by the CLI). */
   herdr: HerdrReporter | null = null;
   private readonly modelCache = new Map<string, Promise<{ models: ModelChoice[]; error: string | null }>>();
+  /** Images attached so far this session (`Image #n`). */
+  private images = 0;
 
   constructor(session: Session) {
     this.session = session;
@@ -473,7 +476,8 @@ export class Controller {
 
   async submit(text: string): Promise<void> {
     const trimmed = text.trim();
-    if (!trimmed) return;
+    const { attachments } = this.store.get();
+    if (!trimmed && attachments.length === 0) return;
     // The welcome has done its job once the user starts: the session gets the whole window.
     this.store.dropBanner();
     if (trimmed.startsWith('/')) {
@@ -481,13 +485,55 @@ export class Controller {
       return;
     }
     const to = this.target;
-    this.store.push({ type: 'user', text: trimmed, ...(to === ROOT ? {} : { to }) });
+    this.store.update({ attachments: [] });
+    this.store.push({
+      type: 'user',
+      text: trimmed,
+      ...(to === ROOT ? {} : { to }),
+      ...(attachments.length > 0 ? { images: attachments } : {}),
+    });
+    // The images go to the engine as images; the note says where each is kept, so it can be handed on.
+    const message =
+      attachments.length > 0 ? [trimmed, attachmentNote(attachments)].filter(Boolean).join('\n\n') : trimmed;
+    const images = attachments.map((a) => a.path);
     try {
-      if (to === ROOT) await this.session.assistant.send(trimmed);
-      else await this.session.team.message('user', to, trimmed);
+      if (to === ROOT) await this.session.assistant.send(message, images);
+      else await this.session.team.message('user', to, message, images);
     } catch (err) {
       this.store.error(err instanceof Error ? err.message : String(err));
     }
+  }
+
+  /** Ctrl+V: the image on the clipboard goes with the next message. False when there is none. */
+  async pasteImage(): Promise<boolean> {
+    const png = await clipboardImage();
+    if (!png) return false;
+    return this.attachImages([png]);
+  }
+
+  /**
+   * Attaches images (PNG bytes, or image files) to the message being written. False when none could be read as an
+   * image.
+   */
+  async attachImages(sources: readonly (Buffer | string)[]): Promise<boolean> {
+    const dir = join(this.session.repo, '.legion', 'session', 'attachments');
+    let any = false;
+    for (const source of sources) {
+      const attachment = await saveAttachment(dir, this.images + 1, source).catch(() => null);
+      if (!attachment) {
+        if (typeof source === 'string') this.store.error(`Could not read ${tildify(source, homedir())} as an image`);
+        continue;
+      }
+      this.images += 1;
+      any = true;
+      this.store.update((s) => ({ attachments: [...s.attachments, attachment] }));
+    }
+    return any;
+  }
+
+  /** Takes the last attached image off the message being written. */
+  detachLast(): void {
+    this.store.update((s) => ({ attachments: s.attachments.slice(0, -1) }));
   }
 
   async interrupt(): Promise<void> {

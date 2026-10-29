@@ -245,13 +245,21 @@ export function threadResumeParams(threadId: string, opts: SessionOptions, sandb
   };
 }
 
-/** A user message: one text input. */
-export function userInput(text: string): UserInput[] {
-  return [{ type: 'text', text, text_elements: [] }];
+/** A user message: the images (local PNG files), then the text. */
+export function userInput(text: string, images: readonly string[] = []): UserInput[] {
+  return [
+    ...images.map((path): UserInput => ({ type: 'localImage', path })),
+    ...(text || images.length === 0 ? [{ type: 'text' as const, text, text_elements: [] }] : []),
+  ];
 }
 
-export function turnStartParams(threadId: string, text: string, opts: SessionOptions): TurnStartParams {
-  const params: TurnStartParams = { threadId, input: userInput(text) };
+export function turnStartParams(
+  threadId: string,
+  text: string,
+  opts: SessionOptions,
+  images: readonly string[] = [],
+): TurnStartParams {
+  const params: TurnStartParams = { threadId, input: userInput(text, images) };
   // Legion's effort scale (low..max) is a subset of Codex's (low..max, ultra).
   if (opts.effort) params.effort = opts.effort;
   if (opts.outputSchema) params.outputSchema = opts.outputSchema as JsonValue;

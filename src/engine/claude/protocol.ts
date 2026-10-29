@@ -3,16 +3,30 @@
  * published `@anthropic-ai/claude-agent-sdk` 0.3.292 (`SDKUserMessage`, `SDKControlRequest`,
  * `control_response` with `PermissionResult`), which drives the same CLI.
  */
+import { readFileSync } from 'node:fs';
 import { hasShellMeta } from '../../util/shell.ts';
 import type { ApprovalDecision, QuestionAnswers, UserQuestion } from '../types.ts';
 
 export type StdinMessage = Record<string, unknown> & { type: string };
 
-/** A user turn. `now` interrupts the running turn and is read immediately; default = next opportunity. */
-export function userMessage(text: string, priority?: 'now' | 'next'): StdinMessage {
+/**
+ * A user turn. `now` interrupts the running turn and is read immediately; default = next opportunity. `images`
+ * (PNG files) go first as base64 image blocks, the text after them.
+ */
+export function userMessage(text: string, priority?: 'now' | 'next', images: readonly string[] = []): StdinMessage {
+  const content =
+    images.length === 0
+      ? text
+      : [
+          ...images.map((path) => ({
+            type: 'image',
+            source: { type: 'base64', media_type: 'image/png', data: readFileSync(path).toString('base64') },
+          })),
+          ...(text ? [{ type: 'text', text }] : []),
+        ];
   return {
     type: 'user',
-    message: { role: 'user', content: text },
+    message: { role: 'user', content },
     parent_tool_use_id: null,
     session_id: '',
     ...(priority === 'now' ? { priority: 'now' } : {}),

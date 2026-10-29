@@ -289,7 +289,8 @@ export class TeamManager extends EventEmitter<TeamEvents> {
   }
 
   /** A message from a parent (or the user) to a lead: queued, delivered when the lead is free. */
-  message(from: string, to: string, text: string): Promise<void> | undefined {
+  /** `images` (PNG files the user attached) go only with the user's own messages. */
+  message(from: string, to: string, text: string, images: readonly string[] = []): Promise<void> | undefined {
     const lead = this.leads.get(to);
     if (!lead) throw new Error(`No lead called ${to}`);
     if (from !== 'user' && lead.record.parent !== from) {
@@ -297,7 +298,7 @@ export class TeamManager extends EventEmitter<TeamEvents> {
     }
     if (from === 'user') {
       // The user is talking to the lead directly: no bundling, no waiting (and it wakes a stopped lead).
-      return this.send(to, `[User] ${text}`);
+      return this.send(to, `[User] ${text}`, images);
     }
     if (lead.record.status === 'stopped') throw new Error(`${to} was stopped`);
     this.enqueue(to, { at: Date.now(), from, kind: 'message', text });
@@ -501,7 +502,7 @@ export class TeamManager extends EventEmitter<TeamEvents> {
     }
   }
 
-  private async send(name: string, text: string): Promise<void> {
+  private async send(name: string, text: string, images: readonly string[] = []): Promise<void> {
     const lead = this.requireLead(name);
     lead.lastActive = Date.now();
     if (lead.record.status === 'idle' || lead.record.status === 'done' || lead.record.status === 'stopped') {
@@ -513,7 +514,7 @@ export class TeamManager extends EventEmitter<TeamEvents> {
     } catch {
       return; // Reported in the feed; the next message tries again.
     }
-    await lead.assistant.send(text);
+    await lead.assistant.send(text, images);
   }
 
   /** Creates a lead's worktree before its session starts in it (and again if its directory went away). */

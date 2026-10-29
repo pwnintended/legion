@@ -164,15 +164,15 @@ export class ClaudeSession implements AgentSession {
   }
 
   /** Writes the first prompt. Called by the engine right after spawning. */
-  begin(prompt: string): void {
+  begin(prompt: string, images?: readonly string[]): void {
     this.busy = true;
     this.unacked += 1;
-    this.write(userMessage(prompt));
+    this.write(userMessage(prompt, undefined, images));
   }
 
-  async send(text: string, priority: 'now' | 'next' = 'next'): Promise<void> {
+  async send(text: string, priority: 'now' | 'next' = 'next', images?: readonly string[]): Promise<void> {
     if (this.exited || this.closing) throw new Error('session is closed');
-    const message = userMessage(text, priority);
+    const message = userMessage(text, priority, images);
     if (priority === 'now' && this.busy) this.parser.noteInterrupt();
     this.busy = true;
     this.unacked += 1;

@@ -99,15 +99,18 @@ export class Assistant extends EventEmitter<AssistantEvents> {
     return [...this.pending.values()];
   }
 
-  /** Sends a user message: starts (or resumes) the session if needed, else queues it into the running one. */
-  async send(text: string): Promise<void> {
+  /**
+   * Sends a user message (with `images`, paths to PNG files): starts (or resumes) the session if needed, else
+   * queues it into the running one.
+   */
+  async send(text: string, images: readonly string[] = []): Promise<void> {
     this.setBusy(true);
     try {
       if (this.session) {
-        await this.session.send(text, 'next');
+        await this.session.send(text, 'next', images);
         return;
       }
-      await this.open(text);
+      await this.open(text, images);
     } catch (err) {
       this.setBusy(false);
       throw err;
@@ -170,10 +173,10 @@ export class Assistant extends EventEmitter<AssistantEvents> {
     return (typeof a === 'function' ? a() : a) ?? 'auto';
   }
 
-  private open(prompt: string): Promise<AgentSession> {
+  private open(prompt: string, images: readonly string[] = []): Promise<AgentSession> {
     if (this.opening) {
       return this.opening.then(async (s) => {
-        await s.send(prompt, 'next');
+        await s.send(prompt, 'next', images);
         return s;
       });
     }
@@ -182,6 +185,7 @@ export class Assistant extends EventEmitter<AssistantEvents> {
     const opts = {
       cwd: this.opts.cwd,
       prompt,
+      images,
       systemPrompt: this.opts.systemPrompt(),
       model: this.opts.model?.() ?? null,
       effort: this.opts.effort?.() ?? null,

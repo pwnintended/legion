@@ -1,9 +1,11 @@
 /**
  * The prompt: a bordered, soft-wrapping input with history, word editing, bracketed paste, and a slash-command
- * menu (type `/`, arrows to pick, Tab to complete, Enter to run).
+ * menu (type `/`, arrows to pick, Tab to complete, Enter to run). Images come in by Ctrl+V (the clipboard) or as
+ * image files pasted or dropped onto it.
  */
 import { Box, Text, useInput, usePaste } from 'ink';
 import { useEffect, useRef, useState } from 'react';
+import { imagePaths } from './attachments.ts';
 import { theme } from './theme.ts';
 
 export interface CommandSpec {
@@ -34,6 +36,15 @@ export interface PromptInputProps {
   onTab?(empty: boolean): void;
   /** The text changed (typed, pasted, cleared). */
   onChange?(value: string): void;
+  /**
+   * Ctrl+V, or a paste with no text in it (what terminals send for an image on the clipboard): look for an image
+   * there. Unset: images are not taken here.
+   */
+  onPasteImage?(): void;
+  /** Image files pasted or dropped onto the prompt (their paths and nothing else), instead of their paths. */
+  onPasteFiles?(paths: string[]): void;
+  /** Backspace with nothing typed (takes the last attached image off). */
+  onEmptyBackspace?(): void;
 }
 
 const MENU_SIZE = 7;
@@ -99,6 +110,9 @@ export function PromptInput(props: PromptInputProps) {
 
   usePaste(
     (text) => {
+      if (props.onPasteImage && !text.trim()) return props.onPasteImage();
+      const files = props.onPasteFiles ? imagePaths(text) : null;
+      if (files) return props.onPasteFiles?.(files);
       const clean = text.replace(/\r\n?/g, '\n');
       set(value.slice(0, cursor) + clean + value.slice(cursor), cursor + clean.length);
     },
@@ -112,6 +126,7 @@ export function PromptInput(props: PromptInputProps) {
         else props.onCtrlC?.();
         return;
       }
+      if (key.ctrl && input === 'v' && props.onPasteImage) return props.onPasteImage();
       if (key.escape) {
         if (value.startsWith('/') && menu.length > 0) set('');
         else props.onEscape?.();
@@ -161,6 +176,7 @@ export function PromptInput(props: PromptInputProps) {
         return set(before + value.slice(cursor), before.length);
       }
       if (key.backspace || key.delete) {
+        if (!value) return props.onEmptyBackspace?.();
         if (cursor === 0) return;
         return set(value.slice(0, cursor - 1) + value.slice(cursor), cursor - 1);
       }
