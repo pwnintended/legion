@@ -111,6 +111,37 @@ describe('ClaudeEngine.start', () => {
   });
 });
 
+describe('ClaudeEngine spawn env', () => {
+  const spawnEnv = async (account: Parameters<typeof claudeAccount>[0], base: Record<string, string>) => {
+    let seen: Record<string, string> = {};
+    const engine = new ClaudeEngine(claudeAccount(account), {
+      baseEnv: { PATH: fakeClaude(), ...base },
+      spawn: (_c, _a, o) => {
+        seen = o.env as Record<string, string>;
+        throw new Error('stop');
+      },
+    });
+    await engine.start({ cwd: dir, prompt: 'p', permission: permissionProfile('workspace_write') }).catch(() => {});
+    return seen;
+  };
+  it('drops an inherited OAuth token for a directory account', async () => {
+    const env = await spawnEnv({ env: { CLAUDE_CONFIG_DIR: '/acc' } }, { CLAUDE_CODE_OAUTH_TOKEN: 'parent' });
+    expect(env.CLAUDE_CONFIG_DIR).toBe('/acc');
+    expect(env.CLAUDE_CODE_OAUTH_TOKEN).toBeUndefined();
+  });
+  it('uses the account token over an inherited one', async () => {
+    const env = await spawnEnv(
+      { env: { CLAUDE_CONFIG_DIR: '/acc', CLAUDE_CODE_OAUTH_TOKEN: 'own' } },
+      { CLAUDE_CODE_OAUTH_TOKEN: 'parent' },
+    );
+    expect(env.CLAUDE_CODE_OAUTH_TOKEN).toBe('own');
+  });
+  it('keeps the inherited token for the implicit account', async () => {
+    const env = await spawnEnv({}, { CLAUDE_CODE_OAUTH_TOKEN: 'parent' });
+    expect(env.CLAUDE_CODE_OAUTH_TOKEN).toBe('parent');
+  });
+});
+
 describe('parsers', () => {
   it('parses versions and auth status', () => {
     expect(parseVersion('2.1.289 (Claude Code)\n')).toBe('2.1.289');

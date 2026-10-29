@@ -171,7 +171,10 @@ export class ClaudeEngine implements AgentEngine {
 
   /** process env → account env → session env, parent Claude Code session variables stripped. */
   private env(session?: Readonly<Record<string, string>>): Record<string, string> {
-    return childEnv(this.baseEnv, this.account.env, session);
+    const account = this.account.env;
+    // An explicit directory account authenticates through its own directory or token, never the shell's token.
+    const own = account.CLAUDE_CONFIG_DIR && !account.CLAUDE_CODE_OAUTH_TOKEN;
+    return childEnv(own ? { ...this.baseEnv, CLAUDE_CODE_OAUTH_TOKEN: undefined } : this.baseEnv, account, session);
   }
 
   private async open(opts: SessionOptions, sessionId: string, resumed: boolean): Promise<ClaudeSession> {

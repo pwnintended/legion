@@ -92,13 +92,13 @@ describe('configured accounts', () => {
     });
     expect(tokenHint(s)).not.toContain('tokenFile =');
   });
-  it('uses the default login for a configured account without dir', () => {
+  it('keeps the inherited CODEX_HOME for a configured account without dir, as the runtime does', () => {
     const s = loginSpec(config, 'codex', 'x', {
       existing: acc({ kind: 'codex', dir: null }),
       processEnv: { CODEX_HOME: '/z' },
     });
     expect(s.dir).toBeNull();
-    expect(s.env.CODEX_HOME).toBeUndefined();
+    expect(s.env.CODEX_HOME).toBe('/z');
   });
 });
 

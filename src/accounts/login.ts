@@ -63,8 +63,8 @@ export function loginSpec(
   delete env.ANTHROPIC_BASE_URL;
   delete env.OPENAI_BASE_URL;
   if (kind === 'claude') {
+    // Without a dir the runtime inherits CLAUDE_CONFIG_DIR, so the login does too.
     if (dir) env.CLAUDE_CONFIG_DIR = dir;
-    else delete env.CLAUDE_CONFIG_DIR;
     // Only a managed directory's oauth-token is discovered; anywhere else the config must name the token source.
     const managed = dir !== null && dir === join(accountsDir(kind, opts.legionHome), name);
     const file = dir ? join(dir, 'oauth-token') : null;
@@ -84,8 +84,8 @@ export function loginSpec(
       tokenTarget: target,
     };
   }
+  // Without a dir the runtime inherits CODEX_HOME, so the login does too.
   if (dir) env.CODEX_HOME = dir;
-  else delete env.CODEX_HOME;
   return { command: config.codex.command ?? 'codex', args: ['login'], env, dir, tokenTarget: null };
 }
 

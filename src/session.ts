@@ -369,13 +369,15 @@ export class Session {
   /** How to launch an account's CLI. The env is built at every spawn, so a token file is read then and only then. */
   engineAccount(account: Account): EngineAccount {
     const section = this._config[account.kind];
+    // Cached engines outlive discovery: resolve the current definition (a token added by /login) at every spawn.
+    const current = () => this.listAccounts(account.kind).find((a) => a.name === account.name) ?? account;
     return {
       name: account.name,
       kind: account.kind,
       command: expandHome(section.command ?? account.kind),
       args: section.args,
       get env() {
-        return accountEnv(account);
+        return accountEnv(current());
       },
     };
   }

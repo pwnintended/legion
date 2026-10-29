@@ -36,3 +36,18 @@ describe('Session.open --continue', () => {
   it('resumes one saved before the account pool (profile = account)', () =>
     resumes({ sessionId: 's-old', profile: 'default', kind: 'claude' }));
 });
+
+describe('Session.engineAccount', () => {
+  it('picks up an oauth-token added to an existing directory account after the engine was cached', async () => {
+    const home = join(repo.path, 'home');
+    const dir = join(home, 'accounts', 'claude', 'work');
+    mkdirSync(dir, { recursive: true });
+    session = await Session.open({ cwd: repo.path, fake: true, legionHome: home });
+    const [account] = session.listAccounts('claude');
+    if (!account) throw new Error('no account discovered');
+    const cached = session.engineAccount(account);
+    expect(cached.env.CLAUDE_CODE_OAUTH_TOKEN).toBeUndefined();
+    writeFileSync(join(dir, 'oauth-token'), 'tok\n');
+    expect(cached.env.CLAUDE_CODE_OAUTH_TOKEN).toBe('tok');
+  });
+});
