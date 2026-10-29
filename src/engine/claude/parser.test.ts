@@ -27,6 +27,36 @@ const of = <T extends AgentEvent['type']>(events: AgentEvent[], type: T) =>
   events.filter((e): e is AgentEventOf<T> => e.type === type);
 
 describe('ClaudeStreamParser (recorded fixtures)', () => {
+  it('isolates a subagent fixture from the parent reply', () => {
+    const events = eventsOf(parseFixture('subagent.jsonl'));
+    expect(of(events, 'subagent_started')).toEqual([
+      {
+        type: 'subagent_started',
+        id: 'agent-1',
+        parent: null,
+        agentType: 'Explore',
+        description: 'Read greeting',
+        prompt: 'Read hello.txt',
+      },
+    ]);
+    expect(of(events, 'subagent_event').map((e) => e.event.type)).toEqual([
+      'activity',
+      'text_delta',
+      'reasoning',
+      'message',
+      'tool_call',
+      'tool_result',
+    ]);
+    expect(of(events, 'subagent_done')).toEqual([
+      { type: 'subagent_done', id: 'agent-1', ok: true, result: 'Found greeting' },
+    ]);
+    expect(of(events, 'message')).toEqual([{ type: 'message', text: 'Parent reply' }]);
+    expect(of(events, 'text_delta')).toEqual([]);
+    expect(of(events, 'turn_complete')).toEqual([
+      { type: 'turn_complete', structuredOutput: null, isError: false, reason: null },
+    ]);
+  });
+
   it('plain answer: session_started, deltas, message, usage, rate limits, turn_complete', () => {
     const events = eventsOf(parseFixture('plain.jsonl'));
     expect(events[0]).toEqual({
@@ -182,7 +212,7 @@ describe('ClaudeStreamParser (synthetic)', () => {
     expect(
       stream({ type: 'content_block_start', content_block: { type: 'tool_use', id: 't2', name: 'Write' } }),
     ).toEqual([{ type: 'activity', activity: 'tool_input', tool: 'Write', chars: 0 }]);
-    // Text blocks and subagent streams stay as they were.
+    // Text starts are silent; child activity is enveloped.
     expect(stream({ type: 'content_block_start', content_block: { type: 'text', text: '' } })).toEqual([]);
     expect(
       events(p, {
@@ -190,7 +220,13 @@ describe('ClaudeStreamParser (synthetic)', () => {
         parent_tool_use_id: 'toolu_x',
         event: { type: 'content_block_start', content_block: { type: 'thinking' } },
       }),
-    ).toEqual([]);
+    ).toEqual([
+      {
+        type: 'subagent_event',
+        id: 'toolu_x',
+        event: { type: 'activity', activity: 'thinking', tool: null, chars: 0 },
+      },
+    ]);
   });
 
   it('sums usage over models and reports cost', () => {
@@ -324,7 +360,7 @@ describe('ClaudeStreamParser (synthetic)', () => {
     expect(out[1]).toEqual({ type: 'file_change', path: 'src/a.ts', added: 2, removed: 1 });
   });
 
-  it('ignores subagent text but keeps its tool calls', () => {
+  it('wraps subagent text and tool calls', () => {
     const out = events(parser(), {
       type: 'assistant',
       parent_tool_use_id: 'task-1',
@@ -335,7 +371,91 @@ describe('ClaudeStreamParser (synthetic)', () => {
         ],
       },
     });
-    expect(out).toEqual([{ type: 'tool_call', id: 's1', name: 'Grep', input: {}, kind: 'read' }]);
+    expect(out).toEqual([
+      { type: 'subagent_event', id: 'task-1', event: { type: 'message', text: 'sub' } },
+      {
+        type: 'subagent_event',
+        id: 'task-1',
+        event: { type: 'tool_call', id: 's1', name: 'Grep', input: {}, kind: 'read' },
+      },
+    ]);
+  });
+
+  it('tracks nested and background agents through completion notifications', () => {
+    const p = parser();
+    const start = (id: string, parent: string | null, background = false) =>
+      events(p, {
+        type: 'assistant',
+        parent_tool_use_id: parent,
+        message: { content: [{ type: 'tool_use', id, name: 'Task', input: { run_in_background: background } }] },
+      });
+    start('outer', null, true);
+    expect(start('inner', 'outer')).toContainEqual({
+      type: 'subagent_started',
+      id: 'inner',
+      parent: 'outer',
+      agentType: null,
+      description: null,
+      prompt: null,
+    });
+    const result = (id: string) =>
+      events(p, {
+        type: 'user',
+        message: { content: [{ type: 'tool_result', tool_use_id: id, is_error: true, content: 'failed' }] },
+      });
+    expect(of(result('inner'), 'subagent_done')).toEqual([
+      { type: 'subagent_done', id: 'inner', ok: false, result: 'failed' },
+    ]);
+    expect(of(result('outer'), 'subagent_done')).toEqual([]);
+    expect(
+      events(p, {
+        type: 'system',
+        subtype: 'task_notification',
+        tool_use_id: 'outer',
+        status: 'failed',
+        summary: 'failed',
+      }),
+    ).toEqual([{ type: 'subagent_done', id: 'outer', ok: false, result: 'failed' }]);
+  });
+
+  it('keeps streaming counts and todo/file side effects isolated', () => {
+    const p = parser();
+    const stream = (parent: string | null, event: unknown) =>
+      events(p, { type: 'stream_event', parent_tool_use_id: parent, event });
+    stream(null, { type: 'content_block_start', content_block: { type: 'thinking' } });
+    stream('child', { type: 'content_block_start', content_block: { type: 'tool_use', name: 'Edit' } });
+    stream('child', { type: 'content_block_stop' });
+    expect(
+      stream(null, { type: 'content_block_delta', delta: { type: 'thinking_delta', thinking: 'x'.repeat(2000) } }),
+    ).toEqual([{ type: 'activity', activity: 'thinking', tool: null, chars: 2000 }]);
+    const call = (id: string, name: string, input: unknown, parent: string | null = null) =>
+      events(p, {
+        type: 'assistant',
+        parent_tool_use_id: parent,
+        message: { content: [{ type: 'tool_use', id, name, input }] },
+      });
+    const result = (id: string, tool_use_result: unknown) =>
+      events(p, {
+        type: 'user',
+        message: { content: [{ type: 'tool_result', tool_use_id: id, content: 'ok' }] },
+        tool_use_result,
+      });
+    call('create', 'TaskCreate', {});
+    result('create', { task: { id: '1', subject: 'Parent' } });
+    expect(call('update', 'TaskUpdate', { taskId: '1', status: 'completed' }, 'child')).toHaveLength(1);
+    call('list', 'TaskList', {}, 'child');
+    expect(result('list', { tasks: [] })).toHaveLength(1);
+    expect(call('parent-update', 'TaskUpdate', { taskId: '1', status: 'in_progress' }).at(-1)).toEqual({
+      type: 'todo',
+      items: [{ text: 'Parent', status: 'in_progress' }],
+    });
+    expect(call('todo', 'TodoWrite', { todos: [] }, 'child')).toHaveLength(1);
+    call('edit', 'Edit', {}, 'child');
+    expect(result('edit', { filePath: `${CWD}/a.ts`, structuredPatch: [{ lines: ['+new'] }] }).at(-1)).toEqual({
+      type: 'subagent_event',
+      id: 'child',
+      event: { type: 'file_change', path: 'a.ts', added: 1, removed: 0 },
+    });
   });
 
   it('truncates long tool output', () => {

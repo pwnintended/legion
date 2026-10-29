@@ -148,6 +148,20 @@ export type AgentEvent =
   | { type: 'tool_result'; id: string; ok: boolean; output: string | null }
   | { type: 'file_change'; path: string; added: number; removed: number }
   | { type: 'todo'; items: TodoItem[] }
+  /** Starts a subagent whose output never appears as the parent's own events. */
+  | {
+      type: 'subagent_started';
+      resumed?: boolean;
+      id: string;
+      parent: string | null;
+      agentType: string | null;
+      description: string | null;
+      prompt: string | null;
+    }
+  /** Wraps subagent output so it never appears as the parent's own events. */
+  | { type: 'subagent_event'; id: string; event: SubagentActivityEvent }
+  /** Ends a subagent whose output never appears as the parent's own events. */
+  | { type: 'subagent_done'; id: string; ok: boolean; result: string | null }
   | { type: 'approval_request'; requestId: string; tool: string; input: unknown; reason: string | null }
   /** The agent asks the user (Claude `AskUserQuestion`, Codex `request_user_input`); answer with `answer()`. */
   | { type: 'question'; requestId: string; questions: UserQuestion[] }
@@ -163,6 +177,12 @@ export type AgentEvent =
   | { type: 'error'; message: string; retryable: boolean }
   /** Always the last event of a session's stream. */
   | { type: 'exited'; code: number | null };
+
+/** Activity belonging to a subagent, isolated from the session's own output and lifecycle. */
+export type SubagentActivityEvent = Extract<
+  AgentEvent,
+  { type: 'text_delta' | 'message' | 'reasoning' | 'activity' | 'tool_call' | 'tool_result' | 'file_change' | 'todo' }
+>;
 
 export type AgentEventType = AgentEvent['type'];
 export type AgentEventOf<T extends AgentEventType> = Extract<AgentEvent, { type: T }>;

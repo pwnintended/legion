@@ -4,7 +4,8 @@
  * gates, answers, errors and the user's own runs finishing. Everything else is the live region: streaming
  * assistant text, the queue of things waiting for the user (gates, questions, tool approvals from the assistant or
  * from workflow agents), and under the prompt the active runs, the team and the activity `feed` (tool calls, lead
- * reports and messages, runs starting, workflow logs).
+ * reports and messages, runs starting, workflow logs). Sub agents have independent bounded transcripts,
+ * and the read-only view holds a snapshot of the selected transcript.
  */
 import type { AssistantApproval, AssistantQuestion } from '../assistant/assistant.ts';
 import type { AgentEvent, UserQuestion } from '../engine/types.ts';
@@ -12,8 +13,10 @@ import type { Presentation } from '../team/team.ts';
 import type { RunEvent } from '../workflow/host.ts';
 import type { RunRecord, StepKind } from '../workflow/journal.ts';
 import type { PendingInteraction } from '../workflow/manager.ts';
+import { type AgentOwner, type AgentRef, agentKey, type SubagentView, subagentLabel } from './agents.ts';
 import type { Attachment } from './attachments.ts';
 import { glyph, type ThemeColor } from './theme.ts';
+import { Transcript } from './transcript.ts';
 
 /** A styled piece of a line in a panel. Colors are theme names (see theme.ts) or Ink colors. */
 export interface Seg {
@@ -41,6 +44,7 @@ export type Item =
   | { id: number; type: 'user'; text: string; to?: string; images?: Attachment[] }
   /** `speaker`: a lead, or the orchestrator while the user talks to a lead (absent: the agent being talked to). */
   | { id: number; type: 'assistant'; text: string; speaker?: string }
+  | { id: number; type: 'reasoning'; text: string; speaker?: string }
   | { id: number; type: 'info'; text: string }
   | { id: number; type: 'panel'; title: string; lines: Line[] }
   | { id: number; type: 'error'; text: string }
@@ -188,9 +192,12 @@ export interface UiState {
   busySince: number | null;
   activity: string | null;
   runs: RunView[];
+  finishedRuns: RunView[];
+  subagents: SubagentView[];
+  view: { ref: AgentRef; title: string; items: Item[]; streaming: string; activity: string | null } | null;
   interactions: UiInteraction[];
   /** A menu that has the keyboard (`/config`). */
-  menu: 'config' | 'workflows' | null;
+  menu: 'config' | 'workflows' | 'agents' | null;
   /** Text to put in the prompt (a command for the user to finish); `n` changes each time. */
   seed: { text: string; n: number } | null;
   accounts: Record<string, string>;
@@ -209,6 +216,13 @@ export interface UiState {
 
 export class UiStore {
   private state: UiState;
+  private readonly incompleteTranscripts = new Set<string>();
+
+  transcriptIncomplete(ref: AgentRef): boolean {
+    return this.incompleteTranscripts.has(agentKey(ref));
+  }
+
+  private readonly transcripts = new Map<string, { ref: AgentRef; transcript: Transcript }>();
   private readonly listeners = new Set<() => void>();
   private nextId = 1;
   /** The feed line of each tool call of the assistant or a lead still running, so a failure names what failed. */
@@ -227,6 +241,9 @@ export class UiStore {
       busySince: null,
       activity: null,
       runs: [],
+      finishedRuns: [],
+      subagents: [],
+      view: null,
       interactions: [],
       menu: null,
       seed: null,
@@ -287,6 +304,156 @@ export class UiStore {
   note(entry: Omit<FeedEntry, 'id' | 'at' | 'tag' | 'files'> & { tag?: string | null; files?: string[] }): void {
     const full: FeedEntry = { tag: null, files: [], ...entry, id: this.nextId++, at: Date.now() };
     this.update((s) => ({ feed: [...s.feed.slice(-(FEED_KEPT - 1)), full] }), false);
+  }
+
+  transcriptOf(ref: AgentRef): Transcript | null {
+    return this.transcripts.get(agentKey(ref))?.transcript ?? null;
+  }
+
+  private finished(ref: AgentRef): boolean {
+    if (ref.kind === 'sub')
+      return (
+        this.state.subagents.find((s) => agentKey(s.owner) === agentKey(ref.owner) && s.id === ref.id)?.status !==
+        'working'
+      );
+    if (ref.kind === 'step')
+      return (
+        this.state.runs.find((r) => r.id === ref.runId)?.steps.find((s) => s.key === ref.key)?.status !== 'started'
+      );
+    return false;
+  }
+
+  private keepTranscript(ref: AgentRef, transcript = new Transcript()): Transcript {
+    const key = agentKey(ref);
+    this.transcripts.delete(key);
+    this.transcripts.set(key, { ref, transcript });
+    while (this.transcripts.size > 64) {
+      const victim =
+        [...this.transcripts].find(([k, v]) => k !== key && this.finished(v.ref)) ??
+        [...this.transcripts].find(([k]) => k !== key);
+      if (victim) {
+        this.incompleteTranscripts.add(victim[0]);
+        this.transcripts.delete(victim[0]);
+      }
+    }
+    return transcript;
+  }
+
+  openView(ref: AgentRef, title: string, seed?: Transcript): void {
+    if (seed) this.incompleteTranscripts.delete(agentKey(ref));
+    const transcript = seed ? this.keepTranscript(ref, seed) : (this.transcriptOf(ref) ?? this.keepTranscript(ref));
+    this.update({
+      view: {
+        ref,
+        title,
+        items: [...transcript.items],
+        streaming: transcript.streaming,
+        activity: transcript.activity,
+      },
+    });
+  }
+
+  closeView(): void {
+    this.update({ view: null });
+  }
+
+  private refreshView(ref: AgentRef): void {
+    const view = this.state.view;
+    const transcript = this.transcriptOf(ref);
+    if (view && transcript && agentKey(view.ref) === agentKey(ref))
+      this.update(
+        {
+          view: {
+            ...view,
+            items: [...transcript.items],
+            streaming: transcript.streaming,
+            activity: transcript.activity,
+          },
+        },
+        false,
+      );
+  }
+
+  subagentEvent(owner: AgentOwner, event: AgentEvent): void {
+    if (event.type !== 'subagent_started' && event.type !== 'subagent_event' && event.type !== 'subagent_done') return;
+    const ref: AgentRef = { kind: 'sub', owner, id: event.id };
+    const matches = (s: SubagentView) => agentKey(s.owner) === agentKey(owner) && s.id === event.id;
+    const who = owner.kind === 'orchestrator' ? 'orchestrator' : owner.kind === 'lead' ? owner.name : owner.key;
+    if (event.type === 'subagent_started') {
+      if (this.state.subagents.some(matches)) {
+        this.update(
+          {
+            subagents: this.state.subagents.map((s) =>
+              matches(s)
+                ? {
+                    ...s,
+                    ...(event.resumed ? { status: 'working' as const, endedAt: null, activity: null } : {}),
+                    parent: event.parent ?? s.parent,
+                    agentType: event.agentType ?? s.agentType,
+                    description: event.description ?? s.description,
+                  }
+                : s,
+            ),
+          },
+          false,
+        );
+        return;
+      }
+      const sub: SubagentView = {
+        owner,
+        id: event.id,
+        parent: event.parent,
+        agentType: event.agentType,
+        description: event.description,
+        status: 'working',
+        activity: null,
+        startedAt: Date.now(),
+        endedAt: null,
+      };
+      this.update({ subagents: [...this.state.subagents, sub] }, false);
+      this.keepTranscript(ref);
+      this.note({ who, kind: 'spawn', text: subagentLabel(sub) });
+    } else {
+      const sub = this.state.subagents.find(matches);
+      if (!sub) return;
+      const transcript = this.transcriptOf(ref) ?? this.keepTranscript(ref);
+      if (event.type === 'subagent_event') {
+        transcript.push(event.event);
+        const activity = agentActivity(event.event);
+        if (activity !== undefined)
+          this.update({ subagents: this.state.subagents.map((s) => (matches(s) ? { ...s, activity } : s)) }, false);
+      } else {
+        transcript.push({
+          type: 'turn_complete',
+          isError: !event.ok,
+          reason: event.ok ? null : event.result,
+          structuredOutput: null,
+        });
+        this.update(
+          {
+            subagents: this.state.subagents.map((s) =>
+              matches(s) ? { ...s, status: event.ok ? 'done' : 'failed', activity: null, endedAt: Date.now() } : s,
+            ),
+          },
+          false,
+        );
+        if (!event.ok) this.note({ who, kind: 'error', text: subagentLabel(sub) });
+      }
+    }
+    const finished = this.state.subagents
+      .filter((s) => agentKey(s.owner) === agentKey(owner) && s.status !== 'working')
+      .sort((a, b) => (a.endedAt ?? 0) - (b.endedAt ?? 0));
+    const removed = new Set(
+      finished.slice(
+        0,
+        Math.max(0, this.state.subagents.filter((s) => agentKey(s.owner) === agentKey(owner)).length - 30),
+      ),
+    );
+    if (removed.size) {
+      for (const s of removed) this.transcripts.delete(agentKey({ kind: 'sub', owner, id: s.id }));
+      this.update({ subagents: this.state.subagents.filter((s) => !removed.has(s)) }, false);
+    }
+    this.refreshView(ref);
   }
 
   // ---- assistant -----------------------------------------------------------------------------
@@ -427,6 +594,7 @@ export class UiStore {
         if (event.status === 'running') {
           if (!this.state.runs.some((r) => r.id === event.runId)) {
             this.update((s) => ({
+              finishedRuns: s.finishedRuns.filter((r) => r.id !== event.runId),
               runs: [
                 ...s.runs,
                 {
@@ -449,7 +617,12 @@ export class UiStore {
         }
         if (event.status === 'waiting' || event.status === 'interrupted') return;
         const view = this.state.runs.find((r) => r.id === event.runId);
-        this.update((s) => ({ runs: s.runs.filter((r) => r.id !== event.runId) }));
+        this.update((s) => ({
+          runs: s.runs.filter((r) => r.id !== event.runId),
+          finishedRuns: view
+            ? [...s.finishedRuns.filter((r) => r.id !== event.runId), view].slice(-10)
+            : s.finishedRuns,
+        }));
         const status = event.status === 'done' ? 'done' : event.status === 'cancelled' ? 'cancelled' : 'failed';
         const detail =
           status === 'done'
@@ -506,6 +679,17 @@ export class UiStore {
         return;
       }
       case 'agent': {
+        const ref: AgentOwner = { kind: 'step', runId: event.runId, key: event.key };
+        if (
+          event.event.type === 'subagent_started' ||
+          event.event.type === 'subagent_event' ||
+          event.event.type === 'subagent_done'
+        ) {
+          this.subagentEvent(ref, event.event);
+          return;
+        }
+        (this.transcriptOf(ref) ?? this.keepTranscript(ref)).push(event.event);
+        this.refreshView(ref);
         const activity = agentActivity(event.event);
         if (activity === undefined) return;
         this.updateRun(

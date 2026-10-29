@@ -110,11 +110,12 @@ Want to say something to the assistant instead? Press **Tab** to switch to the c
 | **?** | Show every shortcut |
 | **Ctrl+V** | Attach the screenshot on your clipboard (or paste or drop image files) |
 | **Ctrl+O** | Show or hide the details of what the agents did |
+| **Ctrl+T** | Open Agents: every agent and sub agent |
 | **PgUp / PgDn** or the mouse wheel | Scroll back through the conversation |
 | **Ctrl+C** twice | Quit |
 
 A few commands you'll use often: `/workflows` to browse what Legion can do, `/runs` to see what's been running,
-`/config` for settings, and `/help` for everything else.
+`/agents` to open any agent's chat or read-only transcript, `/config` for settings, and `/help` for everything else.
 
 ## Setting up your agents
 

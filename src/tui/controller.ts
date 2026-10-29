@@ -48,11 +48,13 @@ import {
 } from '../workflow/loader.ts';
 import type { PendingInteraction } from '../workflow/manager.ts';
 import { formatReport, validateWorkflow } from '../workflow/validate.ts';
+import { type AgentRef, agentKey, buildAgentTree, subagentLabel } from './agents.ts';
 import { attachmentNote, clipboardImage, saveAttachment } from './attachments.ts';
 import type { HerdrReporter } from './herdr.ts';
 import type { CommandSpec } from './input.tsx';
 import { clock, feedMark, feedTone, type Line, type Seg, type TeamRow, type UiInteraction, UiStore } from './store.ts';
 import { glyph, tildify } from './theme.ts';
+import { Transcript, transcriptFromJournal } from './transcript.ts';
 
 interface Command extends CommandSpec {
   group: 'Workflows' | 'Runs' | 'Team' | 'Session';
@@ -63,6 +65,7 @@ export const COMMANDS: readonly Command[] = [
   { group: 'Workflows', name: 'run', args: '<name> [json]', description: 'start a workflow' },
   { group: 'Workflows', name: 'validate', args: '<name>', description: 'type-check and dry-run a workflow' },
   { group: 'Runs', name: 'runs', args: '', description: 'recent runs' },
+  { group: 'Team', name: 'agents', args: '', description: 'every agent and sub agent: open its chat' },
   { group: 'Team', name: 'team', args: '', description: 'the leads: what each is doing, its plan and last report' },
   {
     group: 'Team',
@@ -135,6 +138,8 @@ export function helpLines(): Line[] {
       dim(' exit   '),
       seg('Ctrl+O', { color: 'accent' }),
       dim(' show or fold tool calls   '),
+      seg('Ctrl+T', { color: 'accent' }),
+      dim(' every agent   '),
       seg('?', { color: 'accent' }),
       dim(' shortcuts'),
     ],
@@ -420,6 +425,7 @@ export class Controller {
     // The prompt talks to the orchestrator or to one lead (`/lead`): that one's conversation streams; the
     // orchestrator's replies still show while the user talks to a lead, other leads' do not.
     assistant.on('event', (e) => {
+      this.store.subagentEvent({ kind: 'orchestrator' }, e);
       if (this.target === ROOT) this.store.assistantEvent(e);
       else if (e.type === 'message' && e.text.trim()) {
         this.store.push({ type: 'assistant', text: e.text.trim(), speaker: ROOT });
@@ -447,6 +453,7 @@ export class Controller {
       if (this.target !== ROOT) this.store.setBusy(team.busy(this.target));
     });
     team.on('lead-event', (lead, e) => {
+      this.store.subagentEvent({ kind: 'lead', name: lead }, e);
       if (lead === this.target) this.store.assistantEvent(e, lead);
     });
     // Leads saved by an earlier session.
@@ -766,6 +773,9 @@ export class Controller {
         case 'exit':
         case 'quit':
           this.hooks?.exit();
+          return;
+        case 'agents':
+          this.openAgents();
           return;
         case 'workflows': {
           if (rest[0] !== 'list') {
@@ -1190,6 +1200,42 @@ export class Controller {
   }
 
   // ---- workflows menu ------------------------------------------------------------------------
+
+  openAgents(): void {
+    this.store.update({ menu: 'agents' });
+  }
+
+  agentTree() {
+    return buildAgentTree(this.store.get());
+  }
+
+  openAgent(ref: AgentRef): void {
+    this.store.update({ menu: null });
+    if (ref.kind === 'orchestrator' || ref.kind === 'lead') {
+      this.closeView();
+      this.talkTo(ref.kind === 'lead' ? ref.name : ROOT);
+      return;
+    }
+    const node = this.agentTree().find((node) => node.key === agentKey(ref));
+    const sub =
+      ref.kind === 'sub'
+        ? this.store.get().subagents.find((s) => s.id === ref.id && agentKey(s.owner) === agentKey(ref.owner))
+        : undefined;
+    const title = sub ? subagentLabel(sub) : (node?.label ?? (ref.kind === 'step' ? ref.key : 'sub agent'));
+    let transcript = this.store.transcriptOf(ref);
+    const owner = ref.kind === 'sub' ? ref.owner : ref;
+    if ((!transcript || this.store.transcriptIncomplete(ref)) && owner.kind === 'step') {
+      const path = this.session.runs.journal(owner.runId).transcriptPath(owner.key);
+      transcript = existsSync(path)
+        ? transcriptFromJournal(readFileSync(path, 'utf8'), ref.kind === 'sub' ? ref.id : undefined)
+        : new Transcript();
+    }
+    this.store.openView(ref, title, transcript ?? new Transcript());
+  }
+
+  closeView(): void {
+    this.store.closeView();
+  }
 
   openWorkflows(): void {
     this.store.update({ menu: 'workflows' });
